@@ -11,6 +11,8 @@ import { prisma } from '@/lib/prisma';
 import {
   attendanceEmployeeWhere,
   attendanceRecordScopeWhere,
+  employeeHiredBeforeWhere,
+  isEmployeeHiredOnDate,
   parseAttendanceWorkforceScope,
   type AttendanceWorkforceScope,
 } from '@/lib/production-workforce';
@@ -45,6 +47,7 @@ export async function GET(req: NextRequest) {
     const endDate = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const employeeWhere = {
       ...attendanceEmployeeWhere(scope),
+      AND: [employeeHiredBeforeWhere(endDate)],
       ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
       ...(requestedEmployeeIds.length ? { id: { in: requestedEmployeeIds } } : {}),
     };
@@ -64,6 +67,11 @@ export async function GET(req: NextRequest) {
       },
       orderBy: [{ workDate: 'asc' }, { employee: { employeeNo: 'asc' } }],
     }) : [];
+    const employeeById = new Map(employees.map(employee => [employee.id, employee]));
+    const effectiveRecords = records.filter(record => isEmployeeHiredOnDate(
+      employeeById.get(record.employeeId),
+      dateKeyFromDatabase(record.workDate),
+    ));
     const endInclusive = new Date(range.end.getTime() - 1);
     const rangeEndKey = endInclusive.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
     const rangeStartKey = range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
@@ -87,8 +95,9 @@ export async function GET(req: NextRequest) {
         department: employee.department,
         team: employee.team,
         position: employee.position,
+        hireDate: employee.hireDate?.toISOString().slice(0, 10) || null,
       })),
-      records: records.map(record => ({
+      records: effectiveRecords.map(record => ({
         employeeId: record.employeeId,
         dateKey: dateKeyFromDatabase(record.workDate),
         status: record.status === 'confirmed' ? 'confirmed' : 'draft',

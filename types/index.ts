@@ -2182,7 +2182,7 @@ export type ReportCenterOverviewDTO = {
   focusItems: ReportCenterFocusItemDTO[];
 };
 
-export type ReportOperationsDayStatusDTO = 'missing' | 'draft' | 'confirmed' | 'rest';
+export type ReportOperationsDayStatusDTO = 'not_employed' | 'missing' | 'draft' | 'confirmed' | 'rest';
 
 export type ReportOperationsLaborRowDTO = {
   team: string;
@@ -2239,7 +2239,7 @@ export type ReportOperationsEmployeeDayDTO = {
   utilizationBasisPoints: number | null;
   efficiencyBasisPoints: number | null;
   attainmentBasisPoints: number | null;
-  overtimeSource: 'confirmed_plan' | 'attendance_fallback' | 'none';
+  overtimeSource: 'confirmed_plan' | 'confirmed_attendance' | 'attendance_fallback' | 'none';
   attainmentEligible: boolean;
   attainmentFactorBasisPoints: number;
   attainmentStream: AttainmentStream;
@@ -2327,9 +2327,13 @@ export type ReportOperationsDTO = {
     missingAttendanceRecords: number;
     dataCoverageBasisPoints: number | null;
     plannedBatches: number;
+    scheduledBatches: number;
+    futureBatches: number;
     completedBatches: number;
     batchCompletionBasisPoints: number | null;
     plannedQuantity: number;
+    scheduledQuantity: number;
+    futureQuantity: number;
     completedQuantity: number;
     quantityCompletionBasisPoints: number | null;
   };
@@ -2340,9 +2344,13 @@ export type ReportOperationsDTO = {
     label: string;
     startDate: string;
     endDate: string;
+    scheduledBatches: number;
     plannedBatches: number;
+    futureBatches: number;
     completedBatches: number;
+    scheduledQuantity: number;
     plannedQuantity: number;
+    futureQuantity: number;
     completedQuantity: number;
     batchCompletionBasisPoints: number | null;
     quantityCompletionBasisPoints: number | null;
@@ -2437,7 +2445,7 @@ export type EmployeeAttainmentDayDTO = {
   efficiencyBasisPoints: number | null;
   targetAttainmentBasisPoints: number | null;
   attainmentCapacityMilliseconds: number;
-  overtimeSource: 'confirmed_plan' | 'attendance_fallback' | 'none';
+  overtimeSource: 'confirmed_plan' | 'confirmed_attendance' | 'attendance_fallback' | 'none';
   includedInAttainment: boolean;
   exclusionReason: 'leave' | 'rest' | 'absent' | 'missing_attendance' | 'zero_attendance' | 'excluded_stream' | null;
 };

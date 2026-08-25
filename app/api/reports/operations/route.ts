@@ -13,8 +13,14 @@ import {
 import { safeLaborMilliseconds } from '@/lib/process-labor-service';
 import { employeeReportRange, serializeEmployee } from '@/lib/process-time';
 import { ReportDateRangeError, reportDateRange, reportRangeDateKeys } from '@/lib/report-date-range';
-import { attendanceRecordScopeWhere, productionEmployeeWhere } from '@/lib/production-workforce';
 import {
+  attendanceRecordScopeWhere,
+  employeeHiredBeforeWhere,
+  isEmployeeHiredOnDate,
+  productionEmployeeWhere,
+} from '@/lib/production-workforce';
+import {
+  allocatePlanBatchCompletionQuantities,
   cappedBasisPoints,
   parseReportMonth,
   reportRangeWeekBuckets,
@@ -114,6 +120,7 @@ function officialDay(day: MutableDay, date: string): ReportOperationsEmployeeDay
     actualOvertimeMilliseconds: attendanceOfficial ? day.actualOvertimeMilliseconds : 0,
     leaveMilliseconds: attendanceOfficial ? day.leaveMilliseconds : 0,
     actualAttendanceMilliseconds: attendanceOfficial ? day.attendanceMilliseconds : 0,
+    overtimeBasis: 'actual_confirmed',
   });
   const hasCapacity = day.attainmentEligible
     && day.attainmentStream === 'batch'
@@ -159,6 +166,14 @@ function officialDay(day: MutableDay, date: string): ReportOperationsEmployeeDay
     attainmentEligible: day.attainmentEligible,
     attainmentFactorBasisPoints: day.attainmentFactorBasisPoints,
     attainmentStream: day.attainmentStream,
+  };
+}
+
+function notEmployedDay(date: string): ReportOperationsEmployeeDayDTO {
+  return {
+    ...officialDay(emptyDay(false, 0, 'excluded'), date),
+    status: 'not_employed',
+    attendanceType: null,
   };
 }
 
@@ -230,6 +245,7 @@ export async function GET(req: NextRequest) {
 
     const employees = await prisma.employee.findMany({
       where: {
+        AND: [employeeHiredBeforeWhere(endDate)],
         OR: [
           productionEmployeeWhere({ requireActive: false, requireAttendance: false }),
           {
@@ -366,6 +382,21 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
+    const planWorkOrderIds = [...new Set(batches.map(batch => batch.workOrderId).filter((id): id is string => Boolean(id)))];
+    const allocationBatches = planWorkOrderIds.length ? await prisma.productionPlanBatch.findMany({
+      where: {
+        deletedAt: null,
+        releaseState: { not: 'cancelled' },
+        workOrderId: { in: planWorkOrderIds },
+        plannedCompletionDate: { lt: end },
+      },
+      select: {
+        id: true,
+        quantity: true,
+        plannedCompletionDate: true,
+        workOrderId: true,
+      },
+    }) : [];
     const finalStepIds = batches.flatMap(batch => batch.workOrder?.processRoute?.steps.map(step => step.id) || []);
     const finalCompletions = finalStepIds.length ? await prisma.processCompletion.findMany({
       where: {
@@ -466,14 +497,21 @@ export async function GET(req: NextRequest) {
 
     const employeeMatrix: ReportOperationsEmployeeRowDTO[] = employees.map(employee => {
       const sourceDays = employeeDayMap.get(employee.id) || new Map<string, MutableDay>();
-      const days = dateKeys.map(date => officialDay(
-        sourceDays.get(date) || emptyDay(
+      const currentStream = normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible);
+      const days = dateKeys.map(date => {
+        if (!isEmployeeHiredOnDate(employee, date)) return notEmployedDay(date);
+        const source = sourceDays.get(date) || emptyDay(
           employee.attainmentEligible,
           employee.attainmentFactorBasisPoints,
-          normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible),
-        ),
-        date,
-      ));
+          currentStream,
+        );
+        if (!employee.attainmentEligible || employee.attainmentFactorBasisPoints <= 0 || currentStream !== 'batch') {
+          source.attainmentEligible = false;
+          source.attainmentFactorBasisPoints = 0;
+          source.attainmentStream = currentStream;
+        }
+        return officialDay(source, date);
+      });
       const totals = days.reduce((sum, day) => ({
         plannedMilliseconds: sum.plannedMilliseconds + day.plannedMilliseconds,
         scheduledMilliseconds: sum.scheduledMilliseconds + day.scheduledMilliseconds,
@@ -574,6 +612,7 @@ export async function GET(req: NextRequest) {
     const teamDailyMap = new Map<string, ReportOperationsLaborRowDTO & { date: string }>();
     for (const employee of employeeMatrix) {
       for (const day of employee.days) {
+        if (day.status === 'not_employed') continue;
         const key = `${day.date}\u0000${employee.team}`;
         const row = teamDailyMap.get(key) || { ...emptyLaborRow(employee.team), date: day.date };
         row.employeeCount += 1;
@@ -635,7 +674,7 @@ export async function GET(req: NextRequest) {
           day.draftRecords += 1;
           continue;
         }
-        if (employeeDay.status === 'missing') continue;
+        if (employeeDay.status === 'missing' || employeeDay.status === 'not_employed') continue;
         day.confirmedRecords += 1;
         if (employeeDay.attendanceType === 'rest') {
           day.restPeople += 1;
@@ -677,23 +716,43 @@ export async function GET(req: NextRequest) {
         (completedByWorkOrder.get(completion.workOrderId) || 0) + Math.max(0, completion.goodQty),
       );
     }
+    const allocatedByBatch = allocatePlanBatchCompletionQuantities(
+      allocationBatches.map(batch => ({
+        id: batch.id,
+        workOrderId: batch.workOrderId,
+        quantity: batch.quantity,
+        plannedDateKey: shanghaiDateKey(batch.plannedCompletionDate),
+      })),
+      completedByWorkOrder,
+    );
+    const cutoffDateKey = todayKey(cutoffAt);
     const weeklyPlan = reportRangeWeekBuckets(dateKeys).map(bucket => ({
       ...bucket,
+      scheduledBatches: 0,
       plannedBatches: 0,
+      futureBatches: 0,
       completedBatches: 0,
+      scheduledQuantity: 0,
       plannedQuantity: 0,
+      futureQuantity: 0,
       completedQuantity: 0,
       batchCompletionBasisPoints: null as number | null,
       quantityCompletionBasisPoints: null as number | null,
     }));
     const weekMap = new Map(weeklyPlan.map(week => [week.key, week]));
     for (const batch of batches) {
-      const week = weekMap.get(reportWeekKey(shanghaiDateKey(batch.plannedCompletionDate)));
+      const plannedDateKey = shanghaiDateKey(batch.plannedCompletionDate);
+      const week = weekMap.get(reportWeekKey(plannedDateKey));
       if (!week) continue;
       const plannedQuantity = Math.max(0, batch.quantity);
-      const completedQuantity = batch.workOrderId
-        ? Math.min(plannedQuantity, completedByWorkOrder.get(batch.workOrderId) || 0)
-        : 0;
+      week.scheduledBatches += 1;
+      week.scheduledQuantity += plannedQuantity;
+      if (plannedDateKey > cutoffDateKey) {
+        week.futureBatches += 1;
+        week.futureQuantity += plannedQuantity;
+        continue;
+      }
+      const completedQuantity = allocatedByBatch.get(batch.id) || 0;
       week.plannedBatches += 1;
       week.plannedQuantity += plannedQuantity;
       week.completedQuantity += completedQuantity;
@@ -757,11 +816,24 @@ export async function GET(req: NextRequest) {
       missingAttendanceRecords: 0,
     });
     const planSummary = weeklyPlan.reduce((sum, week) => ({
+      scheduledBatches: sum.scheduledBatches + week.scheduledBatches,
       plannedBatches: sum.plannedBatches + week.plannedBatches,
+      futureBatches: sum.futureBatches + week.futureBatches,
       completedBatches: sum.completedBatches + week.completedBatches,
+      scheduledQuantity: sum.scheduledQuantity + week.scheduledQuantity,
       plannedQuantity: sum.plannedQuantity + week.plannedQuantity,
+      futureQuantity: sum.futureQuantity + week.futureQuantity,
       completedQuantity: sum.completedQuantity + week.completedQuantity,
-    }), { plannedBatches: 0, completedBatches: 0, plannedQuantity: 0, completedQuantity: 0 });
+    }), {
+      scheduledBatches: 0,
+      plannedBatches: 0,
+      futureBatches: 0,
+      completedBatches: 0,
+      scheduledQuantity: 0,
+      plannedQuantity: 0,
+      futureQuantity: 0,
+      completedQuantity: 0,
+    });
 
     const response: ReportOperationsDTO = {
       month,
@@ -812,10 +884,10 @@ export async function GET(req: NextRequest) {
       employeeMatrix,
       dailyAttainmentAverage,
       dataNotes: [
-        '净应出勤 = 排班常规工时 + 认可加班 - 已确认请假；认可加班优先取已确认日计划容量，历史缺失时回退到已确认考勤加班并标注来源。实际出勤已经包含加班，不重复相加。',
+        '净应出勤 = 排班常规工时 + 已确认实际加班 - 已确认请假；实际出勤已经包含加班，不重复相加。',
         '出勤得分按实际出勤 ÷ 净应出勤计算并封顶 100%，超出部分单列；整日请假和休息日剔除基数，部分请假缩减基数，正式缺勤仍保留在出勤基数。草稿与缺失考勤不按 0 计算。',
         '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；目标达成率 = 标准工时 ÷（有效出勤 × 95% × 个人计入比例）。',
-        '周计划批次与数量按计划完成日期分周，完成量取截至统计截止时点的最终工序良品并封顶到计划数量。',
+        '周计划按计划完成日期分周，只以统计截止日前已到期批次为达成率基数；未来批次显示为未到期。最终工序良品按同一工单的批次先后顺序一次分配，不重复计入多个批次。',
         '金额与产值尚无权威单价来源，本模块不生成推测值；待单价主数据接入后再启用。',
       ],
     };

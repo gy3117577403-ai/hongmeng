@@ -451,6 +451,7 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
 .report-week-grid dd em { color: #8794a4; font-size: 10px; font-style: normal; }
 .report-week-grid dl i { grid-column: 1 / -1; height: 6px; display: block; border-radius: 999px; background: #e7edf2; overflow: hidden; }
 .report-week-grid dl i b { height: 100%; display: block; background: var(--report-orange); border-radius: inherit; }
+.report-week-grid article > p { margin: 10px 0 0; color: #7d8998; font-size: 9px; }
 
 .report-batch-table > div,
 .report-batch-table > article { min-height: 72px; padding: 0 14px; display: grid; grid-template-columns: 1.25fr .9fr .72fr .9fr .75fr 1fr 24px; align-items: center; gap: 10px; border-bottom: 1px solid #e8edf2; }
@@ -535,6 +536,7 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
 .report-matrix-scroll td small { display: block; color: #8a97a7; font-size: 8px; }
 .report-matrix-scroll td.status-draft { color: #bb7600; background: #fff8df; }
 .report-matrix-scroll td.status-rest { color: #6b7787; background: #f3f5f7; }
+.report-matrix-scroll td.status-not_employed { color: #98a2b3; background: #f6f7f9; }
 .report-matrix-scroll td.risk { color: var(--report-red); background: #fff0f0; }
 .report-matrix-scroll td.average { color: var(--report-blue); background: #edf5ff; }
 

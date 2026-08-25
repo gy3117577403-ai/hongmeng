@@ -51,22 +51,8 @@ export const REPORT_DOMAINS: readonly ReportDomainDefinition[] = [
     label: '生产结果',
     caption: '计划与完工',
     branches: [
-      { key: 'quantity-attainment', label: '数量达成率', shortLabel: '数量达成', description: '计划数量、最终工序良品、缺口与每日达成趋势' },
-      { key: 'completed-orders', label: '批次按期达成', shortLabel: '批次达成', description: '按计划完成日期核对批次是否按期完成、累计良品与逾期缺口' },
-      { key: 'order-status', label: '工单状态分布', shortLabel: '工单状态', description: '已完成、进行中、待开始、待审核和逾期工单结构' },
-      { key: 'production-trend', label: '生产趋势', shortLabel: '生产趋势', description: '按日对比计划数量与最终工序良品数量' },
-      { key: 'weekly-plan-attainment', label: '周计划达成', shortLabel: '周计划达成', description: '按月拆解各周计划批次与计划数量完成情况' },
+      { key: 'weekly-plan-attainment', label: '周计划达成率', shortLabel: '周计划达成率', description: '按月拆解各周到期计划批次完成情况，未到期周不按 0 计算' },
       { key: 'process-bottlenecks', label: '工序瓶颈', shortLabel: '工序瓶颈', description: '按工序分析待处理数量、涉及工单与逾期影响' },
-    ],
-  },
-  {
-    key: 'delivery',
-    label: '生产交付',
-    caption: '交期与风险',
-    branches: [
-      { key: 'delivery-risk', label: '逾期风险', shortLabel: '逾期风险', description: '已经超过计划交期且尚未完成的量产工单' },
-      { key: 'due-soon', label: '即将到期', shortLabel: '即将到期', description: '未来两天内到期、需要提前处理的量产工单' },
-      { key: 'delivery-orders', label: '交付工单', shortLabel: '交付工单', description: '按交期、状态、责任人与风险查看量产交付任务' },
     ],
   },
   {
@@ -74,9 +60,7 @@ export const REPORT_DOMAINS: readonly ReportDomainDefinition[] = [
     label: '人员工时',
     caption: '出勤与效率',
     branches: [
-      { key: 'attendance-attainment', label: '全厂出勤得分', shortLabel: '出勤得分', description: '按净应出勤核对实际出勤、认可加班、请假扣减与数据完整性' },
-      { key: 'team-hours', label: '班组工时', shortLabel: '班组工时', description: '按班组拆分净应出勤、生产实耗、工时利用率、标准效率与目标达成' },
-      { key: 'employee-attainment', label: '员工每日达成', shortLabel: '员工每日达成', description: '按员工及日期核对净应出勤、报工明细、工时利用率和目标达成' },
+      { key: 'attendance-attainment', label: '全厂出勤得分', shortLabel: '出勤得分', description: '按排班、实际加班与确认请假核对净应出勤和实际出勤' },
       { key: 'employee-matrix', label: '个人达成矩阵', shortLabel: '个人矩阵', description: '员工与日期交叉查看每日达成率、草稿、休息和缺失状态' },
       { key: 'labor-ledger', label: '自动记工明细', shortLabel: '自动记工', description: '报工记录与员工标准工时自动入账映射' },
       { key: 'unmatched-labor', label: '待匹配工时', shortLabel: '待匹配工时', description: '有报工但尚未匹配确认考勤的标准工时' },
@@ -141,8 +125,8 @@ export function hasFullReportAccess(modules: readonly string[]): boolean {
 
 export function defaultReportRoute(modules: readonly string[]): string {
   return hasFullReportAccess(modules)
-    ? reportRoute('production', 'quantity-attainment')
-    : reportRoute('people', 'employee-attainment');
+    ? reportRoute('production', 'weekly-plan-attainment')
+    : reportRoute('people', 'unmatched-labor');
 }
 
 function firstValue(value: string | string[] | undefined): string {
@@ -153,24 +137,23 @@ export function legacyReportRoute(
   searchParams: Record<string, string | string[] | undefined>,
   modules: readonly string[],
 ): string {
-  if (!hasFullReportAccess(modules)) return reportRoute('people', 'employee-attainment');
+  if (!hasFullReportAccess(modules)) return reportRoute('people', 'unmatched-labor');
   const requested = firstValue(searchParams.branch) || firstValue(searchParams.view);
   const section = firstValue(searchParams.section);
   if (requested === 'operations') {
-    if (section === 'labor') return reportRoute('people', 'team-hours');
+    if (section === 'labor') return reportRoute('people', 'attendance-attainment');
     if (section === 'attendance') return reportRoute('people', 'attendance-attainment');
     if (section === 'matrix') return reportRoute('people', 'employee-matrix');
     if (section === 'plan') return reportRoute('production', 'weekly-plan-attainment');
-    return reportRoute('production', 'production-trend');
+    return reportRoute('production', 'weekly-plan-attainment');
   }
   if (requested === 'people' || requested === 'employee') {
-    return section === 'labor' ? reportRoute('people', 'labor-ledger') : reportRoute('people', 'employee-attainment');
+    return section === 'labor' ? reportRoute('people', 'labor-ledger') : reportRoute('people', 'employee-matrix');
   }
   if (requested === 'labor' || requested === 'manual') return reportRoute('people', 'labor-ledger');
   if (requested === 'production') {
-    if (section === 'orders') return reportRoute('production', 'order-status');
     if (section === 'load') return reportRoute('production', 'process-bottlenecks');
-    return reportRoute('production', 'quantity-attainment');
+    return reportRoute('production', 'weekly-plan-attainment');
   }
   if (requested === 'quality' || requested === 'abnormal') {
     return section === 'events' ? reportRoute('quality', 'event-ledger') : reportRoute('quality', 'cause-distribution');

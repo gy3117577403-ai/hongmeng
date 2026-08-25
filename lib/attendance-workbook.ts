@@ -2,6 +2,7 @@ import ExcelJS, { type Cell, type Worksheet } from 'exceljs';
 import sharp from 'sharp';
 import { EXCEL_THEME, excelColumnName, safeExcelSheetName } from '@/lib/business-excel';
 import { attendanceDayMetrics } from '@/lib/report-labor-metrics';
+import { isEmployeeHiredOnDate } from '@/lib/production-workforce';
 
 export type AttendanceWorkbookStatus = 'confirmed' | 'draft';
 export type AttendanceWorkbookType = 'normal' | 'leave' | 'absent' | 'rest';
@@ -13,6 +14,7 @@ export interface AttendanceWorkbookEmployee {
   department: string | null;
   team: string | null;
   position: string | null;
+  hireDate?: string | null;
 }
 
 export interface AttendanceWorkbookRecord {
@@ -140,6 +142,9 @@ function statusStyle(cell: Cell, value: string | number, weekend: 'saturday' | '
   } else if (value === '待') {
     cell.fill = fill(EXCEL_THEME.purpleSoft);
     cell.font = { ...cell.font, color: { argb: EXCEL_THEME.purple }, bold: true };
+  } else if (value === '未') {
+    cell.fill = fill('FFF1F4F7');
+    cell.font = { ...cell.font, color: { argb: EXCEL_THEME.muted }, bold: true };
   }
 }
 
@@ -274,7 +279,10 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
 
   const recordMap = new Map(input.records.map(record => [`${record.employeeId}:${record.dateKey}`, record]));
   const employeeTotals = input.employees.map(employee => {
-    const confirmed = input.dateKeys.map(dateKey => recordMap.get(`${employee.id}:${dateKey}`)).filter((record): record is AttendanceWorkbookRecord => record?.status === 'confirmed');
+    const confirmed = input.dateKeys
+      .filter(dateKey => isEmployeeHiredOnDate(employee, dateKey))
+      .map(dateKey => recordMap.get(`${employee.id}:${dateKey}`))
+      .filter((record): record is AttendanceWorkbookRecord => record?.status === 'confirmed');
     const metrics = confirmed.map(record => attendanceDayMetrics({
       attendanceType: record.attendanceType,
       scheduledMilliseconds: record.plannedMilliseconds,
@@ -282,6 +290,7 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
       actualOvertimeMilliseconds: record.overtimeMilliseconds,
       leaveMilliseconds: record.leaveMilliseconds,
       actualAttendanceMilliseconds: record.actualMilliseconds,
+      overtimeBasis: 'actual_confirmed',
     }));
     const expected = hours(metrics.reduce((sum, metric) => sum + metric.netExpectedMilliseconds, 0));
     const actual = hours(metrics.reduce((sum, metric) => sum + metric.actualAttendanceMilliseconds, 0));
@@ -302,7 +311,10 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
   const rateTotal = expectedTotal > 0 ? Math.min(1, Math.max(0, actualTotal / expectedTotal)) : 0;
   const confirmedRecordCount = input.records.filter(record => record.status === 'confirmed').length;
   const draftRecordCount = input.records.filter(record => record.status === 'draft').length;
-  const missingRecordCount = Math.max(0, input.employees.length * input.dateKeys.length - input.records.length);
+  const eligibleEmployeeDays = input.employees.reduce((sum, employee) => (
+    sum + input.dateKeys.filter(dateKey => isEmployeeHiredOnDate(employee, dateKey)).length
+  ), 0);
+  const missingRecordCount = Math.max(0, eligibleEmployeeDays - input.records.length);
 
   sheet.pageSetup = {
     paperSize: 9,
@@ -360,7 +372,7 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
   sheet.getRow(4).height = 28;
   sheet.getRow(5).height = 23;
 
-  setMergedCell(sheet, 6, 1, totalColumns, '填写说明：数字=已确认实际小时（含加班）  休=休息  假=请假  缺=缺勤  待=草稿  空白=未登记；草稿与未登记不进入正式统计。', {
+  setMergedCell(sheet, 6, 1, totalColumns, '填写说明：数字=已确认实际小时（含加班）  休=休息  假=请假  缺=缺勤  待=草稿  未=尚未入职  空白=未登记；草稿、未登记与未入职不进入正式统计。', {
     font: { name: 'Microsoft YaHei', size: 9, color: { argb: EXCEL_THEME.muted } },
     fill: 'FFFFFBEB',
     alignment: { horizontal: 'left', vertical: 'middle', indent: 1, wrapText: true },
@@ -437,10 +449,11 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
     });
     input.dateKeys.forEach((dateKey, dayIndex) => {
       const record = recordMap.get(`${employee.id}:${dateKey}`);
-      const value = attendanceCellValue(record);
+      const employed = isEmployeeHiredOnDate(employee, dateKey);
+      const value = employed ? attendanceCellValue(record) : '未';
       const cell = sheet.getCell(rowNumber, IDENTITY_COLUMN_COUNT + dayIndex + 1);
       cell.value = value;
-      const note = attendanceCellNote(record);
+      const note = employed ? attendanceCellNote(record) : '尚未入职，不计入考勤与达成率基数。';
       if (note) cell.note = note;
       statusStyle(cell, value, weekday(dateKey).weekend);
       if (typeof value === 'number') {
@@ -601,9 +614,9 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
 
   const notes = [
     '1. 每日单元格记录已确认实际出勤小时，数值中包含已确认加班；草稿与未登记数据不进入正式汇总。',
-    '2. 净应出勤＝排班常规工时＋认可加班－已确认请假；本导出无日计划容量时，认可加班回退为已确认考勤加班。',
+    '2. 净应出勤＝排班常规工时＋已确认实际加班－已确认请假；实际出勤已含加班，不重复相加。',
     '3. 出勤得分＝实际出勤÷净应出勤并封顶 100%；整日请假与休息剔除基数，部分请假缩减基数，超额出勤不再推高得分。',
-    '4. 正式缺勤保留在出勤基数；草稿和未登记不按 0 计算。主管、组长是否计入生产达成率由报表中心另行判断。',
+    '4. 正式缺勤保留在出勤基数；未入职、草稿和未登记不按 0 计算。主管、储备生、组长不进入个人生产达成矩阵。',
   ];
   let noteRow = contentEndRow + 1;
   setMergedCell(sheet, noteRow, 1, totalColumns, '统计说明', {

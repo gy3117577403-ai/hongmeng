@@ -7049,6 +7049,16 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-size: 9px;
 }
 
+.hm-production-workbench .production-dispatch-metric-rate strong {
+  grid-row: 1;
+}
+
+.hm-production-workbench .production-dispatch-metric-rate small {
+  grid-column: 1 / 4;
+  grid-row: 2;
+  text-align: right;
+}
+
 .hm-production-workbench .production-dispatch-toolbar {
   position: relative;
   z-index: 4;

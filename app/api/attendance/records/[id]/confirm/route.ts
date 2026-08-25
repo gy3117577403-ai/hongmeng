@@ -8,6 +8,7 @@ import {
 import { serializeAttendanceRecord } from '@/lib/attendance';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { isEmployeeHiredOnDate } from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +29,10 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
     const boundary = await resolveAttendanceAccessBoundary(user);
     if (!attendanceEmployeeAllowed(boundary, existing.employeeId)) {
       return NextResponse.json({ ok: false, error: '只能确认本人负责范围内的员工考勤' }, { status: 403 });
+    }
+    const workDateKey = existing.workDate.toISOString().slice(0, 10);
+    if (!isEmployeeHiredOnDate(existing.employee, workDateKey)) {
+      return NextResponse.json({ ok: false, error: '不能确认员工入职前的考勤记录' }, { status: 409 });
     }
     const record = await prisma.attendanceRecord.update({
       where: { id: existing.id },

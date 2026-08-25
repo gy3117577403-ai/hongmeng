@@ -392,6 +392,11 @@ type ProductionSummary = {
     dueSoon: number;
     completed: number;
   };
+  planTotals: {
+    totalOrders: number;
+    completedOrders: number;
+    percentage: number | null;
+  };
   arrangementMetrics: ProductionArrangementMetrics;
   quantityTotals: {
     targetQty: number;
@@ -1721,7 +1726,7 @@ export default function ProductionExecutionCenter({
     withNextProcess: summary?.dispatchMetrics.withNextProcess || 0,
     dueSoon: summary?.dispatchMetrics.dueSoon || 0,
     completed: summary?.dispatchMetrics.completed || 0,
-    percentage: summary?.quantityTotals.percentage ?? null,
+    percentage: summary?.planTotals.percentage ?? null,
   }), [summary]);
   const initialBoardLoading = loading && !board;
 
@@ -2797,7 +2802,7 @@ export default function ProductionExecutionCenter({
           <button type="button" className={dispatchPreset === 'next_process' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('next_process')}><span><ArrowRight size={18} aria-hidden="true" />有后续工序</span><strong>{dispatchMetric.withNextProcess}</strong><small>工艺路线存在下一道工序</small></button>
           <button type="button" className={dispatchPreset === 'due_soon' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('due_soon')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{dispatchMetric.dueSoon}</strong><small>客户交期在未来 0-2 天</small></button>
           <button type="button" className={dispatchPreset === 'completed' ? 'active completed' : 'completed'} onClick={() => applyDispatchPreset('completed')}><span><CheckCircle2 size={18} aria-hidden="true" />已完成</span><strong>{dispatchMetric.completed}</strong><small>当前周完成归档</small></button>
-          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />数量达成率</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>按已完成数量统计</small></div>
+          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />计划达成率</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>完成订单 {summary?.planTotals.completedOrders || 0} / 总订单 {summary?.planTotals.totalOrders || 0}</small></div>
         </section>
 
         <section className="production-dispatch-toolbar" aria-label="生产调度筛选">

@@ -27,7 +27,6 @@ export default async function ReportBranchPage({ params }: BranchPageProps) {
   }
   const branch = reportBranch(domain.key, params.branch) || defaultReportBranch(domain.key);
   const restrictedBranch = !fullAccess
-    && branch.key !== 'employee-attainment'
     && branch.key !== 'unmatched-labor';
   if (branch.key !== params.branch || restrictedBranch) {
     if (restrictedBranch) redirect(defaultReportRoute(user.access.modules));

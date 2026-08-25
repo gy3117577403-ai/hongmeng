@@ -40,6 +40,23 @@ test('confirmed plan overtime wins over attendance fallback and extra time remai
   assert.equal(result.overtimeSource, 'confirmed_plan');
 });
 
+test('attendance reports use confirmed actual overtime even when a plan target differs', () => {
+  const result = attendanceDayMetrics({
+    attendanceType: 'normal',
+    scheduledMilliseconds: 8 * hour,
+    plannedOvertimeMilliseconds: 1 * hour,
+    plannedOvertimeConfirmed: true,
+    actualOvertimeMilliseconds: 2 * hour,
+    leaveMilliseconds: 0,
+    actualAttendanceMilliseconds: 10 * hour,
+    overtimeBasis: 'actual_confirmed',
+  });
+  assert.equal(result.recognizedOvertimeMilliseconds, 2 * hour);
+  assert.equal(result.netExpectedMilliseconds, 10 * hour);
+  assert.equal(result.attendanceBasisPoints, 10_000);
+  assert.equal(result.overtimeSource, 'confirmed_attendance');
+});
+
 test('an explicit confirmed zero-overtime plan does not fall back to attendance overtime', () => {
   const result = attendanceDayMetrics({
     attendanceType: 'normal',

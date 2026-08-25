@@ -11,6 +11,10 @@ type EmployeeWorkforceShape = {
   attendanceEnabled?: boolean;
 };
 
+type EmployeeHireDateShape = {
+  hireDate?: Date | string | null;
+};
+
 function normalizedDepartmentKey(value: unknown): string {
   return String(value ?? '')
     .normalize('NFKC')
@@ -53,6 +57,36 @@ export function productionEmployeeWhere(
     department: { in: [...PRODUCTION_DEPARTMENT_ALIASES] },
   };
 }
+
+export function employeeHiredOnOrBeforeWhere(workDate: Date): Prisma.EmployeeWhereInput {
+  return {
+    OR: [
+      { hireDate: null },
+      { hireDate: { lte: workDate } },
+    ],
+  };
+}
+
+export function employeeHiredBeforeWhere(rangeEndExclusive: Date): Prisma.EmployeeWhereInput {
+  return {
+    OR: [
+      { hireDate: null },
+      { hireDate: { lt: rangeEndExclusive } },
+    ],
+  };
+}
+
+export function isEmployeeHiredOnDate(
+  employee: EmployeeHireDateShape | null | undefined,
+  workDateKey: string,
+): boolean {
+  if (!employee?.hireDate) return true;
+  const hireDateKey = employee.hireDate instanceof Date
+    ? employee.hireDate.toISOString().slice(0, 10)
+    : String(employee.hireDate).slice(0, 10);
+  return hireDateKey <= workDateKey;
+}
+
 export function attendanceEmployeeWhere(scope: AttendanceWorkforceScope): Prisma.EmployeeWhereInput {
   const common: Prisma.EmployeeWhereInput = { isActive: true, attendanceEnabled: true };
   if (scope === 'ALL') return common;

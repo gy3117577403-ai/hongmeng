@@ -9,6 +9,13 @@ export type ReportWeekBucket = {
   endDate: string;
 };
 
+export type PlanBatchAllocationInput = {
+  id: string;
+  workOrderId: string | null;
+  quantity: number;
+  plannedDateKey: string;
+};
+
 const DAY_MILLISECONDS = 86_400_000;
 
 export function parseReportMonth(value: unknown, fallbackDate: string): string {
@@ -83,4 +90,36 @@ export function reportMetricTone(value: number | null | undefined): ReportMetric
 export function cappedBasisPoints(numerator: number, denominator: number): number | null {
   const ratio = basisPoints(Math.max(0, numerator), Math.max(0, denominator));
   return ratio === null ? null : Math.min(10_000, ratio);
+}
+
+/**
+ * Allocate final-good quantity once per work order, oldest planned batch first.
+ * This prevents one work order's completion total from being credited in full
+ * to every weekly-plan batch that points at the same work order.
+ */
+export function allocatePlanBatchCompletionQuantities(
+  batches: readonly PlanBatchAllocationInput[],
+  completedByWorkOrder: ReadonlyMap<string, number>,
+): Map<string, number> {
+  const remaining = new Map<string, number>();
+  for (const [workOrderId, quantity] of completedByWorkOrder) {
+    remaining.set(workOrderId, Math.max(0, Math.trunc(quantity || 0)));
+  }
+  const allocated = new Map<string, number>();
+  const ordered = [...batches].sort((left, right) => (
+    left.plannedDateKey.localeCompare(right.plannedDateKey)
+    || left.id.localeCompare(right.id)
+  ));
+  for (const batch of ordered) {
+    const planned = Math.max(0, Math.trunc(batch.quantity || 0));
+    if (!batch.workOrderId || planned <= 0) {
+      allocated.set(batch.id, 0);
+      continue;
+    }
+    const available = remaining.get(batch.workOrderId) || 0;
+    const quantity = Math.min(planned, available);
+    allocated.set(batch.id, quantity);
+    remaining.set(batch.workOrderId, Math.max(0, available - quantity));
+  }
+  return allocated;
 }

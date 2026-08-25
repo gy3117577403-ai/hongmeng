@@ -22,6 +22,8 @@ import { serializeEmployee } from '@/lib/process-time';
 import { ReportDateRangeError, reportRangeDateKeys, reportRangeQuery } from '@/lib/report-date-range';
 import {
   attendanceRecordScopeWhere,
+  employeeHiredBeforeWhere,
+  isEmployeeHiredOnDate,
   isProductionWorkforceEmployee,
   productionEmployeeWhere,
 } from '@/lib/production-workforce';
@@ -130,6 +132,7 @@ function employeeDayDto(date: string, day: DailyAttainment): EmployeeAttainmentD
     actualAttendanceMilliseconds: day.attendanceStatus === 'confirmed'
       ? day.attendanceMilliseconds
       : 0,
+    overtimeBasis: 'actual_confirmed',
   });
   let exclusionReason: EmployeeAttainmentDayDTO['exclusionReason'] = null;
   if (!day.attainmentEligible || day.attainmentStream !== 'batch' || factorBasisPoints <= 0) {
@@ -310,6 +313,7 @@ export async function GET(req: NextRequest) {
       }),
       prisma.employee.findMany({
         where: {
+          AND: [employeeHiredBeforeWhere(endDate)],
           ...(employeeIdConstraint ? { id: employeeIdConstraint } : {}),
           OR: [
             productionEmployeeWhere(),
@@ -369,6 +373,7 @@ export async function GET(req: NextRequest) {
       }),
     ]);
     const productionEmployeeIds = new Set(employees.map(employee => employee.id));
+    const employeeById = new Map(employees.map(employee => [employee.id, employee]));
     if (requestedEmployeeId && !productionEmployeeIds.has(requestedEmployeeId)) {
       return NextResponse.json({
         ok: false,
@@ -404,10 +409,12 @@ export async function GET(req: NextRequest) {
     };
     for (const attendance of attendanceRecords) {
       if (!productionEmployeeIds.has(attendance.employeeId)) continue;
+      const attendanceDateKey = dateKeyFromDatabase(attendance.workDate);
+      if (!isEmployeeHiredOnDate(employeeById.get(attendance.employeeId), attendanceDateKey)) continue;
       const row = groups.get(attendance.employeeId);
       if (!row) continue;
       activityEmployeeIds.add(attendance.employeeId);
-      const daily = dailyFor(attendance.employeeId, dateKeyFromDatabase(attendance.workDate));
+      const daily = dailyFor(attendance.employeeId, attendanceDateKey);
       daily.attendanceStatus = attendance.status === 'confirmed' ? 'confirmed' : 'draft';
       daily.attendanceType = ['partial_leave', 'leave', 'absent', 'rest'].includes(attendance.attendanceType)
         ? attendance.attendanceType as AttendanceType
@@ -438,12 +445,16 @@ export async function GET(req: NextRequest) {
     // It changes the denominator only; actual attendance already includes overtime.
     for (const override of capacityOverrides) {
       if (!productionEmployeeIds.has(override.employeeId)) continue;
-      const daily = dailyFor(override.employeeId, dateKeyFromDatabase(override.plan.workDate));
+      const overrideDateKey = dateKeyFromDatabase(override.plan.workDate);
+      if (!isEmployeeHiredOnDate(employeeById.get(override.employeeId), overrideDateKey)) continue;
+      const daily = dailyFor(override.employeeId, overrideDateKey);
       daily.scheduledOverrideMilliseconds = Math.max(0, override.regularMilliseconds);
       daily.plannedOvertimeMilliseconds = Math.max(0, override.overtimeMilliseconds);
     }
     for (const allocation of abnormalAllocations) {
       if (!productionEmployeeIds.has(allocation.employeeId)) continue;
+      const allocationDateKey = dateKeyFromDatabase(allocation.workDate);
+      if (!isEmployeeHiredOnDate(employeeById.get(allocation.employeeId), allocationDateKey)) continue;
       const row = groups.get(allocation.employeeId);
       if (row) {
         const approvedDuration = allocation.event.approvedDurationMilliseconds
@@ -451,13 +462,15 @@ export async function GET(req: NextRequest) {
         activityEmployeeIds.add(allocation.employeeId);
         dailyFor(
           allocation.employeeId,
-          dateKeyFromDatabase(allocation.workDate),
+          allocationDateKey,
         ).exemptAbnormalMilliseconds += approvedDuration;
         row.exemptAbnormalMilliseconds += approvedDuration;
       }
     }
     for (const execution of executions) {
       if (!productionEmployeeIds.has(execution.employeeId)) continue;
+      const executionDateKey = shanghaiDateKey(execution.endedAt);
+      if (!isEmployeeHiredOnDate(employeeById.get(execution.employeeId), executionDateKey)) continue;
       const workOrder = execution.step.route.workOrder;
       const detail: ProcessExecutionDTO = {
         id: execution.id,
@@ -496,7 +509,7 @@ export async function GET(req: NextRequest) {
       if (execution.countsForEfficiency) {
         row.legacyExecutionStandardLaborMilliseconds += execution.standardLaborMilliseconds;
         row.actualLaborMilliseconds += execution.actualLaborMilliseconds;
-        const daily = dailyFor(execution.employeeId, shanghaiDateKey(execution.endedAt));
+        const daily = dailyFor(execution.employeeId, executionDateKey);
         daily.standardLaborMilliseconds += execution.standardLaborMilliseconds;
         daily.actualLaborMilliseconds += execution.actualLaborMilliseconds;
       }
@@ -510,10 +523,12 @@ export async function GET(req: NextRequest) {
     const claimActualEvidence = new Set<string>();
     for (const claim of laborClaims) {
       if (!productionEmployeeIds.has(claim.employeeId)) continue;
+      const claimDateKey = dateKeyFromDatabase(claim.workDate);
+      if (!isEmployeeHiredOnDate(employeeById.get(claim.employeeId), claimDateKey)) continue;
       const standardLaborMilliseconds = safeLaborMilliseconds(claim.standardLaborMilliseconds);
       const row = groups.get(claim.employeeId) || emptyRow(claim.employee);
       activityEmployeeIds.add(claim.employeeId);
-      const claimDaily = dailyFor(claim.employeeId, dateKeyFromDatabase(claim.workDate));
+      const claimDaily = dailyFor(claim.employeeId, claimDateKey);
       if (claim.pool.countsForEfficiency) {
         claimDaily.standardLaborMilliseconds += standardLaborMilliseconds;
         claimDaily.claimedStandardLaborMilliseconds += standardLaborMilliseconds;
@@ -564,7 +579,8 @@ export async function GET(req: NextRequest) {
     }
     for (const row of groups.values()) {
       const days = dailyGroups.get(row.employee.id) || new Map<string, DailyAttainment>();
-      const dailyInputs = dateKeys.map(dateKey => {
+      const employedDateKeys = dateKeys.filter(dateKey => isEmployeeHiredOnDate(row.employee, dateKey));
+      const dailyInputs = employedDateKeys.map(dateKey => {
         const existing = days.get(dateKey);
         if (existing) return existing;
         return emptyDailyAttainment(
@@ -573,7 +589,7 @@ export async function GET(req: NextRequest) {
           row.employee.attainmentStream,
         );
       });
-      row.days = dailyInputs.map((day, index) => employeeDayDto(dateKeys[index], day));
+      row.days = dailyInputs.map((day, index) => employeeDayDto(employedDateKeys[index], day));
       row.attainmentEligible = dailyInputs.some(day =>
         day.attainmentEligible
         && day.attainmentStream === 'batch'

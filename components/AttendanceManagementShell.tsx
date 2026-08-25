@@ -236,7 +236,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     setError('');
     try {
       const [employeeResponse, attendanceResponse, eventResponse] = await Promise.all([
-        fetch('/api/attendance/employees', { cache: 'no-store', signal }),
+        fetch(`/api/attendance/employees?date=${encodeURIComponent(date)}`, { cache: 'no-store', signal }),
         fetch(`/api/attendance/records?period=today&date=${encodeURIComponent(date)}&scope=${workforceScope}`, { cache: 'no-store', signal }),
         fetch(`/api/abnormal-time-events?period=${period}&date=${encodeURIComponent(date)}`, { cache: 'no-store', signal }),
       ]);

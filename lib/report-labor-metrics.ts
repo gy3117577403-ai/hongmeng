@@ -1,7 +1,8 @@
 import { attainmentCapacityMilliseconds, basisPoints } from '@/lib/attendance';
 import type { AttendanceType } from '@/types';
 
-export type AttendanceOvertimeSource = 'confirmed_plan' | 'attendance_fallback' | 'none';
+export type AttendanceOvertimeSource = 'confirmed_plan' | 'confirmed_attendance' | 'attendance_fallback' | 'none';
+export type AttendanceOvertimeBasis = 'planned_or_fallback' | 'actual_confirmed';
 
 export type AttendanceDayMetricInput = {
   attendanceType: AttendanceType | null;
@@ -13,6 +14,8 @@ export type AttendanceDayMetricInput = {
   allowAttendanceOvertimeFallback?: boolean;
   /** True means a confirmed daily plan supplied overtime, including an explicit zero. */
   plannedOvertimeConfirmed?: boolean;
+  /** Reports use confirmed attendance overtime directly; planning views keep the historical plan/fallback behavior. */
+  overtimeBasis?: AttendanceOvertimeBasis;
 };
 
 export type AttendanceDayMetricResult = {
@@ -52,16 +55,21 @@ export function attendanceDayMetrics(input: AttendanceDayMetricInput): Attendanc
   const allowAttendanceFallback = input.allowAttendanceOvertimeFallback !== false;
   const hasConfirmedPlanOvertime = input.plannedOvertimeConfirmed === true
     || plannedOvertimeMilliseconds > 0;
-  const recognizedOvertimeMilliseconds = hasConfirmedPlanOvertime
-    ? plannedOvertimeMilliseconds
-    : allowAttendanceFallback
-      ? actualOvertimeMilliseconds
-      : 0;
-  const overtimeSource: AttendanceOvertimeSource = hasConfirmedPlanOvertime
-    ? 'confirmed_plan'
-    : recognizedOvertimeMilliseconds > 0
-      ? 'attendance_fallback'
-      : 'none';
+  const useConfirmedAttendance = input.overtimeBasis === 'actual_confirmed';
+  const recognizedOvertimeMilliseconds = useConfirmedAttendance
+    ? actualOvertimeMilliseconds
+    : hasConfirmedPlanOvertime
+      ? plannedOvertimeMilliseconds
+      : allowAttendanceFallback
+        ? actualOvertimeMilliseconds
+        : 0;
+  const overtimeSource: AttendanceOvertimeSource = useConfirmedAttendance
+    ? recognizedOvertimeMilliseconds > 0 ? 'confirmed_attendance' : 'none'
+    : hasConfirmedPlanOvertime
+      ? 'confirmed_plan'
+      : recognizedOvertimeMilliseconds > 0
+        ? 'attendance_fallback'
+        : 'none';
   const grossExpectedMilliseconds = scheduledMilliseconds + recognizedOvertimeMilliseconds;
   const requestedLeaveMilliseconds = nonNegative(input.leaveMilliseconds);
   const leaveDeductionMilliseconds = rest

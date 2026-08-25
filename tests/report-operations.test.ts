@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  allocatePlanBatchCompletionQuantities,
   cappedBasisPoints,
   nextReportMonth,
   parseReportMonth,
@@ -42,4 +43,15 @@ test('plan completion rates are capped at one hundred percent', () => {
   assert.equal(cappedBasisPoints(12, 10), 10_000);
   assert.equal(cappedBasisPoints(7, 10), 7_000);
   assert.equal(cappedBasisPoints(0, 0), null);
+});
+
+test('one work order completion is allocated once across multiple plan batches', () => {
+  const allocations = allocatePlanBatchCompletionQuantities([
+    { id: 'later', workOrderId: 'wo-1', quantity: 80, plannedDateKey: '2026-08-20' },
+    { id: 'first', workOrderId: 'wo-1', quantity: 60, plannedDateKey: '2026-08-10' },
+    { id: 'other', workOrderId: 'wo-2', quantity: 20, plannedDateKey: '2026-08-10' },
+  ], new Map([['wo-1', 100], ['wo-2', 12]]));
+  assert.equal(allocations.get('first'), 60);
+  assert.equal(allocations.get('later'), 40);
+  assert.equal(allocations.get('other'), 12);
 });

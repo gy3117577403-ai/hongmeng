@@ -56,6 +56,7 @@ test('attendance export follows the one-sheet employee attendance standard', asy
     employees: [
       { id: 'e1', employeeNo: '0001', name: '张三', department: '生产部', team: '压接', position: '压接工' },
       { id: 'e2', employeeNo: '0002', name: '李四', department: '生产部', team: '组装', position: '组装工' },
+      { id: 'e3', employeeNo: '0003', name: '王五', department: '生产部', team: '检验', position: '检验员', hireDate: '2026-08-20' },
     ],
     records: [
       { employeeId: 'e1', dateKey: '2026-08-17', status: 'confirmed', attendanceType: 'normal', plannedMilliseconds: 8 * 3_600_000, actualMilliseconds: 10 * 3_600_000, overtimeMilliseconds: 2 * 3_600_000, leaveMilliseconds: 0, remark: null },
@@ -67,10 +68,10 @@ test('attendance export follows the one-sheet employee attendance standard', asy
     ],
   });
 
-  assert.equal(result.employeeCount, 2);
+  assert.equal(result.employeeCount, 3);
   assert.equal(result.confirmedRecordCount, 5);
   assert.equal(result.draftRecordCount, 1);
-  assert.equal(result.missingRecordCount, 8);
+  assert.equal(result.missingRecordCount, 12);
 
   const workbook = new ExcelJS.Workbook();
   const workbookBytes = result.buffer.buffer.slice(
@@ -87,6 +88,8 @@ test('attendance export follows the one-sheet employee attendance standard', asy
   assert.equal(sheet.getCell('G10').value, '假');
   assert.equal(sheet.getCell('H9').value, '待');
   assert.equal(sheet.getCell('K9').value, '休');
+  assert.equal(sheet.getCell('F11').value, '未');
+  assert.equal(sheet.getCell('H11').value, '未');
   assert.equal((sheet.getCell('N9').value as ExcelJS.CellFormulaValue).formula, 'SUM(F9:L9)');
   assert.equal((sheet.getCell('P9').value as ExcelJS.CellFormulaValue).result, 1);
   assert.equal(sheet.getCell('P9').numFmt, '0.0%');

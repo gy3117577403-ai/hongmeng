@@ -3,6 +3,9 @@ import test from 'node:test';
 import {
   attendanceEmployeeWhere,
   attendanceRecordScopeWhere,
+  employeeHiredBeforeWhere,
+  employeeHiredOnOrBeforeWhere,
+  isEmployeeHiredOnDate,
   isProductionDepartment,
   isProductionWorkforceEmployee,
   normalizeEmployeeDepartment,
@@ -36,4 +39,16 @@ test('attendance workforce scope defaults safely to production', () => {
     department: { in: ['生产部', '生产'] },
   });
   assert.deepEqual(attendanceRecordScopeWhere('ALL'), {});
+});
+
+test('attendance effective date excludes employees before their hire date', () => {
+  assert.equal(isEmployeeHiredOnDate({ hireDate: new Date('2026-08-12T00:00:00.000Z') }, '2026-08-11'), false);
+  assert.equal(isEmployeeHiredOnDate({ hireDate: '2026-08-12' }, '2026-08-12'), true);
+  assert.equal(isEmployeeHiredOnDate({ hireDate: null }, '2026-08-01'), true);
+  assert.deepEqual(employeeHiredOnOrBeforeWhere(new Date('2026-08-12T00:00:00.000Z')), {
+    OR: [{ hireDate: null }, { hireDate: { lte: new Date('2026-08-12T00:00:00.000Z') } }],
+  });
+  assert.deepEqual(employeeHiredBeforeWhere(new Date('2026-09-01T00:00:00.000Z')), {
+    OR: [{ hireDate: null }, { hireDate: { lt: new Date('2026-09-01T00:00:00.000Z') } }],
+  });
 });

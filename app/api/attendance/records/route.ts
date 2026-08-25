@@ -11,6 +11,7 @@ import {
   attendanceTotals,
   attainmentEligibleFromConfiguration,
   defaultAttendanceSegments,
+  dateKeyFromDatabase,
   parseAttainmentFactorBasisPoints,
   parseAttainmentStream,
   parseAttendanceSegments,
@@ -25,6 +26,8 @@ import { prisma } from '@/lib/prisma';
 import {
   attendanceEmployeeWhere,
   attendanceRecordScopeWhere,
+  employeeHiredBeforeWhere,
+  isEmployeeHiredOnDate,
   normalizeEmployeeDepartment,
   parseAttendanceWorkforceScope,
   type AttendanceWorkforceScope,
@@ -79,16 +82,18 @@ export async function GET(req: NextRequest) {
       prisma.employee.findMany({
         where: {
           ...attendanceEmployeeWhere(scope),
+          AND: [employeeHiredBeforeWhere(end)],
           ...employeeBoundaryWhere,
           ...(employeeId ? { id: employeeId } : {}),
         },
         orderBy: { employeeNo: 'asc' },
       }),
-      prisma.employee.count({ where: { ...attendanceEmployeeWhere('PRODUCTION'), ...employeeBoundaryWhere } }),
-      prisma.employee.count({ where: { ...attendanceEmployeeWhere('OTHER'), ...employeeBoundaryWhere } }),
-      prisma.employee.count({ where: { ...attendanceEmployeeWhere('ALL'), ...employeeBoundaryWhere } }),
+      prisma.employee.count({ where: { ...attendanceEmployeeWhere('PRODUCTION'), AND: [employeeHiredBeforeWhere(end)], ...employeeBoundaryWhere } }),
+      prisma.employee.count({ where: { ...attendanceEmployeeWhere('OTHER'), AND: [employeeHiredBeforeWhere(end)], ...employeeBoundaryWhere } }),
+      prisma.employee.count({ where: { ...attendanceEmployeeWhere('ALL'), AND: [employeeHiredBeforeWhere(end)], ...employeeBoundaryWhere } }),
     ]);
-    const confirmed = records.filter(item => item.status === 'confirmed');
+    const effectiveRecords = records.filter(item => isEmployeeHiredOnDate(item.employee, dateKeyFromDatabase(item.workDate)));
+    const confirmed = effectiveRecords.filter(item => item.status === 'confirmed');
     return NextResponse.json({
       ok: true,
       period,
@@ -102,12 +107,12 @@ export async function GET(req: NextRequest) {
       date: range.date,
       rangeStart: range.start.toISOString(),
       rangeEnd: range.end.toISOString(),
-      records: records.map(serializeAttendanceRecord),
+      records: effectiveRecords.map(serializeAttendanceRecord),
       summary: {
         enabledEmployeeCount: employees.length,
-        recordCount: records.length,
+        recordCount: effectiveRecords.length,
         confirmedCount: confirmed.length,
-        draftCount: records.length - confirmed.length,
+        draftCount: effectiveRecords.length - confirmed.length,
         actualMilliseconds: confirmed.reduce((sum, item) => sum + item.actualMilliseconds, 0),
         overtimeMilliseconds: confirmed.reduce((sum, item) => sum + item.overtimeMilliseconds, 0),
         leaveMilliseconds: confirmed.reduce((sum, item) => sum + item.leaveMilliseconds, 0),
@@ -126,6 +131,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const employeeId = cleanProcessText(body.employeeId, 80);
     if (!employeeId) return NextResponse.json({ ok: false, error: '请选择员工' }, { status: 400 });
+    const workDate = parseWorkDate(body.workDate);
     const boundary = await resolveAttendanceAccessBoundary(user);
     if (!attendanceEmployeeAllowed(boundary, employeeId)) {
       return NextResponse.json({ ok: false, error: '只能登记本人负责范围内的员工考勤' }, { status: 403 });
@@ -136,7 +142,9 @@ export async function POST(req: NextRequest) {
     }
     if (!employee) return NextResponse.json({ ok: false, error: '员工档案不存在' }, { status: 404 });
     if (!employee.attendanceEnabled) return NextResponse.json({ ok: false, error: '该员工未启用考勤' }, { status: 400 });
-    const workDate = parseWorkDate(body.workDate);
+    if (!isEmployeeHiredOnDate(employee, workDate.key)) {
+      return NextResponse.json({ ok: false, error: `该员工入职日期为 ${employee.hireDate?.toISOString().slice(0, 10)}，不能登记入职前考勤` }, { status: 409 });
+    }
     const requestedAttendanceType = parseAttendanceType(body.attendanceType);
     const requestedSegments = body.segments === undefined
       ? requestedAttendanceType === 'normal' || requestedAttendanceType === 'partial_leave'

@@ -1,19 +1,23 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { resolveAttendanceAccessBoundary } from '@/lib/attendance-access';
+import { chinaTodayDateKey, parseWorkDate } from '@/lib/attendance';
 import { prisma } from '@/lib/prisma';
+import { employeeHiredOnOrBeforeWhere } from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
     const boundary = await resolveAttendanceAccessBoundary(user);
+    const workDate = parseWorkDate(req.nextUrl.searchParams.get('date') || chinaTodayDateKey());
     const employees = await prisma.employee.findMany({
       where: {
         isActive: true,
         attendanceEnabled: true,
+        AND: [employeeHiredOnOrBeforeWhere(workDate.value)],
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
       },
       select: {
@@ -51,6 +55,7 @@ export async function GET() {
         scopeLabel: boundary.scopeLabel,
         unrestricted: boundary.unrestricted,
       },
+      effectiveDate: workDate.key,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

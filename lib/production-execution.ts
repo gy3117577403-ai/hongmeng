@@ -1,6 +1,7 @@
 import { DailyProcessTaskStatus, DailyProductionPlanStatus, DailyTaskAssignmentStatus, Prisma } from '@prisma/client';
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
+import { productionPlanAttainment } from '@/lib/production-plan-attainment';
 import {
   productionTeamScopeWhere,
   type ProductionEntityScope,
@@ -1377,6 +1378,7 @@ function summarizeProductionRecords(
       dueSoon: dispatchDueSoon,
       completed: dispatchCompleted,
     },
+    planTotals: productionPlanAttainment(dispatchCompleted, orders.length),
     arrangementMetrics: summarizeArrangementMetrics(orders, arrangementsByOrder),
     quantityTotals: {
       targetQty: targetQuantity,

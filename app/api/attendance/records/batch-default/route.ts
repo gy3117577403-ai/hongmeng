@@ -15,6 +15,7 @@ import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import {
   attendanceEmployeeWhere,
+  employeeHiredOnOrBeforeWhere,
   normalizeEmployeeDepartment,
   parseAttendanceWorkforceScope,
   type AttendanceWorkforceScope,
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
     const employees = await prisma.employee.findMany({
       where: {
         ...attendanceEmployeeWhere(scope),
+        AND: [employeeHiredOnOrBeforeWhere(workDate.value)],
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
         ...(requestedEmployeeIds.length ? { id: { in: requestedEmployeeIds } } : {}),
       },
