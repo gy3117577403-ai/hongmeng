@@ -191,7 +191,7 @@ main.planning-center-shell.hm-workbench-root {
 .planning-center-shell .planning-period-ribbon {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(250px, 1fr) 66px minmax(250px, 1fr) minmax(238px, .82fr);
+  grid-template-columns: minmax(300px, 1fr) 44px minmax(300px, 1fr) minmax(320px, .78fr);
   align-items: stretch;
   gap: 7px;
 }
@@ -302,7 +302,7 @@ main.planning-center-shell.hm-workbench-root {
   min-width: 0;
   padding: 7px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(72px, 1fr));
   gap: 5px;
   border: 1px solid #dce3ea;
   border-radius: 8px;
@@ -3842,7 +3842,12 @@ main.planning-center-shell.hm-workbench-root {
 
 @media (max-width: 1240px) {
   .planning-center-shell .planning-center-main {
+    grid-template-rows: 58px 126px 54px 48px minmax(0, 1fr);
     padding-inline: 9px;
+  }
+
+  .planning-center-shell .planning-center-main.module-mode-open {
+    grid-template-rows: 58px 132px 126px 54px 48px minmax(0, 1fr);
   }
 
   .planning-center-shell .planning-titlebar {
@@ -3863,7 +3868,28 @@ main.planning-center-shell.hm-workbench-root {
   }
 
   .planning-center-shell .planning-period-ribbon {
-    grid-template-columns: minmax(220px, 1fr) 48px minmax(220px, 1fr) minmax(200px, .8fr);
+    grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr);
+    grid-template-rows: 70px 49px;
+  }
+
+  .planning-center-shell .planning-period-ribbon > article.current {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .planning-center-shell .planning-period-link {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .planning-center-shell .planning-period-ribbon > article.next {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .planning-center-shell .planning-readiness {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .planning-center-shell .planning-period-ribbon > article {
@@ -3882,13 +3908,13 @@ main.planning-center-shell.hm-workbench-root {
 
 @media (max-width: 1040px) {
   .planning-center-shell .planning-center-main {
-    grid-template-rows: 56px 70px 50px 46px minmax(0, 1fr);
+    grid-template-rows: 56px 120px 50px 46px minmax(0, 1fr);
     gap: 6px;
     padding: 7px;
   }
 
   .planning-center-shell .planning-center-main.module-mode-open {
-    grid-template-rows: 56px 126px 70px 50px 46px minmax(0, 1fr);
+    grid-template-rows: 56px 126px 120px 50px 46px minmax(0, 1fr);
   }
 
   .planning-center-shell .planning-titlebar {
@@ -3920,7 +3946,8 @@ main.planning-center-shell.hm-workbench-root {
   }
 
   .planning-center-shell .planning-period-ribbon {
-    grid-template-columns: minmax(205px, 1fr) 34px minmax(205px, 1fr) minmax(175px, .75fr);
+    grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
+    grid-template-rows: 66px 47px;
     gap: 5px;
   }
 

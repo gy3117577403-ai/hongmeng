@@ -15,14 +15,15 @@ main.notification-center-shell.hm-workbench-root.hm-workbench-root {
 }
 
 .nc-page-frame {
-  width: min(1240px, calc(100% - 32px));
+  width: 100%;
+  max-width: none;
   height: 100dvh;
   min-height: 720px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
-  margin: 0 auto;
-  padding: 18px 0;
+  margin: 0;
+  padding: 18px clamp(12px, 1.2vw, 24px);
 }
 
 .nc-command-bar {
@@ -80,6 +81,26 @@ main.notification-center-shell.hm-workbench-root.hm-workbench-root {
 .nc-command-copy h1 { margin: 3px 0 0; font-size: 25px; line-height: 1.18; letter-spacing: -.02em; }
 .nc-command-copy p { max-width: 610px; margin: 6px 0 0; overflow: hidden; color: var(--nc-muted); font-size: 12px; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
 
+.nc-command-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.nc-command-title > b {
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid #f0c8af;
+  border-radius: 999px;
+  background: var(--nc-orange-soft);
+  color: var(--nc-orange-dark);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .nc-command-actions {
   display: flex;
   align-items: center;
@@ -108,22 +129,6 @@ main.notification-center-shell.hm-workbench-root.hm-workbench-root {
 .nc-command-actions > button:hover,
 .nc-command-actions > a:not(.nc-user-link):hover { border-color: #e9b18d; background: var(--nc-orange-soft); color: var(--nc-orange-dark); }
 .nc-command-actions svg { width: 16px; height: 16px; }
-
-.nc-unread-summary {
-  height: 42px;
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  padding: 0 12px;
-  border: 1px solid #f0c8af;
-  border-radius: 10px;
-  background: var(--nc-orange-soft);
-  color: var(--nc-orange-dark);
-}
-
-.nc-unread-summary span,
-.nc-unread-summary small { font-size: 10px; font-weight: 750; }
-.nc-unread-summary strong { font-size: 21px; line-height: 1; }
 
 .nc-user-link {
   min-width: 0;
@@ -155,7 +160,7 @@ main.notification-center-shell.hm-workbench-root.hm-workbench-root {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   gap: 16px;
 }
 
@@ -444,7 +449,7 @@ main.notification-center-shell.hm-workbench-root.hm-workbench-root {
 }
 
 @media (max-width: 1120px) {
-  .nc-page-frame { width: min(100% - 24px, 1240px); }
+  .nc-page-frame { width: 100%; padding-inline: 12px; }
   .nc-command-copy p { max-width: 430px; }
   .nc-user-link b { display: none; }
   .nc-command-actions > a:not(.nc-user-link) { padding-inline: 9px; }
@@ -454,7 +459,6 @@ main.notification-center-shell.hm-workbench-root.hm-workbench-root {
   .nc-page-frame { height: auto; min-height: 100dvh; }
   .nc-command-bar { align-items: flex-start; }
   .nc-command-actions { flex-wrap: wrap; }
-  .nc-command-actions .nc-unread-summary { order: -1; }
   .nc-workspace { grid-template-columns: minmax(0, 1fr); }
   .nc-filter-panel { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .nc-category-filter { margin: 0; padding: 0; border: 0; }
@@ -464,7 +468,7 @@ main.notification-center-shell.hm-workbench-root.hm-workbench-root {
 
 @media (max-width: 680px) {
   main.notification-center-shell.hm-workbench-root.hm-workbench-root { padding-left: 0; }
-  .nc-page-frame { width: min(100% - 18px, 1240px); padding: 9px 0 18px; }
+  .nc-page-frame { width: 100%; padding: 9px 9px 18px; }
   .nc-command-bar { min-height: 0; display: grid; gap: 14px; padding: 15px; }
   .nc-command-mark { width: 46px; height: 46px; flex-basis: 46px; }
   .nc-command-copy h1 { font-size: 22px; }

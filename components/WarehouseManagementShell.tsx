@@ -422,9 +422,7 @@ export default function WarehouseManagementShell({
           <label className="warehouse-search"><Search size={17} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格、品名或工单号" /></label>
           <label className="warehouse-exception-select"><span>异常类型</span><select value={exceptionType} onChange={event => { setExceptionType(event.target.value as 'all' | WarehouseExceptionType); setPage(1); }}><option value="all">全部异常</option>{exceptionOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           <button className="warehouse-reset" type="button" title="重置筛选" aria-label="重置筛选" onClick={resetFilters}><RotateCcw size={15} aria-hidden="true" />重置</button>
-          <div className="warehouse-toolbar-actions" aria-label="仓库管理操作">
-            <a className="hm-workbench-button" href="/workspace/procurement" title="打开物料异常跟进"><ClipboardList size={15} aria-hidden="true" /><span>物料跟进</span></a>
-            <a className="hm-workbench-button" href="/weekly-plan-center" title="打开计划中心"><CalendarDays size={15} aria-hidden="true" /><span>计划中心</span></a>
+          <div className="warehouse-toolbar-actions" aria-label="仓库列表操作">
             <button className="hm-workbench-button" type="button" title="刷新仓库任务" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" /><span>刷新</span></button>
           </div>
         </section>
@@ -569,7 +567,14 @@ export default function WarehouseManagementShell({
           </section>
 
           <aside className="warehouse-collaboration" aria-label="仓库实时协同">
-            <header><div><span><Radio aria-hidden="true" /> 实时协同</span><h2>仓库协同台</h2></div><i className={loading ? 'syncing' : ''} title={loading ? '正在同步' : '数据已同步'} /></header>
+            <header>
+              <div><span><Radio aria-hidden="true" /> 实时协同</span><h2>仓库协同台</h2></div>
+              <nav className="warehouse-related-links" aria-label="仓库相关模块">
+                <a href="/workspace/procurement" title="打开物料异常跟进"><ClipboardList size={13} aria-hidden="true" /><span>跟进</span></a>
+                <a href="/weekly-plan-center" title="打开计划中心"><CalendarDays size={13} aria-hidden="true" /><span>计划</span></a>
+              </nav>
+              <i className={loading ? 'syncing' : ''} title={loading ? '正在同步' : '数据已同步'} />
+            </header>
 
             <section className="warehouse-collab-section exceptions">
               <div className="warehouse-collab-heading"><span><AlertTriangle aria-hidden="true" /><strong>待处理异常</strong></span><em>{summary.exception}</em></div>

@@ -1851,39 +1851,31 @@
 }
 
 .hm-drawing-workbench .drawing-workspace {
-  grid-template-columns: minmax(270px, 292px) minmax(0, 1fr);
+  grid-template-columns: minmax(270px, 292px) minmax(0, 1fr) minmax(238px, 276px);
   gap: 8px;
 }
 
 .hm-drawing-file-toggle {
-  display: inline-flex;
+  display: none;
 }
 
 .hm-drawing-workbench .drawing-file-panel,
 .hm-drawing-workbench .drawing-file-panel.open {
-  position: absolute;
-  z-index: calc(var(--z-side-tool) + 10);
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(360px, 88vw);
+  position: relative;
+  z-index: 1;
+  width: auto;
   display: flex;
   padding: 10px;
   overflow: hidden;
-  box-shadow: -16px 0 36px rgba(31, 41, 51, .18);
+  box-shadow: var(--hm-shadow-sm);
 }
 
 .drawing-file-panel-close {
-  display: grid;
+  display: none;
 }
 
 .drawing-file-panel-scrim {
-  position: absolute;
-  z-index: calc(var(--z-side-tool) + 5);
-  inset: 0;
-  display: block;
-  border: 0;
-  background: rgba(31, 41, 51, .16);
+  display: none;
 }
 
 .hm-drawing-workbench .drawing-library-main {
@@ -2128,5 +2120,88 @@
 
   .hm-drawing-workbench .drawing-workspace {
     grid-template-columns: 250px minmax(0, 1fr);
+  }
+}
+
+/* Keep the detail header focused on primary work; file navigation owns file actions. */
+.hm-drawing-workbench .drawing-head-more-actions > summary {
+  min-height: 38px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hm-drawing-workbench .drawing-head-more-actions > div {
+  min-width: 190px;
+}
+
+.hm-drawing-workbench .drawing-head-more-actions > div > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.hm-drawing-workbench .drawing-head-more-actions > div > button.edit {
+  color: var(--hm-color-text-muted);
+}
+
+.hm-drawing-workbench .drawing-head-more-actions > div > button.edit:hover {
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text);
+}
+
+.hm-drawing-workbench .hm-drawing-file-toggle b {
+  min-width: 20px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--hm-color-surface-muted);
+  color: inherit;
+  font-size: 10px;
+  text-align: center;
+}
+
+@media (max-width: 1180px) {
+  .hm-drawing-workbench .drawing-workspace {
+    grid-template-columns: minmax(250px, 282px) minmax(0, 1fr);
+  }
+
+  .hm-drawing-file-toggle {
+    display: inline-flex;
+  }
+
+  .hm-drawing-workbench .drawing-file-panel,
+  .hm-drawing-workbench .drawing-file-panel.open {
+    position: absolute;
+    z-index: calc(var(--z-side-tool) + 10);
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(360px, 88vw);
+    padding: 10px;
+    overflow: hidden;
+    box-shadow: -16px 0 36px rgba(31, 41, 51, .18);
+  }
+
+  .hm-drawing-workbench .drawing-file-panel {
+    display: none;
+  }
+
+  .hm-drawing-workbench .drawing-file-panel.open {
+    display: flex;
+  }
+
+  .drawing-file-panel-close {
+    display: grid;
+  }
+
+  .drawing-file-panel-scrim {
+    position: absolute;
+    z-index: calc(var(--z-side-tool) + 5);
+    inset: 0;
+    display: block;
+    border: 0;
+    background: rgba(31, 41, 51, .16);
   }
 }

@@ -1406,12 +1406,54 @@ main.warehouse-workbench.hm-workbench-root.hm-workbench-root {
 .warehouse-collaboration > header > i {
   width: 8px;
   height: 8px;
+  flex: 0 0 8px;
   border: 2px solid #d1fae5;
   border-radius: 50%;
   background: #10b981;
   box-shadow: 0 0 0 3px rgba(16, 185, 129, .09);
 }
 .warehouse-collaboration > header > i.syncing { background: #f59e0b; animation: warehouse-live-pulse 1.2s ease-out infinite; }
+
+.warehouse-related-links {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.warehouse-related-links a {
+  min-width: 46px;
+  height: 30px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid #dce3eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #516176;
+  font-size: 9px;
+  font-weight: 750;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.warehouse-collaboration > header .warehouse-related-links span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.warehouse-related-links a:hover,
+.warehouse-related-links a:focus-visible {
+  border-color: #f5aa78;
+  background: #fff5ed;
+  color: #c64e06;
+  outline: 0;
+}
 
 .warehouse-collab-section {
   margin: 8px 8px 0;

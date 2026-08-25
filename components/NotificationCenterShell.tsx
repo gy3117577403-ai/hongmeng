@@ -277,14 +277,11 @@ export default function NotificationCenterShell({ user }: { user: CurrentUserDTO
             <span className="nc-command-mark" aria-hidden="true"><BellRing /></span>
             <div>
               <small>协同消息</small>
-              <h1>消息中心</h1>
+              <div className="nc-command-title"><h1>消息中心</h1><b aria-live="polite" aria-label={`当前 ${unreadCount} 条未读消息`}>{unreadCount} 未读</b></div>
               <p>集中查看分派、审批、账号与系统提醒，处理结果以对应业务页面为准。</p>
             </div>
           </div>
           <div className="nc-command-actions">
-            <div className="nc-unread-summary" aria-label={`当前 ${unreadCount} 条未读消息`}>
-              <span>未读</span><strong>{unreadCount}</strong><small>条</small>
-            </div>
             <button type="button" disabled={loading} onClick={() => setReloadToken(value => value + 1)}>
               <RefreshCw className={loading ? 'nc-spin' : ''} />刷新
             </button>

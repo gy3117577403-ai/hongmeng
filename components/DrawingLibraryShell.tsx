@@ -1,6 +1,6 @@
 'use client';
 
-import { ArchiveRestore, ArrowLeft, BookOpenText, Clock3, FileCheck2, FileImage, FileWarning, Plus, Search, Settings2, ShieldCheck, ShieldOff, Trash2, Upload } from 'lucide-react';
+import { ArchiveRestore, ArrowLeft, BookOpenText, Clock3, FileCheck2, FileImage, Files, FileWarning, MoreHorizontal, Pencil, Plus, Search, Settings2, ShieldCheck, ShieldOff, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
@@ -1045,20 +1045,15 @@ export function DrawingLibraryShell({
                     </div>
                   )}
                   <button className="hm-workbench-button" type="button" onClick={() => { void openProductTime(selectedItem.id); }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
-                  <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
-                  {canManageDrawing && <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>}
-                  {canManageDrawing && <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>}
-                  {canDeleteDrawing && selectedFile && (
-                    <button
-                      className="hm-workbench-button danger"
-                      type="button"
-                      title={`删除当前文件：${safeDisplayFilename(selectedFile)}`}
-                      onClick={() => deleteFile(selectedFile)}
-                    >
-                      <Trash2 size={15} aria-hidden="true" />
-                      删除当前文件
-                    </button>
-                  )}
+                  <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}><Files size={15} aria-hidden="true" /><span>文件列表</span><b>{activeFiles.length}</b></button>
+                  {canManageDrawing && <button className="hm-workbench-button drawing-upload-trigger" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}><Upload size={15} aria-hidden="true" />{uploading ? '上传中...' : '上传资料'}</button>}
+                  {(canManageDrawing || (canDeleteDrawing && selectedFile)) && <details className="hm-drawing-more-actions drawing-head-more-actions">
+                    <summary className="hm-workbench-button" aria-label="更多资料操作" title="更多资料操作"><MoreHorizontal size={16} aria-hidden="true" /><span>更多</span></summary>
+                    <div role="menu" aria-label="资料操作">
+                      {canManageDrawing && <button className="edit" role="menuitem" type="button" onClick={() => openModal('edit', selectedItem)}><Pencil size={15} aria-hidden="true" />编辑资料</button>}
+                      {canDeleteDrawing && selectedFile && <button role="menuitem" type="button" title={`删除当前文件：${safeDisplayFilename(selectedFile)}`} onClick={() => deleteFile(selectedFile)}><Trash2 size={15} aria-hidden="true" />删除当前文件</button>}
+                    </div>
+                  </details>}
                 </div>
               </div>
 
@@ -1166,7 +1161,7 @@ export function DrawingLibraryShell({
           </section>
 
           {filePanelOpen && <button className="drawing-file-panel-scrim" type="button" aria-label="关闭文件工具窗" onClick={closeFilePanel} />}
-          {filePanelOpen && <aside ref={filePanelRef} id="drawing-library-file-panel" className="drawing-file-panel open" aria-label="分类文件工具窗" role="dialog" aria-modal="true" tabIndex={-1}>
+          {selectedItem && <aside ref={filePanelRef} id="drawing-library-file-panel" className={`drawing-file-panel ${filePanelOpen ? 'open' : ''}`.trim()} aria-label="分类文件列表" tabIndex={-1}>
           <div className="drawing-file-panel-head">
             <div><strong>{activeCategory?.name || '分类文件'}</strong><span>{activeFiles.length} 个文件</span></div>
             <button ref={filePanelCloseRef} className="drawing-file-panel-close" type="button" aria-label="关闭文件工具窗" title="关闭" onClick={closeFilePanel}>×</button>

@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -1190,6 +1190,7 @@ export default function ProductionExecutionCenter({
   const [reassignmentSaving, setReassignmentSaving] = useState(false);
   const [reassignmentError, setReassignmentError] = useState('');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [olderCarryoverOpen, setOlderCarryoverOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -1207,6 +1208,7 @@ export default function ProductionExecutionCenter({
   const reassignmentRequestRef = useRef(0);
   const arrangementAutoSelectionRef = useRef('');
   const exportButtonRef = useRef<HTMLButtonElement | null>(null);
+  const commandMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const boardShellRef = useRef<HTMLDivElement | null>(null);
   const dispatchLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const pendingRestoreRef = useRef<ProductionExecutionViewState | null>(null);
@@ -2754,11 +2756,21 @@ export default function ProductionExecutionCenter({
             >
               <AlertTriangle size={15} aria-hidden="true" />更早遗留 <b>{summary?.navigation.olderCarryoverCount ?? 0}</b>
             </button>}
-            {(canAdministerProduction || canScheduleProduction) && <Link className="hm-workbench-button" href={weeklyPlanHref} prefetch={false}><CalendarDays size={15} aria-hidden="true" />周计划</Link>}
-            {canScheduleProduction && <button className="hm-workbench-button production-reassignment-trigger" type="button" disabled={board?.readOnly} title="员工请假、临时缺勤时批量重排未完成数量" onClick={openEmployeeExceptionReassignment}><UserRoundCog size={15} aria-hidden="true" />人员异常</button>}
-            {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
+            <span className="production-command-secondary" aria-label="生产调度辅助操作">
+              {(canAdministerProduction || canScheduleProduction) && <Link className="hm-workbench-button" href={weeklyPlanHref} prefetch={false}><CalendarDays size={15} aria-hidden="true" />周计划</Link>}
+              {canScheduleProduction && <button className="hm-workbench-button production-reassignment-trigger" type="button" disabled={board?.readOnly} title="员工请假、临时缺勤时批量重排未完成数量" onClick={openEmployeeExceptionReassignment}><UserRoundCog size={15} aria-hidden="true" />人员异常</button>}
+              {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
+            </span>
             {canPrintTravelers && <button ref={exportButtonRef} className={`hm-workbench-button ${exportMenuOpen ? 'active' : ''}`.trim()} type="button" aria-haspopup="menu" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(value => !value)}><Download size={15} aria-hidden="true" />导出/打印<ChevronDown size={13} aria-hidden="true" /></button>}
-            <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={toggleInsights}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
+            {(canAdministerProduction || canScheduleProduction || canSelectProduction) && <button
+              ref={commandMenuButtonRef}
+              className={`hm-workbench-button production-command-more-trigger ${commandMenuOpen ? 'active' : ''}`.trim()}
+              type="button"
+              aria-label="更多生产调度操作"
+              aria-haspopup="menu"
+              aria-expanded={commandMenuOpen}
+              onClick={() => setCommandMenuOpen(value => !value)}
+            ><MoreHorizontal size={16} aria-hidden="true" /><span>更多</span><ChevronDown size={13} aria-hidden="true" /></button>}
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
           </div>
         </section>
@@ -2807,6 +2819,7 @@ export default function ProductionExecutionCenter({
           {loading
             ? <span className="production-refresh-status loading" aria-live="polite"><Loader2 size={13} aria-hidden="true" />同步中</span>
             : lastRefreshedAt && <span className="production-refresh-status" aria-live="polite">更新 {new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(lastRefreshedAt)}</span>}
+          <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger production-toolbar-insight ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-label={insightsOpen ? '关闭调度侧栏' : '打开调度侧栏'} title={insightsOpen ? '关闭调度侧栏' : '打开调度侧栏'} aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={toggleInsights}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}<span>侧栏</span></button>
           <div className="production-density-control" aria-label="列表密度">
             <button className={density === 'comfortable' ? 'active' : ''} type="button" aria-label="舒适列表" title="舒适列表" onClick={() => { setDensity('comfortable'); setPage(1); }}><Rows3 size={16} aria-hidden="true" /></button>
             <button className={density === 'compact' ? 'active' : ''} type="button" aria-label="紧凑列表" title="紧凑列表" onClick={() => { setDensity('compact'); setPage(1); }}><ListChecks size={16} aria-hidden="true" /></button>
@@ -2894,6 +2907,12 @@ export default function ProductionExecutionCenter({
       </div>
 
       {canSelectProduction && batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong>{canScheduleProduction && <button className="primary" type="button" disabled={!selected.length} onClick={() => openProductionArrangement((board?.items || []).filter(order => selected.includes(order.id)))}><CalendarDays size={15} />批量安排日期与人员</button>}{canPrintTravelers && <button type="button" disabled={!selected.length} onClick={() => printTravelers(selected)}><Printer size={15} />打印流转单 / SOP</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button>}<button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
+
+      <PortalMenu open={commandMenuOpen} anchorRef={commandMenuButtonRef} align="right" className="production-command-menu hm-production-menu" width={230} onClose={() => setCommandMenuOpen(false)}>
+        {(canAdministerProduction || canScheduleProduction) && <Link role="menuitem" href={weeklyPlanHref} prefetch={false}><CalendarDays size={16} aria-hidden="true" /><span><b>周计划</b><small>打开当前生产周计划</small></span></Link>}
+        {canScheduleProduction && <button role="menuitem" type="button" disabled={board?.readOnly} onClick={openEmployeeExceptionReassignment}><UserRoundCog size={16} aria-hidden="true" /><span><b>人员异常</b><small>批量重排未完成数量</small></span></button>}
+        {canSelectProduction && <button role="menuitem" type="button" disabled={board?.readOnly} onClick={toggleBatchMode}><ListChecks size={16} aria-hidden="true" /><span><b>{batchMode ? '退出批量' : '批量操作'}</b><small>{board?.readOnly ? '历史周仅供查看' : '勾选工单后批量处理'}</small></span></button>}
+      </PortalMenu>
 
       <PortalMenu open={canPrintTravelers && exportMenuOpen} anchorRef={exportButtonRef} align="right" className="production-export-menu hm-production-menu" width={250} onClose={() => setExportMenuOpen(false)} closeOnSelect={false}>
         <span className="production-export-menu-label">当前筛选范围</span>
