@@ -1,4 +1,4 @@
-import { MaterialLibraryCaptureStatus, MaterialLibraryUploadMode, Prisma } from '@prisma/client';
+import { MaterialLibraryCaptureStatus, MaterialLibraryUploadMode, MaterialLibraryWarningState, Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import {
@@ -36,7 +36,18 @@ export async function POST(request: NextRequest, { params }: { params: { code: s
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${materialLibraryItemLockKey(target.materialItemId)}))`;
       const link = await tx.materialLibraryUploadLink.findUnique({
         where: { id: parsed.id },
-        include: { materialItem: { include: { category: true } } },
+        include: {
+          materialItem: {
+            include: {
+              category: true,
+              supplierVariants: {
+                where: { deletedAt: null },
+                orderBy: [{ isPrimary: 'desc' }, { updatedAt: 'desc' }],
+                take: 1,
+              },
+            },
+          },
+        },
       });
       if (!link || link.generation !== parsed.generation || !verifyMaterialUploadCode({
         code: rawCode,
@@ -82,21 +93,25 @@ export async function POST(request: NextRequest, { params }: { params: { code: s
       }
 
       const item = link.materialItem;
+      const supplierVariant = item.supplierVariants[0] || null;
       const created = await tx.materialLibraryCaptureSession.create({
         data: {
           sessionNo: materialSessionNo(now),
           uploadLinkId: link.id,
           materialItemId: item.id,
           categoryId: item.categoryId,
-          draftManufacturerModel: item.manufacturerModel,
-          draftSpecification: item.specification,
-          draftMaterialComposition: item.materialComposition,
-          draftSupplierName: item.supplierName,
-          draftSupplierPartNumber: item.supplierPartNumber,
-          draftBatchNumber: item.batchNumber,
-          draftWarningState: item.warningState,
-          draftWarningNote: item.warningNote,
-          draftNotes: item.notes,
+          supplierVariantId: supplierVariant?.id || null,
+          draftManufacturerModel: supplierVariant?.manufacturerModel ?? item.manufacturerModel,
+          draftSpecification: supplierVariant?.specification ?? item.specification,
+          draftMaterialComposition: supplierVariant?.materialComposition ?? item.materialComposition,
+          draftSupplierName: supplierVariant?.supplierName ?? item.supplierName,
+          draftSupplierPartNumber: supplierVariant?.supplierPartNumber ?? item.supplierPartNumber,
+          // Batch facts belong to one incoming-inspection record. A reusable QR
+          // must never carry the previous lot's conclusion into a new session.
+          draftBatchNumber: null,
+          draftWarningState: MaterialLibraryWarningState.NONE,
+          draftWarningNote: null,
+          draftNotes: null,
           connectedById: actor.id,
           connectedByName: actor.name,
           connectedAt: now,

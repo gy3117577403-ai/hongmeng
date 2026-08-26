@@ -22,7 +22,6 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   MaterialLibraryCaptureSessionDTO,
-  MaterialLibraryCategoryDTO,
   MaterialLibraryPhotoDTO,
   MaterialLibraryWarningStateDTO,
 } from '@/lib/material-library-contract';
@@ -30,6 +29,7 @@ import type { CurrentUserDTO } from '@/types';
 
 type MobileForm = {
   categoryId: string;
+  supplierVariantId: string;
   manufacturerModel: string;
   specification: string;
   materialComposition: string;
@@ -44,6 +44,7 @@ type MobileForm = {
 function formFromSession(session: MaterialLibraryCaptureSessionDTO): MobileForm {
   return {
     categoryId: session.categoryId,
+    supplierVariantId: session.supplierVariantId || '',
     manufacturerModel: session.draftManufacturerModel || '',
     specification: session.draftSpecification || '',
     materialComposition: session.draftMaterialComposition || '',
@@ -68,7 +69,6 @@ function warningLabel(value: MaterialLibraryWarningStateDTO) {
 
 export default function MaterialLibraryMobileCapture({ code, user }: { code: string; user: CurrentUserDTO }) {
   const [session, setSession] = useState<MaterialLibraryCaptureSessionDTO | null>(null);
-  const [categories, setCategories] = useState<MaterialLibraryCategoryDTO[]>([]);
   const [form, setForm] = useState<MobileForm | null>(null);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -90,16 +90,12 @@ export default function MaterialLibraryMobileCapture({ code, user }: { code: str
     setLoading(true);
     setError('');
     try {
-      const [scanResponse, categoryResponse] = await Promise.all([
-        fetch(`/api/material-library/scan/${encodeURIComponent(code)}`, { method: 'POST' }),
-        fetch('/api/material-library/categories', { cache: 'no-store' }),
-      ]);
-      const [scanBody, categoryBody] = await Promise.all([bodyJson(scanResponse), bodyJson(categoryResponse)]);
+      const scanResponse = await fetch(`/api/material-library/scan/${encodeURIComponent(code)}`, { method: 'POST' });
+      const scanBody = await bodyJson(scanResponse);
       if (!scanResponse.ok) throw new Error(scanBody.error || '二维码无效或已过期');
       const next = scanBody.session as MaterialLibraryCaptureSessionDTO;
       setSession(next);
       setForm(formFromSession(next));
-      setCategories(categoryResponse.ok && Array.isArray(categoryBody.categories) ? categoryBody.categories : []);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '二维码读取失败');
     } finally {
@@ -156,6 +152,22 @@ export default function MaterialLibraryMobileCapture({ code, user }: { code: str
 
   function update<K extends keyof MobileForm>(key: K, value: MobileForm[K]) {
     setForm(current => current ? { ...current, [key]: value } : current);
+    setDirty(true);
+  }
+
+  function selectVariant(supplierVariantId: string) {
+    const variant = session?.item.supplierVariants.find(item => item.id === supplierVariantId);
+    setForm(current => current ? {
+      ...current,
+      supplierVariantId,
+      ...(variant ? {
+        supplierName: variant.supplierName || '',
+        manufacturerModel: variant.manufacturerModel || '',
+        supplierPartNumber: variant.supplierPartNumber || '',
+        specification: variant.specification || '',
+        materialComposition: variant.materialComposition || '',
+      } : {}),
+    } : current);
     setDirty(true);
   }
 
@@ -256,6 +268,11 @@ export default function MaterialLibraryMobileCapture({ code, user }: { code: str
       <em>{session.uploadMode === 'PERMANENT' ? '永久二维码' : '临时二维码'}</em>
     </section>
 
+    {session.item.warningState !== 'NONE' && <section className={`material-mobile-history-warning ${session.item.warningState.toLowerCase()}`}>
+      <AlertTriangle size={18} />
+      <span><strong>历史风险警示</strong><small>{session.item.warningNote || '该物料存在历史质量警示，请先核对照片和规格再检验。'}</small></span>
+    </section>}
+
     <section className="material-mobile-steps" aria-label="录入进度">{steps.map((step, index) => <div className={step.done ? 'done' : index === steps.findIndex(item => !item.done) ? 'active' : ''} key={step.label}><b>{step.done ? <Check size={12} /> : index + 1}</b><span>{step.label}</span></div>)}</section>
 
     {session.status === 'COMPLETED' ? <section className="material-mobile-completed"><span><CheckCircle2 size={34} /></span><h2>本次记录已归档</h2><p>{session.photos.length} 张来料照片和检验数据已同步到物料档案。{session.uploadMode === 'PERMANENT' ? '下次扫描永久码将新建一轮录入。' : '本临时二维码已失效。'}</p><Link href="/workspace/material-library"><PackageOpen size={16} />返回物料库</Link></section> : <>
@@ -272,16 +289,13 @@ export default function MaterialLibraryMobileCapture({ code, user }: { code: str
       </section>
 
       <section className="material-mobile-card material-mobile-form">
-        <header><div><span>02</span><div><strong>记录规格与状态</strong><small>没有 AI 识别，请按来料实物人工核对</small></div></div><em>{dirty ? '待保存' : '已保存'}</em></header>
-        <label><span>物料分类</span><select value={form.categoryId} onChange={event => update('categoryId', event.target.value)}>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-        <label><span>厂家型号</span><input value={form.manufacturerModel} onChange={event => update('manufacturerModel', event.target.value)} placeholder="拍摄铭牌后手工录入" /></label>
-        <label><span>规格 / 关键尺寸</span><input value={form.specification} onChange={event => update('specification', event.target.value)} placeholder="线径、颜色、尺寸、公差等" /></label>
-        <label><span>材料 / 表面状态</span><input value={form.materialComposition} onChange={event => update('materialComposition', event.target.value)} placeholder="材质、镀层、颜色、外观" /></label>
-        <div className="two"><label><span>供应商</span><input value={form.supplierName} onChange={event => update('supplierName', event.target.value)} /></label><label><span>供应商料号</span><input value={form.supplierPartNumber} onChange={event => update('supplierPartNumber', event.target.value)} /></label></div>
-        <label><span>来料批次</span><input value={form.batchNumber} onChange={event => update('batchNumber', event.target.value)} placeholder="用于追溯本次到料" /></label>
+        <header><div><span>02</span><div><strong>核对批次与状态</strong><small>固定型号由物料主档带入，只记录本次来料</small></div></div><em>{dirty ? '待保存' : '已保存'}</em></header>
+        {session.item.supplierVariants.length > 1 && <label><span>本次供应商型号</span><select value={form.supplierVariantId} onChange={event => selectVariant(event.target.value)}>{session.item.supplierVariants.map(variant => <option key={variant.id} value={variant.id}>{variant.supplierName || '未登记供应商'} ｜ {variant.manufacturerModel || variant.supplierPartNumber || '未登记型号'}</option>)}</select></label>}
+        <section className="material-mobile-fixed-data"><header><span><PackageOpen size={15} />固定资料</span><small>仅电脑端主档可维护</small></header><dl><div><dt>供应商</dt><dd>{form.supplierName || '—'}</dd></div><div><dt>厂家型号</dt><dd>{form.manufacturerModel || '—'}</dd></div><div><dt>供应商料号</dt><dd>{form.supplierPartNumber || '—'}</dd></div><div><dt>规格 / 材质</dt><dd>{[form.specification, form.materialComposition].filter(Boolean).join(' · ') || '—'}</dd></div></dl></section>
+        <label><span>来料批次</span><input value={form.batchNumber} onChange={event => update('batchNumber', event.target.value)} placeholder="扫描批次标签或手工填写" /></label>
         <fieldset><legend>质量状态</legend><div>{(['NONE', 'ATTENTION', 'DEFECT'] as MaterialLibraryWarningStateDTO[]).map(value => <button type="button" className={`${value.toLowerCase()} ${form.warningState === value ? 'active' : ''}`} key={value} onClick={() => update('warningState', value)}><i />{warningLabel(value)}</button>)}</div></fieldset>
         {form.warningState !== 'NONE' && <label className="warning"><span>警示说明 *</span><textarea value={form.warningNote} onChange={event => update('warningNote', event.target.value)} placeholder="说明异常表现、与同名物料的差异和使用风险" /></label>}
-        <label><span>检验备注</span><textarea value={form.notes} onChange={event => update('notes', event.target.value)} placeholder="补充测量数据、包装状态或核对结论" /></label>
+        <label><span>本批差异 / 检验结论</span><textarea value={form.notes} onChange={event => update('notes', event.target.value)} placeholder="只填写与固定主档不同之处、包装状态或检验结论" /></label>
         <button className="material-mobile-save" type="button" disabled={saving || !dirty} onClick={() => void saveDraft()}>{saving ? <Loader2 className="spin" /> : <Save />}保存检验数据</button>
       </section>
 

@@ -37,6 +37,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
     const expectedVersion = positiveVersion(body.expectedVersion);
     const data = materialItemUpdateData(body);
+    const { code: _requestedCode, ...mutableData } = data;
     const item = await prisma.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${materialLibraryItemLockKey(params.id)}))`;
       const current = await tx.materialLibraryItem.findUnique({ where: { id: params.id } });
@@ -47,16 +48,52 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       if (!category) throw new Error('MATERIAL_CATEGORY_NOT_FOUND');
       const updated = await tx.materialLibraryItem.updateMany({
         where: { id: current.id, version: expectedVersion, deletedAt: null },
-        data: { ...data, updatedById: actor.id, updatedByName: actor.name, version: { increment: 1 } },
+        data: { ...mutableData, updatedById: actor.id, updatedByName: actor.name, version: { increment: 1 } },
       });
       if (updated.count !== 1) throw new Error('MATERIAL_ITEM_CONFLICT');
+      const primaryVariant = await tx.materialLibrarySupplierVariant.findFirst({
+        where: { materialItemId: current.id, isPrimary: true, deletedAt: null },
+        orderBy: { updatedAt: 'desc' },
+      });
+      const variantData = {
+        supplierName: data.supplierName,
+        manufacturerModel: data.manufacturerModel,
+        supplierPartNumber: data.supplierPartNumber,
+        specification: data.specification,
+        materialComposition: data.materialComposition,
+        updatedById: actor.id,
+        updatedByName: actor.name,
+      };
+      const hasVariantData = Boolean(
+        data.supplierName
+        || data.manufacturerModel
+        || data.supplierPartNumber
+        || data.specification
+        || data.materialComposition,
+      );
+      if (primaryVariant) {
+        await tx.materialLibrarySupplierVariant.update({
+          where: { id: primaryVariant.id },
+          data: { ...variantData, version: { increment: 1 } },
+        });
+      } else if (hasVariantData) {
+        await tx.materialLibrarySupplierVariant.create({
+          data: {
+            materialItemId: current.id,
+            ...variantData,
+            isPrimary: true,
+            createdById: actor.id,
+            createdByName: actor.name,
+          },
+        });
+      }
       await tx.operationLog.create({
         data: {
           userId: actor.id,
           action: 'update_material_library_item',
           targetType: 'material_library_item',
           targetId: current.id,
-          detail: { expectedVersion, code: data.code, categoryId: data.categoryId },
+          detail: { expectedVersion, code: current.code, immutableCode: true, categoryId: data.categoryId },
         },
       });
       return tx.materialLibraryItem.findUniqueOrThrow({ where: { id: current.id }, include: materialLibraryItemInclude });

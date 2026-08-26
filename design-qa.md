@@ -221,3 +221,42 @@ The 2555 × 1401 reference and implementation were inspected together in one com
 - P2: none
 
 final result: passed
+
+---
+
+# Material Library v1.34.57 Design QA
+
+## Scope
+
+- Selected reference: `C:\Users\31175\.codex\generated_images\01a03791-4813-7aa3-ab3d-06de901ce204\exec-23a187d8-c96f-4606-9d56-c13cb6139288.png`
+- Implementation route: `/workspace/material-library`
+- Tablet target: 1366 x 1024
+- Mobile capture target: 390 x 844
+
+## Visual comparison
+
+- Same-viewport reference and implementation comparison: `artifacts/material-library-v13457/qa/reference-implementation-1366x1024.png`
+- Final desktop evidence: `artifacts/material-library-v13457/qa/desktop-final-1366x1024.png`
+- Permanent-QR mobile evidence: `artifacts/material-library-v13457/qa/mobile-permanent-390x844.png`
+- The implementation preserves the established application navigation and orange theme while matching the selected v3 hierarchy: command bar, category and material rail, immersive evidence viewer, 2.5D floating controls, filmstrip, contextual facts, warning state, and fixed action area.
+- Differences from the concept image are intentional: the real shell keeps the platform navigation, the evidence uses real QA records rather than decorative placeholders, and the number and aspect ratios of photographs reflect uploaded files.
+
+## Interaction checks
+
+- Search covers material code, name, manufacturer model, specification, supplier, supplier part number, and batch.
+- Supplier variants are reusable and the primary variant can carry a current supplier specification document.
+- Photo viewer supports previous/next, filmstrip selection, wheel/button zoom, 1:1, fit, left/right rotation, CSS full-screen overlay, Escape to exit, and original-file download.
+- Temporary and permanent QR modes were exercised through the real signed-link route.
+- Mobile flow was exercised at 390 x 844: login, scan entry, immediate multi-photo upload, batch input, quality state, warning reason, conclusion, and archive.
+- A permanent QR starts each incoming-inspection session with an empty batch, normal current quality state, and empty conclusion while still displaying the material's historical warning.
+- Supplier specification files and photographs use S3-compatible object storage; PostgreSQL stores metadata; soft-delete paths remain available.
+
+## Findings resolved during QA
+
+1. Native browser full-screen permission was rejected in the embedded browser. Replaced it with an application-controlled full-screen overlay and keyboard exit.
+2. A reusable permanent QR initially copied the prior batch warning and conclusion into a new session. The scan transaction now carries only stable master and supplier-variant facts; batch facts are reset for every inspection.
+3. The mobile permanent-QR page now separates historical risk from the current inspection state so inspectors are warned without pre-judging the new lot.
+
+## Result
+
+final result: passed

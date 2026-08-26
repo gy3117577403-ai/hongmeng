@@ -53,6 +53,13 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       if (!current) throw new Error('MATERIAL_SESSION_NOT_FOUND');
       if (current.status !== MaterialLibraryCaptureStatus.ACTIVE) throw new Error('MATERIAL_SESSION_CLOSED');
       if (current.version !== expectedVersion) throw new Error('MATERIAL_SESSION_CONFLICT');
+      if (draft.supplierVariantId) {
+        const supplierVariant = await tx.materialLibrarySupplierVariant.findFirst({
+          where: { id: draft.supplierVariantId, materialItemId: current.materialItemId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!supplierVariant) throw new Error('MATERIAL_SUPPLIER_VARIANT_NOT_FOUND');
+      }
       const updated = await tx.materialLibraryCaptureSession.updateMany({
         where: { id: current.id, status: MaterialLibraryCaptureStatus.ACTIVE, version: expectedVersion },
         data: {
@@ -83,6 +90,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       if (error.message === 'MATERIAL_SESSION_NOT_FOUND') return NextResponse.json({ ok: false, error: '拍照录入会话不存在' }, { status: 404 });
       if (error.message === 'MATERIAL_SESSION_CLOSED') return NextResponse.json({ ok: false, error: '该录入会话已结束，不能继续修改' }, { status: 409 });
       if (error.message === 'MATERIAL_SESSION_CONFLICT') return NextResponse.json({ ok: false, error: '录入数据已被更新，请刷新后重试' }, { status: 409 });
+      if (error.message === 'MATERIAL_SUPPLIER_VARIANT_NOT_FOUND') return NextResponse.json({ ok: false, error: '所选供应商型号已停用，请重新选择' }, { status: 409 });
     }
     return materialLibraryRouteError(error, '录入数据保存失败');
   }

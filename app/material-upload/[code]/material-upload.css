@@ -15,6 +15,12 @@ body:has(.material-mobile-page), body:has(.material-mobile-state) { background: 
 .material-mobile-identity h1 { margin: 3px 0 0; color: #334357; font-size: 15px; }
 .material-mobile-identity p { margin: 3px 0 0; color: #8793a2; font-size: 9px; }
 .material-mobile-identity > em { flex: 0 0 auto; padding: 5px 7px; border-radius: 999px; background: #f1f3f6; color: #798696; font-size: 8px; font-style: normal; }
+.material-mobile-history-warning { display: flex; align-items: flex-start; gap: 9px; padding: 10px 11px; border: 1px solid #edc9a4; border-radius: 12px; background: #fff8ed; color: #d66a13; box-shadow: 0 5px 14px rgba(122, 73, 31, .07); }
+.material-mobile-history-warning.defect { border-color: #efbbb6; background: #fff5f4; color: #ce3e38; }
+.material-mobile-history-warning span, .material-mobile-history-warning strong, .material-mobile-history-warning small { display: block; }
+.material-mobile-history-warning span { min-width: 0; }
+.material-mobile-history-warning strong { color: #70493b; font-size: 9px; }
+.material-mobile-history-warning small { margin-top: 3px; color: #8d655b; font-size: 8px; line-height: 1.55; }
 .material-mobile-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 9px 0; padding: 10px 5px; border: 1px solid #e2e6eb; border-radius: 12px; background: #fff; box-shadow: 0 4px 12px rgba(27, 43, 63, .04); }
 .material-mobile-steps div { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; color: #9aa3ae; font-size: 8px; }
 .material-mobile-steps div:not(:last-child)::after { content: ''; position: absolute; top: 11px; left: calc(50% + 14px); width: calc(100% - 28px); height: 1px; background: #e0e5ea; }
@@ -60,6 +66,16 @@ body:has(.material-mobile-page), body:has(.material-mobile-state) { background: 
 .material-mobile-form fieldset button.defect i { background: #d94c46; }
 .material-mobile-form fieldset button.active { border-color: #eb8b50; background: #fff4ec; color: #c9530d; box-shadow: 0 3px 9px rgba(103, 68, 44, .07); }
 .material-mobile-form label.warning { padding: 9px; border: 1px solid #efbbb6; border-radius: 10px; background: #fff5f4; }
+.material-mobile-fixed-data { margin: 11px; overflow: hidden; border: 1px solid #dfe5eb; border-radius: 11px; background: linear-gradient(145deg, #fbfcfd, #f5f7fa); box-shadow: inset 0 1px 0 #fff, 0 4px 12px rgba(28, 45, 65, .04); }
+.material-mobile-fixed-data > header { min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; border-bottom: 1px solid #e5e9ee; }
+.material-mobile-fixed-data > header span { display: inline-flex; align-items: center; gap: 6px; color: #536479; font-size: 9px; font-weight: 850; }
+.material-mobile-fixed-data > header small { color: #9aa4af; font-size: 7px; }
+.material-mobile-fixed-data dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.material-mobile-fixed-data dl div { min-width: 0; padding: 9px 10px; border-right: 1px solid #e8ecf0; border-bottom: 1px solid #e8ecf0; }
+.material-mobile-fixed-data dl div:nth-child(2n) { border-right: 0; }
+.material-mobile-fixed-data dl div:nth-last-child(-n + 2) { border-bottom: 0; }
+.material-mobile-fixed-data dt { color: #98a2ad; font-size: 7px; }
+.material-mobile-fixed-data dd { margin: 4px 0 0; overflow: hidden; color: #45576d; font-size: 9px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .material-mobile-save { width: calc(100% - 22px); margin-top: 12px; border-color: #f0ad84; background: #fff4ec; color: #d45a11; }
 .material-mobile-save:disabled, .material-mobile-camera-actions button:disabled { opacity: .5; cursor: not-allowed; }
 .material-mobile-archive-note { display: flex; align-items: flex-start; gap: 8px; margin: 9px 0; padding: 11px; border: 1px solid #efc7aa; border-radius: 12px; background: #fff8f2; color: #d66017; }

@@ -15,6 +15,28 @@ test('material library supports reusable QR sessions, archive sync and recoverab
   const item = await prisma.materialLibraryItem.create({
     data: { categoryId: category.id, code: `${prefix}-T001`.toUpperCase(), name: '集成测试端子' },
   });
+  const variant = await prisma.materialLibrarySupplierVariant.create({
+    data: {
+      materialItemId: item.id,
+      supplierName: '集成测试供应商',
+      manufacturerModel: 'MASTER-MODEL-001',
+      supplierPartNumber: 'SUP-001',
+      specification: 'AWG 22–28',
+      isPrimary: true,
+    },
+  });
+  const specificationDocument = await prisma.materialLibrarySpecificationDocument.create({
+    data: {
+      supplierVariantId: variant.id,
+      revision: 1,
+      originalName: `${prefix}-spec.pdf`,
+      mimeType: 'application/pdf',
+      size: BigInt(2048),
+      objectKey: `material-library/${item.id}/specifications/${prefix}.pdf`,
+      sha256: 'e'.repeat(64),
+      isCurrent: true,
+    },
+  });
   const linkId = randomUUID();
   const linkCode = createMaterialUploadCode({ id: linkId, generation: 1, materialItemId: item.id, mode: 'PERMANENT' });
   const link = await prisma.materialLibraryUploadLink.create({
@@ -34,7 +56,7 @@ test('material library supports reusable QR sessions, archive sync and recoverab
   const session = await prisma.materialLibraryCaptureSession.create({
     data: {
       sessionNo: `${prefix}-REC`, uploadLinkId: link.id, materialItemId: item.id, categoryId: category.id,
-      connectedByName: '集成测试品质员', draftManufacturerModel: 'SXH-001T-P0.6', draftSpecification: 'AWG 22–28',
+      supplierVariantId: variant.id, connectedByName: '集成测试品质员', draftManufacturerModel: 'OBSERVED-MODEL-DIFFERENCE', draftSpecification: 'AWG 22–28', draftBatchNumber: 'LOT-IT-001',
     },
   });
   const objectKey = `material-library/${item.id}/${prefix}.jpg`;
@@ -49,6 +71,8 @@ test('material library supports reusable QR sessions, archive sync and recoverab
     const active = await prisma.materialLibraryCaptureSession.findUniqueOrThrow({ where: { id: session.id }, include: materialLibrarySessionInclude });
     assert.equal(serializeMaterialSession(active).photos.length, 1);
     assert.equal(serializeMaterialSession(active).item.coverPhoto?.id, photo.id);
+    assert.equal(serializeMaterialSession(active).item.primarySupplierVariant?.id, variant.id);
+    assert.equal(serializeMaterialSession(active).item.primarySupplierVariant?.currentSpecificationFile?.id, specificationDocument.id);
     await assert.rejects(
       prisma.materialLibraryCaptureSession.create({
         data: { sessionNo: `${prefix}-DUP`, uploadLinkId: link.id, materialItemId: item.id, categoryId: category.id },
@@ -65,12 +89,13 @@ test('material library supports reusable QR sessions, archive sync and recoverab
     await prisma.$transaction(async tx => {
       await tx.materialLibraryItem.update({
         where: { id: item.id },
-        data: { manufacturerModel: active.draftManufacturerModel, specification: active.draftSpecification, lastCapturedAt: new Date(), version: { increment: 1 } },
+        data: { batchNumber: active.draftBatchNumber, lastCapturedAt: new Date(), version: { increment: 1 } },
       });
       await tx.materialLibraryCaptureSession.update({ where: { id: session.id }, data: { status: 'COMPLETED', completedAt: new Date(), version: { increment: 1 } } });
     });
     const archived = await prisma.materialLibraryItem.findUniqueOrThrow({ where: { id: item.id }, include: materialLibraryItemInclude });
-    assert.equal(serializeMaterialItem(archived).manufacturerModel, 'SXH-001T-P0.6');
+    assert.equal(serializeMaterialItem(archived).manufacturerModel, 'MASTER-MODEL-001');
+    assert.equal(serializeMaterialItem(archived).batchNumber, 'LOT-IT-001');
     assert.equal(serializeMaterialItem(archived).photoCount, 1);
 
     const nextSession = await prisma.materialLibraryCaptureSession.create({
@@ -87,6 +112,8 @@ test('material library supports reusable QR sessions, archive sync and recoverab
     await prisma.materialLibraryPhoto.deleteMany({ where: { materialItemId: item.id } });
     await prisma.materialLibraryCaptureSession.deleteMany({ where: { materialItemId: item.id } });
     await prisma.materialLibraryUploadLink.deleteMany({ where: { materialItemId: item.id } });
+    await prisma.materialLibrarySpecificationDocument.deleteMany({ where: { supplierVariant: { materialItemId: item.id } } });
+    await prisma.materialLibrarySupplierVariant.deleteMany({ where: { materialItemId: item.id } });
     await prisma.materialLibraryItem.deleteMany({ where: { id: item.id } });
     await prisma.materialLibraryCategory.deleteMany({ where: { id: category.id } });
   }

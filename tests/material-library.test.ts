@@ -7,6 +7,7 @@ import {
   assertMaterialUploadLinkActive,
   createMaterialUploadCode,
   hashMaterialUploadCode,
+  materialItemCreateData,
   materialItemUpdateData,
   materialSessionDraftData,
   materialUploadCapturePath,
@@ -19,6 +20,7 @@ process.env.SESSION_SECRET ||= 'material-library-test-secret-2026';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const migration = readFileSync(resolve(repositoryRoot, 'prisma/migrations/202608260003_material_library_photo_archive/migration.sql'), 'utf8');
+const supplierMigration = readFileSync(resolve(repositoryRoot, 'prisma/migrations/202608260004_material_library_supplier_variants/migration.sql'), 'utf8');
 const schema = readFileSync(resolve(repositoryRoot, 'prisma/schema.prisma'), 'utf8');
 const desktop = readFileSync(resolve(repositoryRoot, 'components/MaterialLibraryWorkbench.tsx'), 'utf8');
 const mobile = readFileSync(resolve(repositoryRoot, 'components/MaterialLibraryMobileCapture.tsx'), 'utf8');
@@ -62,6 +64,9 @@ test('material input normalizes codes and requires an explanation for warnings',
   const draft = materialSessionDraftData({ categoryId: 'category-1', warningState: 'ATTENTION', warningNote: '镀层色差' });
   assert.equal(draft.draftWarningState, 'ATTENTION');
   assert.equal(draft.draftWarningNote, '镀层色差');
+  const created = materialItemCreateData({ categoryId: 'category-1', name: '6.3mm 连接端子', supplierName: '上海华翔' });
+  assert.equal(created.name, '6.3mm 连接端子');
+  assert.equal(created.supplierName, '上海华翔');
 });
 
 test('material library persists S3 metadata, sessions and soft deletion without local file paths', () => {
@@ -74,9 +79,20 @@ test('material library persists S3 metadata, sessions and soft deletion without 
   assert.match(migration, /"deleted_at" TIMESTAMP\(3\)/);
   assert.match(migration, /material_library_capture_sessions_one_active_per_item_idx[\s\S]*?\("material_item_id"\)[\s\S]*?WHERE "status" = 'ACTIVE'/);
   assert.match(schema, /model MaterialLibraryPhoto[\s\S]*?objectKey\s+String[\s\S]*?deletedAt\s+DateTime\?/);
+  assert.match(supplierMigration, /CREATE SEQUENCE IF NOT EXISTS "material_library_code_seq"/);
+  assert.match(supplierMigration, /CREATE TABLE "material_library_supplier_variants"/);
+  assert.match(supplierMigration, /CREATE TABLE "material_library_specification_documents"/);
+  assert.match(supplierMigration, /material_library_supplier_variants_one_primary_idx/);
+  assert.match(supplierMigration, /material_library_specification_documents_one_current_idx/);
+  assert.match(schema, /model MaterialLibrarySupplierVariant[\s\S]*?specificationFiles\s+MaterialLibrarySpecificationDocument\[\]/);
+  assert.match(schema, /model MaterialLibrarySpecificationDocument[\s\S]*?objectKey\s+String[\s\S]*?deletedAt\s+DateTime\?/);
   assert.doesNotMatch(schema, /model MaterialLibraryPhoto[\s\S]*?localPath/);
   assert.match(scanRoute, /pg_advisory_xact_lock/);
   assert.match(scanRoute, /TransactionIsolationLevel\.ReadCommitted/);
+  assert.match(scanRoute, /draftBatchNumber: null/);
+  assert.match(scanRoute, /draftWarningState: MaterialLibraryWarningState\.NONE/);
+  assert.match(scanRoute, /draftWarningNote: null/);
+  assert.match(scanRoute, /draftNotes: null/);
 });
 
 test('version 3 UI includes both QR modes, immediate photo upload, preview and archive controls', () => {
@@ -85,11 +101,18 @@ test('version 3 UI includes both QR modes, immediate photo upload, preview and a
   assert.match(desktop, /PERMANENT/);
   assert.match(desktop, /每 1\.6 秒同步一次手机端照片/);
   assert.match(desktop, /确认归档/);
-  assert.match(desktop, /requestFullscreen/);
+  assert.match(desktop, /capture-preview.*is-fullscreen/);
+  assert.match(desktop, /退出全屏/);
+  assert.doesNotMatch(desktop, /requestFullscreen/);
+  assert.match(desktop, /MaterialEvidenceViewer/);
+  assert.match(desktop, /供应商规格书/);
+  assert.match(desktop, /MaterialCodePlate/);
+  assert.match(desktop, /来料记录/);
   assert.match(mobile, /capture="environment"/);
   assert.match(mobile, /照片会立即上传/);
   assert.match(mobile, /从相册选择/);
   assert.match(mobile, /原图直接写入 S3 兼容对象存储/);
+  assert.match(mobile, /历史风险警示/);
   assert.match(mobile, /2_400/);
   assert.doesNotMatch(`${desktop}\n${mobile}`, /AI识别|AI 识别结果|自动识别型号/);
 });

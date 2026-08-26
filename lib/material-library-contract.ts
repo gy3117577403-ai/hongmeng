@@ -36,6 +36,57 @@ export type MaterialLibraryPhotoDTO = {
   contentUrl: string;
 };
 
+export type MaterialLibrarySpecificationDocumentDTO = {
+  id: string;
+  supplierVariantId: string;
+  revision: number;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  isCurrent: boolean;
+  uploadedBy: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  contentUrl: string;
+};
+
+export type MaterialLibrarySupplierVariantDTO = {
+  id: string;
+  materialItemId: string;
+  supplierName: string | null;
+  manufacturerModel: string | null;
+  supplierPartNumber: string | null;
+  specification: string | null;
+  materialComposition: string | null;
+  isPrimary: boolean;
+  version: number;
+  deletedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  specificationFiles: MaterialLibrarySpecificationDocumentDTO[];
+  currentSpecificationFile: MaterialLibrarySpecificationDocumentDTO | null;
+};
+
+export type MaterialLibraryRecordDTO = {
+  id: string;
+  sessionNo: string;
+  status: MaterialLibraryCaptureStatusDTO;
+  supplierVariantId: string | null;
+  supplierName: string | null;
+  manufacturerModel: string | null;
+  supplierPartNumber: string | null;
+  batchNumber: string | null;
+  warningState: MaterialLibraryWarningStateDTO;
+  warningNote: string | null;
+  notes: string | null;
+  connectedByName: string | null;
+  photoCount: number;
+  createdAt: string;
+  completedAt: string | null;
+};
+
 export type MaterialLibraryItemDTO = {
   id: string;
   categoryId: string;
@@ -61,6 +112,9 @@ export type MaterialLibraryItemDTO = {
   photos: MaterialLibraryPhotoDTO[];
   photoCount: number;
   coverPhoto: MaterialLibraryPhotoDTO | null;
+  supplierVariants: MaterialLibrarySupplierVariantDTO[];
+  primarySupplierVariant: MaterialLibrarySupplierVariantDTO | null;
+  records: MaterialLibraryRecordDTO[];
   dataComplete: boolean;
 };
 
@@ -80,6 +134,7 @@ export type MaterialLibraryCaptureSessionDTO = {
   uploadLinkExpiresAt: string | null;
   materialItemId: string;
   categoryId: string;
+  supplierVariantId: string | null;
   status: MaterialLibraryCaptureStatusDTO;
   draftManufacturerModel: string | null;
   draftSpecification: string | null;

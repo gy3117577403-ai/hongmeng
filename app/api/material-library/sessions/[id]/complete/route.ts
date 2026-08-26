@@ -44,11 +44,6 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
         where: { id: session.materialItemId },
         data: {
           categoryId: session.categoryId,
-          manufacturerModel: session.draftManufacturerModel,
-          specification: session.draftSpecification,
-          materialComposition: session.draftMaterialComposition,
-          supplierName: session.draftSupplierName,
-          supplierPartNumber: session.draftSupplierPartNumber,
           batchNumber: session.draftBatchNumber,
           warningState: session.draftWarningState,
           warningNote: session.draftWarningNote,

@@ -2,9 +2,10 @@ import { MaterialLibraryWarningState, Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser } from '@/lib/auth';
 import {
-  materialItemUpdateData,
+  materialItemCreateData,
   materialLibraryActor,
   materialLibraryItemInclude,
+  nextMaterialLibraryCode,
   serializeMaterialItem,
 } from '@/lib/material-library';
 import { materialLibraryRouteError } from '@/lib/material-library-http';
@@ -42,6 +43,13 @@ export async function GET(request: NextRequest) {
           { supplierName: { contains: keyword, mode: 'insensitive' } },
           { supplierPartNumber: { contains: keyword, mode: 'insensitive' } },
           { batchNumber: { contains: keyword, mode: 'insensitive' } },
+          { supplierVariants: { some: { deletedAt: null, OR: [
+            { supplierName: { contains: keyword, mode: 'insensitive' } },
+            { manufacturerModel: { contains: keyword, mode: 'insensitive' } },
+            { supplierPartNumber: { contains: keyword, mode: 'insensitive' } },
+            { specification: { contains: keyword, mode: 'insensitive' } },
+          ] } } },
+          { captureSessions: { some: { draftBatchNumber: { contains: keyword, mode: 'insensitive' } } } },
         ],
       } : {}),
     };
@@ -81,21 +89,46 @@ export async function POST(request: NextRequest) {
     const user = await requireUser();
     const actor = materialLibraryActor(user);
     const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-    const data = materialItemUpdateData(body);
+    const data = materialItemCreateData(body);
     const category = await prisma.materialLibraryCategory.findFirst({ where: { id: data.categoryId, deletedAt: null } });
     if (!category) return NextResponse.json({ ok: false, error: '所选物料分类不存在' }, { status: 404 });
 
     const item = await prisma.$transaction(async tx => {
+      const code = await nextMaterialLibraryCode(tx);
       const created = await tx.materialLibraryItem.create({
         data: {
           ...data,
+          code,
           createdById: actor.id,
           createdByName: actor.name,
           updatedById: actor.id,
           updatedByName: actor.name,
         },
-        include: materialLibraryItemInclude,
       });
+      const hasSupplierVariant = Boolean(
+        data.supplierName
+        || data.manufacturerModel
+        || data.supplierPartNumber
+        || data.specification
+        || data.materialComposition,
+      );
+      if (hasSupplierVariant) {
+        await tx.materialLibrarySupplierVariant.create({
+          data: {
+            materialItemId: created.id,
+            supplierName: data.supplierName,
+            manufacturerModel: data.manufacturerModel,
+            supplierPartNumber: data.supplierPartNumber,
+            specification: data.specification,
+            materialComposition: data.materialComposition,
+            isPrimary: true,
+            createdById: actor.id,
+            createdByName: actor.name,
+            updatedById: actor.id,
+            updatedByName: actor.name,
+          },
+        });
+      }
       await tx.operationLog.create({
         data: {
           userId: actor.id,
@@ -105,7 +138,7 @@ export async function POST(request: NextRequest) {
           detail: { code: created.code, name: created.name, categoryId: created.categoryId },
         },
       });
-      return created;
+      return tx.materialLibraryItem.findUniqueOrThrow({ where: { id: created.id }, include: materialLibraryItemInclude });
     });
     return NextResponse.json({ ok: true, item: serializeMaterialItem(item) }, { status: 201 });
   } catch (error) {

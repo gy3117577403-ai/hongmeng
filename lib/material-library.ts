@@ -11,6 +11,9 @@ import type {
   MaterialLibraryCategoryDTO,
   MaterialLibraryItemDTO,
   MaterialLibraryPhotoDTO,
+  MaterialLibraryRecordDTO,
+  MaterialLibrarySpecificationDocumentDTO,
+  MaterialLibrarySupplierVariantDTO,
   MaterialLibraryUploadLinkDTO,
   MaterialLibraryUploadModeDTO,
   MaterialLibraryWarningStateDTO,
@@ -65,6 +68,15 @@ export function normalizeMaterialCode(value: unknown): string {
     throw new MaterialLibraryError('物料编码仅支持字母、数字、点、横线、斜线和下划线', 400, 'MATERIAL_CODE_INVALID');
   }
   return code;
+}
+
+export async function nextMaterialLibraryCode(tx: Prisma.TransactionClient): Promise<string> {
+  const rows = await tx.$queryRaw<Array<{ value: bigint }>>`SELECT nextval('material_library_code_seq') AS value`;
+  const value = rows[0]?.value;
+  if (typeof value !== 'bigint' || value < 1n) {
+    throw new MaterialLibraryError('物料编码生成失败，请稍后重试', 500, 'MATERIAL_CODE_SEQUENCE_FAILED');
+  }
+  return `MAT-${value.toString().padStart(6, '0')}`;
 }
 
 export function materialWarningState(value: unknown): MaterialLibraryWarningStateDTO {
@@ -174,6 +186,24 @@ export const materialLibraryItemInclude = {
     where: { deletedAt: null },
     orderBy: [{ isCover: 'desc' as const }, { sortOrder: 'asc' as const }, { createdAt: 'desc' as const }],
   },
+  supplierVariants: {
+    where: { deletedAt: null },
+    orderBy: [{ isPrimary: 'desc' as const }, { updatedAt: 'desc' as const }],
+    include: {
+      specificationFiles: {
+        where: { deletedAt: null },
+        orderBy: [{ isCurrent: 'desc' as const }, { revision: 'desc' as const }],
+      },
+    },
+  },
+  captureSessions: {
+    where: { status: MaterialLibraryCaptureStatus.COMPLETED },
+    orderBy: { completedAt: 'desc' as const },
+    take: 24,
+    include: {
+      photos: { where: { deletedAt: null }, select: { id: true } },
+    },
+  },
 } satisfies Prisma.MaterialLibraryItemInclude;
 
 export const materialLibrarySessionInclude = {
@@ -182,6 +212,14 @@ export const materialLibrarySessionInclude = {
   },
   materialItem: { include: materialLibraryItemInclude },
   category: { select: { id: true, code: true, name: true } },
+  supplierVariant: {
+    include: {
+      specificationFiles: {
+        where: { deletedAt: null },
+        orderBy: [{ isCurrent: 'desc' as const }, { revision: 'desc' as const }],
+      },
+    },
+  },
   photos: {
     where: { deletedAt: null },
     orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }],
@@ -197,6 +235,49 @@ export type MaterialLibrarySessionRecord = Prisma.MaterialLibraryCaptureSessionG
 }>;
 
 type MaterialPhotoRecord = MaterialLibraryItemRecord['photos'][number];
+type MaterialSupplierVariantRecord = MaterialLibraryItemRecord['supplierVariants'][number];
+
+export function serializeMaterialSpecificationDocument(
+  document: MaterialSupplierVariantRecord['specificationFiles'][number],
+): MaterialLibrarySpecificationDocumentDTO {
+  return {
+    id: document.id,
+    supplierVariantId: document.supplierVariantId,
+    revision: document.revision,
+    originalName: document.originalName,
+    mimeType: document.mimeType,
+    size: Number(document.size),
+    sha256: document.sha256,
+    isCurrent: document.isCurrent,
+    uploadedBy: document.uploadedByName,
+    deletedAt: document.deletedAt?.toISOString() || null,
+    createdAt: document.createdAt.toISOString(),
+    updatedAt: document.updatedAt.toISOString(),
+    contentUrl: `/api/material-library/specification-documents/${document.id}/content`,
+  };
+}
+
+export function serializeMaterialSupplierVariant(
+  variant: MaterialSupplierVariantRecord,
+): MaterialLibrarySupplierVariantDTO {
+  const specificationFiles = variant.specificationFiles.map(serializeMaterialSpecificationDocument);
+  return {
+    id: variant.id,
+    materialItemId: variant.materialItemId,
+    supplierName: variant.supplierName,
+    manufacturerModel: variant.manufacturerModel,
+    supplierPartNumber: variant.supplierPartNumber,
+    specification: variant.specification,
+    materialComposition: variant.materialComposition,
+    isPrimary: variant.isPrimary,
+    version: variant.version,
+    deletedAt: variant.deletedAt?.toISOString() || null,
+    createdAt: variant.createdAt.toISOString(),
+    updatedAt: variant.updatedAt.toISOString(),
+    specificationFiles,
+    currentSpecificationFile: specificationFiles.find(file => file.isCurrent) || specificationFiles[0] || null,
+  };
+}
 
 export function serializeMaterialPhoto(photo: MaterialPhotoRecord): MaterialLibraryPhotoDTO {
   return {
@@ -223,17 +304,36 @@ export function serializeMaterialPhoto(photo: MaterialPhotoRecord): MaterialLibr
 
 export function serializeMaterialItem(item: MaterialLibraryItemRecord): MaterialLibraryItemDTO {
   const photos = item.photos.map(serializeMaterialPhoto);
+  const supplierVariants = item.supplierVariants.map(serializeMaterialSupplierVariant);
+  const primarySupplierVariant = supplierVariants.find(variant => variant.isPrimary) || supplierVariants[0] || null;
+  const records: MaterialLibraryRecordDTO[] = item.captureSessions.map(record => ({
+    id: record.id,
+    sessionNo: record.sessionNo,
+    status: record.status,
+    supplierVariantId: record.supplierVariantId,
+    supplierName: record.draftSupplierName,
+    manufacturerModel: record.draftManufacturerModel,
+    supplierPartNumber: record.draftSupplierPartNumber,
+    batchNumber: record.draftBatchNumber,
+    warningState: record.draftWarningState,
+    warningNote: record.draftWarningNote,
+    notes: record.draftNotes,
+    connectedByName: record.connectedByName,
+    photoCount: record.photos.length,
+    createdAt: record.createdAt.toISOString(),
+    completedAt: record.completedAt?.toISOString() || null,
+  }));
   return {
     id: item.id,
     categoryId: item.categoryId,
     category: item.category,
     code: item.code,
     name: item.name,
-    manufacturerModel: item.manufacturerModel,
-    specification: item.specification,
-    materialComposition: item.materialComposition,
-    supplierName: item.supplierName,
-    supplierPartNumber: item.supplierPartNumber,
+    manufacturerModel: primarySupplierVariant?.manufacturerModel ?? item.manufacturerModel,
+    specification: primarySupplierVariant?.specification ?? item.specification,
+    materialComposition: primarySupplierVariant?.materialComposition ?? item.materialComposition,
+    supplierName: primarySupplierVariant?.supplierName ?? item.supplierName,
+    supplierPartNumber: primarySupplierVariant?.supplierPartNumber ?? item.supplierPartNumber,
     batchNumber: item.batchNumber,
     warningState: item.warningState,
     warningNote: item.warningNote,
@@ -248,6 +348,9 @@ export function serializeMaterialItem(item: MaterialLibraryItemRecord): Material
     photos,
     photoCount: photos.length,
     coverPhoto: photos.find(photo => photo.isCover) || photos[0] || null,
+    supplierVariants,
+    primarySupplierVariant,
+    records,
     dataComplete: photos.length > 0,
   };
 }
@@ -262,6 +365,7 @@ export function serializeMaterialSession(session: MaterialLibrarySessionRecord):
     uploadLinkExpiresAt: session.uploadLink.expiresAt?.toISOString() || null,
     materialItemId: session.materialItemId,
     categoryId: session.categoryId,
+    supplierVariantId: session.supplierVariantId,
     status: session.status,
     draftManufacturerModel: session.draftManufacturerModel,
     draftSpecification: session.draftSpecification,
@@ -340,6 +444,7 @@ export function materialSessionDraftData(body: Record<string, unknown>) {
   }
   return {
     categoryId: requiredMaterialText(body.categoryId, '分类', 80),
+    supplierVariantId: cleanMaterialText(body.supplierVariantId, 80),
     draftManufacturerModel: cleanMaterialText(body.manufacturerModel, 160),
     draftSpecification: cleanMaterialText(body.specification, 240),
     draftMaterialComposition: cleanMaterialText(body.materialComposition, 240),
@@ -349,6 +454,33 @@ export function materialSessionDraftData(body: Record<string, unknown>) {
     draftWarningState: warningState as MaterialLibraryWarningState,
     draftWarningNote: warningState === 'NONE' ? null : warningNote,
     draftNotes: cleanMaterialText(body.notes, 2_000),
+  };
+}
+
+export function materialSupplierVariantData(body: Record<string, unknown>) {
+  return {
+    supplierName: cleanMaterialText(body.supplierName, 200),
+    manufacturerModel: cleanMaterialText(body.manufacturerModel, 160),
+    supplierPartNumber: cleanMaterialText(body.supplierPartNumber, 160),
+    specification: cleanMaterialText(body.specification, 240),
+    materialComposition: cleanMaterialText(body.materialComposition, 240),
+  };
+}
+
+export function materialItemCreateData(body: Record<string, unknown>) {
+  const warningState = materialWarningState(body.warningState);
+  const warningNote = cleanMaterialText(body.warningNote, 500);
+  if (warningState !== 'NONE' && !warningNote) {
+    throw new MaterialLibraryError('设置不良品警示时请填写说明', 400, 'MATERIAL_WARNING_NOTE_REQUIRED');
+  }
+  return {
+    categoryId: requiredMaterialText(body.categoryId, '分类', 80),
+    name: requiredMaterialText(body.name, '物料名称', 160),
+    ...materialSupplierVariantData(body),
+    batchNumber: cleanMaterialText(body.batchNumber, 120),
+    warningState: warningState as MaterialLibraryWarningState,
+    warningNote: warningState === 'NONE' ? null : warningNote,
+    notes: cleanMaterialText(body.notes, 2_000),
   };
 }
 

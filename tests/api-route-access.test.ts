@@ -279,12 +279,18 @@ test('material library gives quality reviewers capture powers while keeping arch
   assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items', 'GET'), true);
   assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items', 'POST'), true);
   assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items/item-1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items/item-1/variants', 'POST'), true);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/variants/variant-1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/variants/variant-1', 'DELETE'), false);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/specification-documents/document-1', 'DELETE'), false);
   assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items/item-1', 'DELETE'), false);
   assert.equal(canAccessApiRoute(reviewer, '/api/material-library/photos/photo-1', 'DELETE'), true);
   assert.equal(canAccessApiRoute(reviewer, '/api/material-library/upload-links/link-1', 'DELETE'), true);
   assert.equal(canAccessApiRoute(reviewer, '/api/material-library/sessions/session-1/complete', 'POST'), true);
   assert.equal(canAccessApiRoute(administrator, '/api/material-library/items/item-1', 'DELETE'), true);
   assert.equal(canAccessApiRoute(administrator, '/api/material-library/categories/category-1', 'DELETE'), true);
+  assert.equal(canAccessApiRoute(administrator, '/api/material-library/variants/variant-1', 'DELETE'), true);
+  assert.equal(canAccessApiRoute(administrator, '/api/material-library/specification-documents/document-1', 'DELETE'), true);
   assert.equal(canAccessApiRoute(planning, '/api/material-library/items', 'GET'), false);
 });
 

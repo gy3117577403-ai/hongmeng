@@ -5053,36 +5053,37 @@ model MaterialLibraryCategory {
 }
 
 model MaterialLibraryItem {
-  id                  String                          @id @default(uuid())
-  categoryId          String                          @map("category_id")
-  code                String                          @unique
+  id                  String                           @id @default(uuid())
+  categoryId          String                           @map("category_id")
+  code                String                           @unique
   name                String
-  manufacturerModel   String?                         @map("manufacturer_model")
+  manufacturerModel   String?                          @map("manufacturer_model")
   specification       String?
-  materialComposition String?                         @map("material_composition")
-  supplierName        String?                         @map("supplier_name")
-  supplierPartNumber  String?                         @map("supplier_part_number")
-  batchNumber         String?                         @map("batch_number")
-  warningState        MaterialLibraryWarningState     @default(NONE) @map("warning_state")
-  warningNote         String?                         @map("warning_note")
-  status              MaterialLibraryItemStatus       @default(ACTIVE)
+  materialComposition String?                          @map("material_composition")
+  supplierName        String?                          @map("supplier_name")
+  supplierPartNumber  String?                          @map("supplier_part_number")
+  batchNumber         String?                          @map("batch_number")
+  warningState        MaterialLibraryWarningState      @default(NONE) @map("warning_state")
+  warningNote         String?                          @map("warning_note")
+  status              MaterialLibraryItemStatus        @default(ACTIVE)
   notes               String?
-  version             Int                             @default(1)
-  lastCapturedAt      DateTime?                       @map("last_captured_at")
-  createdById         String?                         @map("created_by_id")
-  createdByName       String?                         @map("created_by_name")
-  updatedById         String?                         @map("updated_by_id")
-  updatedByName       String?                         @map("updated_by_name")
-  deletedAt           DateTime?                       @map("deleted_at")
-  deletedReason       String?                         @map("deleted_reason")
-  deletedById         String?                         @map("deleted_by_id")
-  deletedByName       String?                         @map("deleted_by_name")
-  createdAt           DateTime                        @default(now()) @map("created_at")
-  updatedAt           DateTime                        @updatedAt @map("updated_at")
-  category            MaterialLibraryCategory         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  version             Int                              @default(1)
+  lastCapturedAt      DateTime?                        @map("last_captured_at")
+  createdById         String?                          @map("created_by_id")
+  createdByName       String?                          @map("created_by_name")
+  updatedById         String?                          @map("updated_by_id")
+  updatedByName       String?                          @map("updated_by_name")
+  deletedAt           DateTime?                        @map("deleted_at")
+  deletedReason       String?                          @map("deleted_reason")
+  deletedById         String?                          @map("deleted_by_id")
+  deletedByName       String?                          @map("deleted_by_name")
+  createdAt           DateTime                         @default(now()) @map("created_at")
+  updatedAt           DateTime                         @updatedAt @map("updated_at")
+  category            MaterialLibraryCategory          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   photos              MaterialLibraryPhoto[]
   uploadLinks         MaterialLibraryUploadLink[]
   captureSessions     MaterialLibraryCaptureSession[]
+  supplierVariants    MaterialLibrarySupplierVariant[]
 
   @@index([categoryId, deletedAt, updatedAt])
   @@index([warningState, deletedAt, updatedAt])
@@ -5113,39 +5114,91 @@ model MaterialLibraryUploadLink {
 }
 
 model MaterialLibraryCaptureSession {
-  id                       String                       @id @default(uuid())
-  sessionNo                String                       @unique @map("session_no")
-  uploadLinkId             String                       @map("upload_link_id")
-  materialItemId           String                       @map("material_item_id")
-  categoryId               String                       @map("category_id")
-  status                   MaterialLibraryCaptureStatus @default(ACTIVE)
-  draftManufacturerModel   String?                      @map("draft_manufacturer_model")
-  draftSpecification       String?                      @map("draft_specification")
-  draftMaterialComposition String?                      @map("draft_material_composition")
-  draftSupplierName        String?                      @map("draft_supplier_name")
-  draftSupplierPartNumber  String?                      @map("draft_supplier_part_number")
-  draftBatchNumber         String?                      @map("draft_batch_number")
-  draftWarningState        MaterialLibraryWarningState  @default(NONE) @map("draft_warning_state")
-  draftWarningNote         String?                      @map("draft_warning_note")
-  draftNotes               String?                      @map("draft_notes")
-  version                  Int                          @default(1)
-  connectedById            String?                      @map("connected_by_id")
-  connectedByName          String?                      @map("connected_by_name")
-  connectedAt              DateTime?                    @map("connected_at")
-  lastSeenAt               DateTime?                    @map("last_seen_at")
-  completedAt              DateTime?                    @map("completed_at")
-  cancelledAt              DateTime?                    @map("cancelled_at")
-  createdAt                DateTime                     @default(now()) @map("created_at")
-  updatedAt                DateTime                     @updatedAt @map("updated_at")
-  uploadLink               MaterialLibraryUploadLink    @relation(fields: [uploadLinkId], references: [id], onDelete: Restrict)
-  materialItem             MaterialLibraryItem          @relation(fields: [materialItemId], references: [id], onDelete: Restrict)
-  category                 MaterialLibraryCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  id                       String                          @id @default(uuid())
+  sessionNo                String                          @unique @map("session_no")
+  uploadLinkId             String                          @map("upload_link_id")
+  materialItemId           String                          @map("material_item_id")
+  categoryId               String                          @map("category_id")
+  supplierVariantId        String?                         @map("supplier_variant_id")
+  status                   MaterialLibraryCaptureStatus    @default(ACTIVE)
+  draftManufacturerModel   String?                         @map("draft_manufacturer_model")
+  draftSpecification       String?                         @map("draft_specification")
+  draftMaterialComposition String?                         @map("draft_material_composition")
+  draftSupplierName        String?                         @map("draft_supplier_name")
+  draftSupplierPartNumber  String?                         @map("draft_supplier_part_number")
+  draftBatchNumber         String?                         @map("draft_batch_number")
+  draftWarningState        MaterialLibraryWarningState     @default(NONE) @map("draft_warning_state")
+  draftWarningNote         String?                         @map("draft_warning_note")
+  draftNotes               String?                         @map("draft_notes")
+  version                  Int                             @default(1)
+  connectedById            String?                         @map("connected_by_id")
+  connectedByName          String?                         @map("connected_by_name")
+  connectedAt              DateTime?                       @map("connected_at")
+  lastSeenAt               DateTime?                       @map("last_seen_at")
+  completedAt              DateTime?                       @map("completed_at")
+  cancelledAt              DateTime?                       @map("cancelled_at")
+  createdAt                DateTime                        @default(now()) @map("created_at")
+  updatedAt                DateTime                        @updatedAt @map("updated_at")
+  uploadLink               MaterialLibraryUploadLink       @relation(fields: [uploadLinkId], references: [id], onDelete: Restrict)
+  materialItem             MaterialLibraryItem             @relation(fields: [materialItemId], references: [id], onDelete: Restrict)
+  category                 MaterialLibraryCategory         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  supplierVariant          MaterialLibrarySupplierVariant? @relation(fields: [supplierVariantId], references: [id], onDelete: SetNull)
   photos                   MaterialLibraryPhoto[]
 
   @@index([uploadLinkId, status, createdAt])
   @@index([materialItemId, status, updatedAt])
   @@index([connectedById, status, updatedAt])
+  @@index([supplierVariantId, status, updatedAt])
   @@map("material_library_capture_sessions")
+}
+
+model MaterialLibrarySupplierVariant {
+  id                  String                                 @id @default(uuid())
+  materialItemId      String                                 @map("material_item_id")
+  supplierName        String?                                @map("supplier_name")
+  manufacturerModel   String?                                @map("manufacturer_model")
+  supplierPartNumber  String?                                @map("supplier_part_number")
+  specification       String?
+  materialComposition String?                                @map("material_composition")
+  isPrimary           Boolean                                @default(false) @map("is_primary")
+  version             Int                                    @default(1)
+  createdById         String?                                @map("created_by_id")
+  createdByName       String?                                @map("created_by_name")
+  updatedById         String?                                @map("updated_by_id")
+  updatedByName       String?                                @map("updated_by_name")
+  deletedAt           DateTime?                              @map("deleted_at")
+  createdAt           DateTime                               @default(now()) @map("created_at")
+  updatedAt           DateTime                               @updatedAt @map("updated_at")
+  materialItem        MaterialLibraryItem                    @relation(fields: [materialItemId], references: [id], onDelete: Restrict)
+  specificationFiles  MaterialLibrarySpecificationDocument[]
+  captureSessions     MaterialLibraryCaptureSession[]
+
+  @@index([materialItemId, deletedAt, isPrimary, updatedAt])
+  @@index([supplierName, deletedAt, updatedAt])
+  @@index([manufacturerModel, deletedAt, updatedAt])
+  @@map("material_library_supplier_variants")
+}
+
+model MaterialLibrarySpecificationDocument {
+  id                String                         @id @default(uuid())
+  supplierVariantId String                         @map("supplier_variant_id")
+  revision          Int                            @default(1)
+  originalName      String                         @map("original_name")
+  mimeType          String                         @map("mime_type")
+  size              BigInt
+  objectKey         String                         @unique @map("object_key")
+  sha256            String
+  isCurrent         Boolean                        @default(true) @map("is_current")
+  uploadedById      String?                        @map("uploaded_by_id")
+  uploadedByName    String?                        @map("uploaded_by_name")
+  deletedAt         DateTime?                      @map("deleted_at")
+  createdAt         DateTime                       @default(now()) @map("created_at")
+  updatedAt         DateTime                       @updatedAt @map("updated_at")
+  supplierVariant   MaterialLibrarySupplierVariant @relation(fields: [supplierVariantId], references: [id], onDelete: Restrict)
+
+  @@index([supplierVariantId, deletedAt, isCurrent, revision])
+  @@index([sha256, supplierVariantId])
+  @@map("material_library_specification_documents")
 }
 
 model MaterialLibraryPhoto {
