@@ -2,9 +2,12 @@ import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 
-export const INTERNAL_QUALITY_RISK_STATUSES = ['DRAFT', 'REVISING', 'ARCHIVED'] as const;
+export const INTERNAL_QUALITY_RISK_STATUSES = ['DRAFT', 'SUBMITTED', 'CONTAINMENT', 'COLLABORATING', 'VERIFYING', 'PENDING_CLOSE', 'REVISING', 'ARCHIVED'] as const;
 export const INTERNAL_QUALITY_RISK_SEVERITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as const;
 export const QUALITY_ALERT_ACTIVE_STATES = ['ACTIVE', 'ACKNOWLEDGED'] as const;
+export const INTERNAL_QUALITY_RISK_TASK_STATUSES = ['TODO', 'IN_PROGRESS', 'COMPLETED', 'VERIFIED', 'CANCELLED'] as const;
+export const INTERNAL_QUALITY_RISK_TASK_TYPES = ['CONTAINMENT', 'CAUSE', 'ACTION', 'VERIFICATION', 'COLLABORATION'] as const;
+export const INTERNAL_QUALITY_RISK_PRINT_POLICIES = ['REQUIRED', 'OPTIONAL', 'SYSTEM_ONLY'] as const;
 export const QUALITY_RISK_PURGE_RETENTION_DAYS = 30;
 
 export type InternalQualityRiskStatus = typeof INTERNAL_QUALITY_RISK_STATUSES[number];
@@ -46,6 +49,14 @@ export type InternalQualityRiskInput = {
   applicableProcess: string | null;
   effectiveFrom: Date | null;
   effectiveUntil: Date | null;
+  warningSummary: string | null;
+  requiredAction: string | null;
+  inspectionMethod: string | null;
+  inspectionFrequency: string | null;
+  acceptanceCriteria: string | null;
+  stopConditions: string | null;
+  escalationContact: string | null;
+  printPolicy: typeof INTERNAL_QUALITY_RISK_PRINT_POLICIES[number];
   issueIds: string[];
   workOrderIds: string[];
   productIds: string[];
@@ -104,6 +115,10 @@ export function parseInternalQualityRiskInput(input: Record<string, unknown>): I
   if (effectiveFrom && effectiveUntil && effectiveUntil < effectiveFrom) {
     throw new InternalQualityRiskError('失效日期不能早于生效日期');
   }
+  const printPolicy = String(input.printPolicy || 'OPTIONAL').trim().toUpperCase();
+  if (!INTERNAL_QUALITY_RISK_PRINT_POLICIES.includes(printPolicy as typeof INTERNAL_QUALITY_RISK_PRINT_POLICIES[number])) {
+    throw new InternalQualityRiskError('工单打印策略不正确');
+  }
   return {
     reportNo,
     title,
@@ -129,6 +144,14 @@ export function parseInternalQualityRiskInput(input: Record<string, unknown>): I
     applicableProcess: cleanText(input.applicableProcess, 500),
     effectiveFrom,
     effectiveUntil,
+    warningSummary: longText(input.warningSummary, 2_000),
+    requiredAction: longText(input.requiredAction, 4_000),
+    inspectionMethod: longText(input.inspectionMethod, 2_000),
+    inspectionFrequency: cleanText(input.inspectionFrequency, 500),
+    acceptanceCriteria: longText(input.acceptanceCriteria, 2_000),
+    stopConditions: longText(input.stopConditions, 2_000),
+    escalationContact: cleanText(input.escalationContact, 500),
+    printPolicy: printPolicy as typeof INTERNAL_QUALITY_RISK_PRINT_POLICIES[number],
     issueIds: normalizeQualityRiskRelationIds(input.issueIds),
     workOrderIds: normalizeQualityRiskRelationIds(input.workOrderIds),
     productIds: normalizeQualityRiskRelationIds(input.productIds),
@@ -159,7 +182,12 @@ const workOrderSelect = {
 } as const;
 
 export const internalQualityRiskInclude = Prisma.validator<Prisma.InternalQualityRiskReportInclude>()({
-  currentRevision: true,
+  currentRevision: {
+    include: {
+      products: { select: { drawingLibraryItemId: true } },
+      attachments: { orderBy: { sortOrder: 'asc' }, select: { attachmentId: true, sortOrder: true } },
+    },
+  },
   revisions: { orderBy: { revisionNumber: 'desc' } },
   issues: {
     orderBy: { createdAt: 'asc' },
@@ -190,6 +218,15 @@ export const internalQualityRiskInclude = Prisma.validator<Prisma.InternalQualit
     include: { eightDReport: { select: { id: true, reportNo: true, title: true, status: true, deletedAt: true } } },
   },
   activities: { orderBy: { createdAt: 'desc' }, take: 120, include: { actor: { select: userSelect } } },
+  tasks: {
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    include: { attachments: { where: { deletedAt: null }, select: { id: true } } },
+  },
+  attachments: {
+    where: { deletedAt: null },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    include: { uploadedBy: { select: userSelect } },
+  },
   alerts: {
     orderBy: { createdAt: 'desc' },
     include: {
@@ -274,6 +311,14 @@ export function serializeWorkOrderQualityAlert(alert: WorkOrderQualityAlertRecor
     rootCause: alert.rootCause,
     finalConclusion: alert.finalConclusion,
     controlRequirement: alert.controlRequirement,
+    warningSummary: alert.warningSummary,
+    requiredAction: alert.requiredAction,
+    inspectionMethod: alert.inspectionMethod,
+    inspectionFrequency: alert.inspectionFrequency,
+    acceptanceCriteria: alert.acceptanceCriteria,
+    stopConditions: alert.stopConditions,
+    escalationContact: alert.escalationContact,
+    printPolicy: alert.printPolicy,
     applicableProcess: alert.applicableProcess,
     effectiveFrom: alert.effectiveFrom?.toISOString() || null,
     effectiveUntil: alert.effectiveUntil?.toISOString() || null,
@@ -329,6 +374,18 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
     applicableProcess: report.applicableProcess,
     effectiveFrom: report.effectiveFrom?.toISOString() || null,
     effectiveUntil: report.effectiveUntil?.toISOString() || null,
+    warningState: isExpired(report.effectiveUntil) && report.warningState === 'ACTIVE' ? 'EXPIRED' : report.warningState,
+    warningSummary: report.warningSummary,
+    requiredAction: report.requiredAction,
+    inspectionMethod: report.inspectionMethod,
+    inspectionFrequency: report.inspectionFrequency,
+    acceptanceCriteria: report.acceptanceCriteria,
+    stopConditions: report.stopConditions,
+    escalationContact: report.escalationContact,
+    printPolicy: report.printPolicy,
+    warningPublishedAt: report.warningPublishedAt?.toISOString() || null,
+    warningRevokedAt: report.warningRevokedAt?.toISOString() || null,
+    warningRevokeReason: report.warningRevokeReason,
     version: report.version,
     currentRevisionId: report.currentRevisionId,
     currentRevisionNumber: report.currentRevision?.revisionNumber || null,
@@ -397,6 +454,39 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
       acknowledgementCount: alert.acknowledgements.length,
       archivedAt: alert.archivedAt.toISOString(),
       updatedAt: alert.updatedAt.toISOString(),
+    })),
+    tasks: report.tasks.map(task => ({
+      id: task.id,
+      taskType: task.taskType,
+      title: task.title,
+      department: task.department,
+      ownerName: task.ownerName,
+      requirement: task.requirement,
+      result: task.result,
+      status: task.status,
+      dueAt: task.dueAt?.toISOString() || null,
+      completedAt: task.completedAt?.toISOString() || null,
+      verifiedAt: task.verifiedAt?.toISOString() || null,
+      sortOrder: task.sortOrder,
+      attachmentCount: task.attachments.length,
+      createdAt: task.createdAt.toISOString(),
+      updatedAt: task.updatedAt.toISOString(),
+    })),
+    attachments: report.attachments.map(attachment => ({
+      id: attachment.id,
+      taskId: attachment.taskId,
+      category: attachment.category,
+      originalName: attachment.originalName,
+      displayName: attachment.displayName,
+      mimeType: attachment.mimeType,
+      fileSize: attachment.fileSize,
+      sha256: attachment.sha256,
+      caption: attachment.caption,
+      sortOrder: attachment.sortOrder,
+      uploadedBy: actorLabel(attachment.uploadedBy),
+      createdAt: attachment.createdAt.toISOString(),
+      deletedAt: attachment.deletedAt?.toISOString() || null,
+      contentUrl: `/api/quality/internal-risk-attachments/${attachment.id}/content`,
     })),
     activities: report.activities.map(activity => ({
       id: activity.id,
@@ -470,6 +560,14 @@ function reportData(input: InternalQualityRiskInput) {
     applicableProcess: input.applicableProcess,
     effectiveFrom: input.effectiveFrom,
     effectiveUntil: input.effectiveUntil,
+    warningSummary: input.warningSummary,
+    requiredAction: input.requiredAction,
+    inspectionMethod: input.inspectionMethod,
+    inspectionFrequency: input.inspectionFrequency,
+    acceptanceCriteria: input.acceptanceCriteria,
+    stopConditions: input.stopConditions,
+    escalationContact: input.escalationContact,
+    printPolicy: input.printPolicy,
   };
 }
 
@@ -488,7 +586,11 @@ async function replaceRelations(tx: Prisma.TransactionClient, reportId: string, 
   await Promise.all([
     input.issueIds.length ? tx.internalQualityRiskIssue.createMany({ data: input.issueIds.map(issueId => ({ reportId, issueId })) }) : null,
     input.workOrderIds.length ? tx.internalQualityRiskWorkOrder.createMany({
-      data: input.workOrderIds.map(workOrderId => ({ reportId, workOrderId, source: existingWorkOrderSource.get(workOrderId) || 'DIRECT' })),
+      data: input.workOrderIds.map(workOrderId => ({
+        reportId,
+        workOrderId,
+        source: existingWorkOrderSource.get(workOrderId) === 'PRODUCT_CONFIRMATION' ? 'PRODUCT_CONFIRMATION' : 'DIRECT',
+      })),
     }) : null,
     input.productIds.length ? tx.internalQualityRiskProduct.createMany({ data: input.productIds.map(drawingLibraryItemId => ({ reportId, drawingLibraryItemId })) }) : null,
     input.eightDReportIds.length ? tx.internalQualityRiskEightDReport.createMany({ data: input.eightDReportIds.map(eightDReportId => ({ reportId, eightDReportId })) }) : null,
@@ -580,6 +682,12 @@ export function evaluateInternalQualityRiskReadiness(report: InternalQualityRisk
     ['correctiveAction', 'QUALITY_RISK_CORRECTIVE_REQUIRED', '请填写纠正措施'],
     ['verificationResult', 'QUALITY_RISK_VERIFICATION_REQUIRED', '请填写措施验证结果'],
     ['finalConclusion', 'QUALITY_RISK_CONCLUSION_REQUIRED', '请填写最终结论'],
+    ['warningSummary', 'QUALITY_RISK_WARNING_SUMMARY_REQUIRED', '请填写给现场人员看的异常警示摘要'],
+    ['requiredAction', 'QUALITY_RISK_REQUIRED_ACTION_REQUIRED', '请填写本批工单必须执行的处理要求'],
+    ['inspectionMethod', 'QUALITY_RISK_INSPECTION_METHOD_REQUIRED', '请填写检查方法'],
+    ['inspectionFrequency', 'QUALITY_RISK_INSPECTION_FREQUENCY_REQUIRED', '请填写检查频次'],
+    ['acceptanceCriteria', 'QUALITY_RISK_ACCEPTANCE_CRITERIA_REQUIRED', '请填写合格判定标准'],
+    ['stopConditions', 'QUALITY_RISK_STOP_CONDITIONS_REQUIRED', '请填写停线与升级条件'],
   ];
   required.forEach(([field, code, message]) => { if (!report[field]) blockers.push({ code, message }); });
   if (!report.issues.length) blockers.push({ code: 'QUALITY_RISK_SOURCE_ISSUE_REQUIRED', message: '至少关联一个有效来源质量问题' });
@@ -595,14 +703,17 @@ export function evaluateInternalQualityRiskReadiness(report: InternalQualityRisk
     blockers.push({ code: 'QUALITY_RISK_MAJOR_APPROVAL_REQUIRED', message: `${unapprovedMajor.length} 个重大质量问题尚未完成质量复核与总经理终审` });
   }
   if ((report.severity === 'HIGH' || report.severity === 'CRITICAL')
-    && !report.evidenceSummary && !report.eightDReports.length) {
+    && !report.evidenceSummary && !report.eightDReports.length && !report.attachments.length) {
     blockers.push({ code: 'QUALITY_RISK_EVIDENCE_REQUIRED', message: '高风险/重大风险归档前需填写证据摘要或关联8D档案' });
   }
   const skippedImpacts = (report.workOrders.length - activeWorkOrders.length) + (report.products.length - activeProducts.length);
   if (skippedImpacts) warnings.push({ code: 'QUALITY_RISK_DELETED_IMPACT_SKIPPED', message: `${skippedImpacts} 个已删除的工单或产品不会进入归档预警范围` });
-  if (!activeWorkOrders.length) warnings.push({ code: 'QUALITY_RISK_NO_DIRECT_WORK_ORDER', message: '当前仅关联产品，归档不会直接生成工单预警' });
+  if (!activeWorkOrders.length && activeProducts.length) warnings.push({ code: 'QUALITY_RISK_PRODUCT_AUTO_SCOPE', message: '当前仅关联产品；归档时将自动匹配已有工单，并持续应用到未来同产品工单' });
   if (!report.eightDReports.length) warnings.push({ code: 'QUALITY_RISK_NO_EIGHT_D', message: '尚未关联8D档案，可使用问题附件与证据摘要作为当前依据' });
   if (!report.preventiveAction) warnings.push({ code: 'QUALITY_RISK_PREVENTIVE_EMPTY', message: '建议补充预防再发措施' });
+  const incompleteTasks = report.tasks.filter(task => !['VERIFIED', 'CANCELLED'].includes(task.status));
+  if (incompleteTasks.length) blockers.push({ code: 'QUALITY_RISK_TASKS_INCOMPLETE', message: `${incompleteTasks.length} 项部门协同任务尚未验证关闭` });
+  if (!report.tasks.length) warnings.push({ code: 'QUALITY_RISK_NO_TASKS', message: '当前异常没有建立部门协同任务，请确认确实无需分派' });
   return {
     ready: blockers.length === 0,
     blockers,
@@ -625,7 +736,20 @@ export async function previewInternalQualityRiskArchive(reportId: string): Promi
   });
   if (!report) throw new InternalQualityRiskError('内部重大异常不存在', 404, 'QUALITY_RISK_NOT_FOUND');
   if (report.status === 'ARCHIVED') throw new InternalQualityRiskError('该异常汇总已经归档', 409, 'QUALITY_RISK_ALREADY_ARCHIVED');
-  return { report: serializeInternalQualityRisk(report), readiness: evaluateInternalQualityRiskReadiness(report) };
+  const readiness = evaluateInternalQualityRiskReadiness(report);
+  const productIds = report.products.filter(link => !link.product.deletedAt).map(link => link.drawingLibraryItemId);
+  if (productIds.length) {
+    const productWorkOrders = await prisma.workOrder.findMany({
+      where: { drawingLibraryItemId: { in: productIds }, deletedAt: null },
+      select: { id: true },
+    });
+    readiness.alertCount = new Set([
+      ...report.workOrders.filter(link => !link.workOrder.deletedAt).map(link => link.workOrderId),
+      ...productWorkOrders.map(order => order.id),
+    ]).size;
+    readiness.workOrderCount = readiness.alertCount;
+  }
+  return { report: serializeInternalQualityRisk(report), readiness };
 }
 
 function snapshotFor(report: InternalQualityRiskRecord, revisionNumber: number): Prisma.InputJsonValue {
@@ -656,23 +780,169 @@ function snapshotFor(report: InternalQualityRiskRecord, revisionNumber: number):
     applicableProcess: report.applicableProcess,
     effectiveFrom: report.effectiveFrom?.toISOString() || null,
     effectiveUntil: report.effectiveUntil?.toISOString() || null,
+    warningSummary: report.warningSummary,
+    requiredAction: report.requiredAction,
+    inspectionMethod: report.inspectionMethod,
+    inspectionFrequency: report.inspectionFrequency,
+    acceptanceCriteria: report.acceptanceCriteria,
+    stopConditions: report.stopConditions,
+    escalationContact: report.escalationContact,
+    printPolicy: report.printPolicy,
     issues: report.issues.map(link => ({ id: link.issue.id, code: issueCode(link.issue.sequence), title: link.issue.title, version: link.issue.version })),
     workOrders: report.workOrders.map(link => ({ id: link.workOrder.id, code: link.workOrder.code, businessCode: link.workOrder.businessCode, source: link.source })),
     products: report.products.map(link => ({ id: link.product.id, specification: link.product.specification, customerName: link.product.customerName })),
     eightDReports: report.eightDReports.map(link => ({ id: link.eightDReport.id, reportNo: link.eightDReport.reportNo, title: link.eightDReport.title })),
+    tasks: report.tasks.map(task => ({
+      id: task.id,
+      taskType: task.taskType,
+      title: task.title,
+      department: task.department,
+      ownerName: task.ownerName,
+      requirement: task.requirement,
+      result: task.result,
+      status: task.status,
+      dueAt: task.dueAt?.toISOString() || null,
+      completedAt: task.completedAt?.toISOString() || null,
+      verifiedAt: task.verifiedAt?.toISOString() || null,
+    })),
+    attachments: report.attachments.map(attachment => ({
+      id: attachment.id,
+      taskId: attachment.taskId,
+      category: attachment.category,
+      displayName: attachment.displayName,
+      mimeType: attachment.mimeType,
+      fileSize: attachment.fileSize,
+      sha256: attachment.sha256,
+      caption: attachment.caption,
+    })),
   } as Prisma.InputJsonValue;
 }
 
-function controlRequirement(report: Pick<InternalQualityRiskRecord, 'containmentAction' | 'correctiveAction' | 'preventiveAction'>): string | null {
-  const items = [
-    report.containmentAction ? `临时遏制：${report.containmentAction}` : '',
-    report.correctiveAction ? `纠正措施：${report.correctiveAction}` : '',
-    report.preventiveAction ? `预防再发：${report.preventiveAction}` : '',
-  ].filter(Boolean);
-  return items.length ? items.join('\n') : null;
+type ArchivedWarningSource = Pick<InternalQualityRiskRecord,
+  | 'title'
+  | 'severity'
+  | 'defectPhenomenon'
+  | 'rootCause'
+  | 'finalConclusion'
+  | 'containmentAction'
+  | 'correctiveAction'
+  | 'preventiveAction'
+  | 'warningSummary'
+  | 'requiredAction'
+  | 'inspectionMethod'
+  | 'inspectionFrequency'
+  | 'acceptanceCriteria'
+  | 'stopConditions'
+  | 'escalationContact'
+  | 'printPolicy'
+  | 'applicableProcess'
+  | 'effectiveFrom'
+  | 'effectiveUntil'
+>;
+
+export type ArchivedQualityWarningProjection = {
+  title: string;
+  severity: InternalQualityRiskSeverity;
+  defectPhenomenon: string | null;
+  rootCause: string | null;
+  finalConclusion: string | null;
+  controlRequirement: string | null;
+  warningSummary: string | null;
+  requiredAction: string | null;
+  inspectionMethod: string | null;
+  inspectionFrequency: string | null;
+  acceptanceCriteria: string | null;
+  stopConditions: string | null;
+  escalationContact: string | null;
+  printPolicy: typeof INTERNAL_QUALITY_RISK_PRINT_POLICIES[number];
+  applicableProcess: string | null;
+  effectiveFrom: Date | null;
+  effectiveUntil: Date | null;
+};
+
+function jsonObject(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
-function alertCreateData(report: InternalQualityRiskRecord, revisionId: string, workOrderId: string, source: string) {
+function archivedSnapshotText(snapshot: Record<string, unknown> | null, key: string, fallback: string | null): string | null {
+  if (!snapshot || !Object.prototype.hasOwnProperty.call(snapshot, key)) return fallback;
+  const value = snapshot[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function archivedSnapshotDate(snapshot: Record<string, unknown> | null, key: string, fallback: Date | null): Date | null {
+  if (!snapshot || !Object.prototype.hasOwnProperty.call(snapshot, key)) return fallback;
+  if (snapshot[key] === null || snapshot[key] === '') return null;
+  const date = new Date(String(snapshot[key]));
+  return Number.isNaN(date.getTime()) ? fallback : date;
+}
+
+/**
+ * Resolves worker-facing warning content from an immutable archive snapshot.
+ * Passing no snapshot is reserved for the archive transaction itself, where
+ * the current editable report is being frozen for the first time.
+ */
+export function resolveArchivedQualityWarning(
+  report: ArchivedWarningSource,
+  revisionSnapshot?: unknown,
+): ArchivedQualityWarningProjection {
+  const snapshot = jsonObject(revisionSnapshot);
+  const severityValue = archivedSnapshotText(snapshot, 'severity', report.severity) || report.severity;
+  const severity = INTERNAL_QUALITY_RISK_SEVERITIES.includes(severityValue as InternalQualityRiskSeverity)
+    ? severityValue as InternalQualityRiskSeverity
+    : 'HIGH';
+  const printPolicyValue = archivedSnapshotText(snapshot, 'printPolicy', report.printPolicy) || report.printPolicy;
+  const printPolicy = INTERNAL_QUALITY_RISK_PRINT_POLICIES.includes(printPolicyValue as typeof INTERNAL_QUALITY_RISK_PRINT_POLICIES[number])
+    ? printPolicyValue as typeof INTERNAL_QUALITY_RISK_PRINT_POLICIES[number]
+    : 'OPTIONAL';
+  const containmentAction = archivedSnapshotText(snapshot, 'containmentAction', report.containmentAction);
+  const correctiveAction = archivedSnapshotText(snapshot, 'correctiveAction', report.correctiveAction);
+  const preventiveAction = archivedSnapshotText(snapshot, 'preventiveAction', report.preventiveAction);
+  const controlItems = [
+    containmentAction ? `临时遏制：${containmentAction}` : '',
+    correctiveAction ? `纠正措施：${correctiveAction}` : '',
+    preventiveAction ? `预防再发：${preventiveAction}` : '',
+  ].filter(Boolean);
+  return {
+    title: archivedSnapshotText(snapshot, 'title', report.title) || report.title,
+    severity,
+    defectPhenomenon: archivedSnapshotText(snapshot, 'defectPhenomenon', report.defectPhenomenon),
+    rootCause: archivedSnapshotText(snapshot, 'rootCause', report.rootCause),
+    finalConclusion: archivedSnapshotText(snapshot, 'finalConclusion', report.finalConclusion),
+    controlRequirement: controlItems.length ? controlItems.join('\n') : null,
+    warningSummary: archivedSnapshotText(snapshot, 'warningSummary', report.warningSummary),
+    requiredAction: archivedSnapshotText(snapshot, 'requiredAction', report.requiredAction),
+    inspectionMethod: archivedSnapshotText(snapshot, 'inspectionMethod', report.inspectionMethod),
+    inspectionFrequency: archivedSnapshotText(snapshot, 'inspectionFrequency', report.inspectionFrequency),
+    acceptanceCriteria: archivedSnapshotText(snapshot, 'acceptanceCriteria', report.acceptanceCriteria),
+    stopConditions: archivedSnapshotText(snapshot, 'stopConditions', report.stopConditions),
+    escalationContact: archivedSnapshotText(snapshot, 'escalationContact', report.escalationContact),
+    printPolicy,
+    applicableProcess: archivedSnapshotText(snapshot, 'applicableProcess', report.applicableProcess),
+    effectiveFrom: archivedSnapshotDate(snapshot, 'effectiveFrom', report.effectiveFrom),
+    effectiveUntil: archivedSnapshotDate(snapshot, 'effectiveUntil', report.effectiveUntil),
+  };
+}
+
+export function archivedQualityWarningAttachmentIds(revisionSnapshot: unknown): string[] {
+  const attachments = jsonObject(revisionSnapshot)?.attachments;
+  if (!Array.isArray(attachments)) return [];
+  return attachments
+    .map(item => jsonObject(item)?.id)
+    .filter((id): id is string => typeof id === 'string' && Boolean(id));
+}
+
+function alertCreateData(
+  report: InternalQualityRiskRecord,
+  revisionId: string,
+  workOrderId: string,
+  source: string,
+  revisionSnapshot?: unknown,
+  archivedAtOverride?: Date,
+) {
+  const warning = resolveArchivedQualityWarning(report, revisionSnapshot);
   return {
     id: crypto.randomUUID(),
     reportId: report.id,
@@ -680,16 +950,8 @@ function alertCreateData(report: InternalQualityRiskRecord, revisionId: string, 
     workOrderId,
     state: 'ACTIVE',
     source,
-    severity: report.severity,
-    title: report.title,
-    defectPhenomenon: report.defectPhenomenon,
-    rootCause: report.rootCause,
-    finalConclusion: report.finalConclusion,
-    controlRequirement: controlRequirement(report),
-    applicableProcess: report.applicableProcess,
-    effectiveFrom: report.effectiveFrom,
-    effectiveUntil: report.effectiveUntil,
-    archivedAt: report.archivedAt || new Date(),
+    ...warning,
+    archivedAt: archivedAtOverride || report.archivedAt || new Date(),
   };
 }
 
@@ -703,6 +965,9 @@ export async function archiveInternalQualityRisk(
   const base = await activeRiskForMutation(tx, reportId);
   assertExpectedVersion(base.version, expectedVersion);
   if (base.status === 'ARCHIVED') throw new InternalQualityRiskError('该异常汇总已经归档', 409, 'QUALITY_RISK_ALREADY_ARCHIVED');
+  if (!['PENDING_CLOSE', 'REVISING'].includes(base.status)) {
+    throw new InternalQualityRiskError('异常必须完成部门协同与质量验证，进入待关闭状态后才能归档', 409, 'QUALITY_RISK_WORKFLOW_NOT_READY');
+  }
   const report = await tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
   const readiness = evaluateInternalQualityRiskReadiness(report);
   if (!readiness.ready) {
@@ -713,15 +978,29 @@ export async function archiveInternalQualityRisk(
     where: { reportId, state: { in: [...QUALITY_ALERT_ACTIVE_STATES] } },
     data: { state: 'SUPERSEDED', supersededAt: archivedAt },
   });
+  const revisionSnapshot = snapshotFor(report, readiness.revisionNumber);
   const revision = await tx.internalQualityRiskRevision.create({
     data: {
       reportId,
       revisionNumber: readiness.revisionNumber,
-      snapshot: snapshotFor(report, readiness.revisionNumber),
+      snapshot: revisionSnapshot,
       archivedById: actor.id,
       archivedAt,
     },
   });
+  const productIds = report.products.filter(link => !link.product.deletedAt).map(link => link.drawingLibraryItemId);
+  if (productIds.length) {
+    await tx.internalQualityRiskRevisionProduct.createMany({
+      data: productIds.map(drawingLibraryItemId => ({ revisionId: revision.id, drawingLibraryItemId })),
+      skipDuplicates: true,
+    });
+  }
+  if (report.attachments.length) {
+    await tx.internalQualityRiskRevisionAttachment.createMany({
+      data: report.attachments.map((attachment, sortOrder) => ({ revisionId: revision.id, attachmentId: attachment.id, sortOrder })),
+      skipDuplicates: true,
+    });
+  }
   await tx.internalQualityRiskReport.update({
     where: { id: reportId },
     data: {
@@ -730,14 +1009,35 @@ export async function archiveInternalQualityRisk(
       archivedAt,
       archivedById: actor.id,
       updatedById: actor.id,
+      warningState: 'ACTIVE',
+      warningPublishedAt: archivedAt,
+      warningRevokedAt: null,
+      warningRevokeReason: null,
       version: { increment: 1 },
     },
   });
-  const activeWorkOrders = report.workOrders.filter(link => !link.workOrder.deletedAt);
+  const productWorkOrders = productIds.length ? await tx.workOrder.findMany({
+    where: { drawingLibraryItemId: { in: productIds }, deletedAt: null },
+    select: { id: true },
+  }) : [];
+  const directSource = new Map(report.workOrders
+    .filter(link => !link.workOrder.deletedAt && link.source !== 'PRODUCT_AUTO')
+    .map(link => [link.workOrderId, link.source]));
+  const workOrderSources = new Map<string, string>();
+  directSource.forEach((source, id) => workOrderSources.set(id, source));
+  productWorkOrders.forEach(order => { if (!workOrderSources.has(order.id)) workOrderSources.set(order.id, 'PRODUCT_AUTO'); });
+  const activeWorkOrders = [...workOrderSources.entries()].map(([workOrderId, source]) => ({ workOrderId, source }));
+  const autoLinks = activeWorkOrders.filter(link => link.source === 'PRODUCT_AUTO');
+  if (autoLinks.length) {
+    await tx.internalQualityRiskWorkOrder.createMany({
+      data: autoLinks.map(link => ({ reportId, workOrderId: link.workOrderId, source: 'PRODUCT_AUTO' })),
+      skipDuplicates: true,
+    });
+  }
   if (activeWorkOrders.length) {
     await tx.workOrderQualityAlert.createMany({
       data: activeWorkOrders.map(link => ({
-        ...alertCreateData({ ...report, archivedAt }, revision.id, link.workOrderId, 'DIRECT_ARCHIVE'),
+        ...alertCreateData(report, revision.id, link.workOrderId, link.source === 'PRODUCT_AUTO' ? 'PRODUCT_AUTO_ARCHIVE' : 'DIRECT_ARCHIVE', revisionSnapshot, archivedAt),
         archivedAt,
       })),
     });
@@ -773,6 +1073,159 @@ export async function startInternalQualityRiskRevision(
   return tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
 }
 
+const WORKFLOW_TRANSITIONS: Record<string, readonly string[]> = {
+  DRAFT: ['SUBMITTED'],
+  SUBMITTED: ['CONTAINMENT', 'COLLABORATING'],
+  CONTAINMENT: ['COLLABORATING'],
+  COLLABORATING: ['VERIFYING'],
+  VERIFYING: ['COLLABORATING', 'PENDING_CLOSE'],
+  PENDING_CLOSE: ['COLLABORATING'],
+  REVISING: ['COLLABORATING', 'VERIFYING', 'PENDING_CLOSE'],
+};
+
+export async function transitionInternalQualityRiskWorkflow(
+  tx: Prisma.TransactionClient,
+  reportId: string,
+  expectedVersion: number,
+  targetStatus: string,
+  actor: InternalQualityRiskActor,
+): Promise<InternalQualityRiskRecord> {
+  await lockRiskReport(tx, reportId);
+  const report = await activeRiskForMutation(tx, reportId);
+  assertExpectedVersion(report.version, expectedVersion);
+  const target = String(targetStatus || '').trim().toUpperCase();
+  if (!INTERNAL_QUALITY_RISK_STATUSES.includes(target as InternalQualityRiskStatus) || target === 'ARCHIVED') {
+    throw new InternalQualityRiskError('目标流程状态无效', 400, 'QUALITY_RISK_WORKFLOW_STATUS_INVALID');
+  }
+  if (!WORKFLOW_TRANSITIONS[report.status]?.includes(target)) {
+    throw new InternalQualityRiskError(`当前状态不能流转到 ${target}`, 409, 'QUALITY_RISK_WORKFLOW_TRANSITION_INVALID');
+  }
+  if (target === 'VERIFYING' || target === 'PENDING_CLOSE') {
+    const tasks = await tx.internalQualityRiskTask.findMany({ where: { reportId } });
+    const incomplete = tasks.filter(task => target === 'VERIFYING'
+      ? ['TODO', 'IN_PROGRESS'].includes(task.status)
+      : !['VERIFIED', 'CANCELLED'].includes(task.status));
+    if (incomplete.length) {
+      throw new InternalQualityRiskError(`${incomplete.length} 项协同任务尚未满足当前流转条件`, 409, 'QUALITY_RISK_TASKS_INCOMPLETE');
+    }
+  }
+  await tx.internalQualityRiskReport.update({
+    where: { id: reportId },
+    data: { status: target, updatedById: actor.id, version: { increment: 1 } },
+  });
+  await tx.internalQualityRiskActivity.create({
+    data: activityData(reportId, actor, 'WORKFLOW_TRANSITIONED', `${report.status} → ${target}`, { from: report.status, to: target }),
+  });
+  return tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
+}
+
+type QualityRiskTaskInput = {
+  taskType?: unknown;
+  title?: unknown;
+  department?: unknown;
+  ownerName?: unknown;
+  requirement?: unknown;
+  dueAt?: unknown;
+  sortOrder?: unknown;
+};
+
+export async function createInternalQualityRiskTask(
+  tx: Prisma.TransactionClient,
+  reportId: string,
+  input: QualityRiskTaskInput,
+  actor: InternalQualityRiskActor,
+): Promise<InternalQualityRiskRecord> {
+  await lockRiskReport(tx, reportId);
+  const report = await activeRiskForMutation(tx, reportId);
+  if (report.status === 'ARCHIVED') throw new InternalQualityRiskError('已归档异常不能新增协同任务，请先启动修订', 409, 'QUALITY_RISK_ARCHIVED_IMMUTABLE');
+  const title = cleanText(input.title, 180);
+  const department = cleanText(input.department, 120);
+  if (!title || !department) throw new InternalQualityRiskError('任务标题和责任部门不能为空');
+  const taskType = String(input.taskType || 'COLLABORATION').trim().toUpperCase();
+  if (!INTERNAL_QUALITY_RISK_TASK_TYPES.includes(taskType as typeof INTERNAL_QUALITY_RISK_TASK_TYPES[number])) {
+    throw new InternalQualityRiskError('协同任务类型无效');
+  }
+  const dueAt = parseDate(input.dueAt, '任务截止日期');
+  const task = await tx.internalQualityRiskTask.create({ data: {
+    reportId,
+    taskType,
+    title,
+    department,
+    ownerName: cleanText(input.ownerName, 120),
+    requirement: longText(input.requirement, 4_000),
+    dueAt,
+    sortOrder: Math.max(0, Math.min(Number(input.sortOrder) || 0, 10_000)),
+  } });
+  const nextStatus = ['SUBMITTED', 'CONTAINMENT'].includes(report.status) ? 'COLLABORATING' : report.status;
+  await tx.internalQualityRiskReport.update({ where: { id: reportId }, data: { status: nextStatus, updatedById: actor.id, version: { increment: 1 } } });
+  await tx.internalQualityRiskActivity.create({
+    data: activityData(reportId, actor, 'TASK_CREATED', `建立${department}协同任务：${title}`, { taskId: task.id, taskType, dueAt: dueAt?.toISOString() || null }),
+  });
+  return tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
+}
+
+export async function updateInternalQualityRiskTask(
+  tx: Prisma.TransactionClient,
+  reportId: string,
+  taskId: string,
+  input: Record<string, unknown>,
+  actor: InternalQualityRiskActor,
+): Promise<InternalQualityRiskRecord> {
+  await lockRiskReport(tx, reportId);
+  const report = await activeRiskForMutation(tx, reportId);
+  if (report.status === 'ARCHIVED') throw new InternalQualityRiskError('已归档异常不能修改协同任务，请先启动修订', 409, 'QUALITY_RISK_ARCHIVED_IMMUTABLE');
+  const task = await tx.internalQualityRiskTask.findFirst({ where: { id: taskId, reportId } });
+  if (!task) throw new InternalQualityRiskError('协同任务不存在', 404, 'QUALITY_RISK_TASK_NOT_FOUND');
+  const status = String(input.status || task.status).trim().toUpperCase();
+  if (!INTERNAL_QUALITY_RISK_TASK_STATUSES.includes(status as typeof INTERNAL_QUALITY_RISK_TASK_STATUSES[number])) {
+    throw new InternalQualityRiskError('任务状态无效');
+  }
+  const result = input.result === undefined ? task.result : longText(input.result, 8_000);
+  if ((status === 'COMPLETED' || status === 'VERIFIED') && !result) {
+    throw new InternalQualityRiskError('任务完成或验证时必须填写处理结果');
+  }
+  const now = new Date();
+  await tx.internalQualityRiskTask.update({ where: { id: taskId }, data: {
+    status,
+    result,
+    ownerName: input.ownerName === undefined ? task.ownerName : cleanText(input.ownerName, 120),
+    requirement: input.requirement === undefined ? task.requirement : longText(input.requirement, 4_000),
+    dueAt: input.dueAt === undefined ? task.dueAt : parseDate(input.dueAt, '任务截止日期'),
+    completedAt: ['COMPLETED', 'VERIFIED'].includes(status) ? task.completedAt || now : null,
+    verifiedAt: status === 'VERIFIED' ? now : null,
+  } });
+  await tx.internalQualityRiskReport.update({ where: { id: reportId }, data: { updatedById: actor.id, version: { increment: 1 } } });
+  await tx.internalQualityRiskActivity.create({
+    data: activityData(reportId, actor, 'TASK_UPDATED', `${task.department}任务“${task.title}”更新为 ${status}`, { taskId, from: task.status, to: status }),
+  });
+  return tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
+}
+
+export async function revokeInternalQualityRiskWarning(
+  tx: Prisma.TransactionClient,
+  reportId: string,
+  expectedVersion: number,
+  reason: string,
+  actor: InternalQualityRiskActor,
+): Promise<InternalQualityRiskRecord> {
+  await lockRiskReport(tx, reportId);
+  const report = await activeRiskForMutation(tx, reportId);
+  assertExpectedVersion(report.version, expectedVersion);
+  if (report.warningState !== 'ACTIVE') throw new InternalQualityRiskError('当前没有正在生效的产品警示', 409, 'QUALITY_RISK_WARNING_NOT_ACTIVE');
+  const content = cleanText(reason, 500);
+  if (!content) throw new InternalQualityRiskError('撤销产品警示必须填写原因');
+  const revokedAt = new Date();
+  await tx.workOrderQualityAlert.updateMany({
+    where: { reportId, state: { in: [...QUALITY_ALERT_ACTIVE_STATES] } },
+    data: { state: 'REVOKED', revokedAt, revokeReason: content },
+  });
+  await tx.internalQualityRiskReport.update({ where: { id: reportId }, data: {
+    warningState: 'REVOKED', warningRevokedAt: revokedAt, warningRevokeReason: content, updatedById: actor.id, version: { increment: 1 },
+  } });
+  await tx.internalQualityRiskActivity.create({ data: activityData(reportId, actor, 'WARNING_REVOKED', content) });
+  return tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
+}
+
 export async function softDeleteInternalQualityRisk(
   tx: Prisma.TransactionClient,
   reportId: string,
@@ -785,11 +1238,10 @@ export async function softDeleteInternalQualityRisk(
   assertExpectedVersion(report.version, expectedVersion);
   const content = cleanText(reason, 500);
   if (!content) throw new InternalQualityRiskError('移入回收站必须填写删除原因');
+  if (report.warningState === 'ACTIVE') {
+    throw new InternalQualityRiskError('该异常仍在发布产品警示；请先单独撤销警示并填写撤销原因，再移入回收站', 409, 'QUALITY_RISK_WARNING_WITHDRAW_REQUIRED');
+  }
   const deletedAt = new Date();
-  await tx.workOrderQualityAlert.updateMany({
-    where: { reportId, state: { in: [...QUALITY_ALERT_ACTIVE_STATES] } },
-    data: { state: 'REVOKED', revokedAt: deletedAt, revokeReason: `异常汇总进入回收站：${content}` },
-  });
   await tx.internalQualityRiskActivity.create({
     data: activityData(reportId, actor, 'DELETED', content, { previousStatus: report.status, previousVersion: report.version }),
   });
@@ -815,32 +1267,12 @@ export async function restoreInternalQualityRisk(
   const base = await tx.internalQualityRiskReport.findFirst({ where: { id: reportId, deletedAt: { not: null } } });
   if (!base) throw new InternalQualityRiskError('回收站中未找到该异常汇总', 404, 'QUALITY_RISK_NOT_FOUND');
   assertExpectedVersion(base.version, expectedVersion);
-  const report = await tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
   await tx.internalQualityRiskReport.update({
     where: { id: reportId },
     data: { deletedAt: null, deletedById: null, deleteReason: null, updatedById: actor.id, version: { increment: 1 } },
   });
-  let reactivated = 0;
-  if (report.currentRevisionId) {
-    for (const link of report.workOrders.filter(item => !item.workOrder.deletedAt)) {
-      const existing = await tx.workOrderQualityAlert.findUnique({
-        where: { revisionId_workOrderId: { revisionId: report.currentRevisionId, workOrderId: link.workOrderId } },
-      });
-      if (existing) {
-        await tx.workOrderQualityAlert.update({
-          where: { id: existing.id },
-          data: { state: 'ACTIVE', revokedAt: null, revokeReason: null },
-        });
-      } else {
-        await tx.workOrderQualityAlert.create({
-          data: alertCreateData(report, report.currentRevisionId, link.workOrderId, link.source === 'PRODUCT_CONFIRMATION' ? 'PRODUCT_SUGGESTION_CONFIRMED' : 'DIRECT_ARCHIVE'),
-        });
-      }
-      reactivated += 1;
-    }
-  }
   await tx.internalQualityRiskActivity.create({
-    data: activityData(reportId, actor, 'RESTORED', `从回收站恢复异常汇总${reactivated ? `，重新启用 ${reactivated} 条工单预警` : ''}`),
+    data: activityData(reportId, actor, 'RESTORED', '从回收站恢复异常汇总；已撤销的产品警示不会自动重新发布'),
   });
   return tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
 }
@@ -881,7 +1313,8 @@ export async function loadInternalQualityRisks(input: {
   const status = String(input.status || 'all');
   const deletedMode = status === 'DELETED';
   const and: Prisma.InternalQualityRiskReportWhereInput[] = [];
-  if (status === 'DRAFT' || status === 'REVISING' || status === 'ARCHIVED') and.push({ status });
+  if (status === 'SUBMITTED') and.push({ status: { in: ['SUBMITTED', 'CONTAINMENT'] } });
+  else if (INTERNAL_QUALITY_RISK_STATUSES.includes(status as InternalQualityRiskStatus)) and.push({ status });
   if (status === 'UNLINKED') and.push({ OR: [{ issues: { none: {} } }, { AND: [{ workOrders: { none: {} } }, { products: { none: {} } }] }] });
   if (input.severity && INTERNAL_QUALITY_RISK_SEVERITIES.includes(input.severity as InternalQualityRiskSeverity)) and.push({ severity: input.severity });
   if (input.productId) and.push({ products: { some: { drawingLibraryItemId: input.productId } } });
@@ -914,19 +1347,25 @@ export async function loadInternalQualityRisks(input: {
     ...(and.length ? { AND: and } : {}),
   };
   const limit = Math.min(Math.max(Number(input.limit) || 300, 1), 600);
-  const [records, draft, revising, archived, deleted, critical, activeAlerts, unlinked] = await Promise.all([
+  const [records, total, draft, submitted, collaborating, verifying, pendingClose, revising, archived, deleted, critical, activeAlerts, unlinked, overdueTasks] = await Promise.all([
     prisma.internalQualityRiskReport.findMany({ where, include: internalQualityRiskInclude, orderBy: [{ updatedAt: 'desc' }], take: limit }),
+    prisma.internalQualityRiskReport.count({ where: { deletedAt: null } }),
     prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'DRAFT' } }),
+    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: { in: ['SUBMITTED', 'CONTAINMENT'] } } }),
+    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'COLLABORATING' } }),
+    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'VERIFYING' } }),
+    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'PENDING_CLOSE' } }),
     prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'REVISING' } }),
     prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'ARCHIVED' } }),
     prisma.internalQualityRiskReport.count({ where: { deletedAt: { not: null } } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, severity: 'CRITICAL', status: { in: ['DRAFT', 'REVISING', 'ARCHIVED'] } } }),
+    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, severity: 'CRITICAL' } }),
     prisma.workOrderQualityAlert.count({ where: { state: { in: [...QUALITY_ALERT_ACTIVE_STATES] }, report: { deletedAt: null } } }),
     prisma.internalQualityRiskReport.count({ where: { deletedAt: null, OR: [{ issues: { none: {} } }, { AND: [{ workOrders: { none: {} } }, { products: { none: {} } }] }] } }),
+    prisma.internalQualityRiskTask.count({ where: { report: { deletedAt: null }, status: { in: ['TODO', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } } }),
   ]);
   return {
     reports: records.map(serializeInternalQualityRisk),
-    summary: { total: draft + revising + archived, draft, revising, archived, deleted, critical, activeAlerts, unlinked },
+    summary: { total, draft, submitted, collaborating, verifying, pendingClose, revising, archived, deleted, critical, activeAlerts, unlinked, overdueTasks },
   };
 }
 
@@ -986,11 +1425,72 @@ export async function loadInternalQualityRiskOptions() {
   };
 }
 
+export async function materializeProductQualityWarningsForWorkOrders(workOrderIdsInput: readonly string[]): Promise<number> {
+  const workOrderIds = [...new Set(workOrderIdsInput.filter(Boolean))];
+  if (!workOrderIds.length) return 0;
+  const workOrders = await prisma.workOrder.findMany({
+    where: { id: { in: workOrderIds }, deletedAt: null, drawingLibraryItemId: { not: null } },
+    select: { id: true, drawingLibraryItemId: true },
+  });
+  if (!workOrders.length) return 0;
+  const productIds = [...new Set(workOrders.map(order => order.drawingLibraryItemId).filter((id): id is string => Boolean(id)))];
+  const now = new Date();
+  const reports = await prisma.internalQualityRiskReport.findMany({
+    where: {
+      deletedAt: null,
+      status: { in: ['ARCHIVED', 'REVISING'] },
+      warningState: 'ACTIVE',
+      currentRevisionId: { not: null },
+      currentRevision: { is: { products: { some: { drawingLibraryItemId: { in: productIds } } } } },
+      AND: [
+        { OR: [{ warningRevokedAt: null }, { warningRevokedAt: { gt: now } }] },
+      ],
+    },
+    include: internalQualityRiskInclude,
+  });
+  if (!reports.length) return 0;
+  let created = 0;
+  await prisma.$transaction(async tx => {
+    for (const report of reports) {
+      if (!report.currentRevision) continue;
+      const warning = resolveArchivedQualityWarning(report, report.currentRevision.snapshot);
+      if ((warning.effectiveFrom && warning.effectiveFrom > now) || (warning.effectiveUntil && warning.effectiveUntil < now)) continue;
+      const reportProductIds = new Set(report.currentRevision.products.map(link => link.drawingLibraryItemId));
+      for (const workOrder of workOrders.filter(order => order.drawingLibraryItemId && reportProductIds.has(order.drawingLibraryItemId))) {
+        await tx.internalQualityRiskWorkOrder.upsert({
+          where: { reportId_workOrderId: { reportId: report.id, workOrderId: workOrder.id } },
+          create: { reportId: report.id, workOrderId: workOrder.id, source: 'PRODUCT_AUTO' },
+          update: {},
+        });
+        const existing = await tx.workOrderQualityAlert.findUnique({
+          where: { revisionId_workOrderId: { revisionId: report.currentRevisionId!, workOrderId: workOrder.id } },
+          select: { id: true },
+        });
+        if (!existing) created += 1;
+        await tx.workOrderQualityAlert.upsert({
+          where: { revisionId_workOrderId: { revisionId: report.currentRevisionId!, workOrderId: workOrder.id } },
+          create: alertCreateData(
+            report,
+            report.currentRevisionId!,
+            workOrder.id,
+            'PRODUCT_AUTO_ARCHIVE',
+            report.currentRevision.snapshot,
+            report.currentRevision.archivedAt,
+          ),
+          update: {},
+        });
+      }
+    }
+  });
+  return created;
+}
+
 export async function loadWorkOrderQualityAlerts(workOrderId: string) {
   const workOrder = await prisma.workOrder.findFirst({ where: { id: workOrderId, deletedAt: null }, select: workOrderSelect });
   if (!workOrder) throw new InternalQualityRiskError('工单不存在或已删除', 404, 'QUALITY_RISK_WORK_ORDER_NOT_FOUND');
+  await materializeProductQualityWarningsForWorkOrders([workOrderId]);
   const now = new Date();
-  const [alerts, suggestions] = await Promise.all([
+  const [alerts] = await Promise.all([
     prisma.workOrderQualityAlert.findMany({
       where: {
         workOrderId,
@@ -1004,53 +1504,11 @@ export async function loadWorkOrderQualityAlerts(workOrderId: string) {
       include: workOrderQualityAlertInclude,
       orderBy: [{ severity: 'desc' }, { archivedAt: 'desc' }],
     }),
-    workOrder.drawingLibraryItemId ? prisma.internalQualityRiskReport.findMany({
-      where: {
-        deletedAt: null,
-        status: 'ARCHIVED',
-        currentRevisionId: { not: null },
-        products: { some: { drawingLibraryItemId: workOrder.drawingLibraryItemId } },
-        workOrders: { none: { workOrderId } },
-        AND: [
-          { OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }] },
-          { OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: now } }] },
-        ],
-      },
-      select: {
-        id: true,
-        reportNo: true,
-        title: true,
-        severity: true,
-        defectPhenomenon: true,
-        rootCause: true,
-        finalConclusion: true,
-        applicableProcess: true,
-        effectiveUntil: true,
-        version: true,
-        currentRevision: { select: { revisionNumber: true, archivedAt: true } },
-      },
-      orderBy: [{ severity: 'desc' }, { archivedAt: 'desc' }],
-      take: 20,
-    }) : Promise.resolve([]),
   ]);
   return {
     workOrder: serializeWorkOrder(workOrder),
     alerts: alerts.map(serializeWorkOrderQualityAlert),
-    suggestions: suggestions.map(report => ({
-      id: report.id,
-      reportNo: report.reportNo,
-      title: report.title,
-      severity: report.severity,
-      defectPhenomenon: report.defectPhenomenon,
-      rootCause: report.rootCause,
-      finalConclusion: report.finalConclusion,
-      applicableProcess: report.applicableProcess,
-      effectiveUntil: report.effectiveUntil?.toISOString() || null,
-      version: report.version,
-      revisionNumber: report.currentRevision?.revisionNumber || null,
-      archivedAt: report.currentRevision?.archivedAt.toISOString() || null,
-      reason: '该工单与已归档异常关联同一产品主数据，需要质量人员确认后才同步预警',
-    })),
+    suggestions: [],
   };
 }
 
@@ -1071,7 +1529,6 @@ export async function acknowledgeWorkOrderQualityAlert(
     create: { alertId, acknowledgedById: actor.id, note: content },
     update: { note: content, acknowledgedAt: new Date() },
   });
-  await tx.workOrderQualityAlert.update({ where: { id: alertId }, data: { state: 'ACKNOWLEDGED' } });
   await tx.internalQualityRiskActivity.create({
     data: activityData(alert.reportId, actor, 'ALERT_ACKNOWLEDGED', `已知悉工单质量预警${content ? `：${content}` : ''}`, { alertId, workOrderId }),
   });
@@ -1088,7 +1545,7 @@ export async function confirmProductRiskForWorkOrder(
   await lockRiskReport(tx, reportId);
   const base = await activeRiskForMutation(tx, reportId);
   assertExpectedVersion(base.version, expectedVersion);
-  if (base.status !== 'ARCHIVED' || !base.currentRevisionId) {
+  if (!['ARCHIVED', 'REVISING'].includes(base.status) || !base.currentRevisionId) {
     throw new InternalQualityRiskError('只有已归档异常可同步为产品风险预警', 409, 'QUALITY_RISK_NOT_ARCHIVED');
   }
   const [workOrder, report] = await Promise.all([
@@ -1096,7 +1553,7 @@ export async function confirmProductRiskForWorkOrder(
     tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude }),
   ]);
   if (!workOrder) throw new InternalQualityRiskError('工单不存在或已删除', 404, 'QUALITY_RISK_WORK_ORDER_NOT_FOUND');
-  if (!workOrder.drawingLibraryItemId || !report.products.some(link => link.drawingLibraryItemId === workOrder.drawingLibraryItemId)) {
+  if (!workOrder.drawingLibraryItemId || !report.currentRevision?.products.some(link => link.drawingLibraryItemId === workOrder.drawingLibraryItemId)) {
     throw new InternalQualityRiskError('该工单与异常汇总没有相同的产品主数据', 409, 'QUALITY_RISK_PRODUCT_MISMATCH');
   }
   await tx.internalQualityRiskWorkOrder.upsert({
@@ -1104,22 +1561,37 @@ export async function confirmProductRiskForWorkOrder(
     create: { reportId, workOrderId, source: 'PRODUCT_CONFIRMATION' },
     update: { source: 'PRODUCT_CONFIRMATION' },
   });
-  const alertData = alertCreateData(report, report.currentRevisionId!, workOrderId, 'PRODUCT_SUGGESTION_CONFIRMED');
+  const alertData = alertCreateData(
+    report,
+    report.currentRevisionId!,
+    workOrderId,
+    'PRODUCT_SUGGESTION_CONFIRMED',
+    report.currentRevision.snapshot,
+    report.currentRevision.archivedAt,
+  );
   await tx.workOrderQualityAlert.upsert({
     where: { revisionId_workOrderId: { revisionId: report.currentRevisionId!, workOrderId } },
     create: alertData,
     update: {
       state: 'ACTIVE',
       source: 'PRODUCT_SUGGESTION_CONFIRMED',
-      severity: report.severity,
-      title: report.title,
-      defectPhenomenon: report.defectPhenomenon,
-      rootCause: report.rootCause,
-      finalConclusion: report.finalConclusion,
-      controlRequirement: controlRequirement(report),
-      applicableProcess: report.applicableProcess,
-      effectiveFrom: report.effectiveFrom,
-      effectiveUntil: report.effectiveUntil,
+      severity: alertData.severity,
+      title: alertData.title,
+      defectPhenomenon: alertData.defectPhenomenon,
+      rootCause: alertData.rootCause,
+      finalConclusion: alertData.finalConclusion,
+      controlRequirement: alertData.controlRequirement,
+      warningSummary: alertData.warningSummary,
+      requiredAction: alertData.requiredAction,
+      inspectionMethod: alertData.inspectionMethod,
+      inspectionFrequency: alertData.inspectionFrequency,
+      acceptanceCriteria: alertData.acceptanceCriteria,
+      stopConditions: alertData.stopConditions,
+      escalationContact: alertData.escalationContact,
+      printPolicy: alertData.printPolicy,
+      applicableProcess: alertData.applicableProcess,
+      effectiveFrom: alertData.effectiveFrom,
+      effectiveUntil: alertData.effectiveUntil,
       revokedAt: null,
       revokeReason: null,
     },

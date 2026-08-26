@@ -16,7 +16,7 @@ const dockerfile = readFileSync(resolve(repositoryRoot, 'Dockerfile'), 'utf8');
 const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/docker-image.yml'), 'utf8');
 const appInfo = readFileSync(resolve(repositoryRoot, 'lib/app-info.ts'), 'utf8');
 
-const expectedPackageVersion = '1.34.58';
+const expectedPackageVersion = '1.34.59';
 const expectedImageVersion = `v${expectedPackageVersion}`;
 
 test('release version stays aligned across npm, Docker, and GHCR publishing', () => {
@@ -27,7 +27,7 @@ test('release version stays aligned across npm, Docker, and GHCR publishing', ()
   assert.match(appInfo, new RegExp(`APP_VERSION = process\\.env\\.APP_VERSION\\?\\.trim\\(\\) \\|\\| '${expectedImageVersion}'`));
   assert.match(workflow, /^\s+tags: \["v\*"\]$/m);
   assert.match(workflow, /^\s+type=ref,event=tag$/m);
-  assert.match(workflow, new RegExp(`^\\s+APP_VERSION=${expectedImageVersion}$`, 'm'));
+  assert.match(workflow, /^\s+APP_VERSION=\$\{\{ github\.ref_name \}\}$/m);
   assert.match(workflow, /^\s+- name: Verify release tag matches package version$/m);
 });
 
@@ -38,10 +38,7 @@ test('GHCR images retain immutable traceability tags and OCI identity labels', (
   assert.match(workflow, /^\s+cancel-in-progress: true$/m);
   assert.match(workflow, /^\s+if: startsWith\(github\.ref, 'refs\/tags\/v'\)$/m);
   assert.match(workflow, /^\s+org\.opencontainers\.image\.title=hongmeng-workorder-resource$/m);
-  assert.match(workflow, new RegExp(
-    `^\\s+org\\.opencontainers\\.image\\.version=${expectedImageVersion}$`,
-    'm',
-  ));
+  assert.match(workflow, /^\s+org\.opencontainers\.image\.version=\$\{\{ github\.ref_name \}\}$/m);
   assert.match(workflow, /^\s+org\.opencontainers\.image\.revision=\$\{\{ github\.sha \}\}$/m);
   assert.match(
     workflow,

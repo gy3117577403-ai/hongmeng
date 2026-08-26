@@ -125,3 +125,48 @@ test('duplex packet pairs two traveler pages and two SOP pages without an extra 
   assert.equal(result.pageCount, 4);
   assert.equal(packet.getPageCount(), 4);
 });
+
+test('traveler and quality warning packet keeps the traveler first and emits every warning page', async () => {
+  const result = await buildWorkOrderPrintPacket({
+    records: [{
+      printId: 'print-warning-1',
+      mode: 'TRAVELER_QUALITY_WARNING',
+      items: [
+        { material: 'TRAVELER', copies: 1, fileId: null },
+        { material: 'QUALITY_WARNING', copies: 1, fileId: null },
+      ],
+    }],
+    target: 'traveler_warning',
+    travelerImages: new Map([['print-warning-1', [ONE_PIXEL_PNG]]]),
+    warningImages: new Map([['print-warning-1', [ONE_PIXEL_PNG, ONE_PIXEL_PNG]]]),
+  });
+  const packet = await PDFDocument.load(result.bytes);
+  assert.equal(result.pageCount, 3);
+  assert.equal(packet.getPageCount(), 3);
+  assert.equal(packet.getTitle(), '生产流转单与异常警示');
+  for (const page of packet.getPages()) {
+    assert.ok(Math.abs(page.getWidth() - 595.28) < 0.1);
+    assert.ok(Math.abs(page.getHeight() - 841.89) < 0.1);
+  }
+});
+
+test('traveler and quality warning packet fails closed when warning evidence is missing', async () => {
+  await assert.rejects(
+    buildWorkOrderPrintPacket({
+      records: [{
+        printId: 'print-warning-missing',
+        mode: 'TRAVELER_QUALITY_WARNING',
+        items: [
+          { material: 'TRAVELER', copies: 1, fileId: null },
+          { material: 'QUALITY_WARNING', copies: 1, fileId: null },
+        ],
+      }],
+      target: 'traveler_warning',
+      travelerImages: new Map([['print-warning-missing', [ONE_PIXEL_PNG]]]),
+    }),
+    (error: unknown) => error instanceof Error
+      && error.name === 'WorkOrderPrintPacketError'
+      && 'code' in error
+      && error.code === 'PRINT_PACKET_WARNING_MISSING',
+  );
+});

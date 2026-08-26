@@ -17,10 +17,12 @@ import {
   planningSopRequiresReleaseConfirmation,
 } from '@/lib/planning-sop';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
+import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
 import type {
   ProductionPlanBatchDTO,
   ProductionPlanChangeDTO,
   ProductionPlanOrderDTO,
+  InternalQualityRiskSeverity,
   ProductionPlanOrderStatus,
   ProductionPlanPriority,
   ProductionPlanReleaseState,
@@ -60,6 +62,21 @@ export const productionPlanOrderInclude = {
           remark: true,
           deletedAt: true,
           updatedAt: true,
+        },
+      },
+      qualityRiskRevisionLinks: {
+        where: {
+          revision: {
+            currentFor: { is: { deletedAt: null, status: { in: ['ARCHIVED', 'REVISING'] }, warningState: 'ACTIVE' } },
+          },
+        },
+        select: {
+          revision: {
+            select: {
+              snapshot: true,
+              currentFor: true,
+            },
+          },
         },
       },
     },
@@ -1362,6 +1379,20 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
   const profile = activeDrawingLibraryItem?.productTimeProfiles[0] || null;
   const currentUnitMilliseconds = profile ? productTimeTotalMilliseconds(profile.entries) : null;
   const effectiveUnitMilliseconds = currentUnitMilliseconds || order.planningUnitMilliseconds;
+  const now = new Date();
+  const qualityWarnings = (activeDrawingLibraryItem?.qualityRiskRevisionLinks || []).flatMap(link => {
+    if (!link.revision.currentFor) return [];
+    const warning = resolveArchivedQualityWarning(link.revision.currentFor, link.revision.snapshot);
+    return (!warning.effectiveFrom || warning.effectiveFrom <= now) && (!warning.effectiveUntil || warning.effectiveUntil >= now)
+      ? [warning]
+      : [];
+  });
+  const severityRank: Record<InternalQualityRiskSeverity, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+  let highestQualityWarningSeverity: InternalQualityRiskSeverity | null = null;
+  for (const warning of qualityWarnings) {
+    const current = warning.severity as InternalQualityRiskSeverity;
+    if (!highestQualityWarningSeverity || severityRank[current] > severityRank[highestQualityWarningSeverity]) highestQualityWarningSeverity = current;
+  }
   return {
     id: order.id,
     sourceOrderNo: order.sourceOrderNo,
@@ -1377,6 +1408,9 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     sopDrawingStatus: resources.sopDrawingStatus,
     sopRemark: resources.sopRemark,
     sopMetadataUpdatedAt: resources.sopMetadataUpdatedAt,
+    qualityWarningCount: qualityWarnings.length,
+    highestQualityWarningSeverity,
+    qualityWarningPrintRequired: qualityWarnings.some(warning => warning.printPolicy === 'REQUIRED'),
     orderQuantity: order.orderQuantity,
     planningUnitMilliseconds: order.planningUnitMilliseconds,
     effectiveUnitMilliseconds,

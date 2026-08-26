@@ -827,9 +827,13 @@ export type EightDReportOptionsDTO = {
   issues: EightDReportIssueDTO[];
 };
 
-export type InternalQualityRiskStatus = 'DRAFT' | 'REVISING' | 'ARCHIVED';
+export type InternalQualityRiskStatus = 'DRAFT' | 'SUBMITTED' | 'CONTAINMENT' | 'COLLABORATING' | 'VERIFYING' | 'PENDING_CLOSE' | 'REVISING' | 'ARCHIVED';
 export type InternalQualityRiskSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 export type WorkOrderQualityAlertState = 'ACTIVE' | 'ACKNOWLEDGED' | 'SUPERSEDED' | 'REVOKED' | 'EXPIRED';
+export type InternalQualityRiskWarningState = 'DRAFT' | 'ACTIVE' | 'SUPERSEDED' | 'EXPIRED' | 'REVOKED';
+export type InternalQualityRiskPrintPolicy = 'REQUIRED' | 'OPTIONAL' | 'SYSTEM_ONLY';
+export type InternalQualityRiskTaskStatus = 'TODO' | 'IN_PROGRESS' | 'COMPLETED' | 'VERIFIED' | 'CANCELLED';
+export type InternalQualityRiskTaskType = 'CONTAINMENT' | 'CAUSE' | 'ACTION' | 'VERIFICATION' | 'COLLABORATION';
 
 export type InternalQualityRiskWorkOrderDTO = {
   id: string;
@@ -843,7 +847,7 @@ export type InternalQualityRiskWorkOrderDTO = {
   drawingLibraryItemId?: string | null;
   planActive: boolean;
   deletedAt?: string | null;
-  source?: 'DIRECT' | 'PRODUCT_CONFIRMATION';
+  source?: 'DIRECT' | 'PRODUCT_CONFIRMATION' | 'PRODUCT_AUTO';
 };
 
 export type InternalQualityRiskProductDTO = EightDReportProductDTO & {
@@ -890,7 +894,7 @@ export type InternalQualityRiskAlertSummaryDTO = {
   revisionNumber: number;
   workOrder: InternalQualityRiskWorkOrderDTO;
   state: WorkOrderQualityAlertState;
-  source: 'DIRECT_ARCHIVE' | 'PRODUCT_SUGGESTION_CONFIRMED';
+  source: 'DIRECT_ARCHIVE' | 'PRODUCT_SUGGESTION_CONFIRMED' | 'PRODUCT_AUTO_ARCHIVE';
   severity: InternalQualityRiskSeverity;
   acknowledgementCount: number;
   archivedAt: string;
@@ -904,6 +908,41 @@ export type InternalQualityRiskActivityDTO = {
   actorName: string;
   detail?: Record<string, unknown> | null;
   createdAt: string;
+};
+
+export type InternalQualityRiskTaskDTO = {
+  id: string;
+  taskType: InternalQualityRiskTaskType;
+  title: string;
+  department: string;
+  ownerName?: string | null;
+  requirement?: string | null;
+  result?: string | null;
+  status: InternalQualityRiskTaskStatus;
+  dueAt?: string | null;
+  completedAt?: string | null;
+  verifiedAt?: string | null;
+  sortOrder: number;
+  attachmentCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type InternalQualityRiskAttachmentDTO = {
+  id: string;
+  taskId?: string | null;
+  category: 'DEFECT' | 'CAUSE' | 'ACTION' | 'VERIFICATION' | 'SOLUTION' | 'EVIDENCE';
+  originalName: string;
+  displayName: string;
+  mimeType: string;
+  fileSize: number;
+  sha256: string;
+  caption?: string | null;
+  sortOrder: number;
+  uploadedBy?: string | null;
+  createdAt: string;
+  deletedAt?: string | null;
+  contentUrl: string;
 };
 
 export type InternalQualityRiskDTO = {
@@ -934,6 +973,18 @@ export type InternalQualityRiskDTO = {
   applicableProcess?: string | null;
   effectiveFrom?: string | null;
   effectiveUntil?: string | null;
+  warningState: InternalQualityRiskWarningState;
+  warningSummary?: string | null;
+  requiredAction?: string | null;
+  inspectionMethod?: string | null;
+  inspectionFrequency?: string | null;
+  acceptanceCriteria?: string | null;
+  stopConditions?: string | null;
+  escalationContact?: string | null;
+  printPolicy: InternalQualityRiskPrintPolicy;
+  warningPublishedAt?: string | null;
+  warningRevokedAt?: string | null;
+  warningRevokeReason?: string | null;
   version: number;
   currentRevisionId?: string | null;
   currentRevisionNumber?: number | null;
@@ -954,6 +1005,8 @@ export type InternalQualityRiskDTO = {
   eightDReports: InternalQualityRiskEightDDTO[];
   revisions: InternalQualityRiskRevisionDTO[];
   alerts: InternalQualityRiskAlertSummaryDTO[];
+  tasks: InternalQualityRiskTaskDTO[];
+  attachments: InternalQualityRiskAttachmentDTO[];
   activities: InternalQualityRiskActivityDTO[];
 };
 
@@ -966,6 +1019,11 @@ export type InternalQualityRiskSummaryDTO = {
   critical: number;
   activeAlerts: number;
   unlinked: number;
+  submitted: number;
+  collaborating: number;
+  verifying: number;
+  pendingClose: number;
+  overdueTasks: number;
 };
 
 export type InternalQualityRiskOptionIssueDTO = Omit<InternalQualityRiskIssueDTO, 'majorApproval' | 'deletedAt'> & {
@@ -1018,13 +1076,21 @@ export type WorkOrderQualityAlertDTO = {
   workOrderId: string;
   state: WorkOrderQualityAlertState;
   persistedState: Exclude<WorkOrderQualityAlertState, 'EXPIRED'>;
-  source: 'DIRECT_ARCHIVE' | 'PRODUCT_SUGGESTION_CONFIRMED';
+  source: 'DIRECT_ARCHIVE' | 'PRODUCT_SUGGESTION_CONFIRMED' | 'PRODUCT_AUTO_ARCHIVE';
   severity: InternalQualityRiskSeverity;
   title: string;
   defectPhenomenon?: string | null;
   rootCause?: string | null;
   finalConclusion?: string | null;
   controlRequirement?: string | null;
+  warningSummary?: string | null;
+  requiredAction?: string | null;
+  inspectionMethod?: string | null;
+  inspectionFrequency?: string | null;
+  acceptanceCriteria?: string | null;
+  stopConditions?: string | null;
+  escalationContact?: string | null;
+  printPolicy: InternalQualityRiskPrintPolicy;
   applicableProcess?: string | null;
   effectiveFrom?: string | null;
   effectiveUntil?: string | null;
@@ -1400,6 +1466,9 @@ export type ProductionPlanProductOptionDTO = {
   recommendedSalesperson?: string | null;
   publishedProductTimeVersion?: number | null;
   unitMilliseconds?: number | null;
+  qualityWarningCount?: number;
+  highestQualityWarningSeverity?: InternalQualityRiskSeverity | null;
+  qualityWarningPrintRequired?: boolean;
 };
 
 export type ProductionPlanBatchDTO = {
@@ -1427,8 +1496,8 @@ export type ProductionPlanBatchDTO = {
   currentProcessName?: string | null;
   currentProcessStartedAt?: string | null;
   travelerPrintStatus?: 'not_printed' | 'generated' | 'partial' | 'printed' | 'needs_reprint' | 'legacy_unverified';
-  travelerPrintMode?: 'TRAVELER_ONLY' | 'TRAVELER_SOP_DUPLEX' | 'TRAVELER_SOP_SEPARATE' | 'DRAWING_SOP_TRAVELER_SEPARATE' | 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' | 'CUSTOM' | null;
-  travelerPrintMaterials?: Partial<Record<'TRAVELER' | 'SOP' | 'DRAWING', {
+  travelerPrintMode?: 'TRAVELER_ONLY' | 'TRAVELER_QUALITY_WARNING' | 'TRAVELER_SOP_DUPLEX' | 'TRAVELER_SOP_SEPARATE' | 'DRAWING_SOP_TRAVELER_SEPARATE' | 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' | 'CUSTOM' | null;
+  travelerPrintMaterials?: Partial<Record<'TRAVELER' | 'QUALITY_WARNING' | 'SOP' | 'DRAWING', {
     status: 'generated' | 'printed' | 'needs_reprint' | 'legacy_unverified';
     copies: number;
     confirmedAt: string | null;
@@ -1457,6 +1526,9 @@ export type ProductionPlanOrderDTO = {
   sopDrawingStatus?: SopDrawingStatusDTO | null;
   sopRemark?: string | null;
   sopMetadataUpdatedAt?: string | null;
+  qualityWarningCount?: number;
+  highestQualityWarningSeverity?: InternalQualityRiskSeverity | null;
+  qualityWarningPrintRequired?: boolean;
   orderQuantity: number;
   planningUnitMilliseconds?: number | null;
   effectiveUnitMilliseconds?: number | null;

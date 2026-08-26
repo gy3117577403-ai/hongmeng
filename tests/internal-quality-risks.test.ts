@@ -8,12 +8,17 @@ import {
   normalizeQualityRiskRelationIds,
   parseInternalQualityRiskInput,
   qualityRiskPurgeEligibleAt,
+  resolveArchivedQualityWarning,
   type InternalQualityRiskRecord,
 } from '../lib/internal-quality-risks';
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 const migration = readFileSync(
   resolve(repositoryRoot, 'prisma/migrations/202608260002_internal_quality_risk_management/migration.sql'),
+  'utf8',
+);
+const collaborationMigration = readFileSync(
+  resolve(repositoryRoot, 'prisma/migrations/202608270001_quality_anomaly_collaboration/migration.sql'),
   'utf8',
 );
 const schema = readFileSync(resolve(repositoryRoot, 'prisma/schema.prisma'), 'utf8');
@@ -32,12 +37,22 @@ function readinessRecord(overrides: Record<string, unknown> = {}): InternalQuali
     finalConclusion: '措施有效，可按控制要求恢复生产',
     evidenceSummary: '拉脱力记录和现场照片已核对',
     preventiveAction: '换型后强制复核参数',
+    warningSummary: '同类产品压接高度曾发生超差，作业前必须核验参数',
+    requiredAction: '首件确认后方可开工；每小时抽检并留存记录',
+    inspectionMethod: '使用数显千分尺测量压接高度',
+    inspectionFrequency: '首件 + 每小时 5 件',
+    acceptanceCriteria: '压接高度 1.80±0.05mm',
+    stopConditions: '出现 1 件不合格立即停线并升级质量部',
+    escalationContact: '质量部',
+    printPolicy: 'REQUIRED',
     severity: 'HIGH',
     issues: [{ issue: { deletedAt: null, isMajorQuality: false, majorApprovals: [] } }],
     workOrders: [{ workOrder: { deletedAt: null } }],
     products: [],
     eightDReports: [],
     revisions: [],
+    attachments: [],
+    tasks: [],
     ...overrides,
   } as unknown as InternalQualityRiskRecord;
 }
@@ -134,21 +149,54 @@ test('migration persists report associations, immutable revisions and work-order
   assert.match(migration, /quality_risk_reports_effective_range_check/);
   assert.match(schema, /model InternalQualityRiskRevision[\s\S]*?snapshot\s+Json/);
   assert.match(schema, /model WorkOrderQualityAlertAcknowledgement[\s\S]*?@@unique\(\[alertId, acknowledgedById\]\)/);
+  assert.match(collaborationMigration, /CREATE TABLE "quality_risk_tasks"/);
+  assert.match(collaborationMigration, /CREATE TABLE "quality_risk_attachments"/);
+  assert.match(collaborationMigration, /CREATE TABLE "quality_risk_revision_products"/);
+  assert.match(collaborationMigration, /CREATE TABLE "quality_risk_revision_attachments"/);
+  assert.match(schema, /model InternalQualityRiskRevisionProduct[\s\S]*?@@id\(\[revisionId, drawingLibraryItemId\]\)/);
+  assert.match(schema, /model InternalQualityRiskRevisionAttachment[\s\S]*?@@id\(\[revisionId, attachmentId\]\)/);
+});
+
+test('published warning content resolves from the immutable revision snapshot while a new draft is edited', () => {
+  const source = readinessRecord({
+    title: '修订稿标题',
+    severity: 'LOW',
+    warningSummary: '修订稿尚未发布',
+    printPolicy: 'SYSTEM_ONLY',
+  });
+  const published = resolveArchivedQualityWarning(source, {
+    title: '已发布 R1 标题',
+    severity: 'CRITICAL',
+    warningSummary: '已发布现场警示',
+    requiredAction: '首件确认并每小时抽检',
+    containmentAction: '隔离旧批次',
+    correctiveAction: '锁定设备参数',
+    preventiveAction: '换型双人复核',
+    printPolicy: 'REQUIRED',
+    effectiveFrom: '2026-08-27T00:00:00.000Z',
+    effectiveUntil: null,
+  });
+  assert.equal(published.title, '已发布 R1 标题');
+  assert.equal(published.severity, 'CRITICAL');
+  assert.equal(published.warningSummary, '已发布现场警示');
+  assert.equal(published.printPolicy, 'REQUIRED');
+  assert.match(published.controlRequirement || '', /隔离旧批次/);
+  assert.equal(published.effectiveUntil, null);
 });
 
 test('workbench exposes administrator-only recycle interactions and production warning closure', () => {
-  assert.match(workbench, /isAdmin && <button[^>]*title="移入回收站"/);
+  assert.match(workbench, /isAdmin && <button[^>]*disabled=\{saving \|\| selected\.warningState === 'ACTIVE'\}/);
+  assert.match(workbench, /撤销产品警示后才可回收异常/);
   assert.match(workbench, /管理员回收规则/);
   assert.match(workbench, /满30天且无活动预警后才可彻底删除/);
   assert.match(workbench, /请输入完整编号确认/);
-  assert.match(workbench, /移入回收站并撤销预警/);
-  assert.match(workbench, /恢复时会按有效归档版本重建/);
+  assert.match(workbench, /确认撤销警示/);
+  assert.match(workbench, /已撤销的警示不会因恢复自动重发/);
   assert.match(production, /质量预警 \$\{qualityAlertCount\}/);
   assert.match(production, /确认知悉/);
-  assert.match(production, /同产品历史风险待确认/);
+  assert.match(workbench, /同产品新工单首次进入计划或执行时会自动物化警示/);
   assert.match(production, /不会自动暂停生产/);
-  assert.match(production, /aria-label="确认同步质量预警"/);
-  assert.match(production, /确认并同步/);
+  assert.match(production, /工单质量问题预警/);
   assert.doesNotMatch(production, /window\.confirm/);
 });
 

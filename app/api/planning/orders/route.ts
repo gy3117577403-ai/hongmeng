@@ -18,11 +18,13 @@ import {
   serializeProductionPlanOrder,
 } from '@/lib/production-planning';
 import type {
+  InternalQualityRiskSeverity,
   ProductionPlanProductOptionDTO,
   ProductionPlanningSummaryDTO,
   ProductionPlanningWeekDTO,
 } from '@/types';
 import { resolveProductionEntityScope } from '@/lib/production-access-scope';
+import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -170,6 +172,14 @@ export async function GET(req: NextRequest) {
             take: 1,
             select: { version: true, entries: { select: { unitMilliseconds: true } } },
           },
+          qualityRiskRevisionLinks: {
+            where: {
+              revision: {
+                currentFor: { is: { deletedAt: null, status: { in: ['ARCHIVED', 'REVISING'] }, warningState: 'ACTIVE' } },
+              },
+            },
+            select: { revision: { select: { snapshot: true, currentFor: true } } },
+          },
         },
         orderBy: [{ customerName: 'asc' }, { specification: 'asc' }],
         take: 1200,
@@ -190,6 +200,20 @@ export async function GET(req: NextRequest) {
     const productOptions: ProductionPlanProductOptionDTO[] = drawingProducts.map(item => {
       const profile = item.productTimeProfiles[0] || null;
       const sopDocument = item.sopDocument && !item.sopDocument.deletedAt ? item.sopDocument : null;
+      const now = new Date();
+      const qualityWarnings = item.qualityRiskRevisionLinks.flatMap(link => {
+        if (!link.revision.currentFor) return [];
+        const warning = resolveArchivedQualityWarning(link.revision.currentFor, link.revision.snapshot);
+        return (!warning.effectiveFrom || warning.effectiveFrom <= now) && (!warning.effectiveUntil || warning.effectiveUntil >= now)
+          ? [warning]
+          : [];
+      });
+      const severityRank: Record<InternalQualityRiskSeverity, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+      let highestQualityWarningSeverity: InternalQualityRiskSeverity | null = null;
+      for (const warning of qualityWarnings) {
+        const current = warning.severity as InternalQualityRiskSeverity;
+        if (!highestQualityWarningSeverity || severityRank[current] > severityRank[highestQualityWarningSeverity]) highestQualityWarningSeverity = current;
+      }
       return {
         id: item.id,
         customerName: item.customerName,
@@ -206,6 +230,9 @@ export async function GET(req: NextRequest) {
         recommendedSalesperson: salespersonByCustomer.get(item.customerName) || null,
         publishedProductTimeVersion: profile?.version || null,
         unitMilliseconds: profile ? productTimeTotalMilliseconds(profile.entries) : null,
+        qualityWarningCount: qualityWarnings.length,
+        highestQualityWarningSeverity,
+        qualityWarningPrintRequired: qualityWarnings.some(warning => warning.printPolicy === 'REQUIRED'),
       };
     });
     return NextResponse.json({

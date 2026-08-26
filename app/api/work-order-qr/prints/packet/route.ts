@@ -29,13 +29,15 @@ const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
 const MAX_SOURCE_TOTAL_BYTES = 160 * 1024 * 1024;
 
 function packetTarget(value: FormDataEntryValue | null): WorkOrderPrintPacketTarget {
-  if (value === 'all' || value === 'traveler' || value === 'sop') return value;
+  if (value === 'all' || value === 'traveler' || value === 'warning' || value === 'traveler_warning' || value === 'sop') return value;
   throw new WorkOrderPrintPacketError('打印资料类型无效', 400, 'PRINT_PACKET_TARGET_INVALID');
 }
 
 function packetFilename(target: WorkOrderPrintPacketTarget) {
   if (target === 'all') return 'production-traveler-sop.pdf';
   if (target === 'traveler') return 'production-traveler.pdf';
+  if (target === 'warning') return 'production-quality-warning.pdf';
+  if (target === 'traveler_warning') return 'production-traveler-quality-warning.pdf';
   return 'production-sop.pdf';
 }
 
@@ -52,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     const travelerImages = new Map<string, readonly Uint8Array[]>();
     let travelerImageTotal = 0;
-    if (target === 'all' || target === 'traveler') {
+    if (target === 'all' || target === 'traveler' || target === 'traveler_warning') {
       for (const record of records) {
         if (!record.items.some(item => item.material === 'TRAVELER')) continue;
         const manifestEntry = form.get(`travelerManifest:${record.printId}`);
@@ -94,6 +96,28 @@ export async function POST(req: NextRequest) {
           pageImages.push(new Uint8Array(await entry.arrayBuffer()));
         }
         travelerImages.set(record.printId, pageImages);
+      }
+    }
+
+    const warningImages = new Map<string, readonly Uint8Array[]>();
+    let warningImageTotal = 0;
+    if (target === 'warning' || target === 'traveler_warning') {
+      for (const record of records) {
+        if (!record.items.some(item => item.material === 'QUALITY_WARNING')) continue;
+        const expectedPages = record.snapshot.qualityWarnings.length;
+        if (!expectedPages) throw new WorkOrderPrintPacketError('异常警示打印快照为空，请重新生成打印任务', 410, 'PRINT_PACKET_WARNING_SNAPSHOT_EMPTY');
+        const pages: Uint8Array[] = [];
+        for (let pageIndex = 0; pageIndex < expectedPages; pageIndex += 1) {
+          const entry = form.get(`warningImage:${record.printId}:${pageIndex + 1}`);
+          if (!(entry instanceof File) || !entry.size || (entry.type && entry.type !== 'image/png')) {
+            throw new WorkOrderPrintPacketError(`异常警示第 ${pageIndex + 1} 页缺失或格式无效`, 400, 'PRINT_PACKET_WARNING_PAGE_MISSING');
+          }
+          if (entry.size > MAX_TRAVELER_IMAGE_BYTES) throw new WorkOrderPrintPacketError(`异常警示第 ${pageIndex + 1} 页超过 8MB`, 413, 'PRINT_PACKET_WARNING_TOO_LARGE');
+          warningImageTotal += entry.size;
+          if (warningImageTotal > MAX_TRAVELER_IMAGE_TOTAL_BYTES) throw new WorkOrderPrintPacketError('本次异常警示页面总量过大，请分批打印', 413, 'PRINT_PACKET_WARNING_BATCH_TOO_LARGE');
+          pages.push(new Uint8Array(await entry.arrayBuffer()));
+        }
+        warningImages.set(record.printId, pages);
       }
     }
 
@@ -146,7 +170,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const packet = await buildWorkOrderPrintPacket({ records, target, travelerImages, sourceFiles });
+    const packet = await buildWorkOrderPrintPacket({ records, target, travelerImages, warningImages, sourceFiles });
     return new Response(Buffer.from(packet.bytes), {
       headers: {
         'Content-Type': 'application/pdf',

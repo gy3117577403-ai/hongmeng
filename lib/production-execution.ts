@@ -20,6 +20,7 @@ import {
 } from '@/lib/production-carryovers';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
+import { materializeProductQualityWarningsForWorkOrders } from '@/lib/internal-quality-risks';
 import {
   productionArrangementCrossesWeek,
   resolveProductionArrangementProgress,
@@ -1254,6 +1255,7 @@ export async function loadProductionExecution(input: {
     ? (page - 1) * pageSize
     : Math.min(Math.max(input.offset, 0), total);
   const pageOrderIds = filtered.slice(offset, offset + pageSize).map(order => order.id);
+  if (pageOrderIds.length) await materializeProductQualityWarningsForWorkOrders(pageOrderIds);
   const pageOrders = pageOrderIds.length
     ? await prisma.workOrder.findMany({
       where: { id: { in: pageOrderIds }, deletedAt: null },

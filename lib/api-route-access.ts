@@ -74,6 +74,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/material-library', anyOf: ['QUALITY'] },
 
   { prefix: '/api/quality/internal-risks', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'], readOnlyModules: ['ISSUE_MANAGEMENT'] },
+  { prefix: '/api/quality/internal-risk-attachments', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'], readOnlyModules: ['ISSUE_MANAGEMENT'] },
   { prefix: '/api/quality/8d', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/api/issues/from-production-alert', anyOf: ['QUALITY'] },
   { prefix: '/api/issues/detected', anyOf: ['QUALITY'] },

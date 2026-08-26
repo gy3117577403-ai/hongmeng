@@ -8,7 +8,7 @@ import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCom
 import { QualityModuleTabs } from '@/components/QualityModuleTabs';
 import type { CurrentUserDTO, EightDReportSummaryDTO, InternalQualityRiskSummaryDTO } from '@/types';
 
-const emptyRisk: InternalQualityRiskSummaryDTO = { total: 0, draft: 0, revising: 0, archived: 0, deleted: 0, critical: 0, activeAlerts: 0, unlinked: 0 };
+const emptyRisk: InternalQualityRiskSummaryDTO = { total: 0, draft: 0, submitted: 0, collaborating: 0, verifying: 0, pendingClose: 0, revising: 0, archived: 0, deleted: 0, critical: 0, activeAlerts: 0, unlinked: 0, overdueTasks: 0 };
 const emptyEightD: EightDReportSummaryDTO = { total: 0, active: 0, archived: 0, deleted: 0, productCount: 0, issueCount: 0, unlinked: 0 };
 
 export default function QualityManagementShell({ user }: { user: CurrentUserDTO }) {

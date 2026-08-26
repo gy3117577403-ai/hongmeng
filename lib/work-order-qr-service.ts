@@ -12,6 +12,7 @@ import { printableSourceFormat, type ImagePrintPaperSize } from '@/lib/printable
 import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
 import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
+import { materializeProductQualityWarningsForWorkOrders } from '@/lib/internal-quality-risks';
 import {
   processSupplementActualRequiredQty,
   processSupplementRemainingQty,
@@ -63,6 +64,7 @@ export type WorkOrderTravelerSnapshot = {
     drawingImagePaperSize: ImagePrintPaperSize;
     imageFit: 'contain';
   };
+  qualityWarnings: WorkOrderQualityWarningSnapshot[];
   steps: Array<{
     id: string;
     position: number;
@@ -104,6 +106,38 @@ export type WorkOrderTravelerSnapshot = {
       status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
       version: number;
     } | null;
+  }>;
+};
+
+export type WorkOrderQualityWarningSnapshot = {
+  alertId: string;
+  reportId: string;
+  reportNo: string;
+  revisionId: string;
+  revisionNumber: number;
+  severity: string;
+  title: string;
+  warningSummary: string | null;
+  defectPhenomenon: string | null;
+  rootCause: string | null;
+  requiredAction: string | null;
+  inspectionMethod: string | null;
+  inspectionFrequency: string | null;
+  acceptanceCriteria: string | null;
+  stopConditions: string | null;
+  escalationContact: string | null;
+  applicableProcess: string | null;
+  effectiveFrom: string | null;
+  effectiveUntil: string | null;
+  printPolicy: 'REQUIRED' | 'OPTIONAL' | 'SYSTEM_ONLY';
+  archivedAt: string;
+  attachments: Array<{
+    id: string;
+    displayName: string;
+    mimeType: string;
+    caption: string | null;
+    category: string;
+    contentUrl: string;
   }>;
 };
 
@@ -220,6 +254,7 @@ export type WorkOrderTravelerPrintReadinessRecord = {
   traveler: TravelerPrintReadinessCheck;
   sop: TravelerPrintReadinessCheck;
   drawing: TravelerPrintReadinessCheck;
+  qualityWarning: TravelerPrintReadinessCheck & { count: number; requiredCount: number };
 };
 
 export type TravelerPrintSourceFileInput = {
@@ -266,6 +301,7 @@ function shortCode(code: string): string {
 function cleanPrintMode(value: unknown): WorkOrderQrPrintMode {
   const mode = String(value || '').trim().toUpperCase();
   if (mode === WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX) return WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX;
+  if (mode === WorkOrderQrPrintMode.TRAVELER_QUALITY_WARNING) return WorkOrderQrPrintMode.TRAVELER_QUALITY_WARNING;
   if (mode === WorkOrderQrPrintMode.TRAVELER_SOP_SEPARATE) return WorkOrderQrPrintMode.TRAVELER_SOP_SEPARATE;
   if (mode === WorkOrderQrPrintMode.DRAWING_SOP_TRAVELER_SEPARATE) return WorkOrderQrPrintMode.DRAWING_SOP_TRAVELER_SEPARATE;
   if (mode === WorkOrderQrPrintMode.DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX) return WorkOrderQrPrintMode.DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX;
@@ -275,17 +311,19 @@ function cleanPrintMode(value: unknown): WorkOrderQrPrintMode {
 
 const PRINT_MATERIAL_ORDER = [
   WorkOrderQrPrintMaterial.TRAVELER,
+  WorkOrderQrPrintMaterial.QUALITY_WARNING,
   WorkOrderQrPrintMaterial.SOP,
   WorkOrderQrPrintMaterial.DRAWING,
 ] as const;
 
 export function resolveWorkOrderQrPrintMaterials(mode: WorkOrderQrPrintMode, values?: unknown): WorkOrderQrPrintMaterial[] {
   if (mode === WorkOrderQrPrintMode.TRAVELER_ONLY) return [WorkOrderQrPrintMaterial.TRAVELER];
+  if (mode === WorkOrderQrPrintMode.TRAVELER_QUALITY_WARNING) return [WorkOrderQrPrintMaterial.TRAVELER, WorkOrderQrPrintMaterial.QUALITY_WARNING];
   if (mode === WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX || mode === WorkOrderQrPrintMode.TRAVELER_SOP_SEPARATE) {
     return [WorkOrderQrPrintMaterial.TRAVELER, WorkOrderQrPrintMaterial.SOP];
   }
   if (mode === WorkOrderQrPrintMode.DRAWING_SOP_TRAVELER_SEPARATE || mode === WorkOrderQrPrintMode.DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX) {
-    return [...PRINT_MATERIAL_ORDER];
+    return [WorkOrderQrPrintMaterial.TRAVELER, WorkOrderQrPrintMaterial.SOP, WorkOrderQrPrintMaterial.DRAWING];
   }
   const requested = Array.isArray(values)
     ? new Set(values.map(value => String(value || '').trim().toUpperCase()))
@@ -482,7 +520,7 @@ function targetQuantity(order: Pick<TravelerOrder, 'productionTargetQty' | 'unco
   return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : 0;
 }
 
-function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
+function createSnapshot(order: TravelerOrder, qualityWarnings: WorkOrderQualityWarningSnapshot[] = []): WorkOrderTravelerSnapshot {
   const route = order.processRoute;
   if (!route) {
     throw new WorkOrderQrServiceError('该工单尚未建立工艺路线，不能打印流转单', 409, 'QR_ROUTE_REQUIRED');
@@ -524,6 +562,7 @@ function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
     sopFileVersion: sopFile?.version || null,
     sopFileName: sopFile?.displayName || sopFile?.originalName || null,
     sopMimeType: sopFile?.mimeType || null,
+    qualityWarnings,
     steps: [...route.steps]
       .sort((left, right) => left.position - right.position)
       .map(step => ({
@@ -553,6 +592,79 @@ async function findTravelerOrders(workOrderIds: string[]): Promise<TravelerOrder
   });
 }
 
+async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<string, WorkOrderQualityWarningSnapshot[]>> {
+  await materializeProductQualityWarningsForWorkOrders(workOrderIds);
+  const now = new Date();
+  const alerts = await prisma.workOrderQualityAlert.findMany({
+    where: {
+      workOrderId: { in: workOrderIds },
+      state: { in: ['ACTIVE', 'ACKNOWLEDGED'] },
+      report: { deletedAt: null, warningState: 'ACTIVE' },
+      AND: [
+        { OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }] },
+        { OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: now } }] },
+      ],
+    },
+    include: {
+      report: {
+        select: {
+          reportNo: true,
+        },
+      },
+      revision: {
+        select: {
+          revisionNumber: true,
+          attachments: {
+            where: { attachment: { mimeType: { startsWith: 'image/' } } },
+            orderBy: { sortOrder: 'asc' },
+            take: 6,
+            select: {
+              attachment: { select: { id: true, displayName: true, mimeType: true, caption: true, category: true } },
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ archivedAt: 'desc' }],
+  });
+  const severityRank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+  const result = new Map<string, WorkOrderQualityWarningSnapshot[]>();
+  for (const alert of alerts) {
+    const warning: WorkOrderQualityWarningSnapshot = {
+      alertId: alert.id,
+      reportId: alert.reportId,
+      reportNo: alert.report.reportNo,
+      revisionId: alert.revisionId,
+      revisionNumber: alert.revision.revisionNumber,
+      severity: alert.severity,
+      title: alert.title,
+      warningSummary: alert.warningSummary,
+      defectPhenomenon: alert.defectPhenomenon,
+      rootCause: alert.rootCause,
+      requiredAction: alert.requiredAction,
+      inspectionMethod: alert.inspectionMethod,
+      inspectionFrequency: alert.inspectionFrequency,
+      acceptanceCriteria: alert.acceptanceCriteria,
+      stopConditions: alert.stopConditions,
+      escalationContact: alert.escalationContact,
+      applicableProcess: alert.applicableProcess,
+      effectiveFrom: alert.effectiveFrom?.toISOString() || null,
+      effectiveUntil: alert.effectiveUntil?.toISOString() || null,
+      printPolicy: (['REQUIRED', 'SYSTEM_ONLY'].includes(alert.printPolicy) ? alert.printPolicy : 'OPTIONAL') as WorkOrderQualityWarningSnapshot['printPolicy'],
+      archivedAt: alert.archivedAt.toISOString(),
+      attachments: alert.revision.attachments.map(({ attachment }) => ({
+        ...attachment,
+        contentUrl: `/api/quality/internal-risk-attachments/${attachment.id}/content`,
+      })),
+    };
+    const current = result.get(alert.workOrderId) || [];
+    current.push(warning);
+    current.sort((left, right) => (severityRank[right.severity] || 0) - (severityRank[left.severity] || 0));
+    result.set(alert.workOrderId, current);
+  }
+  return result;
+}
+
 function readyCheck(message: string): TravelerPrintReadinessCheck {
   return {
     ready: true,
@@ -565,7 +677,7 @@ function readyCheck(message: string): TravelerPrintReadinessCheck {
   };
 }
 
-function buildTravelerPrintReadiness(order: TravelerOrder): WorkOrderTravelerPrintReadinessRecord {
+function buildTravelerPrintReadiness(order: TravelerOrder, qualityWarnings: WorkOrderQualityWarningSnapshot[] = []): WorkOrderTravelerPrintReadinessRecord {
   const businessCode = order.businessCode || businessWorkOrderCodeBase(order) || order.code;
   let traveler: TravelerPrintReadinessCheck;
   try {
@@ -584,6 +696,13 @@ function buildTravelerPrintReadiness(order: TravelerOrder): WorkOrderTravelerPri
     traveler,
     sop: materialReadiness(order, 'sop'),
     drawing: materialReadiness(order, 'drawing'),
+    qualityWarning: {
+      ...(qualityWarnings.length
+        ? readyCheck(`${businessCode} 有 ${qualityWarnings.length} 项生效异常警示可附页打印`)
+        : missingResourceResult('QR_QUALITY_WARNING_EMPTY', `${businessCode} 当前没有生效异常警示`)),
+      count: qualityWarnings.length,
+      requiredCount: qualityWarnings.filter(warning => warning.printPolicy === 'REQUIRED').length,
+    },
   };
 }
 
@@ -601,8 +720,9 @@ export async function loadWorkOrderTravelerPrintReadiness(input: {
   if (orders.length !== workOrderIds.length) {
     throw new WorkOrderQrServiceError('所选工单中有记录不存在或已删除，请刷新后重试', 404, 'QR_WORK_ORDER_NOT_FOUND');
   }
+  const warningsByWorkOrder = await loadQualityWarningSnapshots(workOrderIds);
   const orderById = new Map(orders.map(order => [order.id, order]));
-  return workOrderIds.map(id => buildTravelerPrintReadiness(orderById.get(id)!));
+  return workOrderIds.map(id => buildTravelerPrintReadiness(orderById.get(id)!, warningsByWorkOrder.get(id) || []));
 }
 
 export async function createWorkOrderTravelerPrints(input: {
@@ -619,11 +739,8 @@ export async function createWorkOrderTravelerPrints(input: {
   const workOrderIds = cleanIds(input.workOrderIds);
   const mode = cleanPrintMode(input.mode);
   const copies = cleanCopies(input.copies ?? 1);
-  const materials = resolveWorkOrderQrPrintMaterials(mode, input.materials);
-  const materialCopies = cleanMaterialCopies(input.materialCopies, materials, copies);
+  let materials = resolveWorkOrderQrPrintMaterials(mode, input.materials);
   const drawingImagePaperSize = cleanDrawingImagePaperSize(input.drawingImagePaperSize);
-  const requiresSop = materials.includes(WorkOrderQrPrintMaterial.SOP);
-  const requiresDrawing = materials.includes(WorkOrderQrPrintMaterial.DRAWING);
   const reprintReason = String(input.reprintReason || '').trim().slice(0, 500) || null;
   if (!workOrderIds.length) {
     throw new WorkOrderQrServiceError('请至少选择一张生产工单', 400, 'QR_WORK_ORDER_REQUIRED');
@@ -631,17 +748,30 @@ export async function createWorkOrderTravelerPrints(input: {
   if (workOrderIds.length > MAX_PRINT_BATCH) {
     throw new WorkOrderQrServiceError(`每次最多打印 ${MAX_PRINT_BATCH} 张流转单`, 400, 'QR_PRINT_BATCH_TOO_LARGE');
   }
-  if ((requiresSop || requiresDrawing) && workOrderIds.length > MAX_SOP_PRINT_BATCH) {
-    throw new WorkOrderQrServiceError(`含生产资料的打印任务每次最多选择 ${MAX_SOP_PRINT_BATCH} 张工单`, 400, 'QR_RESOURCE_PRINT_BATCH_TOO_LARGE');
-  }
   const orders = await findTravelerOrders(workOrderIds);
   if (orders.length !== workOrderIds.length) {
     throw new WorkOrderQrServiceError('所选工单中有记录不存在或已删除，请刷新后重试', 404, 'QR_WORK_ORDER_NOT_FOUND');
   }
   const orderById = new Map(orders.map(order => [order.id, order]));
   const orderedOrders = workOrderIds.map(id => orderById.get(id)!);
+  const warningsByWorkOrder = await loadQualityWarningSnapshots(workOrderIds);
+  const hasRequiredWarnings = workOrderIds.some(id => (warningsByWorkOrder.get(id) || []).some(warning => warning.printPolicy === 'REQUIRED'));
+  if (hasRequiredWarnings && !materials.includes(WorkOrderQrPrintMaterial.QUALITY_WARNING)) {
+    materials = [...materials, WorkOrderQrPrintMaterial.QUALITY_WARNING].sort((left, right) => PRINT_MATERIAL_ORDER.indexOf(left) - PRINT_MATERIAL_ORDER.indexOf(right));
+  }
+  const materialCopies = cleanMaterialCopies(input.materialCopies, materials, copies);
+  const requiresSop = materials.includes(WorkOrderQrPrintMaterial.SOP);
+  const requiresDrawing = materials.includes(WorkOrderQrPrintMaterial.DRAWING);
+  const requiresQualityWarning = materials.includes(WorkOrderQrPrintMaterial.QUALITY_WARNING);
+  if ((requiresSop || requiresDrawing || requiresQualityWarning) && workOrderIds.length > MAX_SOP_PRINT_BATCH) {
+    throw new WorkOrderQrServiceError(`含生产资料的打印任务每次最多选择 ${MAX_SOP_PRINT_BATCH} 张工单`, 400, 'QR_RESOURCE_PRINT_BATCH_TOO_LARGE');
+  }
+  if (requiresQualityWarning) {
+    const withoutWarnings = orderedOrders.find(order => !(warningsByWorkOrder.get(order.id) || []).length);
+    if (withoutWarnings) throw new WorkOrderQrServiceError(`${withoutWarnings.businessCode || withoutWarnings.code} 当前没有可打印的异常警示`, 409, 'QR_QUALITY_WARNING_EMPTY');
+  }
   const snapshots = orderedOrders.map(order => ({
-    ...createSnapshot(order),
+    ...createSnapshot(order, warningsByWorkOrder.get(order.id) || []),
     printRendering: {
       version: 'IMAGE_PRINT_V1' as const,
       drawingImagePaperSize,
@@ -725,6 +855,12 @@ export async function createWorkOrderTravelerPrints(input: {
             drawingFileVersion: snapshot.drawingFileVersion,
             sopFileId: snapshot.sopFileId,
             sopFileVersion: snapshot.sopFileVersion,
+            qualityWarnings: snapshot.qualityWarnings.map(warning => ({
+              alertId: warning.alertId,
+              revisionId: warning.revisionId,
+              revisionNumber: warning.revisionNumber,
+              printPolicy: warning.printPolicy,
+            })),
             printRendering: snapshot.printRendering,
           })).digest('hex'),
           reprintReason,
@@ -823,7 +959,7 @@ export async function confirmWorkOrderTravelerPrints(input: {
   }
   const requestedMaterials = Array.isArray(input.materials)
     ? [...new Set(input.materials.map(value => String(value || '').trim().toUpperCase()))]
-        .filter((value): value is WorkOrderQrPrintMaterial => PRINT_MATERIAL_ORDER.includes(value as WorkOrderQrPrintMaterial))
+        .filter((value): value is WorkOrderQrPrintMaterial => (PRINT_MATERIAL_ORDER as readonly WorkOrderQrPrintMaterial[]).includes(value as WorkOrderQrPrintMaterial))
     : [];
   return prisma.$transaction(async tx => {
     const prints = await tx.workOrderQrPrint.findMany({

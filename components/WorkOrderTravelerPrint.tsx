@@ -13,6 +13,7 @@ import {
   FileText,
   LoaderCircle,
   Printer,
+  ShieldAlert,
   SlidersHorizontal,
   X,
 } from 'lucide-react';
@@ -31,8 +32,8 @@ import {
   type TravelerPageChunk,
 } from '@/lib/work-order-traveler-layout';
 
-type PrintTarget = 'all' | 'traveler' | 'sop';
-type PrintMaterial = 'TRAVELER' | 'SOP' | 'DRAWING';
+type PrintTarget = 'all' | 'traveler' | 'warning' | 'traveler_warning' | 'sop';
+type PrintMaterial = 'TRAVELER' | 'QUALITY_WARNING' | 'SOP' | 'DRAWING';
 type PacketState = {
   status: 'loading' | 'ready' | 'error';
   url?: string;
@@ -42,6 +43,11 @@ type PacketState = {
 
 type TravelerStep = WorkOrderTravelerPrintRecord['snapshot']['steps'][number];
 type TravelerPage = TravelerPageChunk<TravelerStep>;
+type QualityWarning = WorkOrderTravelerPrintRecord['snapshot']['qualityWarnings'][number];
+
+function warningLines(value?: string | null): string[] {
+  return String(value || '').split(/\r?\n|[；;]/).map(item => item.replace(/^\s*[\d一二三四五六七八九十]+[.、)）]\s*/, '').trim()).filter(Boolean).slice(0, 6);
+}
 
 const TRAVELER_LAYOUT_OPTIONS: Array<{
   value: TravelerLayoutMode;
@@ -92,6 +98,7 @@ function hourlyCapacityText(input: {
 }
 
 function modeText(mode: WorkOrderTravelerPrintRecord['mode']): string {
+  if (mode === 'TRAVELER_QUALITY_WARNING') return '流转单 + 异常警示附页';
   if (mode === 'TRAVELER_SOP_DUPLEX') return '流转单 + SOP 双面';
   if (mode === 'TRAVELER_SOP_SEPARATE') return '流转单与 SOP 分开';
   if (mode === 'DRAWING_SOP_TRAVELER_SEPARATE') return '原图、SOP、流转单分开';
@@ -102,6 +109,7 @@ function modeText(mode: WorkOrderTravelerPrintRecord['mode']): string {
 
 function materialText(material: PrintMaterial): string {
   if (material === 'TRAVELER') return '二维码流转单';
+  if (material === 'QUALITY_WARNING') return '异常警示附页';
   if (material === 'SOP') return 'SOP';
   return '原图';
 }
@@ -109,6 +117,8 @@ function materialText(material: PrintMaterial): string {
 function targetText(target: PrintTarget): string {
   if (target === 'all') return '流转单 + SOP 双面打印包';
   if (target === 'traveler') return '二维码流转单';
+  if (target === 'warning') return '异常警示附页';
+  if (target === 'traveler_warning') return '流转单 + 异常警示打印包';
   return 'SOP 打印包';
 }
 
@@ -131,6 +141,8 @@ function drawingPrintRule(record: WorkOrderTravelerPrintRecord, item: WorkOrderT
 
 function targetMaterials(target: PrintTarget): PrintMaterial[] {
   if (target === 'all') return ['TRAVELER', 'SOP'];
+  if (target === 'traveler_warning') return ['TRAVELER', 'QUALITY_WARNING'];
+  if (target === 'warning') return ['QUALITY_WARNING'];
   return [target === 'traveler' ? 'TRAVELER' : 'SOP'];
 }
 
@@ -140,6 +152,10 @@ function itemKey(printId: string, material: PrintMaterial) {
 
 function travelerPageKey(printId: string, pageNumber: number) {
   return `${printId}:${pageNumber}`;
+}
+
+function warningPageKey(printId: string, pageNumber: number) {
+  return `${printId}:warning:${pageNumber}`;
 }
 
 function printItem(record: WorkOrderTravelerPrintRecord, material: PrintMaterial) {
@@ -163,6 +179,7 @@ export default function WorkOrderTravelerPrint({
   returnTo: string;
 }) {
   const [qrImages, setQrImages] = useState<Record<string, string>>({});
+  const [warningQrImages, setWarningQrImages] = useState<Record<string, string>>({});
   const [loadError, setLoadError] = useState('');
   const [packetStates, setPacketStates] = useState<Partial<Record<PrintTarget, PacketState>>>({});
   const [activeTarget, setActiveTarget] = useState<PrintTarget>('all');
@@ -175,6 +192,7 @@ export default function WorkOrderTravelerPrint({
   const [layoutMode, setLayoutMode] = useState<TravelerLayoutMode>('auto');
   const [customPageCount, setCustomPageCount] = useState(3);
   const travelerRefs = useRef<Record<string, HTMLElement | null>>({});
+  const warningRefs = useRef<Record<string, HTMLElement | null>>({});
   const [confirmedItems, setConfirmedItems] = useState(() => new Set(records.flatMap(record => record.items
     .filter(item => item.status === 'CONFIRMED')
     .map(item => itemKey(record.printId, item.material)))));
@@ -183,13 +201,19 @@ export default function WorkOrderTravelerPrint({
   const includesTraveler = records.some(record => Boolean(printItem(record, 'TRAVELER')));
   const includesSop = records.some(record => Boolean(printItem(record, 'SOP')));
   const includesDrawing = records.some(record => Boolean(printItem(record, 'DRAWING')));
+  const includesWarning = records.some(record => Boolean(printItem(record, 'QUALITY_WARNING')));
   const duplexTravelerSop = records.every(record => record.mode === 'TRAVELER_SOP_DUPLEX' || record.mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX');
-  const qrReady = records.every(record => !printItem(record, 'TRAVELER') || Boolean(qrImages[record.printId]));
+  const qrReady = records.every(record => (!printItem(record, 'TRAVELER') || Boolean(qrImages[record.printId]))
+    && (!printItem(record, 'QUALITY_WARNING') || record.snapshot.qualityWarnings.every(warning => Boolean(warningQrImages[warning.alertId]))));
   const allConfirmed = records.every(record => record.items.every(item => confirmedItems.has(itemKey(record.printId, item.material))));
-  const separateTargets = useMemo(() => ([
-    ...(includesTraveler ? ['traveler' as const] : []),
-    ...(includesSop ? ['sop' as const] : []),
-  ]), [includesSop, includesTraveler]);
+  const combinedTravelerWarning = !duplexTravelerSop && includesTraveler && includesWarning;
+  const separateTargets = useMemo<PrintTarget[]>(() => (combinedTravelerWarning
+    ? ['traveler_warning']
+    : [
+        ...(includesTraveler ? ['traveler' as const] : []),
+        ...(includesWarning ? ['warning' as const] : []),
+        ...(includesSop ? ['sop' as const] : []),
+      ]), [combinedTravelerWarning, includesSop, includesTraveler, includesWarning]);
   const travelerLayoutSelection = useMemo<TravelerLayoutSelection>(() => ({
     mode: layoutMode,
     customPageCount,
@@ -216,8 +240,9 @@ export default function WorkOrderTravelerPrint({
     let cancelled = false;
     setLoadError('');
     setQrImages({});
+    setWarningQrImages({});
     const travelerRecords = records.filter(record => printItem(record, 'TRAVELER'));
-    void Promise.all(travelerRecords.map(async record => {
+    const travelerPromise = Promise.all(travelerRecords.map(async record => {
       const link = `${window.location.origin}/field-report/${encodeURIComponent(record.publicCode)}`;
       const dataUrl = await QRCode.toDataURL(link, {
         errorCorrectionLevel: 'M', margin: 1, width: 520,
@@ -226,18 +251,27 @@ export default function WorkOrderTravelerPrint({
       return [record.printId, dataUrl] as const;
     })).then(entries => {
       if (!cancelled) setQrImages(Object.fromEntries(entries));
-    }).catch(reason => {
+    });
+    const warningPromise = Promise.all(records.flatMap(record => record.snapshot.qualityWarnings.map(async warning => {
+      const link = `${window.location.origin}/workspace/quality/internal-risks?reportId=${encodeURIComponent(warning.reportId)}`;
+      const dataUrl = await QRCode.toDataURL(link, { errorCorrectionLevel: 'M', margin: 1, width: 420, color: { dark: '#111827', light: '#ffffff' } });
+      return [warning.alertId, dataUrl] as const;
+    }))).then(entries => {
+      if (!cancelled) setWarningQrImages(Object.fromEntries(entries));
+    });
+    void Promise.all([travelerPromise, warningPromise]).catch(reason => {
       if (!cancelled) setLoadError(reason instanceof Error ? reason.message : '二维码生成失败');
     });
     return () => { cancelled = true; };
   }, [originKey, records]);
 
   useEffect(() => {
-    if (loadError || (includesTraveler && !qrReady) || (!includesTraveler && !includesSop)) return;
+    if (loadError || ((includesTraveler || includesWarning) && !qrReady) || (!includesTraveler && !includesSop && !includesWarning)) return;
     let cancelled = false;
     const controller = new AbortController();
     const objectUrls: string[] = [];
     const capturedTravelers = new Map<string, Blob[]>();
+    const capturedWarnings = new Map<string, Blob[]>();
     setPacketStates({});
     setActiveTarget(duplexTravelerSop && includesTraveler && includesSop ? 'all' : (separateTargets[0] || 'traveler'));
 
@@ -278,15 +312,41 @@ export default function WorkOrderTravelerPrint({
       }
     }
 
+    async function captureWarningPages() {
+      if (capturedWarnings.size) return;
+      if ('fonts' in document) await document.fonts.ready;
+      await new Promise<void>(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
+      const html2canvas = (await import('html2canvas')).default;
+      for (const record of records) {
+        if (!printItem(record, 'QUALITY_WARNING')) continue;
+        const pageBlobs: Blob[] = [];
+        for (let index = 0; index < record.snapshot.qualityWarnings.length; index += 1) {
+          const source = warningRefs.current[warningPageKey(record.printId, index + 1)];
+          if (!source) throw new Error(`异常警示第 ${index + 1} 页尚未就绪，请刷新后重试`);
+          const images = [...source.querySelectorAll('img')];
+          await Promise.all(images.map(image => image.complete ? image.decode().catch(() => undefined) : new Promise<void>(resolve => {
+            image.addEventListener('load', () => resolve(), { once: true });
+            image.addEventListener('error', () => resolve(), { once: true });
+          })));
+          const canvas = await html2canvas(source, { scale: 2.5, backgroundColor: '#ffffff', logging: false, useCORS: true, width: source.scrollWidth, height: source.scrollHeight, windowWidth: source.scrollWidth, windowHeight: source.scrollHeight });
+          pageBlobs.push(await canvasPng(canvas));
+          canvas.width = 1;
+          canvas.height = 1;
+        }
+        capturedWarnings.set(record.printId, pageBlobs);
+      }
+    }
+
     async function buildPacket(target: PrintTarget): Promise<boolean> {
       if (cancelled) return false;
       setPacketStates(previous => ({ ...previous, [target]: { status: 'loading' } }));
       try {
-        if (target === 'all' || target === 'traveler') await captureTravelerPages();
+        if (target === 'all' || target === 'traveler' || target === 'traveler_warning') await captureTravelerPages();
+        if (target === 'warning' || target === 'traveler_warning') await captureWarningPages();
         const form = new FormData();
         form.set('printIds', records.map(record => record.printId).join(','));
         form.set('target', target);
-        if (target === 'all' || target === 'traveler') {
+        if (target === 'all' || target === 'traveler' || target === 'traveler_warning') {
           for (const record of records) {
             if (!printItem(record, 'TRAVELER')) continue;
             const pages = travelerPagesByPrintId.get(record.printId) || [];
@@ -307,6 +367,14 @@ export default function WorkOrderTravelerPrint({
               blob,
               `${record.printId}-${index + 1}.png`,
             ));
+          }
+        }
+        if (target === 'warning' || target === 'traveler_warning') {
+          for (const record of records) {
+            if (!printItem(record, 'QUALITY_WARNING')) continue;
+            const pageBlobs = capturedWarnings.get(record.printId) || [];
+            if (pageBlobs.length !== record.snapshot.qualityWarnings.length) throw new Error('异常警示附页生成不完整，请刷新后重试');
+            pageBlobs.forEach((blob, index) => form.set(`warningImage:${record.printId}:${index + 1}`, blob, `${record.printId}-warning-${index + 1}.png`));
           }
         }
         const response = await fetch('/api/work-order-qr/prints/packet', {
@@ -347,6 +415,7 @@ export default function WorkOrderTravelerPrint({
           const travelerReady = await buildPacket('traveler');
           if (travelerReady && !cancelled) setActiveTarget('traveler');
         }
+        if (includesWarning && !cancelled) await buildPacket('warning');
         return;
       }
       for (const target of separateTargets) await buildPacket(target);
@@ -361,6 +430,7 @@ export default function WorkOrderTravelerPrint({
     duplexTravelerSop,
     includesSop,
     includesTraveler,
+    includesWarning,
     loadError,
     originKey,
     qrReady,
@@ -468,9 +538,58 @@ export default function WorkOrderTravelerPrint({
     </article>;
   }
 
+  function warningSheet(record: WorkOrderTravelerPrintRecord, warning: QualityWarning, pageNumber: number, capture = false) {
+    const snapshot = record.snapshot;
+    const actions = warningLines(warning.requiredAction);
+    const photos = warning.attachments.filter(item => item.mimeType.startsWith('image/')).slice(0, 3);
+    return <article
+      className="quality-warning-sheet"
+      key={`${record.printId}-warning-${warning.alertId}`}
+      ref={capture ? node => { warningRefs.current[warningPageKey(record.printId, pageNumber)] = node; } : undefined}
+      data-warning-source={capture ? `${record.printId}:${pageNumber}` : undefined}
+    >
+      <header className="quality-warning-print-head">
+        <div><ShieldAlert /><span><strong>产品质量异常作业警示单</strong><small>归档异常自动同步 · 随工单执行并留存</small></span></div>
+        <em>R{warning.revisionNumber} · {warning.printPolicy === 'REQUIRED' ? '必须随单打印' : '可选附页'}</em>
+      </header>
+      <section className="quality-warning-meta">
+        <div className="wide"><span>异常标题</span><strong>{warning.title}</strong></div>
+        <div><span>异常编号</span><strong>{warning.reportNo}</strong></div>
+        <div><span>风险等级</span><strong className={`risk-${warning.severity.toLowerCase()}`}>{warning.severity === 'CRITICAL' ? '重大' : warning.severity === 'HIGH' ? '高' : warning.severity === 'MEDIUM' ? '中' : '低'}</strong></div>
+        <div className="wide"><span>产品</span><strong>{snapshot.specification || snapshot.productName}</strong></div>
+        <div><span>关联工单</span><strong>{snapshot.businessWorkOrderCode || snapshot.workOrderCode}</strong></div>
+        <div><span>归档时间</span><strong>{dateTimeText(warning.archivedAt)}</strong></div>
+      </section>
+      <section className="quality-warning-analysis">
+        <div><h3>异常现象与风险</h3><p>{warning.warningSummary || warning.defectPhenomenon || '见异常归档记录'}</p><small><b>确认根因：</b>{warning.rootCause || '见归档分析'}</small></div>
+        <aside>{photos.length ? photos.map(photo => <figure key={photo.id}><img src={photo.contentUrl} alt={photo.caption || photo.displayName} /><figcaption>{photo.caption || photo.category}</figcaption></figure>) : <div className="quality-warning-no-photo"><ShieldAlert /><span>本版本无图片证据<br />请扫码查看完整归档</span></div>}</aside>
+      </section>
+      <section className="quality-warning-actions">
+        <h3>本批工单执行要求（必须执行）</h3>
+        <div>{(actions.length ? actions : ['按归档解决方案执行，并完成首件确认与过程复核。']).map((action, index) => <article key={`${warning.alertId}-action-${index}`}><b>{String(index + 1).padStart(2, '0')}</b><span>{action}</span></article>)}</div>
+      </section>
+      <section className="quality-warning-controls">
+        <div><span>检查方法</span><strong>{warning.inspectionMethod || '按归档方案执行'}</strong></div>
+        <div><span>检查频次</span><strong>{warning.inspectionFrequency || '首件及巡检'}</strong></div>
+        <div><span>合格判定</span><strong>{warning.acceptanceCriteria || '满足图纸与检验标准'}</strong></div>
+        <div><span>停线 / 升级条件</span><strong>{warning.stopConditions || '发现同类异常立即停线并上报质量'}</strong></div>
+      </section>
+      <section className="quality-warning-knowledge">
+        <div className="quality-warning-qr">{warningQrImages[warning.alertId] ? <img src={warningQrImages[warning.alertId]} alt="异常归档二维码" /> : <span>二维码生成中</span>}</div>
+        <div><h3>扫码查看完整异常归档</h3><p>原因、措施、证据图片、版本历史与关联产品均以系统归档版本为准。</p><small>适用工序：{warning.applicableProcess || '全部相关工序'} · 升级联系人：{warning.escalationContact || '质量部'}</small></div>
+      </section>
+      <section className="quality-warning-signatures">
+        {['工艺确认', '质量确认', '生产确认', '操作员确认'].map(label => <div key={label}><strong>{label}</strong><span>姓名：</span><span>签字：</span><span>日期：</span></div>)}
+      </section>
+      <footer><span>警示快照 {warning.reportNo}-R{warning.revisionNumber}</span><strong>请随工单一同下发与归档</strong><small>第 {pageNumber} / {snapshot.qualityWarnings.length} 张警示附页</small></footer>
+    </article>;
+  }
+
   const combinedState = packetStates.all;
   const visibleTargets: PrintTarget[] = duplexTravelerSop && includesTraveler && includesSop
-    ? (combinedState?.status === 'error' && packetStates.traveler?.status === 'ready' ? ['traveler'] : ['all'])
+    ? (combinedState?.status === 'error' && packetStates.traveler?.status === 'ready'
+        ? ['traveler', ...(includesWarning ? ['warning' as const] : [])]
+        : ['all', ...(includesWarning ? ['warning' as const] : [])])
     : separateTargets;
   const selectedTarget = visibleTargets.includes(activeTarget) ? activeTarget : (visibleTargets[0] || activeTarget);
   const activePacket = packetStates[selectedTarget];
@@ -500,6 +619,7 @@ export default function WorkOrderTravelerPrint({
       </header>
 
       {duplexTravelerSop && includesTraveler && includesSop && <div className="traveler-print-instruction"><FileText size={18} /><span><strong>统一 PDF 双面打印包</strong> PDF版SOP保留源页面，图片版SOP自动转为A4打印页；打印时选择“双面 / 长边翻转”，方向选择“自动”。</span></div>}
+      {includesWarning && <div className="traveler-print-instruction quality"><ShieldAlert size={18} /><span><strong>异常警示使用固定 A4 附页</strong> 每条生效警示独立一页；必打策略已强制加入。流转单/SOP双面包与警示附页分开，避免破坏双面翻页顺序。</span></div>}
       {loadError && <div className="traveler-print-warning">资料加载失败：{loadError}</div>}
 
       {includesTraveler && <section className="traveler-layout-settings" aria-labelledby="traveler-layout-title">
@@ -550,7 +670,7 @@ export default function WorkOrderTravelerPrint({
           {visibleTargets.length > 1 && <nav aria-label="打印资料切换">{visibleTargets.map(target => <button className={selectedTarget === target ? 'active' : ''} type="button" key={target} onClick={() => setActiveTarget(target)}>{targetText(target)}</button>)}</nav>}
         </header>
         <div className="traveler-packet-preview">
-          {(!activePacket || activePacket.status === 'loading') && <div className="traveler-packet-loading"><LoaderCircle className="spin" size={34} /><strong>正在生成打印文件</strong><span>流转单只渲染一次；PDF版SOP直接复制页面，图片版SOP安全转换为打印页。</span></div>}
+          {(!activePacket || activePacket.status === 'loading') && <div className="traveler-packet-loading"><LoaderCircle className="spin" size={34} /><strong>正在生成打印文件</strong><span>流转单与异常警示仅渲染一次；PDF版SOP直接复制页面，图片版SOP安全转换为打印页。</span></div>}
           {activePacket?.status === 'error' && <div className="traveler-packet-error"><FileText size={34} /><strong>合并打印文件生成失败</strong><span>{activePacket.message}</span>{includesSop && <small>下方已提供 SOP 原文件入口；流转单备用文件会继续生成。</small>}</div>}
           {activePacket?.status === 'ready' && activePacket.url && <iframe title={`${targetText(selectedTarget)}预览`} src={`${activePacket.url}#toolbar=1&navpanes=0&view=FitH`} />}
         </div>
@@ -579,6 +699,9 @@ export default function WorkOrderTravelerPrint({
       {records.filter(record => printItem(record, 'TRAVELER')).flatMap(record => (
         travelerPagesByPrintId.get(record.printId) || []
       ).map(page => travelerSheet(record, page, true)))}
+    </div>}
+    {includesWarning && <div className="quality-warning-packet-sources" aria-hidden="true">
+      {records.filter(record => printItem(record, 'QUALITY_WARNING')).flatMap(record => record.snapshot.qualityWarnings.map((warning, index) => warningSheet(record, warning, index + 1, true)))}
     </div>}
   </>;
 }

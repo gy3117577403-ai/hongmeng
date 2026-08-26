@@ -13,6 +13,10 @@ test('print presets resolve to the intended material groups', () => {
   assert.deepEqual(resolveWorkOrderQrPrintMaterials(WorkOrderQrPrintMode.TRAVELER_ONLY), [
     WorkOrderQrPrintMaterial.TRAVELER,
   ]);
+  assert.deepEqual(resolveWorkOrderQrPrintMaterials(WorkOrderQrPrintMode.TRAVELER_QUALITY_WARNING), [
+    WorkOrderQrPrintMaterial.TRAVELER,
+    WorkOrderQrPrintMaterial.QUALITY_WARNING,
+  ]);
   assert.deepEqual(resolveWorkOrderQrPrintMaterials(WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX), [
     WorkOrderQrPrintMaterial.TRAVELER,
     WorkOrderQrPrintMaterial.SOP,
@@ -30,8 +34,9 @@ test('print presets resolve to the intended material groups', () => {
 });
 
 test('custom reprint keeps only supported materials in stable order', () => {
-  assert.deepEqual(resolveWorkOrderQrPrintMaterials(WorkOrderQrPrintMode.CUSTOM, ['drawing', 'TRAVELER', 'drawing']), [
+  assert.deepEqual(resolveWorkOrderQrPrintMaterials(WorkOrderQrPrintMode.CUSTOM, ['drawing', 'QUALITY_WARNING', 'TRAVELER', 'drawing']), [
     WorkOrderQrPrintMaterial.TRAVELER,
+    WorkOrderQrPrintMaterial.QUALITY_WARNING,
     WorkOrderQrPrintMaterial.DRAWING,
   ]);
   assert.throws(

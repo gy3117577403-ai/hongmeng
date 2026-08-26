@@ -1,6 +1,6 @@
 'use client';
 
-import { ArchiveRestore, ArrowLeft, BookOpenText, Clock3, FileCheck2, FileImage, Files, FileWarning, MoreHorizontal, Pencil, Plus, Search, Settings2, ShieldCheck, ShieldOff, Trash2, Upload } from 'lucide-react';
+import { AlertTriangle, ArchiveRestore, ArrowLeft, BookOpenText, Clock3, ExternalLink, FileCheck2, FileImage, Files, FileWarning, MoreHorizontal, Pencil, Plus, Search, Settings2, ShieldAlert, ShieldCheck, ShieldOff, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
@@ -74,6 +74,31 @@ type DrawingTrashFile = {
 type MissingDrawingReference =
   | { kind: 'deleted'; item: DrawingTrashItem }
   | { kind: 'missing'; itemId: string };
+
+type DrawingQualityWarning = {
+  id: string;
+  reportNo: string;
+  title: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  revisionNumber: number;
+  archivedAt?: string | null;
+  warningSummary?: string | null;
+  requiredAction?: string | null;
+  inspectionMethod?: string | null;
+  inspectionFrequency?: string | null;
+  acceptanceCriteria?: string | null;
+  stopConditions?: string | null;
+  escalationContact?: string | null;
+  applicableProcess?: string | null;
+  printPolicy: 'REQUIRED' | 'OPTIONAL' | 'SYSTEM_ONLY';
+  effectiveFrom?: string | null;
+  effectiveUntil?: string | null;
+  detailUrl: string;
+  attachments: Array<{ id: string; category: string; displayName: string; mimeType: string; caption?: string | null; sha256: string; createdAt: string; contentUrl: string }>;
+};
+
+const qualitySeverityLabels: Record<DrawingQualityWarning['severity'], string> = { LOW: '低风险', MEDIUM: '中风险', HIGH: '高风险', CRITICAL: '重大风险' };
+const warningPrintPolicyLabels: Record<DrawingQualityWarning['printPolicy'], string> = { REQUIRED: '必须随单打印', OPTIONAL: '计划可选附页', SYSTEM_ONLY: '仅系统警示' };
 
 const emptyForm: DrawingLibraryForm = { customerName: '', productName: '', specification: '', remark: '' };
 const filterOptions: Array<[DrawingFilter, string]> = [
@@ -193,6 +218,10 @@ export function DrawingLibraryShell({
   const [selectedId, setSelectedId] = useState(requestedItemId ? (requestedActiveItem?.id || '') : (initialItems[0]?.id || ''));
   const [selectedFileId, setSelectedFileId] = useState('');
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
+  const [qualityWarningMode, setQualityWarningMode] = useState(false);
+  const [qualityWarnings, setQualityWarnings] = useState<DrawingQualityWarning[]>([]);
+  const [qualityWarningsLoading, setQualityWarningsLoading] = useState(false);
+  const [selectedWarningId, setSelectedWarningId] = useState('');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
   const [planningReturnContext, setPlanningReturnContext] = useState<PlanningReturnContext | null>(null);
@@ -253,6 +282,7 @@ export function DrawingLibraryShell({
   const activeConnectorParameters = activeCategory?.code === 'sample_parameters'
     ? selectedItem?.connectorParameters || []
     : [];
+  const selectedQualityWarning = qualityWarnings.find(item => item.id === selectedWarningId) || qualityWarnings[0] || null;
   const activeStructuredCount = activeStructuredRecords.length + activeConnectorParameters.length;
   const isSopCategory = activeCategory?.code === 'sop';
   const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户' || sopFilter !== 'all';
@@ -264,8 +294,33 @@ export function DrawingLibraryShell({
   }, [selectedItem, selectedId]);
 
   useEffect(() => {
+    if (!selectedItem?.id) { setQualityWarnings([]); setSelectedWarningId(''); return; }
+    let cancelled = false;
+    setQualityWarningsLoading(true);
+    fetch(`/api/drawing-library/${encodeURIComponent(selectedItem.id)}/quality-warnings`, { cache: 'no-store' })
+      .then(async response => {
+        const body = await response.json().catch(() => ({ ok: false, error: '警示接口返回格式异常' })) as { ok: boolean; warnings?: DrawingQualityWarning[]; error?: string };
+        if (!response.ok || !body.ok) throw new Error(body.error || '产品异常警示加载失败');
+        if (cancelled) return;
+        const next = body.warnings || [];
+        setQualityWarnings(next);
+        setSelectedWarningId(current => next.some(item => item.id === current) ? current : next[0]?.id || '');
+      })
+      .catch(error => { if (!cancelled) { setQualityWarnings([]); setMsg(error instanceof Error ? error.message : '产品异常警示加载失败'); } })
+      .finally(() => { if (!cancelled) setQualityWarningsLoading(false); });
+    return () => { cancelled = true; };
+  }, [selectedItem?.id]);
+
+  useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    const syncWarningHash = () => { if (window.location.hash === '#quality-warning') { setQualityWarningMode(true); setFilePanelOpen(false); } };
+    syncWarningHash();
+    window.addEventListener('hashchange', syncWarningHash);
+    return () => window.removeEventListener('hashchange', syncWarningHash);
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -824,8 +879,9 @@ export function DrawingLibraryShell({
   }
 
   async function chooseCategory(category: ResourceCategoryDTO) {
-    if (category.id === activeCategoryId) return;
+    if (category.id === activeCategoryId && !qualityWarningMode) return;
     setFilePanelOpen(false);
+    setQualityWarningMode(false);
     setActiveCategoryId(category.id);
     setSelectedFileId('');
   }
@@ -941,7 +997,7 @@ export function DrawingLibraryShell({
           </div>
         </section>
 
-        <section className="drawing-workspace">
+        <section className={`drawing-workspace ${qualityWarningMode ? 'quality-warning-mode' : ''}`.trim()}>
           <aside className="drawing-browser" aria-label="图纸规格结果">
             <div className="drawing-panel-head">
               <div><strong>规格结果</strong><span>{customer === '全部客户' ? '全部客户' : customer}</span></div>
@@ -1033,6 +1089,7 @@ export function DrawingLibraryShell({
                     {selectedItem.fileCount > 0 && <small>{selectedItem.fileCount} 个文件</small>}
                     <small>更新于 {dt(selectedItem.updatedAt)}</small>
                     {selectedItem.isAnomaly && <small className="anomaly">{selectedItem.anomalyReason}</small>}
+                    {qualityWarnings.length > 0 && <button className="drawing-quality-warning-chip" type="button" onClick={() => { setQualityWarningMode(true); setFilePanelOpen(false); }}><ShieldAlert size={12} />{qualityWarnings.length} 条异常警示</button>}
                   </p>
                 </div>
                 <div className="drawing-head-actions">
@@ -1059,6 +1116,11 @@ export function DrawingLibraryShell({
 
               <div className="drawing-library-main">
                 <nav className="drawing-category-rail">
+                  <button className={`drawing-quality-warning-entry ${qualityWarningMode ? 'active' : ''} ${qualityWarnings.length ? 'has-warning' : ''}`} type="button" onClick={() => { setQualityWarningMode(true); setFilePanelOpen(false); }}>
+                    <ShieldAlert size={14} aria-hidden="true" />
+                    <strong>异常警示</strong>
+                    <em>{qualityWarningsLoading ? '…' : qualityWarnings.length}</em>
+                  </button>
                   {categories.map(category => {
                     const fileCount = selectedItem.categoryFileCounts[category.id] || 0;
                     const structuredCount = category.code === 'material'
@@ -1070,7 +1132,7 @@ export function DrawingLibraryShell({
                           : 0;
                     const count = fileCount + structuredCount;
                     return (
-                      <button key={category.id} className={activeCategoryId === category.id ? 'active' : ''} type="button" onClick={() => { void chooseCategory(category); }}>
+                      <button key={category.id} className={!qualityWarningMode && activeCategoryId === category.id ? 'active' : ''} type="button" onClick={() => { void chooseCategory(category); }}>
                         <span className={count ? 'dot filled' : 'dot'} />
                         <strong title={category.name}>{categoryShortName(category.name)}</strong>
                         <em>{count}</em>
@@ -1086,7 +1148,18 @@ export function DrawingLibraryShell({
 
                 <div className="drawing-preview">
                   <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
-                  <>
+                  {qualityWarningMode ? <div className="drawing-quality-warning-workspace">
+                    <header><div><ShieldAlert size={20} /><span><strong>产品异常警示</strong><small>来自已归档重大异常 · 自动随产品版本下沉</small></span></div><em>{qualityWarnings.length} 条生效</em></header>
+                    {qualityWarningsLoading ? <div className="drawing-quality-warning-empty"><span className="spin" /><strong>正在加载产品警示</strong></div> : !selectedQualityWarning ? <div className="drawing-quality-warning-empty"><ShieldCheck size={36} /><strong>当前产品没有活动异常警示</strong><p>撤销、过期或尚未归档的异常不会显示在产品警示库。</p></div> : <div className="drawing-quality-warning-body">
+                      <aside>{qualityWarnings.map(warning => <button className={`${warning.id === selectedQualityWarning.id ? 'active' : ''} severity-${warning.severity.toLowerCase()}`} type="button" key={warning.id} onClick={() => setSelectedWarningId(warning.id)}><span><ShieldAlert size={15} /><b>{qualitySeverityLabels[warning.severity]}</b></span><strong>{warning.title}</strong><small>{warning.reportNo} · R{warning.revisionNumber}</small><em>{warningPrintPolicyLabels[warning.printPolicy]}</em></button>)}</aside>
+                      <section className="drawing-quality-warning-detail"><header><div><span>{selectedQualityWarning.reportNo} · R{selectedQualityWarning.revisionNumber}</span><h2>{selectedQualityWarning.title}</h2><p>{qualitySeverityLabels[selectedQualityWarning.severity]} · 归档于 {dt(selectedQualityWarning.archivedAt)}</p></div><a href={selectedQualityWarning.detailUrl}><ExternalLink size={14} />查看完整归档</a></header>
+                        <article className="drawing-quality-warning-summary"><AlertTriangle size={19} /><div><strong>异常现象与风险</strong><p>{selectedQualityWarning.warningSummary || '归档警示摘要未填写'}</p></div></article>
+                        <section className="drawing-quality-warning-actions"><header><strong>本批必须执行</strong><span>{warningPrintPolicyLabels[selectedQualityWarning.printPolicy]}</span></header><div>{(selectedQualityWarning.requiredAction || '按归档解决方案执行，并完成首件确认与过程复核。').split(/\r?\n/).map(item => item.trim()).filter(Boolean).map((item, index) => <article key={`${selectedQualityWarning.id}-action-${index}`}><b>{String(index + 1).padStart(2, '0')}</b><p>{item.replace(/^\d+[.、)]\s*/, '')}</p></article>)}</div></section>
+                        <section className="drawing-quality-warning-controls"><div><span>检查方法</span><strong>{selectedQualityWarning.inspectionMethod || '按归档方案'}</strong></div><div><span>检查频次</span><strong>{selectedQualityWarning.inspectionFrequency || '首件及巡检'}</strong></div><div><span>合格判定</span><strong>{selectedQualityWarning.acceptanceCriteria || '按图纸与检验标准'}</strong></div><div><span>停线/升级</span><strong>{selectedQualityWarning.stopConditions || '发现同类异常立即停线并上报'}</strong></div><div><span>适用工序</span><strong>{selectedQualityWarning.applicableProcess || '全部相关工序'}</strong></div><div><span>升级联系人</span><strong>{selectedQualityWarning.escalationContact || '质量部'}</strong></div></section>
+                        {selectedQualityWarning.attachments.some(item => item.mimeType.startsWith('image/')) && <section className="drawing-quality-warning-evidence"><header><strong>归档图片证据</strong><span>点击可查看原图</span></header><div>{selectedQualityWarning.attachments.filter(item => item.mimeType.startsWith('image/')).slice(0, 6).map(item => <a href={item.contentUrl} target="_blank" rel="noreferrer" key={item.id}><img src={item.contentUrl} alt={item.caption || item.displayName} /><span>{item.caption || item.displayName}</span></a>)}</div></section>}
+                      </section>
+                    </div>}
+                  </div> : <>
                       <div className="drawing-preview-head">
                         <span><b>{activeCategory?.name || '资料预览'}</b><small>{selectedFile ? `${selectedFile.version || 'V1.0'} · ${bytes(selectedFile.fileSize)}` : '当前分类'}{isSopCategory && selectedFile?.controlMode ? <em className={`drawing-control-inline ${selectedFile.controlMode}`}>{selectedFile.controlMode === 'controlled' ? '受控' : '未受控'}</em> : null}</small></span>
                         <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>
@@ -1153,7 +1226,7 @@ export function DrawingLibraryShell({
                           <a href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载文件</a>
                         </div>
                       )}
-                  </>
+                  </>}
                 </div>
               </div>
             </>
