@@ -7,6 +7,7 @@ import {
   MIN_PREVIEW_ZOOM,
   clampPreviewZoom,
   constrainPreviewPan,
+  normalizePreviewRotation,
   previewCanPan,
   previewDistance,
   previewFitZoom,
@@ -58,6 +59,7 @@ type PreviewGestureOptions = {
   resetKey: string;
   settleDelay?: number;
   initialFitMode?: Exclude<PreviewFitMode, 'manual'>;
+  initialRotation?: number;
   scrollWheel?: boolean;
 };
 
@@ -92,12 +94,14 @@ export function usePreviewGestures({
   resetKey,
   settleDelay = 160,
   initialFitMode = 'fit-window',
+  initialRotation = 0,
   scrollWheel = false,
 }: PreviewGestureOptions): PreviewGestureController {
+  const normalizedInitialRotation = normalizePreviewRotation(initialRotation);
   const [zoom, setZoom] = useState(1);
   const [committedZoom, setCommittedZoom] = useState(1);
   const [fitMode, setFitModeState] = useState<PreviewFitMode>(initialFitMode);
-  const [rotation, setRotation] = useState(0);
+  const [rotation, setRotation] = useState(normalizedInitialRotation);
   const [pan, setPan] = useState<PreviewPan>({ panX: 0, panY: 0 });
   const [isGestureActive, setGestureActive] = useState(false);
   const [isDragging, setDragging] = useState(false);
@@ -230,9 +234,10 @@ export function usePreviewGestures({
   }, [commitZoom, contentSize, showHint, stageRef, viewportSize]);
 
   const reset = useCallback((): void => {
-    rotationRef.current = 0;
-    setRotation(0);
-    const nextZoom = previewFitZoom(initialFitMode, contentSize, viewportSize);
+    const nextRotation = normalizePreviewRotation(initialRotation);
+    rotationRef.current = nextRotation;
+    setRotation(nextRotation);
+    const nextZoom = previewFitZoom(initialFitMode, rotatedPreviewSize(contentSize, nextRotation), viewportSize);
     fitModeRef.current = initialFitMode;
     zoomRef.current = nextZoom;
     panRef.current = { panX: 0, panY: 0 };
@@ -242,7 +247,7 @@ export function usePreviewGestures({
     setPan({ panX: 0, panY: 0 });
     stageRef.current?.scrollTo({ left: 0, top: 0 });
     showHint(initialFitMode === 'fit-height' ? '适应高度' : '适应整页');
-  }, [commitZoom, contentSize, initialFitMode, showHint, stageRef, viewportSize]);
+  }, [commitZoom, contentSize, initialFitMode, initialRotation, showHint, stageRef, viewportSize]);
 
   const recenter = useCallback((): void => {
     panRef.current = { panX: 0, panY: 0 };
@@ -261,7 +266,7 @@ export function usePreviewGestures({
   }, [applyManualZoom, applyScrollZoom, scrollWheel, stageRef]);
 
   const rotateBy = useCallback((delta: number): void => {
-    const nextRotation = (rotationRef.current + delta + 360) % 360;
+    const nextRotation = normalizePreviewRotation(rotationRef.current + delta);
     rotationRef.current = nextRotation;
     setRotation(nextRotation);
     recenter();

@@ -503,14 +503,26 @@ main.material-library-shell.hm-workbench-root {
 .material-evidence-viewer.is-fullscreen .material-evidence-stage { height: 100%; margin-top: 0; }
 .material-evidence-stage { position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden; margin: 11px 11px 0; border: 1px solid #dfe4e9; border-radius: 10px; background: radial-gradient(circle at 50% 40%, #fff 0, #f4f5f6 55%, #e7eaed 100%); cursor: default; touch-action: none; }
 .material-evidence-stage.dragging { cursor: grabbing; }
-.material-evidence-stage > img { max-width: calc(100% - 34px); max-height: calc(100% - 34px); width: auto; height: auto; object-fit: contain; user-select: none; transform-origin: center; transition: transform .16s ease; will-change: transform; }
-.material-evidence-stage.dragging > img { transition: none; }
+.material-evidence-positioner { position: absolute; z-index: 1; top: 50%; left: 50%; pointer-events: none; transform-origin: top left; transition: transform .16s ease, opacity .16s ease; will-change: transform; }
+.material-evidence-positioner.active, .material-evidence-stage.dragging .material-evidence-positioner { transition: opacity .16s ease; }
+.material-evidence-canvas { width: 100%; height: 100%; transform-origin: center; transition: transform .16s ease; will-change: transform; }
+.material-evidence-positioner.active .material-evidence-canvas, .material-evidence-stage.dragging .material-evidence-canvas { transition: none; }
+.material-evidence-canvas > img { display: block; width: 100%; height: 100%; max-width: none; max-height: none; object-fit: contain; user-select: none; pointer-events: none; -webkit-user-drag: none; }
+.material-evidence-status { position: absolute; z-index: 2; top: 50%; left: 50%; min-width: 220px; display: grid; justify-items: center; gap: 6px; padding: 18px 22px; border: 1px solid rgba(219, 226, 233, .92); border-radius: 13px; background: rgba(255, 255, 255, .88); color: #8895a4; text-align: center; box-shadow: 0 12px 30px rgba(29, 46, 66, .1); backdrop-filter: blur(10px); transform: translate(-50%, -50%); }
+.material-evidence-status > span { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 11px; background: #f2f5f8; color: #a2adb9; }
+.material-evidence-status strong { color: #53657a; font-size: 10px; }
+.material-evidence-status small { font-size: 8px; }
+.material-evidence-status.error { border-color: #edc5c1; color: #b5645f; }
+.material-evidence-status.error > span { background: #fff0ef; color: #c64e48; }
+.material-evidence-hint { position: absolute; z-index: 4; top: 18px; left: 50%; padding: 6px 10px; border: 1px solid rgba(255, 255, 255, .9); border-radius: 999px; background: rgba(30, 47, 67, .78); color: #fff; font-size: 8px; font-weight: 800; box-shadow: 0 7px 18px rgba(24, 39, 56, .18); backdrop-filter: blur(8px); transform: translateX(-50%); }
 .material-evidence-dock { position: absolute; z-index: 3; bottom: 14px; left: 50%; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 24px); padding: 7px 9px 9px; border: 1px solid rgba(255, 255, 255, .88); border-radius: 12px; background: rgba(255, 255, 255, .92); box-shadow: 0 14px 30px rgba(25, 40, 58, .2), inset 0 1px 0 #fff; backdrop-filter: blur(12px); transform: translateX(-50%); }
 .material-evidence-dock .osui-3d-icon { width: 31px; height: 31px; flex-basis: 31px; border-radius: 8px; }
 .material-evidence-dock > i { width: 1px; height: 23px; margin: 0 2px; background: #e0e5ea; }
 .material-evidence-counter, .material-evidence-zoom { min-width: 52px; color: #647387; font-size: 9px; text-align: center; }
 .material-evidence-counter b { color: #263a52; font-size: 11px; }
 .material-evidence-one { width: 34px; height: 31px; border: 1px solid #d8dfe7; border-radius: 8px; background: linear-gradient(#fff, #f6f8fa); color: #5b6b7e; font-size: 8px; font-weight: 850; box-shadow: 0 3px 0 #d1d8e0, 0 6px 11px rgba(29, 46, 66, .08); cursor: pointer; }
+.material-evidence-one.active { border-color: #f0955d; background: #fff2e9; color: #d9580b; box-shadow: 0 3px 0 #e4a47d, 0 6px 11px rgba(199, 81, 13, .12); }
+.material-evidence-one:disabled { opacity: .45; cursor: not-allowed; }
 .material-evidence-filmstrip { min-width: 0; display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 10px 13px 12px; border-top: 1px solid #dfe4e9; background: #fff; scrollbar-width: thin; }
 .material-evidence-filmstrip > button { position: relative; flex: 0 0 90px; height: 85px; display: grid; grid-template-rows: minmax(0, 1fr) 23px; overflow: hidden; padding: 0; border: 1px solid #dce2e8; border-radius: 8px; background: #fff; color: #627185; cursor: pointer; box-shadow: 0 3px 8px rgba(30, 47, 66, .07); }
 .material-evidence-filmstrip > button.active { border-color: #ee6815; box-shadow: 0 0 0 2px rgba(238, 104, 21, .18), 0 6px 13px rgba(92, 54, 31, .12); }

@@ -23,6 +23,7 @@ const migration = readFileSync(resolve(repositoryRoot, 'prisma/migrations/202608
 const supplierMigration = readFileSync(resolve(repositoryRoot, 'prisma/migrations/202608260004_material_library_supplier_variants/migration.sql'), 'utf8');
 const schema = readFileSync(resolve(repositoryRoot, 'prisma/schema.prisma'), 'utf8');
 const desktop = readFileSync(resolve(repositoryRoot, 'components/MaterialLibraryWorkbench.tsx'), 'utf8');
+const evidenceViewer = readFileSync(resolve(repositoryRoot, 'components/MaterialEvidenceViewer.tsx'), 'utf8');
 const mobile = readFileSync(resolve(repositoryRoot, 'components/MaterialLibraryMobileCapture.tsx'), 'utf8');
 const scanRoute = readFileSync(resolve(repositoryRoot, 'app/api/material-library/scan/[code]/route.ts'), 'utf8');
 
@@ -105,6 +106,12 @@ test('version 3 UI includes both QR modes, immediate photo upload, preview and a
   assert.match(desktop, /退出全屏/);
   assert.doesNotMatch(desktop, /requestFullscreen/);
   assert.match(desktop, /MaterialEvidenceViewer/);
+  assert.match(evidenceViewer, /ResizeObserver/);
+  assert.match(evidenceViewer, /naturalWidth/);
+  assert.match(evidenceViewer, /initialRotation: activePhoto\?\.rotation/);
+  assert.match(evidenceViewer, /setFitMode\('fit-window'\)/);
+  assert.match(evidenceViewer, /setFitMode\('actual-size'\)/);
+  assert.doesNotMatch(evidenceViewer, /function fit\(\)[\s\S]*?setZoom\(1\)/);
   assert.match(desktop, /供应商规格书/);
   assert.match(desktop, /MaterialCodePlate/);
   assert.match(desktop, /来料记录/);

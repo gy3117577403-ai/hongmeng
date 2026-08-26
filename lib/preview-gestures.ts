@@ -22,6 +22,12 @@ export type PreviewPan = {
   panY: number;
 };
 
+export function normalizePreviewRotation(rotation: number): number {
+  if (!Number.isFinite(rotation)) return 0;
+  const snapped = Math.round(rotation / 90) * 90;
+  return ((snapped % 360) + 360) % 360;
+}
+
 export function clampPreviewZoom(value: number): number {
   return Math.max(MIN_PREVIEW_ZOOM, Math.min(MAX_PREVIEW_ZOOM, value));
 }
@@ -35,7 +41,7 @@ export function previewMidpoint(first: PreviewPoint, second: PreviewPoint): Prev
 }
 
 export function rotatedPreviewSize(size: PreviewSize, rotation: number): PreviewSize {
-  return Math.abs(rotation % 180) === 90
+  return normalizePreviewRotation(rotation) % 180 === 90
     ? { width: size.height, height: size.width }
     : size;
 }

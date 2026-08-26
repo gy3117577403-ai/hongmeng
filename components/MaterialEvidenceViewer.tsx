@@ -14,13 +14,15 @@ import {
   RotateCw,
 } from 'lucide-react';
 import Image from 'next/image';
-import { PointerEvent, useEffect, useMemo, useRef, useState, WheelEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { SyntheticEvent } from 'react';
 import { ThreeDIconButton } from '@/components/ui/opensourceui/ThreeDControls';
+import { usePreviewGestures } from '@/components/usePreviewGestures';
 import type { MaterialLibraryPhotoDTO } from '@/lib/material-library-contract';
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
+type Size = { width: number; height: number };
+
+const EMPTY_SIZE: Size = { width: 0, height: 0 };
 
 export default function MaterialEvidenceViewer({
   photos,
@@ -35,132 +37,162 @@ export default function MaterialEvidenceViewer({
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ x: number; y: number; originX: number; originY: number } | null>(null);
   const activeIndex = useMemo(() => Math.max(0, photos.findIndex(photo => photo.id === activePhotoId)), [activePhotoId, photos]);
   const activePhoto = photos[activeIndex] || photos[0] || null;
-  const [zoom, setZoom] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [localRotation, setLocalRotation] = useState(0);
-  const [dragging, setDragging] = useState(false);
+  const [viewportSize, setViewportSize] = useState<Size>(EMPTY_SIZE);
+  const [naturalSize, setNaturalSize] = useState<Size>(EMPTY_SIZE);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const gestures = usePreviewGestures({
+    stageRef,
+    contentSize: naturalSize,
+    viewportSize,
+    resetKey: activePhoto ? `${activePhoto.id}|${activePhoto.contentUrl}|${activePhoto.rotation}` : 'empty',
+    initialFitMode: 'fit-window',
+    initialRotation: activePhoto?.rotation || 0,
+  });
 
   useEffect(() => {
-    if (!fullscreen) return;
+    const node = stageRef.current;
+    if (!node) return undefined;
+    let frame = 0;
+    const measure = (): void => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const next = { width: node.clientWidth, height: node.clientHeight };
+        setViewportSize(current => current.width === next.width && current.height === next.height ? current : next);
+      });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    setNaturalSize(EMPTY_SIZE);
+    setLoading(Boolean(activePhoto?.id));
+    setLoadError(false);
+  }, [activePhoto?.contentUrl, activePhoto?.id]);
+
+  useEffect(() => {
+    if (!fullscreen) return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    rootRef.current?.focus();
     return () => {
       document.body.style.overflow = previousOverflow;
     };
   }, [fullscreen]);
-
-  useEffect(() => {
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
-    setLocalRotation(activePhoto?.rotation || 0);
-  }, [activePhoto?.id, activePhoto?.rotation]);
 
   function choose(index: number) {
     const next = photos[(index + photos.length) % photos.length];
     if (next) onActivePhotoChange(next.id);
   }
 
-  function changeZoom(next: number) {
-    const value = clamp(next, .35, 4);
-    setZoom(value);
-    if (value <= 1) setOffset({ x: 0, y: 0 });
-  }
-
-  function fit() {
-    setZoom(1);
-    setOffset({ x: 0, y: 0 });
-  }
-
-  function oneToOne() {
-    if (!activePhoto || !stageRef.current || !activePhoto.width || !activePhoto.height) return changeZoom(1.5);
-    const rect = stageRef.current.getBoundingClientRect();
-    const containWidth = Math.min(rect.width - 36, (rect.height - 36) * activePhoto.width / activePhoto.height);
-    changeZoom(clamp(activePhoto.width / Math.max(containWidth, 1), 1, 4));
-  }
-
   function rotate(delta: number) {
     if (!activePhoto) return;
-    const next = (localRotation + delta + 360) % 360;
-    setLocalRotation(next);
+    const next = (gestures.rotation + delta + 360) % 360;
+    gestures.rotateBy(delta);
     void onRotate?.(activePhoto, next);
   }
 
-  function pointerDown(event: PointerEvent<HTMLDivElement>) {
-    if (zoom <= 1) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    dragRef.current = { x: event.clientX, y: event.clientY, originX: offset.x, originY: offset.y };
-    setDragging(true);
-  }
-
-  function pointerMove(event: PointerEvent<HTMLDivElement>) {
-    if (!dragRef.current) return;
-    setOffset({
-      x: dragRef.current.originX + event.clientX - dragRef.current.x,
-      y: dragRef.current.originY + event.clientY - dragRef.current.y,
-    });
-  }
-
-  function pointerEnd() {
-    dragRef.current = null;
-    setDragging(false);
-  }
-
-  function wheel(event: WheelEvent<HTMLDivElement>) {
-    event.preventDefault();
-    changeZoom(zoom + (event.deltaY < 0 ? .12 : -.12));
+  function isControlTarget(event: SyntheticEvent<HTMLDivElement>) {
+    return event.target instanceof Element && Boolean(event.target.closest('[data-preview-controls]'));
   }
 
   if (!activePhoto) return <div className="material-evidence-empty"><span><ImageIcon size={34} /></span><strong>尚无来料实拍</strong><p>生成临时或永久二维码后，品质人员可用手机实时拍照留库。</p></div>;
+
+  const renderSize = naturalSize.width > 0 && naturalSize.height > 0
+    ? naturalSize
+    : { width: activePhoto.width || 1, height: activePhoto.height || 1 };
+  const zoomLabel = naturalSize.width > 0 ? `${Math.round(gestures.zoom * 100)}%` : '—';
 
   return <div
     ref={rootRef}
     className={`material-evidence-viewer${fullscreen ? ' is-fullscreen' : ''}`}
     tabIndex={0}
+    data-fit-mode={gestures.fitMode}
     onKeyDown={event => {
       if (event.key === 'ArrowLeft') choose(activeIndex - 1);
       else if (event.key === 'ArrowRight') choose(activeIndex + 1);
-      else if (event.key === '+' || event.key === '=') changeZoom(zoom + .15);
-      else if (event.key === '-') changeZoom(zoom - .15);
+      else if (event.key === '+' || event.key === '=') gestures.zoomBy(1.15);
+      else if (event.key === '-') gestures.zoomBy(1 / 1.15);
       else if (event.key.toLowerCase() === 'r') rotate(90);
-      else if (event.key.toLowerCase() === 'f') fit();
+      else if (event.key.toLowerCase() === 'f' || event.key === '0') gestures.setFitMode('fit-window');
+      else if (event.key === '1') gestures.setFitMode('actual-size');
       else if (event.key === 'Escape' && fullscreen) setFullscreen(false);
     }}
   >
     <div
       ref={stageRef}
-      className={`material-evidence-stage${dragging ? ' dragging' : ''}`}
-      onPointerDown={pointerDown}
-      onPointerMove={pointerMove}
-      onPointerUp={pointerEnd}
-      onPointerCancel={pointerEnd}
-      onWheel={wheel}
+      className={`material-evidence-stage${gestures.isDragging ? ' dragging' : ''}`}
+      onPointerDown={event => { if (!isControlTarget(event)) gestures.onPointerDown(event); }}
+      onPointerMove={gestures.onPointerMove}
+      onPointerUp={gestures.onPointerUp}
+      onPointerCancel={gestures.onPointerCancel}
+      onDoubleClick={event => { if (!isControlTarget(event)) gestures.onDoubleClick(event); }}
     >
-      <Image
-        unoptimized
-        priority
-        draggable={false}
-        src={activePhoto.contentUrl}
-        width={activePhoto.width || 1440}
-        height={activePhoto.height || 1080}
-        alt={activePhoto.caption || activePhoto.originalName}
-        style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${zoom}) rotate(${localRotation}deg)` }}
-      />
-      <div className="material-evidence-dock" aria-label="照片预览控制">
+      <div
+        className={`material-evidence-positioner${gestures.isGestureActive ? ' active' : ''}`}
+        style={{
+          width: `${renderSize.width}px`,
+          height: `${renderSize.height}px`,
+          transform: `translate3d(calc(-50% + ${gestures.panX}px), calc(-50% + ${gestures.panY}px), 0)`,
+          opacity: loadError ? 0 : 1,
+        }}
+      >
+        <div
+          className="material-evidence-canvas"
+          style={{ transform: `rotate(${gestures.rotation}deg) scale(${gestures.zoom})` }}
+        >
+          {/* The browser-decoded natural size is required for EXIF-aware fitting. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            key={activePhoto.contentUrl}
+            src={activePhoto.contentUrl}
+            alt={activePhoto.caption || activePhoto.originalName}
+            draggable={false}
+            decoding="async"
+            onLoad={event => {
+              const width = event.currentTarget.naturalWidth || activePhoto.width || 1;
+              const height = event.currentTarget.naturalHeight || activePhoto.height || 1;
+              setNaturalSize({ width, height });
+              setLoading(false);
+              setLoadError(false);
+            }}
+            onError={() => {
+              setLoading(false);
+              setLoadError(true);
+            }}
+          />
+        </div>
+      </div>
+
+      {(loading || loadError) && <div className={`material-evidence-status${loadError ? ' error' : ''}`} role="status" aria-live="polite">
+        <span><ImageIcon size={25} /></span>
+        <strong>{loadError ? '照片读取失败' : '正在适配照片'}</strong>
+        <small>{loadError ? '可以下载原图检查，或刷新页面后重试。' : '正在读取真实像素和手机拍摄方向…'}</small>
+      </div>}
+
+      {gestures.zoomHint && <div className="material-evidence-hint" aria-live="polite">{gestures.zoomHint}</div>}
+
+      <div className="material-evidence-dock" aria-label="照片预览控制" data-preview-controls>
         <ThreeDIconButton label="上一张" disabled={photos.length < 2} onClick={() => choose(activeIndex - 1)}><ChevronLeft size={17} /></ThreeDIconButton>
         <span className="material-evidence-counter"><b>{activeIndex + 1}</b> / {photos.length}</span>
         <ThreeDIconButton label="下一张" disabled={photos.length < 2} onClick={() => choose(activeIndex + 1)}><ChevronRight size={17} /></ThreeDIconButton>
         <i />
-        <ThreeDIconButton label="缩小" onClick={() => changeZoom(zoom - .15)}><Minus size={16} /></ThreeDIconButton>
-        <span className="material-evidence-zoom">{Math.round(zoom * 100)}%</span>
-        <ThreeDIconButton label="放大" onClick={() => changeZoom(zoom + .15)}><Plus size={16} /></ThreeDIconButton>
-        <ThreeDIconButton label="自适应" onClick={fit}><Focus size={16} /></ThreeDIconButton>
-        <button className="material-evidence-one" type="button" onClick={oneToOne}>1:1</button>
-        <ThreeDIconButton label="向左旋转" onClick={() => rotate(-90)}><RotateCcw size={16} /></ThreeDIconButton>
-        <ThreeDIconButton label="向右旋转" onClick={() => rotate(90)}><RotateCw size={16} /></ThreeDIconButton>
+        <ThreeDIconButton label="缩小" disabled={loading || loadError} onClick={() => gestures.zoomBy(1 / 1.15)}><Minus size={16} /></ThreeDIconButton>
+        <span className="material-evidence-zoom" aria-live="polite">{zoomLabel}</span>
+        <ThreeDIconButton label="放大" disabled={loading || loadError} onClick={() => gestures.zoomBy(1.15)}><Plus size={16} /></ThreeDIconButton>
+        <ThreeDIconButton label="自适应" active={gestures.fitMode === 'fit-window'} disabled={loading || loadError} onClick={() => gestures.setFitMode('fit-window')}><Focus size={16} /></ThreeDIconButton>
+        <button className={`material-evidence-one${gestures.fitMode === 'actual-size' ? ' active' : ''}`} type="button" disabled={loading || loadError} onClick={() => gestures.setFitMode('actual-size')}>1:1</button>
+        <ThreeDIconButton label="向左旋转" disabled={loading || loadError} onClick={() => rotate(-90)}><RotateCcw size={16} /></ThreeDIconButton>
+        <ThreeDIconButton label="向右旋转" disabled={loading || loadError} onClick={() => rotate(90)}><RotateCw size={16} /></ThreeDIconButton>
         <i />
         <ThreeDIconButton label={fullscreen ? '退出全屏' : '全屏预览'} onClick={() => setFullscreen(value => !value)}>
           {fullscreen ? <Minimize2 size={16} /> : <Expand size={16} />}

@@ -15,6 +15,7 @@ import { prisma } from '@/lib/prisma';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { safeFilename, validateFileContent } from '@/lib/validation';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
+import { orientedImageSize } from '@/lib/image-orientation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,6 +45,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     if (!upload.type.startsWith('image/')) return NextResponse.json({ ok: false, error: '物料照片仅支持 JPG、PNG 或 WEBP 图片' }, { status: 400 });
     const metadata = await sharp(body, { failOn: 'error' }).metadata().catch(() => null);
     if (!metadata?.width || !metadata.height) return NextResponse.json({ ok: false, error: '无法识别图片尺寸，请重新拍照' }, { status: 400 });
+    const displaySize = orientedImageSize(metadata);
+    if (!displaySize) return NextResponse.json({ ok: false, error: '无法识别图片显示方向，请重新拍照' }, { status: 400 });
 
     const sha256 = crypto.createHash('sha256').update(body).digest('hex');
     objectKey = `material-library/${session.materialItemId}/${datePart()}/sha256-${sha256}-${crypto.randomUUID()}-${safeFilename(upload.name)}`;
@@ -75,8 +78,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           size: BigInt(upload.size),
           objectKey: objectKey!,
           sha256,
-          width: metadata.width,
-          height: metadata.height,
+          width: displaySize.width,
+          height: displaySize.height,
           sortOrder: (order._max.sortOrder ?? -1) + 1,
           isCover: activePhotoCount === 0,
           caption: cleanMaterialText(form.get('caption'), 500),
@@ -92,7 +95,15 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           action: 'upload_material_library_photo',
           targetType: 'material_library_photo',
           targetId: photo.id,
-          detail: { sessionId: fresh.id, materialItemId: fresh.materialItemId, size: upload.size, sha256, width: metadata.width, height: metadata.height },
+          detail: {
+            sessionId: fresh.id,
+            materialItemId: fresh.materialItemId,
+            size: upload.size,
+            sha256,
+            width: displaySize.width,
+            height: displaySize.height,
+            exifOrientation: metadata.orientation || null,
+          },
         },
       });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });

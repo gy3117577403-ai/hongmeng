@@ -59,6 +59,59 @@ The focused artifact makes the date-area change legible: weekday headers align t
 
 final result: passed
 
+---
+
+# Material Library Image-Fit Repair v1.34.58 — Design QA
+
+Date: 2026-08-27
+Release candidate: v1.34.58
+Tablet acceptance viewport: 1366 × 1024
+Reference-comparison viewport: 2048 × 1177
+
+## Evidence
+
+- User-reported source: `C:\Windows\TEMP\codex-clipboard-0d428b77-0802-459d-b92a-78f2cfb6b1c9.png` (2421 × 1391)
+- Tablet implementation: `artifacts/material-library-v13458/qa/implementation-1366x1024.png`
+- Same-aspect implementation: `artifacts/material-library-v13458/qa/implementation-2048x1177.png`
+- Source and implementation in one comparison input: `artifacts/material-library-v13458/qa/reference-implementation-2048x1177.png`
+- State: authenticated local QA administrator, material `MAT-000001`, three S3-backed photographs with landscape and persisted 90° rotation cases.
+
+The supplied screenshot and browser-rendered implementation were inspected together in one combined comparison image. The source was normalized from 2421 × 1391 to the same 2048 × 1177 aspect and viewport used for the implementation capture; no content crop was applied.
+
+## Confirmed root cause and repair
+
+- The old viewer mixed CSS image fitting with a transform applied to the image itself. After persisted 90° rotation, layout dimensions, transformed dimensions and the scale calculation no longer described the same coordinate space. The result was the large blank upper area and the cropped photograph shown in the source.
+- The viewer now decodes the browser's real `naturalWidth` and `naturalHeight`, measures the live stage through `ResizeObserver`, computes a rotation-aware contain scale, and applies transform to a centered canvas inside an independent positioner.
+- New uploads store display-oriented width and height for EXIF orientations 5–8 while retaining the original bytes in S3-compatible object storage. Existing records remain compatible because the browser-decoded dimensions are authoritative in the viewer.
+
+## Required fidelity surfaces
+
+- Layout and spacing: passed. At 1366 × 1024 and 2048 × 1177, the active photograph is centered within the evidence stage, the filmstrip remains below it, and the context panel stays independently readable. No page-level horizontal overflow or overlapping persistent control was observed.
+- Image quality and asset fidelity: passed. The original image URL is rendered without screenshot rasterization, artificial crop or stretched aspect ratio. Landscape, portrait-equivalent 90° rotation and a third image all fit within the stage with preserved proportions.
+- Typography, colors and surfaces: passed. Existing Chinese system typography, navy navigation, orange active/action states, compact 2.5D controls, borders, radii and shadows are unchanged outside the bounded viewer repair.
+- Icons and controls: passed. Previous/next, zoom, fit, 1:1, left/right rotation, full-screen and download actions remain aligned and expose their existing semantic names.
+- Accessibility and resilience: passed. Disabled controls remain disabled until real image dimensions are known; loading and failure states are announced; touch pan/pinch, double-click fit and keyboard full-screen exit remain available. The target tablet viewport and the wider source viewport both have zero body overflow.
+
+## Interaction and geometry checks
+
+- Landscape fit: decoded 1448 × 1086 source rendered 547 × 410.25 inside a 584.67 × 691.67 stage.
+- Persisted 90° fit: rendered 490.5 × 654 inside the same stage; left, right, top and bottom containment checks all returned true.
+- 1:1 mode: rendered the rotated source at 1086 × 1448 and intentionally allowed stage clipping for pixel inspection; restoring `自适应` returned the complete 490.5 × 654 view.
+- Rotation: 90° → 180° → 90° was exercised, with both fitted states contained; the original persisted rotation was restored after the check.
+- CSS full-screen: stage expanded to 1294.67 × 866.67, the image remained fully contained, and exit restored the 584.67 × 691.67 stage.
+- Multi-image navigation: filmstrip selection changed the counter from 1 / 3 to 2 / 3 and loaded the correct rotated record.
+- Runtime: browser console errors 0. One Next.js LCP optimization warning was observed on an existing thumbnail and does not affect viewer geometry or interaction.
+
+## Comparison history and severity review
+
+- Pass 1: reproduced the reported visual state from the supplied screenshot and isolated the fit/rotation coordinate mismatch.
+- Pass 2: compared the final implementation with the source in one combined input. The source's blank upper region and lower crop are absent; the repaired photograph is fully visible and centered while the surrounding material-library hierarchy remains consistent.
+- P0: none
+- P1: none
+- P2: none
+
+final result: passed
+
 # Quality Management Three-Page Top-Spacing — Design QA
 
 Date: 2026-08-26
