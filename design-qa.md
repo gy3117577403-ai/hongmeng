@@ -64,7 +64,7 @@ final result: passed
 # Quality Management Three-Page Top-Spacing — Design QA
 
 Date: 2026-08-26
-Release candidate: v1.34.54
+Release candidate: v1.34.55 (same verified UI plus bounded mirror-release handling)
 Target viewport: 1366 × 1024 horizontal tablet, device scale factor 1
 
 ## Source and implementation evidence

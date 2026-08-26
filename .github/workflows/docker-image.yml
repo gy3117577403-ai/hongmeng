@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 concurrency:
   group: docker-image-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 permissions:
   contents: read
   packages: write
@@ -162,14 +162,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.54
+            org.opencontainers.image.version=v1.34.55
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.54
+            APP_VERSION=v1.34.55
             APP_REVISION=${{ github.sha }}
           load: true
           push: false
@@ -289,6 +289,9 @@ jobs:
           $RELEASE_TAGS
           EOF
       - name: Verify Sealos China mirror manifest and blobs
+        id: sealos_mirror
+        continue-on-error: true
+        timeout-minutes: 15
         env:
           UPSTREAM_IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
           SEALOS_IMAGE: ghcr.nju.edu.cn/${{ github.repository }}:${{ github.ref_name }}
@@ -296,16 +299,16 @@ jobs:
           IMAGE_REPOSITORY: ${{ github.repository }}
           IMAGE_REFERENCE: ${{ github.ref_name }}
         run: |
-          upstream_digest="$(docker buildx imagetools inspect "$UPSTREAM_IMAGE" | awk '$1 == "Digest:" { print $2; exit }')"
+          upstream_digest="$(timeout 30s docker buildx imagetools inspect "$UPSTREAM_IMAGE" | awk '$1 == "Digest:" { print $2; exit }')"
           test -n "$upstream_digest"
 
           mirror_digest=""
-          for attempt in $(seq 1 20); do
-            mirror_digest="$(docker buildx imagetools inspect "$SEALOS_IMAGE" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+          for attempt in $(seq 1 4); do
+            mirror_digest="$(timeout 30s docker buildx imagetools inspect "$SEALOS_IMAGE" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
             if [ "$mirror_digest" = "$upstream_digest" ]; then
               break
             fi
-            echo "Sealos mirror is not synchronized yet ($attempt/20)"
+            echo "Sealos mirror is not synchronized yet ($attempt/4)"
             sleep 15
           done
 
@@ -323,6 +326,7 @@ jobs:
 
           manifest_url="https://${SEALOS_REGISTRY}/v2/${IMAGE_REPOSITORY}/manifests/${IMAGE_REFERENCE}"
           curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 90 \
             --retry 5 --retry-all-errors --retry-delay 5 \
             -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
             "$manifest_url" > "$manifest_file"
@@ -345,6 +349,7 @@ jobs:
             for attempt in $(seq 1 5); do
               rm -f "$blob_file"
               if curl --fail --silent --show-error --location \
+                --connect-timeout 10 --max-time 300 \
                 --retry 3 --retry-all-errors --retry-delay 3 \
                 "$blob_url" > "$blob_file"; then
                 actual_digest="sha256:$(sha256sum "$blob_file" | awk '{ print $1 }')"
@@ -373,4 +378,17 @@ jobs:
             echo "Verified digest: \`$upstream_digest\`"
             echo
             echo "Downloaded and SHA-256 verified ${#blob_digests[@]} config/layer blobs from the Sealos mirror."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record unavailable Sealos mirror without blocking GHCR release
+        if: always() && steps.sealos_mirror.outcome != 'success'
+        env:
+          SEALOS_IMAGE: ghcr.nju.edu.cn/${{ github.repository }}:${{ github.ref_name }}
+        run: |
+          echo "::warning::The verified GHCR image was published, but the Sealos China pull-through mirror did not respond within bounded retries."
+          {
+            echo "### Sealos China mirror unavailable"
+            echo
+            echo "The verified GHCR image was published successfully. The pull-through mirror did not return the manifest and is not claimed as deployable:"
+            echo
+            echo "\`$SEALOS_IMAGE\`"
           } >> "$GITHUB_STEP_SUMMARY"

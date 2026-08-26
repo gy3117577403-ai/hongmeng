@@ -16,7 +16,7 @@ const dockerfile = readFileSync(resolve(repositoryRoot, 'Dockerfile'), 'utf8');
 const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/docker-image.yml'), 'utf8');
 const appInfo = readFileSync(resolve(repositoryRoot, 'lib/app-info.ts'), 'utf8');
 
-const expectedPackageVersion = '1.34.54';
+const expectedPackageVersion = '1.34.55';
 const expectedImageVersion = `v${expectedPackageVersion}`;
 
 test('release version stays aligned across npm, Docker, and GHCR publishing', () => {
@@ -35,7 +35,7 @@ test('GHCR images retain immutable traceability tags and OCI identity labels', (
   assert.match(workflow, /^\s+type=raw,value=latest$/m);
   assert.match(workflow, /^\s+type=sha$/m);
   assert.match(workflow, /^\s+group: docker-image-release$/m);
-  assert.match(workflow, /^\s+cancel-in-progress: false$/m);
+  assert.match(workflow, /^\s+cancel-in-progress: true$/m);
   assert.match(workflow, /^\s+if: startsWith\(github\.ref, 'refs\/tags\/v'\)$/m);
   assert.match(workflow, /^\s+org\.opencontainers\.image\.title=hongmeng-workorder-resource$/m);
   assert.match(workflow, new RegExp(
@@ -56,9 +56,15 @@ test('GHCR images retain immutable traceability tags and OCI identity labels', (
   assert.match(workflow, /^\s+for attempt in \$\(seq 1 5\); do$/m);
   assert.match(workflow, /GHCR push failed after retries:/);
   assert.match(workflow, /^\s+- name: Verify Sealos China mirror manifest and blobs$/m);
+  assert.match(workflow, /^\s+id: sealos_mirror$/m);
+  assert.match(workflow, /^\s+continue-on-error: true$/m);
+  assert.match(workflow, /^\s+timeout-minutes: 15$/m);
+  assert.match(workflow, /timeout 30s docker buildx imagetools inspect/);
+  assert.match(workflow, /--connect-timeout 10 --max-time 90/);
   assert.match(workflow, /\/blobs\/\$\{digest\}/);
   assert.match(workflow, /sha256sum "\$blob_file"/);
   assert.match(workflow, /Sealos blob verification failed after retries:/);
+  assert.match(workflow, /^\s+- name: Record unavailable Sealos mirror without blocking GHCR release$/m);
 });
 
 test('release image changes the standalone application layer for every immutable release', () => {
