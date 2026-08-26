@@ -577,7 +577,7 @@ export default function EightDArchiveShell({ user }: EightDArchiveShellProps) {
       .some(value => value?.toLowerCase().includes(query));
   });
 
-  return <main className="hm-workbench-root hm-eight-d-workbench">
+  return <main className="hm-workbench-root hm-cockpit-root hm-eight-d-workbench">
     <AppWorkbenchHeader
       user={user}
       activeHref="/workspace/quality/8d"

@@ -39,7 +39,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
 
   useEffect(() => { void load(); }, [load]);
 
-  return <main className="hm-workbench-root quality-home-shell">
+  return <main className="hm-workbench-root hm-cockpit-root quality-home-shell">
     <AppWorkbenchHeader user={user} activeHref="/workspace/quality" subtitle="异常、风险预知与受控质量档案" menuItems={[]} hideHeader sidebarTriggerTargetId="quality-home-navigation-trigger" />
     <div className="quality-home-frame">
       <WorkbenchCockpitCommand

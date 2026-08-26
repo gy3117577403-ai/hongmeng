@@ -61,6 +61,61 @@ final result: passed
 
 ---
 
+# Quality Management Three-Page Top-Spacing — Design QA
+
+Date: 2026-08-26
+Release candidate: v1.34.54
+Target viewport: 1366 × 1024 horizontal tablet, device scale factor 1
+
+## Source and implementation evidence
+
+- Quality overview source: `C:\Windows\TEMP\codex-clipboard-01da8397-ea37-42e0-8b9d-28611c0ec3fe.png` (2557 × 1395)
+- Quality overview implementation: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\quality-layout-v13454\overview-2557x1395.png`
+- Internal-risk source: `C:\Windows\TEMP\codex-clipboard-3b849470-1467-419d-9e3f-1e3c15e20c69.png` (2557 × 1462, including browser chrome)
+- Internal-risk implementation: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\quality-layout-v13454\internal-risks-2557x1462.png`
+- 8D source: `C:\Windows\TEMP\codex-clipboard-8dbccb02-f332-4996-bb3b-912874283e90.png` (2548 × 1402)
+- 8D implementation: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\quality-layout-v13454\eight-d-2548x1402.png`
+- Tablet captures: `overview-1366x1024.png`, `internal-risks-1366x1024.png`, and `eight-d-1366x1024.png` in the same artifact directory.
+- State: authenticated local QA administrator against isolated PostgreSQL and S3-compatible MinIO fixtures. Fixture counts differ from the production screenshots and are not treated as visual drift.
+
+All three source images and all three implementation captures were inspected together in one comparison input. Focused crop evidence was not required because the reported defect is the full-width top spacer and its boundary is directly visible in every full-view pair; DOM geometry measurements provide the focused verification.
+
+## Root cause and intended visual change
+
+- Confirmed root cause: all three screens hide the shared workbench header, but only `InternalQualityRiskShell` opted into the `hm-cockpit-root` layout contract that zeros the hidden-header reservation. `QualityManagementShell` and `EightDArchiveShell` therefore retained the shared 64 px top padding.
+- Intended change: apply the same `hm-cockpit-root` contract to all three quality shells. No page-specific negative margin, duplicate CSS rule, or unrelated visual redesign was introduced.
+- Measured result at 1366 × 1024: all three main roots start at y=0 with computed `padding-top: 0px`; command bars start at y=8, y=6, and y=8 respectively.
+
+## Required fidelity surfaces
+
+- Layout and spacing: passed. The command bar now begins directly below the browser viewport on all three routes, the quality-module tab bar follows consistently, and panel grids retain their existing widths, gaps, borders, radii, and scroll boundaries.
+- Typography: passed. Existing Chinese system-font stack, heading scale, status numerals, muted descriptions, and compact workbench density are unchanged.
+- Colors and tokens: passed. Navy navigation, orange active/action states, neutral panel surfaces, severity colors, and border tokens remain consistent with the supplied screens.
+- Icons and assets: passed. Existing icon-library assets remain sharp; no placeholder or replacement asset was introduced.
+- Copy and content: passed. Screen labels, search placeholders, status categories, recovery rules, and quality-management navigation copy remain intact.
+- Responsive target: passed at 1366 × 1024. No horizontal page overflow, clipped command action, overlapping tab, or detached panel edge was observed.
+
+## Interaction and accessibility checks
+
+- Passed: links between quality overview, internal risks, and 8D archive resolve to the correct routes.
+- Passed: internal-risk global search remains visible and product, source-issue, and work-order selectors open as semantic combobox/dialog/listbox controls.
+- Passed: product search for `EHPS`, source-issue search for `ISS-000004`, and work-order search for `F260826004` each reduce the visible options to the matching row plus the explicit unrestricted option.
+- Passed: 8D product and quality-issue list searches return the expected `EHPS-4-4L616A-610` and `ISS-000004` rows.
+- Passed: all three routes expose the shared module navigation and hidden workbench header contract through the DOM.
+- Passed: browser console errors/warnings during the three-page pass: 0.
+
+## Comparison history and severity review
+
+- Pass 1: reproduced the discrepancy in source evidence and traced it to inconsistent root-class adoption rather than deployment cache or three separate page bugs.
+- Pass 2: compared all three final captures with all three sources. The highlighted top blank space is gone on overview and 8D, while the already-correct internal-risk page remains aligned. No unintended P0, P1, or P2 visual mismatch remains.
+- P0: none
+- P1: none
+- P2: none
+
+final result: passed
+
+---
+
 # Internal Quality Risk Search UI — Design QA
 
 Date: 2026-08-26
