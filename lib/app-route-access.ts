@@ -25,6 +25,7 @@ type RouteAccessRule = {
 export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/field-report', anyOf: ['FIELD_REPORT'] },
   { prefix: '/sample-capture', anyOf: ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'FIELD_REPORT', 'PRODUCTION', 'PLANNING', 'ENGINEERING', 'PROCESS'] },
+  { prefix: '/material-upload', anyOf: ['QUALITY'] },
   { prefix: '/account', anyOf: ['ACCOUNT_SELF'] },
   { prefix: '/home', anyOf: ['BASIC_SUMMARY'] },
   { prefix: '/production/qr-print', anyOf: ['PRODUCTION'], action: 'EXECUTE_WORKFLOW' },
@@ -37,6 +38,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/connector-parameters', anyOf: ['ENGINEERING'] },
   { prefix: '/workspace/terminal-tooling', anyOf: ['TERMINAL_TOOLING'] },
   { prefix: '/workspace/capability-showcase', anyOf: ['ACCOUNT_SELF'] },
+  { prefix: '/workspace/material-library', anyOf: ['QUALITY'] },
   { prefix: '/workspace/quality', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/workspace/issues', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/workspace/approvals', anyOf: ['QUALITY', 'MAJOR_APPROVAL'] },

@@ -82,6 +82,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:quality-risk-integration
+      - name: Material library PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:material-library-integration
       - name: Major quality approval PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -162,14 +166,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.55
+            org.opencontainers.image.version=v1.34.56
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.55
+            APP_VERSION=v1.34.56
             APP_REVISION=${{ github.sha }}
           load: true
           push: false

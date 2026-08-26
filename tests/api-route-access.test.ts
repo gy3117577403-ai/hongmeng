@@ -256,6 +256,38 @@ test('internal quality risks reuse quality permissions while issue collaboration
   assert.equal(canAccessApiRoute(quality, '/api/work-orders/w1/quality-alerts/link', 'POST'), true);
 });
 
+test('material library gives quality reviewers capture powers while keeping archive deletion administrative', () => {
+  const reviewer = context({
+    profile: 'QUALITY_REVIEWER',
+    departmentCode: 'QUALITY',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:QUALITY',
+  });
+  const administrator = context({
+    profile: 'DEPARTMENT_FULL',
+    departmentCode: 'QUALITY',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:QUALITY',
+  });
+  const planning = context({
+    profile: 'DEPARTMENT_FULL',
+    departmentCode: 'PLANNING',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:PLANNING',
+  });
+
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items', 'GET'), true);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items', 'POST'), true);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items/item-1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/items/item-1', 'DELETE'), false);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/photos/photo-1', 'DELETE'), true);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/upload-links/link-1', 'DELETE'), true);
+  assert.equal(canAccessApiRoute(reviewer, '/api/material-library/sessions/session-1/complete', 'POST'), true);
+  assert.equal(canAccessApiRoute(administrator, '/api/material-library/items/item-1', 'DELETE'), true);
+  assert.equal(canAccessApiRoute(administrator, '/api/material-library/categories/category-1', 'DELETE'), true);
+  assert.equal(canAccessApiRoute(planning, '/api/material-library/items', 'GET'), false);
+});
+
 test('drawing reader and editor share data while write and destructive actions remain separated', () => {
   const reader = context({
     profile: 'DRAWING_LIBRARY_READER',

@@ -71,6 +71,8 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/material-follow-ups', anyOf: ['PROCUREMENT'] },
   { prefix: '/api/warehouse', anyOf: ['WAREHOUSE'] },
 
+  { prefix: '/api/material-library', anyOf: ['QUALITY'] },
+
   { prefix: '/api/quality/internal-risks', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'], readOnlyModules: ['ISSUE_MANAGEMENT'] },
   { prefix: '/api/quality/8d', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/api/issues/from-production-alert', anyOf: ['QUALITY'] },
@@ -271,6 +273,38 @@ function pathOnly(value: string): string {
 
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
+
+  if (/^\/api\/material-library\/sessions\/[^/]+\/complete$/.test(path)) {
+    return {
+      prefix: '/api/material-library/sessions/:id/complete',
+      anyOf: ['QUALITY'],
+      action: 'EXECUTE_WORKFLOW',
+    };
+  }
+
+  if (/^\/api\/material-library\/sessions\/[^/]+\/(?:cancel|heartbeat)$/.test(path)) {
+    return {
+      prefix: '/api/material-library/sessions/:id/session-command',
+      anyOf: ['QUALITY'],
+      action: 'UPDATE',
+    };
+  }
+
+  if (/^\/api\/material-library\/items\/[^/]+\/restore$/.test(path)) {
+    return {
+      prefix: '/api/material-library/items/:id/restore',
+      anyOf: ['QUALITY'],
+      action: 'UPDATE',
+    };
+  }
+
+  if (/^\/api\/material-library\/(?:photos|upload-links)\/[^/]+$/.test(path)) {
+    return {
+      prefix: '/api/material-library/removable-session-resource/:id',
+      anyOf: ['QUALITY'],
+      actionsByMethod: { DELETE: 'UPDATE' },
+    };
+  }
 
   if (/^\/api\/work-orders\/[^/]+\/quality-alerts\/link$/.test(path)) {
     return {

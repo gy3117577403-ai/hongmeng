@@ -123,3 +123,10 @@ test('quality management parent, internal risks and 8D archive share quality and
   assert.equal(canAccessAppRoute(access('ISSUE_MANAGEMENT'), '/workspace/quality/8d?issueId=i1'), true);
   assert.equal(canAccessAppRoute(access('PLANNING'), '/workspace/quality'), false);
 });
+
+test('material library is standalone and mobile upload stays quality-only', () => {
+  assert.equal(canAccessAppRoute(access('QUALITY'), '/workspace/material-library'), true);
+  assert.equal(canAccessAppRoute(access('QUALITY'), '/material-upload/signed-code'), true);
+  assert.equal(canAccessAppRoute(access('ISSUE_MANAGEMENT'), '/workspace/material-library'), false);
+  assert.equal(canAccessAppRoute(access('PLANNING'), '/material-upload/signed-code'), false);
+});

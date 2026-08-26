@@ -59,8 +59,6 @@ The focused artifact makes the date-area change legible: weekday headers align t
 
 final result: passed
 
----
-
 # Quality Management Three-Page Top-Spacing — Design QA
 
 Date: 2026-08-26
@@ -108,6 +106,63 @@ All three source images and all three implementation captures were inspected tog
 
 - Pass 1: reproduced the discrepancy in source evidence and traced it to inconsistent root-class adoption rather than deployment cache or three separate page bugs.
 - Pass 2: compared all three final captures with all three sources. The highlighted top blank space is gone on overview and 8D, while the already-correct internal-risk page remains aligned. No unintended P0, P1, or P2 visual mismatch remains.
+- P0: none
+- P1: none
+- P2: none
+
+final result: passed
+
+---
+
+# Standalone Material Library Version 3 — Design QA
+
+Date: 2026-08-26
+Release candidate: v1.34.56
+Desktop target: 1366 × 1024 horizontal tablet
+Mobile capture target: 390 × 844
+
+## Evidence
+
+- Selected visual reference: `C:\Users\31175\.codex\generated_images\01a03791-4813-7aa3-ab3d-06de901ce204\exec-8a66f17e-48fd-46a6-8984-a60bb76eb6a2.png`
+- Reference and implementation comparison: `artifacts/material-library-v13456/qa/reference-vs-implementation.png`
+- Desktop live capture: `artifacts/material-library-v13456/qa/desktop-live-1366x1024-v2.png`
+- Desktop archived item: `artifacts/material-library-v13456/qa/desktop-archived-1366x1024.png`
+- Desktop library: `artifacts/material-library-v13456/qa/desktop-library-1366x1024.png`
+- Permanent QR modal: `artifacts/material-library-v13456/qa/desktop-qr-modal-1366x1024.png`
+- Mobile capture: `artifacts/material-library-v13456/qa/mobile-capture-390x844.png`
+
+The selected version-3 reference and the final 1366 × 1024 implementation were combined into one comparison image and inspected together. The implementation retains the established navy navigation, orange actions, compact workbench density and light 2.5D elevation while adapting the concept to the existing authenticated application shell.
+
+## Layout and visual fidelity
+
+- Passed: the material library is a standalone navigation module and is not nested under quality management.
+- Passed: the session command bar and capture progress occupy separate rows, preserving control clarity at the tablet target.
+- Passed: the central evidence area uses a stable 2 × 2 photo grid with a dedicated preview surface instead of a compressed thumbnail strip.
+- Passed: item list, category rail, photo preview and inspection form preserve explicit scroll boundaries without page-level horizontal overflow.
+- Passed: the 390 × 844 capture page keeps camera actions, editable inspection fields and the archive action usable without horizontal clipping.
+- Passed: the first comparison pass found an over-dominant preview and compressed progress header; both were corrected before the final pass.
+
+## Interaction and accessibility
+
+- Passed: quality users can create and edit material records, search by code, name, model, specification, supplier or batch, and filter by custom category or warning state.
+- Passed: administrators can soft-delete material records, inspect the recycle state and restore archived records; object evidence remains retained according to the archive lifecycle.
+- Passed: temporary QR codes enforce expiry and one completed use, while permanent QR codes remain reusable and open a new incoming-inspection session after the prior session is archived.
+- Passed: the mobile route supports direct camera capture or gallery selection, uploads one image at a time to object storage, and synchronizes the live session to the desktop workbench.
+- Passed: desktop staff can preview, rotate, enlarge, download, mark a cover photo, remove an active-session mistake and complete the remaining specification, material, supplier and warning details.
+- Passed: warning state requires a traceable reason for defective material, and completion requires at least one retained photo.
+- Passed: QR creation, copy, revoke and close controls expose semantic labels; mobile form fields and capture actions retain explicit labels and focusable native controls.
+
+## Runtime and data checks
+
+- Passed: three representative incoming-inspection photos were uploaded to the isolated S3-compatible MinIO bucket and previewed from object-backed content routes.
+- Passed: PostgreSQL retained material metadata, categories, QR links, capture sessions and photo metadata; no uploaded photo is permanently stored on local application disk.
+- Passed: all 101 Prisma migrations applied to a fresh PostgreSQL database.
+- Passed: concurrent permanent-QR scans are serialized per material item; the observed PostgreSQL transaction-conflict boundary was reproduced and converted to a stable single-active-session contract.
+- Passed: the permanent QR was reused after archive and created a distinct next inspection session.
+- Passed: TypeScript, lint, 921 unit tests and the optimized production build completed with zero failures. The only lint output was three pre-existing image-optimization warnings outside this module.
+
+## Severity review
+
 - P0: none
 - P1: none
 - P2: none
