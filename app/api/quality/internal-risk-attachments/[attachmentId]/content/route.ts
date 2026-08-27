@@ -1,8 +1,9 @@
 import { Readable } from 'node:stream';
 import { NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getObjectStream } from '@/lib/s3';
+import { qualityRiskSession, requireQualityRiskParticipant } from '@/lib/quality-risk-access';
+import { internalQualityRiskRouteError } from '@/lib/internal-quality-risk-route-response';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,7 +14,7 @@ function asciiFilename(filename: string): string {
 
 export async function GET(_req: Request, { params }: { params: { attachmentId: string } }) {
   try {
-    await requireUser();
+    await qualityRiskSession();
     const attachment = await prisma.internalQualityRiskAttachment.findFirst({
       where: {
         id: params.attachmentId,
@@ -22,9 +23,15 @@ export async function GET(_req: Request, { params }: { params: { attachmentId: s
           { revisionLinks: { some: {} } },
         ],
       },
-      select: { objectKey: true, originalName: true, displayName: true, mimeType: true, fileSize: true },
+      select: { reportId: true, objectKey: true, originalName: true, displayName: true, mimeType: true, fileSize: true },
     });
     if (!attachment) return NextResponse.json({ ok: false, error: '证据不存在或已删除' }, { status: 404 });
+    const published = await prisma.internalQualityRiskRevisionAttachment.findFirst({
+      where: { attachmentId: params.attachmentId, revision: { published: true, currentFor: { is: { deletedAt: null, warningState: 'ACTIVE' } } } },
+      select: { revisionId: true },
+    });
+    // Production/drawing readers may see published evidence, never another incident's working files.
+    if (!published) await requireQualityRiskParticipant(attachment.reportId, 'read');
     const filename = attachment.displayName || attachment.originalName;
     const stream = await getObjectStream(attachment.objectKey);
     return new Response(Readable.toWeb(stream as Readable) as unknown as BodyInit, { headers: {
@@ -35,8 +42,6 @@ export async function GET(_req: Request, { params }: { params: { attachmentId: s
       'X-Content-Type-Options': 'nosniff',
     } });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
-    console.error('quality risk attachment content failed', error);
-    return NextResponse.json({ ok: false, error: '证据读取失败' }, { status: 500 });
+    return internalQualityRiskRouteError(error, '证据读取失败');
   }
 }

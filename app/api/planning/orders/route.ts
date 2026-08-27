@@ -175,7 +175,8 @@ export async function GET(req: NextRequest) {
           qualityRiskRevisionLinks: {
             where: {
               revision: {
-                currentFor: { is: { deletedAt: null, status: { in: ['ARCHIVED', 'REVISING'] }, warningState: 'ACTIVE' } },
+                published: true,
+                currentFor: { is: { deletedAt: null, warningState: 'ACTIVE' } },
               },
             },
             select: { revision: { select: { snapshot: true, currentFor: true } } },

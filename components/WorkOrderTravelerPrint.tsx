@@ -21,6 +21,7 @@ import QRCode from 'qrcode';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { calculateStandardHourlyCapacity } from '@/lib/process-capacity';
 import { QualityWarningPrintSheet } from '@/components/QualityWarningPrintSheet';
+import { flattenQualityWarningPages, type QualityPrintPage } from '@/lib/quality-warning-print-layout';
 import { workOrderPrintReturnLabel } from '@/lib/work-order-print-navigation';
 import type { WorkOrderTravelerPrintRecord } from '@/lib/work-order-qr-service';
 import {
@@ -201,7 +202,7 @@ export default function WorkOrderTravelerPrint({
   const includesWarning = records.some(record => Boolean(printItem(record, 'QUALITY_WARNING')));
   const duplexTravelerSop = records.every(record => record.mode === 'TRAVELER_SOP_DUPLEX' || record.mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX');
   const qrReady = records.every(record => (!printItem(record, 'TRAVELER') || Boolean(qrImages[record.printId]))
-    && (!printItem(record, 'QUALITY_WARNING') || record.snapshot.qualityWarnings.every(warning => Boolean(warningQrImages[warning.alertId]))));
+    && (!printItem(record, 'QUALITY_WARNING') || record.snapshot.qualityWarnings.every(warning => !warning.employeePath || Boolean(warningQrImages[warning.alertId]))));
   const allConfirmed = records.every(record => record.items.every(item => confirmedItems.has(itemKey(record.printId, item.material))));
   const combinedTravelerWarning = !duplexTravelerSop && includesTraveler && includesWarning;
   const separateTargets = useMemo<PrintTarget[]>(() => (combinedTravelerWarning
@@ -250,7 +251,8 @@ export default function WorkOrderTravelerPrint({
       if (!cancelled) setQrImages(Object.fromEntries(entries));
     });
     const warningPromise = Promise.all(records.flatMap(record => record.snapshot.qualityWarnings.map(async warning => {
-      const link = `${window.location.origin}/workspace/quality/internal-risks?reportId=${encodeURIComponent(warning.reportId)}`;
+      if (!warning.employeePath) return [warning.alertId, ''] as const;
+      const link = `${window.location.origin}${warning.employeePath}`;
       const dataUrl = await QRCode.toDataURL(link, { errorCorrectionLevel: 'M', margin: 1, width: 420, color: { dark: '#111827', light: '#ffffff' } });
       return [warning.alertId, dataUrl] as const;
     }))).then(entries => {
@@ -317,7 +319,7 @@ export default function WorkOrderTravelerPrint({
       for (const record of records) {
         if (!printItem(record, 'QUALITY_WARNING')) continue;
         const pageBlobs: Blob[] = [];
-        for (let index = 0; index < record.snapshot.qualityWarnings.length; index += 1) {
+        for (let index = 0; index < flattenQualityWarningPages(record.snapshot.qualityWarnings).length; index += 1) {
           const source = warningRefs.current[warningPageKey(record.printId, index + 1)];
           if (!source) throw new Error(`异常警示第 ${index + 1} 页尚未就绪，请刷新后重试`);
           const images = [...source.querySelectorAll('img')];
@@ -325,6 +327,8 @@ export default function WorkOrderTravelerPrint({
             image.addEventListener('load', () => resolve(), { once: true });
             image.addEventListener('error', () => resolve(), { once: true });
           })));
+          if (images.some(image => !image.complete || !image.naturalWidth)) throw new Error('异常图片未完整加载，请重试；不会输出缺图的正式附页');
+          if (source.scrollHeight > source.clientHeight + 3 || source.scrollWidth > source.clientWidth + 3) throw new Error('异常附页内容超出纸张，请调整图片或分段后重试');
           const canvas = await html2canvas(source, { scale: 2.5, backgroundColor: '#ffffff', logging: false, useCORS: true, width: source.scrollWidth, height: source.scrollHeight, windowWidth: source.scrollWidth, windowHeight: source.scrollHeight });
           pageBlobs.push(await canvasPng(canvas));
           canvas.width = 1;
@@ -370,7 +374,7 @@ export default function WorkOrderTravelerPrint({
           for (const record of records) {
             if (!printItem(record, 'QUALITY_WARNING')) continue;
             const pageBlobs = capturedWarnings.get(record.printId) || [];
-            if (pageBlobs.length !== record.snapshot.qualityWarnings.length) throw new Error('异常警示附页生成不完整，请刷新后重试');
+            if (pageBlobs.length !== flattenQualityWarningPages(record.snapshot.qualityWarnings).length) throw new Error('异常警示附页生成不完整，请刷新后重试');
             pageBlobs.forEach((blob, index) => form.set(`warningImage:${record.printId}:${index + 1}`, blob, `${record.printId}-warning-${index + 1}.png`));
           }
         }
@@ -535,10 +539,11 @@ export default function WorkOrderTravelerPrint({
     </article>;
   }
 
-  function warningSheet(record: WorkOrderTravelerPrintRecord, warning: QualityWarning, pageNumber: number, capture = false) {
+  function warningSheet(record: WorkOrderTravelerPrintRecord, warning: QualityWarning, pageNumber: number, capture = false, page?: QualityPrintPage) {
     const snapshot = record.snapshot;
     return <QualityWarningPrintSheet
-      key={`${record.printId}-warning-${warning.alertId}`}
+      key={`${record.printId}-warning-${warning.alertId}-${pageNumber}`}
+      page={page}
       sheetRef={capture ? node => { warningRefs.current[warningPageKey(record.printId, pageNumber)] = node; } : undefined}
       sourceKey={capture ? `${record.printId}:${pageNumber}` : undefined}
       order={{
@@ -550,7 +555,7 @@ export default function WorkOrderTravelerPrint({
       warning={warning}
       qrImage={warningQrImages[warning.alertId]}
       pageNumber={pageNumber}
-      totalPages={snapshot.qualityWarnings.length}
+      totalPages={flattenQualityWarningPages(snapshot.qualityWarnings).length}
     />;
   }
 
@@ -588,7 +593,7 @@ export default function WorkOrderTravelerPrint({
       </header>
 
       {duplexTravelerSop && includesTraveler && includesSop && <div className="traveler-print-instruction"><FileText size={18} /><span><strong>统一 PDF 双面打印包</strong> PDF版SOP保留源页面，图片版SOP自动转为A4打印页；打印时选择“双面 / 长边翻转”，方向选择“自动”。</span></div>}
-      {includesWarning && <div className="traveler-print-instruction quality"><ShieldAlert size={18} /><span><strong>异常警示使用固定 A4 附页</strong> 每条生效警示独立一页；必打策略已强制加入。流转单/SOP双面包与警示附页分开，避免破坏双面翻页顺序。</span></div>}
+      {includesWarning && <div className="traveler-print-instruction quality"><ShieldAlert size={18} /><span><strong>异常警示使用固定 A4 附页</strong> 每条警示独立排版，长方案和多图自动续页；必打策略已强制加入。流转单/SOP双面包与警示附页分开，避免破坏双面翻页顺序。</span></div>}
       {loadError && <div className="traveler-print-warning">资料加载失败：{loadError}</div>}
 
       {includesTraveler && <section className="traveler-layout-settings" aria-labelledby="traveler-layout-title">
@@ -670,7 +675,7 @@ export default function WorkOrderTravelerPrint({
       ).map(page => travelerSheet(record, page, true)))}
     </div>}
     {includesWarning && <div className="quality-warning-packet-sources" aria-hidden="true">
-      {records.filter(record => printItem(record, 'QUALITY_WARNING')).flatMap(record => record.snapshot.qualityWarnings.map((warning, index) => warningSheet(record, warning, index + 1, true)))}
+      {records.filter(record => printItem(record, 'QUALITY_WARNING')).flatMap(record => flattenQualityWarningPages(record.snapshot.qualityWarnings).map(({ warning, page }, index) => warningSheet(record, warning, index + 1, true, page)))}
     </div>}
   </>;
 }

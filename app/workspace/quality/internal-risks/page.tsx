@@ -1,6 +1,7 @@
 import InternalQualityRiskShell from '@/components/InternalQualityRiskShell';
 import { requirePageAccess } from '@/lib/page-access';
 import './internal-quality-risk.css';
+import './quality-workflow-v2.css';
 
 export default async function InternalQualityRiskPage({ searchParams }: { searchParams?: { reportId?: string | string[]; workOrderId?: string | string[] } }) {
   const user = await requirePageAccess('/workspace/quality/internal-risks');

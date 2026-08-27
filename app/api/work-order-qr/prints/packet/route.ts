@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { flattenQualityWarningPages } from '@/lib/quality-warning-print-layout';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { safeDisplayFilename } from '@/lib/filenames';
 import {
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
     if (target === 'warning' || target === 'traveler_warning') {
       for (const record of records) {
         if (!record.items.some(item => item.material === 'QUALITY_WARNING')) continue;
-        const expectedPages = record.snapshot.qualityWarnings.length;
+        const expectedPages = flattenQualityWarningPages(record.snapshot.qualityWarnings).length;
         if (!expectedPages) throw new WorkOrderPrintPacketError('异常警示打印快照为空，请重新生成打印任务', 410, 'PRINT_PACKET_WARNING_SNAPSHOT_EMPTY');
         const pages: Uint8Array[] = [];
         for (let pageIndex = 0; pageIndex < expectedPages; pageIndex += 1) {

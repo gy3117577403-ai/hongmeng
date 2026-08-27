@@ -70,7 +70,7 @@ test('internal quality risk archives immutable revisions and synchronizes recove
       verificationResult: '连续三批拉脱力合格',
     },
   });
-  const actorInput = { id: actor.id, name: actor.displayName };
+  const actorInput = { id: actor.id, name: actor.displayName, canVerify: true, canManage: true };
   let reportId = '';
 
   const riskInput = ({
@@ -91,6 +91,7 @@ test('internal quality risk archives immutable revisions and synchronizes recove
     workshopArea: '压接车间 A 区',
     processName: '端子压接',
     responsibleDepartment: '质量部 / 制造部',
+    ownerUserId: actor.id,
     defectPhenomenon: '抽检发现端子压接后拉脱力低于标准下限',
     occurrenceCause: '换型参数调用错误',
     escapeCause: '首件记录未包含拉脱力实测值',
@@ -148,16 +149,18 @@ test('internal quality risk archives immutable revisions and synchronizes recove
       title: '锁定压接参数并补充首件门禁',
       department: '制造部',
       ownerName: '制造主管',
+      ownerUserId: actor.id,
       requirement: '完成参数锁定并提交验证记录',
     }, actorInput));
     assert.equal(withTask.status, 'COLLABORATING');
-    const taskId = withTask.tasks[0].id;
-    const taskVerified = await prisma.$transaction(tx => updateInternalQualityRiskTask(tx, reportId, taskId, {
-      status: 'VERIFIED',
-      result: '参数锁定完成，连续三批复核通过',
-    }, actorInput));
+    let taskVerified = withTask;
+    for (const task of withTask.tasks) {
+      taskVerified = await prisma.$transaction(tx => updateInternalQualityRiskTask(tx, reportId, task.id, { expectedVersion: 0, status: 'IN_PROGRESS' }, actorInput));
+      taskVerified = await prisma.$transaction(tx => updateInternalQualityRiskTask(tx, reportId, task.id, { expectedVersion: 1, status: 'COMPLETED', result: '参数锁定完成，连续三批复核通过' }, actorInput));
+      taskVerified = await prisma.$transaction(tx => updateInternalQualityRiskTask(tx, reportId, task.id, { expectedVersion: 2, status: 'VERIFIED', reason: '质量复核连续三批数据，确认通过' }, actorInput));
+    }
     const verifying = await prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, reportId, taskVerified.version, 'VERIFYING', actorInput));
-    const pendingClose = await prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, reportId, verifying.version, 'PENDING_CLOSE', actorInput));
+    const pendingClose = await prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, reportId, verifying.version, 'PENDING_CLOSE', actorInput, '质量复核记录与措施有效'));
     assert.ok(submitted.version < pendingClose.version);
 
     const archivedR1 = await prisma.$transaction(tx => archiveInternalQualityRisk(tx, reportId, pendingClose.version, actorInput));
@@ -235,7 +238,7 @@ test('internal quality risk archives immutable revisions and synchronizes recove
     assert.equal(lateR1Warning.alerts[0].rootCause, '设备换型后压接高度参数未受控');
     assert.equal((await loadWorkOrderQualityAlerts(replacementOrder.id)).alerts.length, 0);
 
-    const revisionPendingClose = await prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, reportId, updated.version, 'PENDING_CLOSE', actorInput));
+    const revisionPendingClose = await prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, reportId, updated.version, 'PENDING_CLOSE', actorInput, '修订版已重新验证通过'));
     const archivedR2 = await prisma.$transaction(tx => archiveInternalQualityRisk(tx, reportId, revisionPendingClose.version, actorInput));
     assert.equal(archivedR2.currentRevision?.revisionNumber, 2);
     assert.equal(archivedR2.revisions.length, 2);
@@ -289,10 +292,8 @@ test('internal quality risk archives immutable revisions and synchronizes recove
       where: { id: reportId },
       data: { deletedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1_000) },
     });
-    const purged = await prisma.$transaction(tx => permanentlyDeleteInternalQualityRisk(tx, reportId, `${prefix}-IQR-001`));
-    assert.equal(purged.reportNo, `${prefix}-IQR-001`);
-    assert.equal(await prisma.internalQualityRiskReport.count({ where: { id: reportId } }), 0);
-    reportId = '';
+    await assert.rejects(prisma.$transaction(tx => permanentlyDeleteInternalQualityRisk(tx, reportId, `${prefix}-IQR-001`, actorInput, '验证历史保留')), /历史/);
+    assert.equal(await prisma.internalQualityRiskReport.count({ where: { id: reportId } }), 1);
   } finally {
     if (reportId) await prisma.internalQualityRiskReport.deleteMany({ where: { id: reportId } });
     await prisma.issue.deleteMany({ where: { id: issue.id } });

@@ -13,6 +13,7 @@ import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
 import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
 import { materializeProductQualityWarningsForWorkOrders } from '@/lib/internal-quality-risks';
+import { qualityWarningEmployeePath } from '@/lib/quality-warning-employee';
 import {
   processSupplementActualRequiredQty,
   processSupplementRemainingQty,
@@ -110,6 +111,11 @@ export type WorkOrderTravelerSnapshot = {
 };
 
 export type WorkOrderQualityWarningSnapshot = {
+  correctiveAction?: string | null;
+  controlRequirement?: string | null;
+  finalConclusion?: string | null;
+  employeePath?: string | null;
+  printPhotoLayout?: 'SINGLE' | 'PAIR';
   alertId: string;
   reportId: string;
   reportNo: string;
@@ -132,6 +138,7 @@ export type WorkOrderQualityWarningSnapshot = {
   printPolicy: 'REQUIRED' | 'OPTIONAL' | 'SYSTEM_ONLY';
   archivedAt: string;
   attachments: Array<{
+    printIncluded?: boolean;
     id: string;
     displayName: string;
     mimeType: string;
@@ -614,12 +621,12 @@ async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<
       revision: {
         select: {
           revisionNumber: true,
+          snapshot: true,
           attachments: {
             where: { attachment: { mimeType: { startsWith: 'image/' } } },
             orderBy: { sortOrder: 'asc' },
-            take: 6,
             select: {
-              attachment: { select: { id: true, displayName: true, mimeType: true, caption: true, category: true } },
+              attachment: { select: { id: true, displayName: true, mimeType: true, caption: true, category: true, printIncluded: true } },
             },
           },
         },
@@ -630,7 +637,14 @@ async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<
   const severityRank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
   const result = new Map<string, WorkOrderQualityWarningSnapshot[]>();
   for (const alert of alerts) {
+    const frozen = (alert.revision.snapshot || {}) as Record<string, unknown>;
+    const frozenAttachments = Array.isArray(frozen.attachments) ? frozen.attachments as Array<Record<string, unknown>> : [];
     const warning: WorkOrderQualityWarningSnapshot = {
+      correctiveAction: typeof frozen.correctiveAction === 'string' ? frozen.correctiveAction : null,
+      finalConclusion: alert.finalConclusion,
+      controlRequirement: alert.controlRequirement,
+      employeePath: await qualityWarningEmployeePath(alert.revisionId, alert.workOrderId),
+      printPhotoLayout: frozen.printPhotoLayout === 'SINGLE' ? 'SINGLE' : 'PAIR',
       alertId: alert.id,
       reportId: alert.reportId,
       reportNo: alert.report.reportNo,
@@ -654,6 +668,8 @@ async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<
       archivedAt: alert.archivedAt.toISOString(),
       attachments: alert.revision.attachments.map(({ attachment }) => ({
         ...attachment,
+        caption: String(frozenAttachments.find(item => item.id === attachment.id) ? frozenAttachments.find(item => item.id === attachment.id)?.caption || '' : attachment.caption || ''),
+        printIncluded: frozenAttachments.find(item => item.id === attachment.id)?.printIncluded !== false,
         contentUrl: `/api/quality/internal-risk-attachments/${attachment.id}/content`,
       })),
     };
@@ -917,8 +933,18 @@ export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promi
     throw new WorkOrderQrServiceError('部分流转单打印记录不存在，请重新生成', 404, 'QR_PRINT_NOT_FOUND');
   }
   const printById = new Map(prints.map(print => [print.id, print]));
-  return printIds.map(id => {
+  return Promise.all(printIds.map(async id => {
     const print = printById.get(id)!;
+    const snapshot = print.snapshot as unknown as WorkOrderTravelerSnapshot;
+    snapshot.qualityWarnings = await Promise.all((snapshot.qualityWarnings || []).map(async warning => {
+      if (warning.employeePath !== undefined && warning.correctiveAction !== undefined) return warning;
+      const revision = await prisma.internalQualityRiskRevision.findUnique({ where: { id: warning.revisionId }, select: { snapshot: true } });
+      const frozen = (revision?.snapshot || {}) as Record<string, unknown>;
+      return { ...warning, employeePath: warning.employeePath || await qualityWarningEmployeePath(warning.revisionId, snapshot.workOrderId),
+        correctiveAction: warning.correctiveAction ?? (typeof frozen.correctiveAction === 'string' ? frozen.correctiveAction : null),
+        finalConclusion: warning.finalConclusion ?? (typeof frozen.finalConclusion === 'string' ? frozen.finalConclusion : null),
+      };
+    }));
     return {
       printId: print.id,
       publicCode: print.ticket.publicCode,
@@ -942,9 +968,9 @@ export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promi
         mimeType: item.mimeType,
         confirmedAt: item.confirmedAt?.toISOString() || null,
       })),
-      snapshot: print.snapshot as unknown as WorkOrderTravelerSnapshot,
+      snapshot,
     };
-  });
+  }));
 }
 
 export async function confirmWorkOrderTravelerPrints(input: {

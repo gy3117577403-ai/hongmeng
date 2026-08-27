@@ -4,6 +4,7 @@ import { requirePageAccess } from '@/lib/page-access';
 import type { InternalQualityRiskPrintPreviewDTO } from '@/types';
 import '@/app/production/qr-print/traveler-print.css';
 import './print-preview.css';
+import '@/app/production/qr-print/quality-warning-v2.css';
 
 export const dynamic = 'force-dynamic';
 

@@ -911,6 +911,11 @@ export type InternalQualityRiskActivityDTO = {
 };
 
 export type InternalQualityRiskTaskDTO = {
+  ownerUserId?: string | null;
+  isPrimary?: boolean;
+  version: number;
+  reviewNote?: string | null;
+  verifiedById?: string | null;
   id: string;
   taskType: InternalQualityRiskTaskType;
   title: string;
@@ -929,6 +934,7 @@ export type InternalQualityRiskTaskDTO = {
 };
 
 export type InternalQualityRiskAttachmentDTO = {
+  printIncluded?: boolean;
   id: string;
   taskId?: string | null;
   category: 'DEFECT' | 'CAUSE' | 'ACTION' | 'VERIFICATION' | 'SOLUTION' | 'EVIDENCE';
@@ -946,6 +952,11 @@ export type InternalQualityRiskAttachmentDTO = {
 };
 
 export type InternalQualityRiskDTO = {
+  ownerUserId?: string | null;
+  ownerName?: string | null;
+  printPhotoLayout?: 'PAIR' | 'SINGLE';
+  verifiedAt?: string | null;
+  purgeBlockers?: string[];
   id: string;
   sequence: number;
   reportNo: string;
@@ -1041,6 +1052,7 @@ export type InternalQualityRiskOptionEightDDTO = {
 };
 
 export type InternalQualityRiskOptionsDTO = {
+  assignees?: Array<{ id: string; displayName: string; username: string }>;
   products: EightDReportProductDTO[];
   issues: InternalQualityRiskOptionIssueDTO[];
   workOrders: InternalQualityRiskWorkOrderDTO[];
@@ -1048,6 +1060,7 @@ export type InternalQualityRiskOptionsDTO = {
 };
 
 export type InternalQualityRiskReadinessDTO = {
+  publicationBlockers?: Array<{ code: string; message: string }>;
   ready: boolean;
   blockers: Array<{ code: string; message: string }>;
   warnings: Array<{ code: string; message: string }>;
@@ -1072,6 +1085,11 @@ export type InternalQualityRiskPrintPreviewDTO = {
     customerName?: string | null;
   };
   warning: {
+    correctiveAction?: string | null;
+    controlRequirement?: string | null;
+    finalConclusion?: string | null;
+    employeePath?: string | null;
+    printPhotoLayout?: 'SINGLE' | 'PAIR';
     alertId: string;
     reportId: string;
     reportNo: string;
@@ -1094,6 +1112,7 @@ export type InternalQualityRiskPrintPreviewDTO = {
     printPolicy: InternalQualityRiskPrintPolicy;
     archivedAt: string;
     attachments: Array<{
+      printIncluded?: boolean;
       id: string;
       displayName: string;
       mimeType: string;

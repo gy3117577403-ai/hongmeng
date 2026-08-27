@@ -6,6 +6,7 @@ import {
 } from '@/lib/work-order-qr-service';
 import { sanitizeWorkOrderPrintReturnTo, workOrderPrintReturnLabel } from '@/lib/work-order-print-navigation';
 import './traveler-print.css';
+import './quality-warning-v2.css';
 
 export const dynamic = 'force-dynamic';
 

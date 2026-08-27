@@ -167,12 +167,12 @@ test('archive requirement parser keeps safe defaults and accepts per-field modes
   assert.equal(normalized.rootCause, 'REQUIRED');
   assert.equal(normalized.inspectionMethod, 'NOT_APPLICABLE');
   assert.equal(normalized.evidence, 'OPTIONAL');
-  assert.equal(normalized.warningSummary, 'REQUIRED');
+  assert.equal(normalized.warningSummary, 'OPTIONAL');
 });
 
-test('recycle retention is exactly thirty days before irreversible deletion eligibility', () => {
+test('safe draft recycle has no artificial thirty-day waiting period', () => {
   const deletedAt = new Date('2026-08-01T00:00:00.000Z');
-  assert.equal(qualityRiskPurgeEligibleAt(deletedAt)?.toISOString(), '2026-08-31T00:00:00.000Z');
+  assert.equal(qualityRiskPurgeEligibleAt(deletedAt)?.toISOString(), '2026-08-01T00:00:00.000Z');
   assert.equal(qualityRiskPurgeEligibleAt(null), null);
 });
 
@@ -230,8 +230,8 @@ test('workbench exposes administrator-only recycle interactions and production w
   assert.match(workbench, /isAdmin && <button[^>]*disabled=\{saving \|\| selected\.warningState === 'ACTIVE'\}/);
   assert.match(workbench, /撤销产品警示后才可回收异常/);
   assert.match(workbench, /管理员回收规则/);
-  assert.match(workbench, /满30天且无活动预警后才可彻底删除/);
-  assert.match(workbench, /请输入完整编号确认/);
+  assert.match(workbench, /未形成归档和打印历史的记录可立即彻底删除/);
+  assert.match(workbench, /确认完整编号/);
   assert.match(workbench, /确认撤销警示/);
   assert.match(workbench, /已撤销的警示不会因恢复自动重发/);
   assert.match(production, /质量预警 \$\{qualityAlertCount\}/);

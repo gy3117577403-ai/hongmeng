@@ -16,10 +16,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       where: {
         drawingLibraryItemId: params.id,
         revision: {
+          published: true,
           currentFor: {
             is: {
               deletedAt: null,
-              status: { in: ['ARCHIVED', 'REVISING'] },
               warningState: 'ACTIVE',
             },
           },
@@ -47,6 +47,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       const report = link.revision.currentFor;
       if (!report) return [];
       const warning = resolveArchivedQualityWarning(report, link.revision.snapshot);
+      const snapshot = link.revision.snapshot as Record<string, unknown>;
+      const frozenAttachments = Array.isArray(snapshot.attachments) ? snapshot.attachments as Array<Record<string, unknown>> : [];
       if ((warning.effectiveFrom && warning.effectiveFrom > now) || (warning.effectiveUntil && warning.effectiveUntil < now)) return [];
       return [{
         id: report.id,
@@ -59,6 +61,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         detailUrl: `/workspace/quality/internal-risks?reportId=${encodeURIComponent(report.id)}`,
         attachments: link.revision.attachments.map(({ attachment }) => ({
           ...attachment,
+          ...(frozenAttachments.find(item => item.id === attachment.id) ? {
+            caption: String(frozenAttachments.find(item => item.id === attachment.id)?.caption || ''),
+            displayName: String(frozenAttachments.find(item => item.id === attachment.id)?.displayName || attachment.displayName),
+          } : {}),
           createdAt: attachment.createdAt.toISOString(),
           contentUrl: `/api/quality/internal-risk-attachments/${encodeURIComponent(attachment.id)}/content`,
         })),

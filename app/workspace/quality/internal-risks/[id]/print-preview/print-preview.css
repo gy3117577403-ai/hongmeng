@@ -8,3 +8,10 @@
 .quality-warning-sheet { position: relative; }.quality-warning-preview-watermark { position: absolute; inset: 44% -18% auto; z-index: 4; transform: rotate(-18deg); padding: 3mm; border: 1.2mm solid rgba(220,38,38,.13); color: rgba(220,38,38,.12); font-size: 13mm; font-weight: 900; letter-spacing: 2mm; text-align: center; pointer-events: none; }
 @media (max-width: 900px) { .risk-print-preview-screen { padding-inline: 8px; overflow-x: auto; }.risk-print-preview-toolbar { grid-template-columns: auto 1fr auto; padding-inline: 9px; }.risk-print-preview-toolbar > div small, .risk-print-preview-toolbar nav label { display: none; }.risk-print-preview-toolbar > a, .risk-print-preview-toolbar button { width: 38px; padding: 0; font-size: 0; }.risk-print-preview-stage { justify-content: flex-start; padding: 10px; } }
 @media print { .risk-print-preview-screen { padding: 0; background: #fff; }.risk-print-preview-toolbar, .risk-print-preview-notice { display: none !important; }.risk-print-preview-stage { width: 210mm; min-height: 0; margin: 0; padding: 0; overflow: visible; border: 0; border-radius: 0; background: #fff; box-shadow: none; }.risk-print-preview-paper { box-shadow: none; } }
+.risk-print-preview-screen .risk-print-preview-stage { flex-direction: column; align-items: center; gap: 20px; }
+.risk-print-preview-toolbar button:disabled { opacity: .5; cursor: not-allowed; }
+@media print {
+  .risk-print-preview-screen .risk-print-preview-stage { display: block; }
+  .risk-print-preview-screen .risk-print-preview-paper { break-after: page; border-radius: 0; overflow: visible; }
+  .risk-print-preview-screen .risk-print-preview-paper:last-child { break-after: auto; }
+}

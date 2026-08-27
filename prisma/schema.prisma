@@ -468,6 +468,8 @@ model User {
   uploadedEightDReportVersions   EightDReportVersion[]                  @relation("EightDReportVersionUploadedBy")
   eightDReportActivities         EightDReportActivity[]                 @relation("EightDReportActivityActor")
   createdInternalQualityRisks    InternalQualityRiskReport[]            @relation("InternalQualityRiskCreatedBy")
+  ownedInternalQualityRisks      InternalQualityRiskReport[]            @relation("InternalQualityRiskOwner")
+  assignedQualityRiskTasks       InternalQualityRiskTask[]              @relation("QualityRiskTaskOwner")
   updatedInternalQualityRisks    InternalQualityRiskReport[]            @relation("InternalQualityRiskUpdatedBy")
   archivedInternalQualityRisks   InternalQualityRiskReport[]            @relation("InternalQualityRiskArchivedBy")
   deletedInternalQualityRisks    InternalQualityRiskReport[]            @relation("InternalQualityRiskDeletedBy")
@@ -3622,6 +3624,10 @@ model InternalQualityRiskReport {
   workshopArea          String?                           @map("workshop_area")
   processName           String?                           @map("process_name")
   responsibleDepartment String?                           @map("responsible_department")
+  ownerUserId           String?                           @map("owner_user_id")
+  printPhotoLayout      String                            @default("PAIR") @map("print_photo_layout")
+  verifiedById          String?                           @map("verified_by_id")
+  verifiedAt            DateTime?                         @map("verified_at")
   defectPhenomenon      String?                           @map("defect_phenomenon")
   occurrenceCause       String?                           @map("occurrence_cause")
   escapeCause           String?                           @map("escape_cause")
@@ -3674,6 +3680,7 @@ model InternalQualityRiskReport {
   attachments           InternalQualityRiskAttachment[]
   alerts                WorkOrderQualityAlert[]
   createdBy             User?                             @relation("InternalQualityRiskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  owner                 User?                             @relation("InternalQualityRiskOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   updatedBy             User?                             @relation("InternalQualityRiskUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   archivedBy            User?                             @relation("InternalQualityRiskArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
   deletedBy             User?                             @relation("InternalQualityRiskDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
@@ -3696,6 +3703,11 @@ model InternalQualityRiskTask {
   title       String
   department  String
   ownerName   String?                         @map("owner_name")
+  ownerUserId String?                         @map("owner_user_id")
+  isPrimary   Boolean                         @default(false) @map("is_primary")
+  version     Int                             @default(0)
+  reviewNote  String?                         @map("review_note")
+  verifiedById String?                        @map("verified_by_id")
   requirement String?
   result      String?
   status      String                          @default("TODO")
@@ -3706,10 +3718,12 @@ model InternalQualityRiskTask {
   createdAt   DateTime                        @default(now()) @map("created_at")
   updatedAt   DateTime                        @updatedAt @map("updated_at")
   report      InternalQualityRiskReport       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  owner       User?                           @relation("QualityRiskTaskOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   attachments InternalQualityRiskAttachment[]
 
   @@index([reportId, status, dueAt])
   @@index([department, status])
+  @@index([ownerUserId, status])
   @@map("quality_risk_tasks")
 }
 
@@ -3726,6 +3740,7 @@ model InternalQualityRiskAttachment {
   sha256        String
   caption       String?
   sortOrder     Int                                     @default(0) @map("sort_order")
+  printIncluded Boolean                                 @default(true) @map("print_included")
   uploadedById  String?                                 @map("uploaded_by_id")
   createdAt     DateTime                                @default(now()) @map("created_at")
   updatedAt     DateTime                                @updatedAt @map("updated_at")
@@ -3747,6 +3762,8 @@ model InternalQualityRiskRevision {
   reportId       String                                  @map("report_id")
   revisionNumber Int                                     @map("revision_number")
   snapshot       Json
+  published      Boolean @default(false)
+  employeeLinks  QualityWarningEmployeeLink[]
   archivedById   String?                                 @map("archived_by_id")
   archivedAt     DateTime                                @default(now()) @map("archived_at")
   createdAt      DateTime                                @default(now()) @map("created_at")
@@ -3761,6 +3778,31 @@ model InternalQualityRiskRevision {
   @@index([reportId, archivedAt])
   @@index([archivedById])
   @@map("quality_risk_revisions")
+}
+
+model QualityWarningEmployeeLink {
+  id          String   @id
+  tokenHash   String   @unique @map("token_hash")
+  scopeKey    String   @unique @map("scope_key")
+  revisionId  String   @map("revision_id")
+  workOrderId String?  @map("work_order_id")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  revision    InternalQualityRiskRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+
+  @@index([revisionId])
+  @@map("quality_warning_employee_links")
+}
+
+// Transactional outbox: retained independently after a safe draft purge.
+model QualityRiskObjectCleanup {
+  id          String   @id @default(uuid())
+  objectKey   String   @unique @map("object_key")
+  reportId    String   @map("report_id")
+  attempts    Int      @default(0)
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  @@map("quality_risk_object_cleanup")
 }
 
 model InternalQualityRiskRevisionProduct {

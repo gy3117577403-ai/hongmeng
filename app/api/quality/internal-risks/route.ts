@@ -6,6 +6,7 @@ import {
   loadInternalQualityRisks,
   parseInternalQualityRiskInput,
   serializeInternalQualityRisk,
+  transitionInternalQualityRiskWorkflow,
 } from '@/lib/internal-quality-risks';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -42,7 +43,10 @@ export async function POST(req: NextRequest) {
     const user = await requireCapability('QUALITY', 'CREATE');
     const body = await req.json() as Record<string, unknown>;
     const input = parseInternalQualityRiskInput(body);
-    const report = await prisma.$transaction(tx => createInternalQualityRiskRecord(tx, input, actor(user)));
+    const report = await prisma.$transaction(async tx => {
+      const draft = await createInternalQualityRiskRecord(tx, input, actor(user));
+      return body.submit === true ? transitionInternalQualityRiskWorkflow(tx, draft.id, draft.version, 'SUBMITTED', actor(user)) : draft;
+    });
     await logOp({
       userId: user.id,
       action: 'create_internal_quality_risk',

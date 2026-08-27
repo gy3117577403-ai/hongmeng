@@ -27,6 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       params.id,
       expectedInternalQualityRiskVersion(body.expectedVersion),
       actor(user),
+      body.publishWarning !== false,
     ));
     await logOp({ userId: user.id, action: 'archive_internal_quality_risk', targetType: 'internal_quality_risk', targetId: params.id, detail: { revisionId: report.currentRevisionId, workOrderAlertCount: report.alerts.length } });
     return NextResponse.json({ ok: true, report: serializeInternalQualityRisk(report) });
