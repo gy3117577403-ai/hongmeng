@@ -92,11 +92,12 @@ test('training QR migration preserves only unambiguous single-session history an
   assert.match(migration, /'LEGACY_MIGRATION'/);
 });
 
-test('training workbook exports plan, session attendance, feedback detail and feedback summary sheets', async () => {
+test('training workbook exports one ordinary sheet with Beijing dates even when legacy details are supplied', async () => {
   const startAt = new Date('2026-08-23T01:00:00.000Z');
   const endAt = new Date('2026-08-23T03:00:00.000Z');
   const base = {
     planCode: 'TRP-TEST',
+    planStatus: 'COMPLETED',
     planTitle: '安全操作培训',
     courseName: '岗位安全',
     startAt,
@@ -177,10 +178,12 @@ test('training workbook exports plan, session attendance, feedback detail and fe
   });
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(Uint8Array.from(buffer).buffer);
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['培训台账', '课次签到明细', '课后反馈明细', '反馈汇总']);
-  assert.equal(workbook.getWorksheet('课次签到明细')?.getCell('M2').value, '正常签到');
-  assert.equal(workbook.getWorksheet('课次签到明细')?.getCell('P2').value, '个人账号扫码');
-  assert.equal(workbook.getWorksheet('课后反馈明细')?.getCell('O2').value, '建议增加演练');
-  assert.equal(workbook.getWorksheet('反馈汇总')?.getCell('J2').value, 1);
-  assert.equal(workbook.getWorksheet('培训台账')?.getCell('Q6').value, '完成 / 无需考核');
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['培训台账']);
+  const sheet = workbook.worksheets[0];
+  assert.equal(sheet.getCell('A1').value, '序号');
+  assert.equal(sheet.getCell('M2').value, '完成（无需考核）');
+  assert.equal(sheet.getCell('J2').value, 2);
+  assert.equal((sheet.getCell('D2').value as Date).toISOString(), '2026-08-23T09:00:00.000Z');
+  assert.equal((sheet.getCell('E2').value as Date).toISOString(), '2026-08-23T11:00:00.000Z');
+  assert.equal(startAt.toISOString(), '2026-08-23T01:00:00.000Z');
 });

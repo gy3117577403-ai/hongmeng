@@ -5182,6 +5182,9 @@ model TrainingAttachment {
   size          BigInt
   uploadedById  String?              @map("uploaded_by_id")
   deletedAt     DateTime?            @map("deleted_at")
+  deletedById   String?              @map("deleted_by_id")
+  deleteReason  String?              @map("delete_reason")
+  sourceSnapshot Json?              @map("source_snapshot")
   createdAt     DateTime             @default(now()) @map("created_at")
   course        TrainingCourse?      @relation(fields: [courseId], references: [id], onDelete: Cascade)
   plan          TrainingPlan?        @relation(fields: [planId], references: [id], onDelete: Cascade)

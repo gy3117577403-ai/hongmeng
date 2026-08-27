@@ -80,6 +80,7 @@ export async function GET() {
         canCreate: hasCapability(user.access, 'TRAINING', 'CREATE') || hasCapability(user.access, 'HR', 'CREATE'),
         canUpdate: hasCapability(user.access, 'TRAINING', 'UPDATE') || hasCapability(user.access, 'HR', 'UPDATE'),
         canDelete: hasCapability(user.access, 'TRAINING', 'DELETE') || hasCapability(user.access, 'HR', 'DELETE'),
+        canPermanentDelete: user.laborRole === 'ADMIN' || (hasCapability(user.access, 'ACCOUNT_ADMIN', 'MANAGE') && (hasCapability(user.access, 'TRAINING', 'DELETE') || hasCapability(user.access, 'HR', 'DELETE'))),
         canExecute: hasCapability(user.access, 'TRAINING', 'EXECUTE_WORKFLOW') || hasCapability(user.access, 'HR', 'EXECUTE_WORKFLOW'),
         actorEmployeeId: user.employeeId,
       },

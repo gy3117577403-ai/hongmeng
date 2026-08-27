@@ -43,6 +43,7 @@ import Image from 'next/image';
 import QRCode from 'qrcode';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
+import { parseTrainingLocalTime, trainingDateTimeInput, trainingMonthRange } from '@/lib/training-time';
 
 type TrainingEmployee = {
   id: string;
@@ -233,7 +234,7 @@ type Workbench = {
   ok: boolean;
   error?: string;
   generatedAt: string;
-  permissions: { canRead: boolean; canCreate: boolean; canUpdate: boolean; canDelete: boolean; canExecute: boolean; actorEmployeeId: string | null };
+  permissions: { canRead: boolean; canCreate: boolean; canUpdate: boolean; canDelete: boolean; canPermanentDelete: boolean; canExecute: boolean; actorEmployeeId: string | null };
   summary: {
     activeCourseCount: number;
     upcomingPlanCount: number;
@@ -290,12 +291,15 @@ type PlanChangePreview = {
 };
 
 type PlanDialog = {
-  kind: 'change' | 'delete' | 'archive' | 'unarchive' | 'restore' | 'cancel';
+  kind: 'change' | 'delete' | 'archive' | 'unarchive' | 'restore' | 'cancel' | 'purge';
   plan: TrainingPlan;
   reason: string;
   confirmationCode: string;
   impact: TrainingPlanImpact | null;
   preview: PlanChangePreview | null;
+  purge?: { impact: TrainingPlanImpact; canPurge: boolean; blockers: string[]; previewToken: string; requiresInvalidateFacts: boolean; willCancel: boolean };
+  invalidateFacts?: boolean;
+  error?: string;
 };
 
 const emptyCourse = {
@@ -304,16 +308,11 @@ const emptyCourse = {
 };
 
 function localInputDate(offsetHours = 1): string {
-  const value = new Date(Date.now() + offsetHours * 60 * 60 * 1000);
-  const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
+  return trainingDateTimeInput(new Date(Date.now() + offsetHours * 60 * 60 * 1000));
 }
 
 function localDateTimeValue(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
+  return trainingDateTimeInput(value);
 }
 
 const emptyPlan = {
@@ -377,6 +376,7 @@ function planChangeValueLabel(
 
 function planDialogCopy(kind: PlanDialog['kind']) {
   const copies: Record<PlanDialog['kind'], { eyebrow: string; title: string; description: string; confirm: string }> = {
+    purge: { eyebrow: '管理员危险操作 · 不可恢复', title: '永久删除培训计划', description: '永久移除本计划及其私有参训、签到、成绩和反馈记录。独立审计保留；附件进入文件回收，不删除课程库、员工档案及共享技能证书。', confirm: '确认永久删除' },
     change: { eyebrow: '已发布计划变更', title: '确认影响后保存变更', description: '系统不会覆盖历史签到、反馈或成绩；受影响员工会收到本次变更通知。', confirm: '确认变更并通知' },
     delete: { eyebrow: '可恢复删除', title: '将草稿移入回收站', description: '只允许删除未产生执行事实的草稿。课程资料和计划数据不会物理清除，可从回收站恢复。', confirm: '确认删除草稿' },
     archive: { eyebrow: '资料归档', title: '归档已结束计划', description: '归档后从日常计划中隐藏，但员工培训档案、签到、反馈、成绩、附件和审计记录继续保留。', confirm: '确认归档' },
@@ -417,12 +417,10 @@ export default function TrainingDevelopmentWorkbench() {
   const [live, setLive] = useState<TrainingLive | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
-  const [exportRange, setExportRange] = useState(() => {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    return { start: start.toLocaleDateString('en-CA'), end: end.toLocaleDateString('en-CA') };
-  });
+  const [exportRange, setExportRange] = useState(() => trainingMonthRange());
+  const [exportFilters, setExportFilters] = useState({ planKeyword: '', department: '', employee: '' });
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportPreview, setExportPreview] = useState<{ planCount: number; rowCount: number; employeeCount: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const qrPanelRef = useRef<HTMLElement>(null);
   useToastBridge(toast, setToast);
@@ -547,8 +545,8 @@ export default function TrainingDevelopmentWorkbench() {
   function planPayload(plan?: TrainingPlan): Record<string, unknown> {
     return {
       ...planDraft,
-      startAt: new Date(planDraft.startAt).toISOString(),
-      endAt: new Date(planDraft.endAt).toISOString(),
+      startAt: parseTrainingLocalTime(planDraft.startAt).toISOString(),
+      endAt: parseTrainingLocalTime(planDraft.endAt).toISOString(),
       passScore: planDraft.assessmentMode === 'NONE' ? null : Number(planDraft.passScore),
       checkInOpenMinutes: Number(planDraft.checkInOpenMinutes),
       lateAfterMinutes: Number(planDraft.lateAfterMinutes),
@@ -668,10 +666,38 @@ export default function TrainingDevelopmentWorkbench() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : '计划状态更新失败'); } finally { setSaving(false); }
   }
 
+  async function exportLedger(planId?: string, previewOnly = false) {
+    setExportBusy(true); setError('');
+    try {
+      const query = new URLSearchParams(planId ? { planId } : {
+        period: 'custom', startDate: exportRange.start, endDate: exportRange.end, ...exportFilters,
+      });
+      if (previewOnly) query.set('preview', '1');
+      const response = await fetch(`/api/training/export.xlsx?${query}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error((await response.json()).error || '台账导出失败');
+      if (previewOnly) { setExportPreview(await response.json()); return; }
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      const encoded = response.headers.get('content-disposition')?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+      anchor.download = encoded ? decodeURIComponent(encoded) : '培训台账.xlsx';
+      document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      setToast('已导出普通 Excel 台账，时间为北京时间');
+    } catch (err) { setError(err instanceof Error ? err.message : '台账导出失败'); }
+    finally { setExportBusy(false); }
+  }
+
   async function openPlanLifecycleDialog(kind: PlanDialog['kind'], plan: TrainingPlan) {
     setSaving(true);
     try {
       let impact: TrainingPlanImpact | null = null;
+      if (kind === 'purge') {
+        const result = await jsonRequest(`/api/training/plans/${plan.id}/permanent-delete`) as { preview?: NonNullable<PlanDialog['purge']> };
+        if (!result.preview) throw new Error('未取得永久删除影响');
+        setPlanDialog({ kind, plan, reason: '', confirmationCode: '', impact: result.preview.impact, preview: null, purge: result.preview, invalidateFacts: false });
+        return;
+      }
       if (kind === 'delete') {
         const result = await jsonRequest(`/api/training/plans/${plan.id}/delete-preview`, { method: 'POST' }) as {
           preview?: { impact: TrainingPlanImpact; canDelete: boolean; blockers: string[] };
@@ -695,17 +721,32 @@ export default function TrainingDevelopmentWorkbench() {
     if (!planDialog) return;
     const { kind, plan } = planDialog;
     const reason = planDialog.reason.trim();
-    if (['change', 'delete', 'restore', 'cancel'].includes(kind) && !reason) {
+    if (['change', 'delete', 'restore', 'cancel', 'purge'].includes(kind) && !reason) {
+      setPlanDialog(current => current ? { ...current, error: '请填写本次操作原因' } : current);
       setError('请填写本次操作原因');
       return;
     }
-    if (['delete', 'restore'].includes(kind) && planDialog.confirmationCode.trim() !== plan.code) {
+    if (['delete', 'restore', 'purge'].includes(kind) && planDialog.confirmationCode.trim() !== plan.code) {
+      setPlanDialog(current => current ? { ...current, error: '请输入完整计划编号' } : current);
       setError(`请输入完整计划编号 ${plan.code}`);
       return;
     }
     setSaving(true);
     try {
-      if (kind === 'change') {
+      if (kind === 'purge') {
+        if (!planDialog.purge?.canPurge) throw new Error('请先处理界面列出的证书关联');
+        if (planDialog.purge.requiresInvalidateFacts && !planDialog.invalidateFacts) throw new Error('请确认已有记录属于误录；真实培训应归档保留');
+        await jsonRequest(`/api/training/plans/${plan.id}/permanent-delete`, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirmed: true, reason, confirmationCode: planDialog.confirmationCode.trim(), previewToken: planDialog.purge.previewToken, invalidateFacts: planDialog.invalidateFacts === true }),
+        });
+        setSelectedPlanId('');
+        setLive(null);
+        setSelectedSessionId('');
+        setSelectedParticipantIds([]);
+        setQrDataUrl('');
+        setToast('培训计划已永久删除，无法恢复；专属附件已进入文件回收，共享资料未改动');
+      } else if (kind === 'change') {
         if (!pendingPlanPayload) throw new Error('变更内容已失效，请重新编辑');
         await jsonRequest(`/api/training/plans/${plan.id}`, {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...pendingPlanPayload, confirmed: true, reason }),
@@ -748,6 +789,7 @@ export default function TrainingDevelopmentWorkbench() {
       setPlanDialog(null);
       await load(true);
     } catch (reasonValue) {
+      setPlanDialog(current => current ? { ...current, error: reasonValue instanceof Error ? reasonValue.message : '计划操作失败' } : current);
       setError(reasonValue instanceof Error ? reasonValue.message : '计划操作失败');
     } finally {
       setSaving(false);
@@ -924,6 +966,8 @@ export default function TrainingDevelopmentWorkbench() {
       <section className="td-plan-detail">
         <header><div><span>{plan.deletedAt ? '回收站草稿' : plan.archivedAt ? `${statusLabel(plan.status)} · 已归档` : statusLabel(plan.status)}</span><h2>{plan.title}</h2><p>{plan.code} · {plan.course?.name || '临时培训'} · {modeLabel(plan.mode)}</p></div><div className="td-plan-actions">
           {plan.deletedAt && data!.permissions.canDelete && <button type="button" className="primary" disabled={saving} onClick={() => void openPlanLifecycleDialog('restore', plan)}><ArchiveRestore />恢复草稿</button>}
+          {!plan.deletedAt && plan.status === 'COMPLETED' && <button type="button" disabled={exportBusy} onClick={() => void exportLedger(plan.id)}><Download />导出本计划台账</button>}
+          {data!.permissions.canPermanentDelete && <button type="button" className="danger" disabled={saving} onClick={() => void openPlanLifecycleDialog('purge', plan)}><Trash2 />永久删除</button>}
           {plan.archivedAt && data!.permissions.canExecute && <button type="button" disabled={saving} onClick={() => void openPlanLifecycleDialog('unarchive', plan)}><ArchiveRestore />取消归档</button>}
           {!isLockedRecord && ['DRAFT', 'PUBLISHED'].includes(plan.status) && data!.permissions.canUpdate && <button type="button" disabled={saving} onClick={() => openEditPlan(plan)}><PencilLine />{plan.status === 'PUBLISHED' ? '变更计划' : '编辑草稿'}</button>}
           {!isLockedRecord && plan.status === 'DRAFT' && data!.permissions.canDelete && <button type="button" className="danger" disabled={saving} onClick={() => void openPlanLifecycleDialog('delete', plan)}><Trash2 />删除草稿</button>}
@@ -1000,7 +1044,7 @@ export default function TrainingDevelopmentWorkbench() {
 
     {view === 'overview' && <div className="td-page"><section className="td-kpis"><article className="orange"><BookOpenCheck /><span><small>有效课程</small><strong>{data.summary.activeCourseCount}</strong><em>标准化课程库</em></span></article><article className="blue"><CalendarDays /><span><small>待开展计划</small><strong>{data.summary.upcomingPlanCount}</strong><em>进行中 {data.summary.activePlanCount}</em></span></article><article className="violet"><ClipboardCheck /><span><small>待分项审核</small><strong>{data.summary.pendingReviewCount}</strong><em>成绩必须审核后入档</em></span></article><article className="green"><UserCheck /><span><small>综合到课率</small><strong>{data.summary.attendanceRate}%</strong><em>{data.summary.participantCount} 人次</em></span></article><article className="amber"><Award /><span><small>到期复训</small><strong>{data.expiringCertifications.length}</strong><em>未来 90 天</em></span></article></section>
       <div className="td-overview-grid"><section className="td-panel td-overview-plans"><header className="td-section-title"><div><span>近期计划</span><h2>培训执行节奏</h2></div><button type="button" onClick={() => setView('plans')}>查看全部<ArrowRight /></button></header><div>{currentPlans.filter(plan => ['DRAFT', 'PUBLISHED', 'IN_PROGRESS', 'PENDING_REVIEW'].includes(plan.status)).slice(0, 6).map(planCard)}{!currentPlans.length && <div className="td-empty compact"><CalendarDays /><strong>尚无培训计划</strong><button type="button" onClick={() => openCreatePlan()}>建立第一条计划</button></div>}</div></section>
-        <section className="td-panel td-radar"><header className="td-section-title"><div><span>质量门禁</span><h2>审核与复训预警</h2></div></header><div className="td-radar-ring"><strong>{data.summary.passRate === null ? '—' : `${data.summary.passRate}%`}</strong><span>{data.summary.passRate === null ? '暂无需考核样本' : '已审核合格率'}</span></div><div className="td-risk-list"><button type="button" onClick={() => setView('review')}><span className="red"><ClipboardCheck /></span><div><strong>{data.summary.pendingReviewCount} 项待审核</strong><small>审核通过后才进入正式技能资料</small></div><ChevronRight /></button><button type="button" onClick={() => setView('retraining')}><span className="amber"><Award /></span><div><strong>{data.expiringCertifications.length} 项到期提醒</strong><small>证书到期前可一键创建复训计划</small></div><ChevronRight /></button><button type="button" onClick={() => setView('reports')}><span className="blue"><Download /></span><div><strong>培训台账可追溯导出</strong><small>计划、员工、签到、成绩、审核和证书一行呈现</small></div><ChevronRight /></button></div></section></div>
+        <section className="td-panel td-radar"><header className="td-section-title"><div><span>质量门禁</span><h2>审核与复训预警</h2></div></header><div className="td-radar-ring"><strong>{data.summary.passRate === null ? '—' : `${data.summary.passRate}%`}</strong><span>{data.summary.passRate === null ? '暂无需考核样本' : '已审核合格率'}</span></div><div className="td-risk-list"><button type="button" onClick={() => setView('review')}><span className="red"><ClipboardCheck /></span><div><strong>{data.summary.pendingReviewCount} 项待审核</strong><small>审核通过后才进入正式技能资料</small></div><ChevronRight /></button><button type="button" onClick={() => setView('retraining')}><span className="amber"><Award /></span><div><strong>{data.expiringCertifications.length} 项到期提醒</strong><small>证书到期前可一键创建复训计划</small></div><ChevronRight /></button><button type="button" onClick={() => setView('reports')}><span className="blue"><Download /></span><div><strong>培训台账可追溯导出</strong><small>北京时间、员工、签到、学时、成绩和审核一行呈现</small></div><ChevronRight /></button></div></section></div>
       <section className="td-panel td-course-strip"><header className="td-section-title"><div><span>课程库</span><h2>岗位能力课程</h2></div><button type="button" onClick={() => setView('courses')}>管理课程<ArrowRight /></button></header><div>{data.courses.slice(0, 5).map(course => <article key={course.id}><span><BookOpenCheck /></span><div><small>{course.category} · {course.code}</small><strong>{course.name}</strong><p>{course.targetAudience || '适用对象待补充'}</p></div><em>{assessmentLabel(course.assessmentMode)}</em></article>)}</div></section></div>}
 
     {view === 'courses' && <div className="td-page"><section className="td-toolbar"><div><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索课程名称、分类或技能" /></div><span>{data.courses.length} 门真实课程</span>{data.permissions.canCreate && <button type="button" className="primary" onClick={() => setDrawer('course')}><Plus />新建课程</button>}</section><section className="td-course-grid">{data.courses.filter(course => !keyword || [course.name, course.code, course.category, course.skill?.name].some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(keyword.toLocaleLowerCase('zh-CN')))).map(course => <article key={course.id}><header><span><BookOpenCheck /></span><div><small>{course.category} · {course.code}</small><h2>{course.name}</h2></div><em>{course.status === 'ACTIVE' ? '启用' : '停用'}</em></header><p>{course.objective || course.description || '课程目标待补充'}</p><dl><div><dt>适用对象</dt><dd>{course.targetAudience || '待设置'}</dd></div><div><dt>培训规则</dt><dd>{course.defaultDurationMinutes} 分钟 · {modeLabel(course.mode)}</dd></div><div><dt>考核</dt><dd>{assessmentLabel(course.assessmentMode)}{course.passScore !== null ? ` · ${course.passScore}分` : ''}</dd></div><div><dt>技能联动</dt><dd>{course.skill ? `${course.skill.name} · L${course.targetLevel || 1}` : '不关联技能证书'}</dd></div></dl><footer><span>{course.isRequired ? '必修' : '选修'} · {course.retrainingMonths ? `${course.retrainingMonths}个月复训` : '无复训周期'}</span><button type="button" onClick={() => openCreatePlan({ courseId: course.id, title: course.name, purpose: course.objective || '', mode: course.mode, isRequired: course.isRequired, assessmentMode: course.assessmentMode, passScore: String(course.passScore ?? 80) })}>据此建计划<ArrowRight /></button></footer></article>)}</section></div>}
@@ -1017,7 +1061,21 @@ export default function TrainingDevelopmentWorkbench() {
 
     {view === 'retraining' && <div className="td-page"><header className="td-section-title td-page-title"><div><span>有效期管理</span><h2>到期复训与证书续期</h2><p>展示已到期及未来 90 天内到期的正式技能证书。</p></div><em>{data.expiringCertifications.length} 项</em></header><section className="td-retraining-grid">{data.expiringCertifications.map(item => <article key={item.id} className={item.expired ? 'expired' : ''}><span><Award /></span><div><small>{item.employeeNo} · {item.department || '未分组'} / {item.team || '未分组'}</small><strong>{item.employeeName}</strong><p>{item.skillName} · L{item.level}</p></div><div><em>{item.expired ? '已到期' : '即将到期'}</em><strong>{item.expiresAt || '—'}</strong></div><button type="button" onClick={() => { const course = data.courses.find(course => course.skillId && course.skill?.name === item.skillName); openCreatePlan({ title: `${item.skillName}复训`, courseId: course?.id || '', participantIds: [item.employeeId], assessmentMode: course?.assessmentMode || 'COMBINED', passScore: String(course?.passScore || 80), mode: course?.mode || 'OFFLINE', isRequired: true }); }}>创建复训<ChevronRight /></button></article>)}{!data.expiringCertifications.length && <div className="td-empty"><Award /><strong>未来 90 天没有到期证书</strong><p>关联技能的培训审核通过后会进入有效期管理。</p></div>}</section></div>}
 
-    {view === 'reports' && <div className="td-page"><section className="td-export-card"><div className="td-export-art"><Download /></div><div><span>四张工作表还原培训事实</span><h2>员工培训发展记录表</h2><p>同时导出计划台账、课次签到明细、课后反馈明细和反馈汇总；人工修正原因与扫码来源可追溯。</p><ul><li><Check />冻结表头与自动筛选</li><li><Check />签到来源和修正原因</li><li><Check />反馈明细与匿名汇总</li></ul></div><form onSubmit={event => { event.preventDefault(); window.location.href = `/api/training/export.xlsx?period=custom&startDate=${exportRange.start}&endDate=${exportRange.end}`; }}><label>开始日期<input type="date" required value={exportRange.start} onChange={event => setExportRange(current => ({ ...current, start: event.target.value }))} /></label><label>结束日期<input type="date" required value={exportRange.end} onChange={event => setExportRange(current => ({ ...current, end: event.target.value }))} /></label><button type="submit" className="primary"><Download />导出 Excel 台账</button><small>导出行为会写入系统操作日志</small></form></section></div>}
+    {view === 'reports' && <div className="td-page"><section className="td-panel td-ledger-panel">
+      <header><div><span>普通 Excel · 1 个文件 / 1 张工作表</span><h2>培训台账导出</h2><p>按计划开始日期筛选，结束日期包含当天全天，统一北京时间。仅纳入已完成的培训（含已归档），不纳入取消、草稿或回收站记录。</p></div></header>
+      <form onSubmit={event => { event.preventDefault(); void exportLedger(); }}>
+        <div className="td-ledger-form">
+          <label>开始日期（北京时间）<input type="date" required value={exportRange.start} onChange={event => { setExportRange(current => ({ ...current, start: event.target.value })); setExportPreview(null); }} /></label>
+          <label>结束日期（含当天）<input type="date" required min={exportRange.start} value={exportRange.end} onChange={event => { setExportRange(current => ({ ...current, end: event.target.value })); setExportPreview(null); }} /></label>
+          <label>培训名称 / 计划编号<input value={exportFilters.planKeyword} placeholder="全部培训" onChange={event => { setExportFilters(current => ({ ...current, planKeyword: event.target.value })); setExportPreview(null); }} /></label>
+          <label>部门<input list="training-ledger-departments" value={exportFilters.department} placeholder="全部部门" onChange={event => { setExportFilters(current => ({ ...current, department: event.target.value })); setExportPreview(null); }} /><datalist id="training-ledger-departments">{[...new Set(data.employees.map(person => person.department).filter(Boolean))].map(name => <option key={name} value={name!} />)}</datalist></label>
+          <label>员工姓名 / 工号<input value={exportFilters.employee} placeholder="全部员工" onChange={event => { setExportFilters(current => ({ ...current, employee: event.target.value })); setExportPreview(null); }} /></label>
+        </div>
+        <div className="td-ledger-actions"><button type="button" disabled={exportBusy || !exportRange.start || !exportRange.end} onClick={() => void exportLedger(undefined, true)}><Search />核对导出范围</button><button type="submit" className="primary" disabled={exportBusy}>{exportBusy ? <Loader2 className="spin" /> : <Download />}导出 Excel 台账</button></div>
+      </form>
+      {exportPreview && <div className="td-ledger-summary" role="status"><strong>{exportPreview.planCount} 个计划 · {exportPreview.rowCount} 条明细 · {exportPreview.employeeCount} 位员工</strong><span>{exportPreview.rowCount ? '按当前筛选条件导出；每位员工每次培训一行。' : '当前范围没有记录，导出文件仅包含表头。'}</span></div>}
+      <div className="td-ledger-help"><strong>时间和结果按真实记录填写</strong><p>计划开始/结束时间与实际参训学时分开显示；未记录的成绩和学时留空，缺席不会标记为培训完成。工号保留前导零，表头可筛选、冻结，无封面和额外工作表。</p></div>
+    </section></div>}
 
     {drawer && <div className="td-drawer-backdrop" role="presentation"><aside className="td-drawer" role="dialog" aria-modal="true"><header><div><span>{drawer === 'course' ? '课程标准' : drawer === 'plan' ? '培训安排' : '考核录分'}</span><h2>{drawer === 'course' ? '新建培训课程' : drawer === 'plan' ? editingPlan ? (editingPlan.status === 'PUBLISHED' ? '变更已发布计划' : '编辑培训计划草稿') : '新建培训计划' : `${participantDraft?.employeeName || ''} · 录入成绩`}</h2></div><button type="button" onClick={() => { setDrawer(null); setParticipantDraft(null); setEditingPlanId(''); setPendingPlanPayload(null); }}><X /></button></header>
       {drawer === 'course' && <form className="td-form" onSubmit={submitCourse}><div className="td-form-scroll"><section><strong>课程基础</strong><div className="td-form-grid"><label className="wide">课程名称<input required value={courseDraft.name} onChange={event => setCourseDraft({ ...courseDraft, name: event.target.value })} placeholder="如：全自动压接机安全与操作" /></label><label>课程分类<input value={courseDraft.category} onChange={event => setCourseDraft({ ...courseDraft, category: event.target.value })} /></label><label>培训方式<select value={courseDraft.mode} onChange={event => setCourseDraft({ ...courseDraft, mode: event.target.value })}><option value="OFFLINE">线下</option><option value="ONLINE">线上</option><option value="BLENDED">混合</option></select></label><label>默认时长（分钟）<input type="number" min="1" max="1440" value={courseDraft.defaultDurationMinutes} onChange={event => setCourseDraft({ ...courseDraft, defaultDurationMinutes: event.target.value })} /></label><label>课程负责人<select value={courseDraft.ownerEmployeeId} onChange={event => setCourseDraft({ ...courseDraft, ownerEmployeeId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label className="wide">课程目标<textarea value={courseDraft.objective} onChange={event => setCourseDraft({ ...courseDraft, objective: event.target.value })} placeholder="完成后应掌握什么" /></label><label className="wide">适用对象<input value={courseDraft.targetAudience} onChange={event => setCourseDraft({ ...courseDraft, targetAudience: event.target.value })} placeholder="如：压接岗位新员工、换岗人员" /></label></div></section><section><strong>考核与技能联动</strong><div className="td-form-grid"><label>考核方式<select value={courseDraft.assessmentMode} onChange={event => setCourseDraft({ ...courseDraft, assessmentMode: event.target.value })}><option value="NONE">无需考核</option><option value="THEORY">理论</option><option value="PRACTICAL">实操</option><option value="COMBINED">理论 + 实操</option></select></label><label>合格分<input type="number" min="0" max="100" disabled={courseDraft.assessmentMode === 'NONE'} value={courseDraft.passScore} onChange={event => setCourseDraft({ ...courseDraft, passScore: event.target.value })} /></label><label>关联技能<select value={courseDraft.skillId} onChange={event => { const skill = data.skills.find(item => item.id === event.target.value); setCourseDraft({ ...courseDraft, skillId: event.target.value, validityMonths: String(skill?.defaultValidityMonths || 12) }); }}><option value="">不关联证书</option>{data.skills.map(skill => <option key={skill.id} value={skill.id}>{skill.code} · {skill.name}</option>)}</select></label><label>认证等级<select disabled={!courseDraft.skillId} value={courseDraft.targetLevel} onChange={event => setCourseDraft({ ...courseDraft, targetLevel: event.target.value })}>{[1, 2, 3, 4, 5].map(level => <option key={level} value={level}>L{level}</option>)}</select></label><label>证书有效（月）<input type="number" min="1" max="120" disabled={!courseDraft.skillId} value={courseDraft.validityMonths} onChange={event => setCourseDraft({ ...courseDraft, validityMonths: event.target.value })} /></label><label>复训周期（月）<input type="number" min="1" max="120" value={courseDraft.retrainingMonths} onChange={event => setCourseDraft({ ...courseDraft, retrainingMonths: event.target.value })} /></label><label className="td-check wide"><input type="checkbox" checked={courseDraft.isRequired} onChange={event => setCourseDraft({ ...courseDraft, isRequired: event.target.checked })} /><span><strong>必修课程</strong><small>计划创建时默认标记为必修</small></span></label></div></section></div><footer><button type="button" onClick={() => setDrawer(null)}>取消</button><button type="submit" className="primary" disabled={saving}>{saving ? <Loader2 className="spin" /> : <Check />}保存课程</button></footer></form>}
@@ -1027,9 +1085,17 @@ export default function TrainingDevelopmentWorkbench() {
     {planDialog && (() => { const copy = planDialogCopy(planDialog.kind); return <div className="td-confirm-backdrop" role="presentation"><section className="td-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="training-plan-confirm-title"><header><div><span>{copy.eyebrow}</span><h2 id="training-plan-confirm-title">{copy.title}</h2><p>{planDialog.plan.code} · {planDialog.plan.title}</p></div><button type="button" aria-label="关闭" onClick={() => { setPlanDialog(null); if (planDialog.kind === 'change') setPendingPlanPayload(null); }}><X /></button></header><div className="td-confirm-body"><p className="td-confirm-description">{copy.description}</p>
       {planDialog.preview && <section className="td-change-preview"><header><strong>本次变更 {planDialog.preview.changedFields.length} 项</strong><span>新增 {planDialog.preview.addedParticipantCount} 人 · 移除 {planDialog.preview.removedParticipantCount} 人</span></header><div>{planDialog.preview.changedFields.map(field => <article key={field.key}><strong>{field.label}</strong><small>{planChangeValueLabel(field.key, field.before, data.employees, data.courses)}</small><ArrowRight /><small>{planChangeValueLabel(field.key, field.after, data.employees, data.courses)}</small></article>)}</div>{planDialog.preview.warnings.map(warning => <p key={warning}><AlertCircle />{warning}</p>)}</section>}
       {planDialog.impact && <section className="td-impact-grid"><article><span>参训人员</span><strong>{planDialog.impact.participantCount}</strong></article><article><span>签到事实</span><strong>{planDialog.impact.attendanceFactCount}</strong></article><article><span>反馈</span><strong>{planDialog.impact.feedbackCount}</strong></article><article><span>成绩/审核</span><strong>{planDialog.impact.scoreOrReviewFactCount}</strong></article><article><span>证书</span><strong>{planDialog.impact.certificationCount}</strong></article><article><span>附件</span><strong>{planDialog.impact.attachmentCount}</strong></article></section>}
+      {planDialog.purge && <section className="td-purge-notice">
+        <strong>永久删除后不可恢复，不设等待天数</strong>
+        <p>{planDialog.purge.willCancel ? '该计划尚在进行中，删除后签到二维码和待办立即失效。' : '该计划及其专属参训、签到、反馈和审核记录将从业务台账中移除。'} 课程、员工和技能证书不会连带删除；附件按回收规则保留，操作原因单独留痕。</p>
+        {planDialog.purge.blockers.length > 0 && <div role="alert">{planDialog.purge.blockers.map(message => <p key={message}>{message}</p>)}<a href="/workspace/employees?view=performance">查看技能绩效关联</a></div>}
+        {planDialog.purge.requiresInvalidateFacts && <label className="td-purge-ack"><input type="checkbox" checked={planDialog.invalidateFacts === true} onChange={event => setPlanDialog(current => current ? { ...current, invalidateFacts: event.target.checked } : current)} /><span>我已核对以上影响，确认这些是误录记录，同意作废并永久删除。真实培训应使用归档保留。</span></label>}
+        <button type="button" disabled={saving} onClick={() => void openPlanLifecycleDialog('purge', planDialog.plan)}>重新检查删除影响</button>
+      </section>}
+      {planDialog.error && <p className="td-dialog-error" role="alert">{planDialog.error}</p>}
       <label>操作原因{!['archive', 'unarchive'].includes(planDialog.kind) && <em>必填</em>}<textarea value={planDialog.reason} onChange={event => setPlanDialog(current => current ? { ...current, reason: event.target.value } : current)} placeholder={planDialog.kind === 'change' ? '说明为什么要变更已发布计划' : planDialog.kind === 'cancel' ? '说明取消原因' : '填写本次操作说明，便于审计追溯'} /></label>
-      {['delete', 'restore'].includes(planDialog.kind) && <label>输入计划编号确认 <em>必填</em><input value={planDialog.confirmationCode} onChange={event => setPlanDialog(current => current ? { ...current, confirmationCode: event.target.value } : current)} placeholder={planDialog.plan.code} /><small>请完整输入：{planDialog.plan.code}</small></label>}
-    </div><footer><button type="button" onClick={() => { setPlanDialog(null); if (planDialog.kind === 'change') setPendingPlanPayload(null); }}>返回</button><button type="button" className={planDialog.kind === 'delete' || planDialog.kind === 'cancel' ? 'danger' : 'primary'} disabled={saving} onClick={() => void confirmPlanDialog()}>{saving ? <Loader2 className="spin" /> : planDialog.kind === 'delete' ? <Trash2 /> : planDialog.kind === 'archive' ? <Archive /> : <Check />}{copy.confirm}</button></footer></section></div>; })()}
+      {['delete', 'restore', 'purge'].includes(planDialog.kind) && <label>输入计划编号确认 <em>必填</em><input value={planDialog.confirmationCode} onChange={event => setPlanDialog(current => current ? { ...current, confirmationCode: event.target.value } : current)} placeholder={planDialog.plan.code} /><small>请完整输入：{planDialog.plan.code}</small></label>}
+    </div><footer><button type="button" onClick={() => { setPlanDialog(null); if (planDialog.kind === 'change') setPendingPlanPayload(null); }}>返回</button><button type="button" className={['delete', 'cancel', 'purge'].includes(planDialog.kind) ? 'danger' : 'primary'} disabled={saving || (planDialog.kind === 'purge' && (!planDialog.purge?.canPurge || (planDialog.purge.requiresInvalidateFacts && !planDialog.invalidateFacts)))} onClick={() => void confirmPlanDialog()}>{saving ? <Loader2 className="spin" /> : ['delete', 'purge'].includes(planDialog.kind) ? <Trash2 /> : planDialog.kind === 'archive' ? <Archive /> : <Check />}{copy.confirm}</button></footer></section></div>; })()}
     {saving && <div className="td-saving"><Loader2 className="spin" />正在保存真实培训数据</div>}
   </div>;
 }

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@prisma/client';
+import { parseTrainingLocalTime } from '@/lib/training-time';
 
 export const TRAINING_PLAN_STATUSES = [
   'DRAFT',
@@ -127,6 +128,10 @@ function enumValue<T extends string>(
 
 export function parseTrainingDateTime(value: unknown, label: string): Date {
   const text = cleanTrainingText(value, 80);
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) {
+    try { return parseTrainingLocalTime(text); }
+    catch { throw new TrainingInputError(`${label}格式不正确`); }
+  }
   const date = new Date(text);
   if (!text || Number.isNaN(date.getTime())) throw new TrainingInputError(`${label}格式不正确`);
   return date;
