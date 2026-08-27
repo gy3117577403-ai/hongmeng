@@ -5,6 +5,8 @@ import { prisma } from '../lib/prisma';
 import { createInternalQualityRiskRecord, parseInternalQualityRiskInput, transitionInternalQualityRiskWorkflow, updateInternalQualityRiskTask, archiveInternalQualityRisk, softDeleteInternalQualityRisk, permanentlyDeleteInternalQualityRisk, revokeInternalQualityRiskWarning } from '../lib/internal-quality-risks';
 import { qualityWarningEmployeePath, loadEmployeeQualityWarning } from '../lib/quality-warning-employee';
 import { startInternalQualityRiskRevision, materializeProductQualityWarningsForWorkOrders } from '../lib/internal-quality-risks';
+import { loadInternalQualityRiskPrintPreview } from '../lib/internal-quality-risks';
+import { createWorkOrderTravelerPrints, loadWorkOrderTravelerPrints } from '../lib/work-order-qr-service';
 
 test('quality v2 real assignment, review authorization, employee credential scoping, and safe purge', { skip: process.env.RUN_DB_INTEGRATION !== '1' }, async () => {
   process.env.SESSION_SECRET ||= 'quality-v2-isolated-integration-test-only';
@@ -31,16 +33,24 @@ test('quality v2 real assignment, review authorization, employee credential scop
     report = await prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, report.id, report.version, 'VERIFYING', handler));
     await assert.rejects(prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, report.id, report.version, 'PENDING_CLOSE', handler, '自行归档')), /质量/);
     report = await prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, report.id, report.version, 'PENDING_CLOSE', actor, '质量验证方案有效'));
-    const attachment = await prisma.internalQualityRiskAttachment.create({ data: { reportId: report.id, originalName: 'evidence.png', displayName: '已确认异常照片', mimeType: 'image/png', fileSize: 100, objectKey: `quality-risks/${report.id}/test.png`, sha256: 'a'.repeat(64), category: 'SOLUTION', caption: '原版本说明' } });
+    const attachment = await prisma.internalQualityRiskAttachment.create({ data: { reportId: report.id, originalName: 'evidence.png', displayName: '已确认异常照片', mimeType: 'image/png', fileSize: 100, objectKey: `quality-risks/${report.id}/test.png`, sha256: 'a'.repeat(64), category: 'SOLUTION', caption: '原版本说明', imageWidth: 1600, imageHeight: 900, imageOrientation: 1, printGroup: '原版本对照' } });
     report = await prisma.$transaction(tx => archiveInternalQualityRisk(tx, report.id, report.version, actor));
     assert.equal(report.alerts.length, 1); assert.equal(report.alerts[0].workOrderId, order.id);
+    await prisma.workOrder.update({ where: { id: order.id }, data: { productionTargetQty: 24, uncompletedQty: '24', completedQty: '0', planActive: true, planType: 'managed_plan' } });
+    await prisma.workOrderProcessRoute.create({ data: { workOrderId: order.id, templateName: '隔离打印验收', templateVersion: 1, status: 'in_progress', version: 1, confirmedAt: new Date(), confirmedById: quality.id, startedAt: new Date(), routeSource: 'process_template', steps: { create: { processCode: 'QA', processName: '压接', stageGroup: 'frontend', position: 1, sequenceGroup: 1, standardSource: 'integration_test', timeBasis: 'per_unit', unitLabel: '套', standardMillisecondsPerUnit: 3000, setupMilliseconds: 0, unitsPerProduct: 1, countsForEfficiency: true, inputQty: 24, status: 'current', startedAt: new Date() } } } });
+    const issued = (await createWorkOrderTravelerPrints({ workOrderIds: [order.id], mode: 'TRAVELER_QUALITY_WARNING', materials: ['TRAVELER', 'QUALITY_WARNING'], userId: quality.id, actor: 'quality' }))[0];
+    assert.equal(issued.snapshot.qualityWarnings[0].printLayoutVersion, 'ASPECT_V1');
+    assert.equal(issued.snapshot.qualityWarnings[0].attachments[0].imageWidth, 1600);
+    assert.equal(issued.snapshot.qualityWarnings[0].attachments[0].printGroup, '原版本对照');
     const path = await qualityWarningEmployeePath(report.currentRevisionId!, order.id); assert.ok(path);
     const token = path!.split('/').pop()!;
     const view = await loadEmployeeQualityWarning(token); assert.ok(view); assert.equal(view!.view.attachments.length, 1); assert.equal(view!.view.correctiveAction, report.correctiveAction);
     assert.equal(await loadEmployeeQualityWarning(`${token}wrong`), null);
     assert.equal('tasks' in view!.view, false); assert.equal('ownerUserId' in view!.view, false); assert.equal('objectKey' in view!.view.attachments[0], false);
-    await prisma.internalQualityRiskAttachment.update({ where: { id: attachment.id }, data: { caption: '修订时修改的说明' } });
+    await prisma.internalQualityRiskAttachment.update({ where: { id: attachment.id }, data: { caption: '修订时修改的说明', printGroup: '下一版本对照' } });
     assert.equal((await loadEmployeeQualityWarning(token))!.view.attachments[0].caption, '原版本说明');
+    assert.equal((await loadInternalQualityRiskPrintPreview(report.id, order.id)).warning.attachments[0].printGroup, '原版本对照');
+    assert.deepEqual((await loadWorkOrderTravelerPrints([issued.printId]))[0].snapshot, issued.snapshot);
     const originalSolution = report.correctiveAction;
     report = await prisma.$transaction(tx => startInternalQualityRiskRevision(tx, report.id, report.version, actor));
     report = await prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, report.id, report.version, 'COLLABORATING', actor));
@@ -78,6 +88,10 @@ test('quality v2 real assignment, review authorization, employee credential scop
     assert.equal(archiveOnly.currentRevision!.published, false); assert.equal(archiveOnly.alerts.length, 0);
     assert.equal(await qualityWarningEmployeePath(archiveOnly.currentRevisionId!, order.id), null);
   } finally {
+    await prisma.workOrderQrPrint.deleteMany({ where: { ticket: { workOrderId: order.id } } });
+    await prisma.workOrderQrTicket.deleteMany({ where: { workOrderId: order.id } });
+    await prisma.workOrderProcessStep.deleteMany({ where: { route: { workOrderId: order.id } } });
+    await prisma.workOrderProcessRoute.deleteMany({ where: { workOrderId: order.id } });
     await prisma.qualityWarningEmployeeLink.deleteMany({ where: { revision: { reportId: { in: ids } } } });
     await prisma.internalQualityRiskReport.deleteMany({ where: { id: { in: ids } } });
     await prisma.qualityRiskObjectCleanup.deleteMany({ where: { reportId: { in: ids } } });

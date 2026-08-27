@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { resolveQualityPrintImages } from '@/lib/quality-print-image-source';
+import { qualityPrintHeaderExtraMm } from '@/lib/quality-warning-print-layout';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { createSystemNotification } from '@/lib/system-notifications';
@@ -562,6 +564,10 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
       caption: attachment.caption,
       sortOrder: attachment.sortOrder,
       printIncluded: attachment.printIncluded,
+      printGroup: attachment.printGroup,
+      imageWidth: attachment.imageWidth,
+      imageHeight: attachment.imageHeight,
+      imageOrientation: attachment.imageOrientation,
       uploadedBy: actorLabel(attachment.uploadedBy),
       createdAt: attachment.createdAt.toISOString(),
       deletedAt: attachment.deletedAt?.toISOString() || null,
@@ -931,6 +937,10 @@ function snapshotFor(report: InternalQualityRiskRecord, revisionNumber: number):
       sha256: attachment.sha256,
       caption: attachment.caption,
       printIncluded: attachment.printIncluded,
+      printGroup: attachment.printGroup,
+      imageWidth: attachment.imageWidth,
+      imageHeight: attachment.imageHeight,
+      imageOrientation: attachment.imageOrientation,
       sortOrder: attachment.sortOrder,
     })),
   } as Prisma.InputJsonValue;
@@ -1082,19 +1092,23 @@ export async function loadInternalQualityRiskPrintPreview(reportId: string, requ
     : null;
   const frozen = jsonObject(useArchiveSnapshot);
   const frozenAttachments = Array.isArray(frozen?.attachments) ? frozen.attachments.map(jsonObject).filter(Boolean) : [];
-  const attachments = report.attachments
+  const attachments = await resolveQualityPrintImages(report.attachments
     .filter(attachment => !archivedAttachmentIds || archivedAttachmentIds.has(attachment.id))
     .map(attachment => ({
       id: attachment.id,
       displayName: attachment.displayName,
       mimeType: attachment.mimeType,
       category: attachment.category,
+      imageWidth: attachment.imageWidth,
+      imageHeight: attachment.imageHeight,
+      imageOrientation: attachment.imageOrientation,
       contentUrl: `/api/quality/internal-risk-attachments/${attachment.id}/content`,
       ...(frozenAttachments.find(item => item?.id === attachment.id) ? {
         caption: String(frozenAttachments.find(item => item?.id === attachment.id)?.caption || ''),
         printIncluded: frozenAttachments.find(item => item?.id === attachment.id)?.printIncluded !== false,
-      } : { caption: attachment.caption, printIncluded: attachment.printIncluded }),
-    }));
+        printGroup: String(frozenAttachments.find(item => item?.id === attachment.id)?.printGroup || '') || null,
+      } : { caption: attachment.caption, printIncluded: attachment.printIncluded, printGroup: attachment.printGroup }),
+    })));
   return {
     generatedAt: new Date().toISOString(),
     previewState: report.status === 'ARCHIVED' ? 'ARCHIVED' as const : 'DRAFT' as const,
@@ -1127,6 +1141,8 @@ export async function loadInternalQualityRiskPrintPreview(reportId: string, requ
       controlRequirement: warning.controlRequirement,
       finalConclusion: warning.finalConclusion,
       printPhotoLayout: (frozen?.printPhotoLayout || report.printPhotoLayout) === 'SINGLE' ? 'SINGLE' as const : 'PAIR' as const,
+      printLayoutVersion: 'ASPECT_V1' as const,
+      printHeaderExtraMm: qualityPrintHeaderExtraMm({ productName: selectedOrder?.productName || selectedProduct?.productName || '关联产品待选择', specification: selectedOrder?.specification || selectedProduct?.specification, workOrderCode: selectedOrder?.code || '归档后按产品匹配', businessWorkOrderCode: selectedOrder?.businessCode }),
       employeePath: report.status === 'ARCHIVED' && report.currentRevisionId ? await qualityWarningEmployeePath(report.currentRevisionId, selectedOrder?.id || null) : null,
       requiredAction: warning.requiredAction,
       inspectionMethod: warning.inspectionMethod,

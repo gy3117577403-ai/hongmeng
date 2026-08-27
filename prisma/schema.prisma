@@ -3741,6 +3741,10 @@ model InternalQualityRiskAttachment {
   caption       String?
   sortOrder     Int                                     @default(0) @map("sort_order")
   printIncluded Boolean                                 @default(true) @map("print_included")
+  imageWidth    Int?                                    @map("image_width")
+  imageHeight   Int?                                    @map("image_height")
+  imageOrientation Int?                                 @map("image_orientation")
+  printGroup    String?                                 @map("print_group")
   uploadedById  String?                                 @map("uploaded_by_id")
   createdAt     DateTime                                @default(now()) @map("created_at")
   updatedAt     DateTime                                @updatedAt @map("updated_at")

@@ -935,6 +935,10 @@ export type InternalQualityRiskTaskDTO = {
 
 export type InternalQualityRiskAttachmentDTO = {
   printIncluded?: boolean;
+  printGroup?: string | null;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
+  imageOrientation?: number | null;
   id: string;
   taskId?: string | null;
   category: 'DEFECT' | 'CAUSE' | 'ACTION' | 'VERIFICATION' | 'SOLUTION' | 'EVIDENCE';
@@ -1090,6 +1094,8 @@ export type InternalQualityRiskPrintPreviewDTO = {
     finalConclusion?: string | null;
     employeePath?: string | null;
     printPhotoLayout?: 'SINGLE' | 'PAIR';
+    printLayoutVersion?: 'ASPECT_V1';
+    printHeaderExtraMm?: number;
     alertId: string;
     reportId: string;
     reportNo: string;
@@ -1113,6 +1119,10 @@ export type InternalQualityRiskPrintPreviewDTO = {
     archivedAt: string;
     attachments: Array<{
       printIncluded?: boolean;
+      printGroup?: string | null;
+      imageWidth?: number | null;
+      imageHeight?: number | null;
+      imageOrientation?: number | null;
       id: string;
       displayName: string;
       mimeType: string;

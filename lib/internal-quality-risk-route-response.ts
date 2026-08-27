@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { ForbiddenError, UnauthorizedError, forbidden, unauthorized } from '@/lib/auth';
 import { InternalQualityRiskError } from '@/lib/internal-quality-risks';
+import { PrintableDocumentError } from '@/lib/printable-document';
 
 export function internalQualityRiskRouteError(error: unknown, fallback: string) {
   if (error instanceof UnauthorizedError) return unauthorized();
   if (error instanceof ForbiddenError) return forbidden(error.message);
-  if (error instanceof InternalQualityRiskError) {
+  if (error instanceof InternalQualityRiskError || error instanceof PrintableDocumentError) {
     return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
   }
   if ((error as { code?: string }).code === 'P2002') {

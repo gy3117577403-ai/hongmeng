@@ -19,7 +19,15 @@ export function QualityWarningPrintSheet({ order, warning, qrImage, pageNumber, 
     <section className="quality-v2-meta"><h1>{warning.title}</h1><div><span><b>产品</b> {order.specification || order.productName}</span><span><b>工单</b> {order.businessWorkOrderCode || order.workOrderCode}</span></div><small>{warning.reportNo} · {previewState === 'DRAFT' ? '未归档' : `归档 ${warning.archivedAt.slice(0, 10)}`}{warning.applicableProcess ? ` · ${warning.applicableProcess}` : ''}</small></section>
     <div className="quality-v2-body">{content.blocks.map((block, index) => block.kind === 'text'
       ? <section key={index} className={`quality-v2-text${block.emphasis ? ' emphasis' : ''}`}><h2>{block.title}</h2><p>{block.lines.map((line, n) => <span key={n}>{line || '\u00a0'}</span>)}</p></section>
-      : <section key={index} className={`quality-v2-photos cols-${block.photos.length}`}>{block.photos.map(photo => <figure key={photo.id}><img src={photo.contentUrl} alt={photo.caption || photo.displayName} style={{ height: `${block.imageHeightMm}mm` }} /><figcaption>{wrapQualityPrintText(photo.caption || photo.displayName, block.photos.length === 1 ? 84 : 39).map((line, n) => <span key={n}>{line}</span>)}</figcaption></figure>)}</section>)}</div>
+      : <section key={index} className={`quality-v2-photos cols-${block.columns || block.photos.length}${block.sizes ? ' aspect-locked' : ''}`} style={block.columns ? { gridTemplateColumns: `repeat(${block.columns},minmax(0,1fr))` } : undefined}>
+          {block.group && <h2 className="quality-photo-group">对照组 · {block.group}</h2>}
+          {block.photos.map((photo, photoIndex) => <figure key={photo.id}>
+            <div className={block.sizes ? 'quality-photo-canvas' : undefined} style={block.sizes ? { height: `${block.imageHeightMm}mm` } : undefined}>
+              <img src={photo.contentUrl} alt={photo.caption || photo.displayName} data-evidence-id={photo.id}
+                style={block.sizes ? { width: `${block.sizes[photoIndex].widthMm}mm`, height: `${block.sizes[photoIndex].heightMm}mm`, maxWidth: 'none', maxHeight: 'none' } : { height: `${block.imageHeightMm}mm` }} />
+            </div><figcaption>{wrapQualityPrintText(photo.caption || photo.displayName, block.captionWidth || (block.photos.length === 1 ? 84 : 39)).map((line, n) => <span key={n}>{line}</span>)}</figcaption>
+          </figure>)}
+        </section>)}</div>
     <footer className="quality-v2-footer"><div className="quality-v2-qr">{qrImage && previewState === 'ARCHIVED' ? <img src={qrImage} alt="员工免后台登录查看本版本图文方案" /> : <span>{previewState === 'DRAFT' ? '草稿无员工码' : '未发布员工链接'}</span>}</div><div><b>扫码查看本版本完整图文</b><small>{previewState === 'DRAFT' ? '预览不能替代正式下发，禁止用于生产。' : '无需后台账号；有新版或已撤销时会明确提示。'}</small><span>现场确认：________　日期：________</span></div><strong>第 {pageNumber} / {totalPages} 页</strong></footer>
   </article>;
 }

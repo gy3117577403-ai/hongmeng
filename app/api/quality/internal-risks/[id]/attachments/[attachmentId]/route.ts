@@ -21,13 +21,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (Number(body.expectedVersion) !== report.version) throw new InternalQualityRiskError('版本已变化，请刷新后重试', 409);
       const attachment = await tx.internalQualityRiskAttachment.findFirst({ where: { id: params.attachmentId, reportId: params.id, deletedAt: null } });
       if (!attachment) throw new InternalQualityRiskError('附件不存在', 404);
+      const printGroup = typeof body.printGroup === 'string' ? body.printGroup.trim().slice(0, 24) || null : undefined;
+      if (printGroup) {
+        if (!attachment.mimeType.startsWith('image/')) throw new InternalQualityRiskError('只有照片可以加入对照组', 400);
+        const members = await tx.internalQualityRiskAttachment.count({ where: { reportId: params.id, deletedAt: null, printGroup, id: { not: attachment.id } } });
+        if (members >= 2) throw new InternalQualityRiskError('每个对照组最多两张照片，请使用其他组名', 400);
+      }
       const order = await tx.internalQualityRiskAttachment.findMany({ where: { reportId: params.id, deletedAt: null }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }], select: { id: true } });
       if (body.direction === 'up' || body.direction === 'down') {
         const index = order.findIndex(item => item.id === attachment.id); const next = index + (body.direction === 'up' ? -1 : 1);
         if (index >= 0 && next >= 0 && next < order.length) { [order[index], order[next]] = [order[next], order[index]]; }
         for (let i = 0; i < order.length; i++) await tx.internalQualityRiskAttachment.update({ where: { id: order[i].id }, data: { sortOrder: i * 10 } });
       }
-      await tx.internalQualityRiskAttachment.update({ where: { id: attachment.id }, data: { ...(typeof body.caption === 'string' ? { caption: body.caption.trim().slice(0, 500) || null } : {}), ...(typeof body.printIncluded === 'boolean' ? { printIncluded: body.printIncluded } : {}) } });
+      await tx.internalQualityRiskAttachment.update({ where: { id: attachment.id }, data: { ...(typeof body.caption === 'string' ? { caption: body.caption.trim().slice(0, 500) || null } : {}), ...(typeof body.printIncluded === 'boolean' ? { printIncluded: body.printIncluded } : {}), ...(printGroup !== undefined ? { printGroup } : {}) } });
       await tx.internalQualityRiskReport.update({ where: { id: params.id }, data: { version: { increment: 1 }, updatedById: user.id, ...(['VERIFYING', 'PENDING_CLOSE'].includes(report.status) ? { status: 'COLLABORATING', verifiedAt: null, verifiedById: null } : {}) } });
       await tx.internalQualityRiskActivity.create({ data: { reportId: params.id, actorId: user.id, actorName: user.displayName || user.username, action: 'ATTACHMENT_LAYOUT_UPDATED', content: '调整照片说明、打印选择或排序；旧版归档保持原样', detail: { attachmentId: attachment.id } } });
       return tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: params.id }, include: internalQualityRiskInclude });

@@ -5,3 +5,11 @@
 .quality-v2-photos { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3mm;break-inside:avoid; }.quality-v2-photos.cols-1 { grid-template-columns:1fr; }.quality-v2-photos figure { margin:0;border:.25mm solid #b7c3d0;padding:1.3mm;min-width:0;border-radius:1mm; }.quality-v2-photos img { display:block;width:100%;object-fit:contain;max-height:none;background:#fff; }.quality-v2-photos figcaption { font-size:10pt;line-height:5mm;margin:1.2mm 0 0; }.quality-v2-photos figcaption span { display:block; }
 .quality-warning-sheet.quality-warning-v2 > .quality-v2-footer { display:flex;align-items:center;gap:3mm;padding-top:2mm;margin-top:auto;border-top:.3mm solid #afbdcb;color:#30445e;min-height:27mm; }.quality-v2-qr { width:25mm;height:25mm;flex:0 0 25mm; }.quality-v2-qr img { display:block;width:25mm;height:25mm;object-fit:contain; }.quality-v2-qr > span { font-size:9pt;border:.3mm dashed #bdc8d5;height:100%;display:grid;place-items:center;text-align:center; }.quality-v2-footer > div:nth-child(2) { display:grid;gap:1.5mm;flex:1; }.quality-v2-footer b { font-size:10pt; }.quality-v2-footer small,.quality-v2-footer span { font-size:9pt; }.quality-warning-sheet.quality-warning-v2 > footer > strong { font-size:9pt;color:#24344b;white-space:nowrap; }
 @media print { .quality-warning-sheet.quality-warning-v2 { margin:0;break-after:page;box-shadow:none; }.quality-warning-sheet.quality-warning-v2:last-child { break-after:auto; } }
+.quality-photo-canvas { display:flex;align-items:center;justify-content:center;overflow:visible; }
+.quality-v2-photos.aspect-locked { row-gap:0; }
+.quality-v2-photos.aspect-locked figure { align-self:start; }
+.quality-v2-photos .quality-photo-group { grid-column:1 / -1;margin:0;height:6mm;font-size:10pt;color:#9a4110;line-height:6mm; }
+.risk-print-layout-options { display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:12px 24px;background:#fff7ed;border-bottom:1px solid #fed7aa;font-size:13px; }
+.risk-print-layout-options select { border:1px solid #fdba74;border-radius:8px;padding:8px;background:#fff; }
+.risk-print-layout-options span { color:#64748b; }
+@media print { .risk-print-layout-options { display:none; } }

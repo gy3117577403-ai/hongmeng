@@ -16,14 +16,16 @@ export default function InternalQualityRiskPrintPreview({ preview }: { preview: 
   const stageRef = useRef<HTMLElement>(null);
   const [imagesReady, setImagesReady] = useState(false);
   const [imageError, setImageError] = useState(false);
-  const pages = buildQualityWarningPages(preview.warning);
+  const [layout, setLayout] = useState(preview.warning.printPhotoLayout || 'PAIR');
+  const warning = { ...preview.warning, printPhotoLayout: layout };
+  const pages = buildQualityWarningPages(warning);
 
   useEffect(() => {
     const images = Array.from(stageRef.current?.querySelectorAll('img') || []);
     const check = () => { setImagesReady(images.every(image => image.complete && image.naturalWidth > 0)); setImageError(images.some(image => image.complete && !image.naturalWidth)); };
     images.forEach(image => { image.addEventListener('load', check); image.addEventListener('error', check); }); check();
     return () => images.forEach(image => { image.removeEventListener('load', check); image.removeEventListener('error', check); });
-  }, [preview, qrImage]);
+  }, [preview, qrImage, layout]);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +48,7 @@ export default function InternalQualityRiskPrintPreview({ preview }: { preview: 
       <span><strong>{preview.previewState === 'ARCHIVED' ? '当前显示已归档版本，可核对正式附页内容' : '当前为归档前预览，不会发布警示或写入工单'}</strong><small>{preview.previewState === 'DRAFT' ? `还有 ${preview.readiness.blockers.length} 个归档阻断项；预览页保留明显水印，不能作为生产文件。` : '归档快照不可被后续草稿直接覆盖。'}{qrError ? ` · ${qrError}` : ''}{imageError ? ' · 图片读取失败，请刷新重试后打印' : !imagesReady ? ' · 正在等待完整图片' : ''}</small></span>
       <em><ShieldAlert size={14} />{preview.order.businessWorkOrderCode || preview.order.workOrderCode}</em>
     </section>
-    <section ref={stageRef} className="risk-print-preview-stage">{pages.map((page, index) => <div className="risk-print-preview-paper" key={index}><QualityWarningPrintSheet page={page} order={preview.order} warning={preview.warning} qrImage={qrImage} pageNumber={index + 1} totalPages={pages.length} previewState={preview.previewState} /></div>)}</section>
+    <section className="risk-print-layout-options"><label>排版试览 <select aria-label="图片排版试览" value={layout} onChange={event => setLayout(event.target.value as 'PAIR' | 'SINGLE')}><option value="PAIR">自动省纸 · 保持原图比例</option><option value="SINGLE">大图细节 · 按需续页</option></select></label><strong>预计 {pages.length} 页 A4</strong><span>不裁切、不拉伸；同组两图保持并排。{layout !== preview.warning.printPhotoLayout ? '当前为试览，正式随单打印仍使用归档图片设置。' : '正式随单打印使用相同排版规则。'}</span></section>
+    <section ref={stageRef} className="risk-print-preview-stage">{pages.map((page, index) => <div className="risk-print-preview-paper" key={index}><QualityWarningPrintSheet page={page} order={preview.order} warning={warning} qrImage={qrImage} pageNumber={index + 1} totalPages={pages.length} previewState={preview.previewState} /></div>)}</section>
   </main>;
 }

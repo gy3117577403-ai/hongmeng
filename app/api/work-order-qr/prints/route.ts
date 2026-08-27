@@ -5,6 +5,7 @@ import {
   WorkOrderQrServiceError,
 } from '@/lib/work-order-qr-service';
 import { sanitizeWorkOrderPrintReturnTo } from '@/lib/work-order-print-navigation';
+import { PrintableDocumentError } from '@/lib/printable-document';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof WorkOrderQrServiceError) {
+    if (error instanceof WorkOrderQrServiceError || error instanceof PrintableDocumentError) {
       return NextResponse.json(
         { ok: false, error: error.message, code: error.code },
         { status: error.status },

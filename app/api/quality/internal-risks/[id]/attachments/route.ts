@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { safeFilename, validateFileContent } from '@/lib/validation';
+import { readQualityImageGeometry } from '@/lib/quality-image-metadata';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -42,6 +43,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const validationError = validateFileContent(upload.name, upload.type, upload.size, body);
     if (validationError) return NextResponse.json({ ok: false, error: validationError }, { status: 400 });
     const mimeType = upload.type || 'application/octet-stream';
+    let geometry = {};
+    if (mimeType.startsWith('image/')) {
+      try { geometry = await readQualityImageGeometry(body); }
+      catch (error) { return NextResponse.json({ ok: false, error: `图片无法解析：${error instanceof Error ? error.message : '内容损坏或像素过大'}` }, { status: 400 }); }
+    }
     objectKey = `quality-risks/${params.id}/${crypto.randomUUID()}-${safeFilename(upload.name)}`;
     await putObject({ key: objectKey, body, contentType: mimeType, originalName: upload.name });
     const sha256 = crypto.createHash('sha256').update(body).digest('hex');
@@ -64,6 +70,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         fileSize: upload.size,
         objectKey,
         sha256,
+        ...geometry,
         caption: String(form.get('caption') || '').trim().slice(0, 500) || null,
         uploadedById: user.id,
       } });

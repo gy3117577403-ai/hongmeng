@@ -14,6 +14,8 @@ import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
 import { materializeProductQualityWarningsForWorkOrders } from '@/lib/internal-quality-risks';
 import { qualityWarningEmployeePath } from '@/lib/quality-warning-employee';
+import { resolveQualityPrintImages } from '@/lib/quality-print-image-source';
+import { qualityPrintHeaderExtraMm } from '@/lib/quality-warning-print-layout';
 import {
   processSupplementActualRequiredQty,
   processSupplementRemainingQty,
@@ -116,6 +118,8 @@ export type WorkOrderQualityWarningSnapshot = {
   finalConclusion?: string | null;
   employeePath?: string | null;
   printPhotoLayout?: 'SINGLE' | 'PAIR';
+  printLayoutVersion?: 'ASPECT_V1';
+  printHeaderExtraMm?: number;
   alertId: string;
   reportId: string;
   reportNo: string;
@@ -139,6 +143,10 @@ export type WorkOrderQualityWarningSnapshot = {
   archivedAt: string;
   attachments: Array<{
     printIncluded?: boolean;
+    printGroup?: string | null;
+    imageWidth?: number | null;
+    imageHeight?: number | null;
+    imageOrientation?: number | null;
     id: string;
     displayName: string;
     mimeType: string;
@@ -626,7 +634,7 @@ async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<
             where: { attachment: { mimeType: { startsWith: 'image/' } } },
             orderBy: { sortOrder: 'asc' },
             select: {
-              attachment: { select: { id: true, displayName: true, mimeType: true, caption: true, category: true, printIncluded: true } },
+              attachment: { select: { id: true, displayName: true, mimeType: true, caption: true, category: true, printIncluded: true, imageWidth: true, imageHeight: true, imageOrientation: true } },
             },
           },
         },
@@ -670,6 +678,7 @@ async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<
         ...attachment,
         caption: String(frozenAttachments.find(item => item.id === attachment.id) ? frozenAttachments.find(item => item.id === attachment.id)?.caption || '' : attachment.caption || ''),
         printIncluded: frozenAttachments.find(item => item.id === attachment.id)?.printIncluded !== false,
+        printGroup: String(frozenAttachments.find(item => item.id === attachment.id)?.printGroup || '') || null,
         contentUrl: `/api/quality/internal-risk-attachments/${attachment.id}/content`,
       })),
     };
@@ -786,6 +795,12 @@ export async function createWorkOrderTravelerPrints(input: {
     const withoutWarnings = orderedOrders.find(order => !(warningsByWorkOrder.get(order.id) || []).length);
     if (withoutWarnings) throw new WorkOrderQrServiceError(`${withoutWarnings.businessCode || withoutWarnings.code} 当前没有可打印的异常警示`, 409, 'QR_QUALITY_WARNING_EMPTY');
   }
+  // Resolve dimensions before opening the print transaction. Issued snapshots are never upgraded on read.
+  if (requiresQualityWarning) for (const order of orderedOrders) for (const warning of warningsByWorkOrder.get(order.id) || []) {
+    warning.attachments = await resolveQualityPrintImages(warning.attachments);
+    warning.printLayoutVersion = 'ASPECT_V1';
+    warning.printHeaderExtraMm = qualityPrintHeaderExtraMm({ productName: order.productName, specification: order.specification, workOrderCode: order.code, businessWorkOrderCode: order.businessCode });
+  }
   const snapshots = orderedOrders.map(order => ({
     ...createSnapshot(order, warningsByWorkOrder.get(order.id) || []),
     printRendering: {
@@ -876,6 +891,10 @@ export async function createWorkOrderTravelerPrints(input: {
               revisionId: warning.revisionId,
               revisionNumber: warning.revisionNumber,
               printPolicy: warning.printPolicy,
+              printLayoutVersion: warning.printLayoutVersion,
+              printHeaderExtraMm: warning.printHeaderExtraMm,
+              printPhotoLayout: warning.printPhotoLayout,
+              attachments: warning.attachments.map(photo => ({ id: photo.id, width: photo.imageWidth, height: photo.imageHeight, orientation: photo.imageOrientation, group: photo.printGroup, printIncluded: photo.printIncluded })),
             })),
             printRendering: snapshot.printRendering,
           })).digest('hex'),
