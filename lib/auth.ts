@@ -16,6 +16,7 @@ import {
 } from '@/lib/department-access';
 import { legacyFallbackGrants } from '@/lib/legacy-access-policy';
 import { canRetainPasswordSession } from '@/lib/login-security';
+import { canManageEmployeeAccounts } from '@/lib/employee-account-access';
 import { prisma } from '@/lib/prisma';
 import { productionPlanningDateBoundary } from '@/lib/production-planning-date';
 import {
@@ -137,6 +138,7 @@ export async function currentUser() {
           position: true,
           team: true,
           isActive: true,
+          attendanceEnabled: true,
           departmentRef: { select: { code: true, name: true } },
           productionPlanningMemberships: {
             where: {
@@ -215,6 +217,7 @@ export async function currentUser() {
       position: user.employee.position,
       team: user.employee.team,
       isActive: user.employee.isActive,
+      attendanceEnabled: user.employee.attendanceEnabled,
     } : null,
     access,
     dailyPlanningRoles,
@@ -270,6 +273,14 @@ export async function requireAdmin() {
     user.laborRole !== 'ADMIN'
     && !hasCapability(user.access, 'ACCOUNT_ADMIN', 'MANAGE')
   ) throw new ForbiddenError();
+  return user;
+}
+
+export async function requireEmployeeAccountManager() {
+  const user = await currentUser();
+  if (!user) throw new UnauthorizedError();
+  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码');
+  if (!canManageEmployeeAccounts(user)) throw new ForbiddenError();
   return user;
 }
 

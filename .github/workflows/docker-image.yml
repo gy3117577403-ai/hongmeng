@@ -264,6 +264,10 @@ jobs:
             SMOKE_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
             SMOKE_ADMIN_CHANGED_PASSWORD="$SMOKE_ADMIN_CHANGED_PASSWORD" \
             node scripts/smoke-connector-manual-pdf.mjs
+          REPORT_QA_BASE=http://127.0.0.1:3000 \
+            REPORT_QA_S3_ENDPOINT=http://127.0.0.1:19000 \
+            REPORT_QA_EVIDENCE_PATH=artifacts/employee-reports-access-v13466/runtime-ci.json \
+            node scripts/smoke-employee-reports-access.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image

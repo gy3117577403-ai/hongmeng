@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { hasCapability } from '@/lib/department-access';
+import { employeeAttainmentScope } from '@/lib/employee-attainment-access';
+import { abnormalTimeScopedEmployeeIds } from '@/lib/abnormal-time-access';
 import {
   basisPoints,
   dateKeyFromDatabase,
@@ -199,24 +200,15 @@ export async function GET(req: NextRequest) {
     const { period, date, start, end } = reportRangeQuery(req.nextUrl.searchParams);
     const requestedEmployeeId = String(req.nextUrl.searchParams.get('employeeId') || '').trim();
     let scopedEmployeeIds: string[] | null = null;
-    const canReadGlobalPeopleReport = hasCapability(actor.access, 'REPORT_CENTER', 'READ')
-      || hasCapability(actor.access, 'BUSINESS', 'READ')
-      || hasCapability(actor.access, 'PLANNING', 'READ')
-      || hasCapability(actor.access, 'MAJOR_APPROVAL', 'READ')
-      || actor.laborRole === 'ADMIN';
-    if (!canReadGlobalPeopleReport && actor.laborRole === 'EMPLOYEE') {
+    const accessScope = employeeAttainmentScope(actor);
+    if (accessScope === 'SELF') {
       const actorEmployee = actor.employee;
       if (!actorEmployee || !isProductionWorkforceEmployee(actorEmployee)) {
         return forbidden('账号未绑定生产部且已启用考勤的在职员工档案，无法查看生产达成率');
       }
       scopedEmployeeIds = [actorEmployee.id];
-    } else if (!canReadGlobalPeopleReport && actor.laborRole === 'TEAM_LEAD') {
-      const team = actor.employee?.isActive ? String(actor.employee.team || '').trim() : '';
-      if (!team) return forbidden('班组长账号未绑定有效班组，无法查看达成率');
-      scopedEmployeeIds = (await prisma.employee.findMany({
-        where: { ...productionEmployeeWhere(), team },
-        select: { id: true },
-      })).map(employee => employee.id);
+    } else if (accessScope === 'TEAM') {
+      scopedEmployeeIds = await abnormalTimeScopedEmployeeIds(actor) ?? [];
     }
     if (
       requestedEmployeeId
@@ -700,6 +692,7 @@ export async function GET(req: NextRequest) {
         date,
         workforceScope: 'PRODUCTION',
         workforceLabel: '生产部',
+        accessScope,
         rangeStart: start.toISOString(),
         rangeEnd: end.toISOString(),
         summary,

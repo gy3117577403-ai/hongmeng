@@ -35,6 +35,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useDeferredValue, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { populateBusinessReportWorkbook, type BusinessExcelKpi, type BusinessExcelValue } from '@/lib/business-excel';
+import { employeeAttainmentDetails, employeeAttainmentDetailExportRows, EMPLOYEE_ATTAINMENT_DETAIL_HEADERS } from '@/lib/employee-attainment-details';
 import {
   REPORT_DOMAINS,
   hasFullReportAccess,
@@ -185,6 +186,7 @@ async function downloadWorkbook(input: {
   method: string;
   kpis: BusinessExcelKpi[];
   rows: BusinessExcelValue[][];
+  detailSheets?: { name: string; headers: string[]; rows: BusinessExcelValue[][] }[];
 }): Promise<void> {
   const { Workbook } = await import('exceljs');
   const workbook = new Workbook();
@@ -201,6 +203,19 @@ async function downloadWorkbook(input: {
     rows: body,
     kpis: input.kpis,
   });
+  for (const sheet of input.detailSheets || []) {
+    populateBusinessReportWorkbook(workbook, {
+      title: sheet.name,
+      sheetName: sheet.name,
+      period: input.period,
+      scope: input.scope,
+      generatedAt: input.generatedAt,
+      method: '逐笔列出产品型号与工序；每日达成率以汇总表为准，明细不重复分摊每日出勤和目标。',
+      headers: sheet.headers,
+      rows: sheet.rows,
+      kpis: [],
+    });
+  }
   const bytes = await workbook.xlsx.writeBuffer({ useStyles: true, useSharedStrings: true });
   const url = URL.createObjectURL(new Blob([bytes as ArrayBuffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -773,6 +788,11 @@ export default function ReportCenterBranchDashboard({
       scope: scopeText,
       generatedAt: dateTimeText(new Date().toISOString()),
       method: branchMethod(initialBranch),
+      detailSheets: initialBranch === 'employee-attainment' ? [{
+        name: '产品工序明细',
+        headers: EMPLOYEE_ATTAINMENT_DETAIL_HEADERS,
+        rows: employeeAttainmentDetailExportRows(employeeRows),
+      }] : undefined,
       kpis: [
         { icon: '核', label: metric.label, value: metric.value, unit: metric.unit, note: metric.description, tone: metric.tone },
         ...metric.stats.slice(0, 3).map((item, index) => ({
@@ -1107,14 +1127,32 @@ function EmptyState({ icon, title }: { icon: ReactNode; title: string }) {
 }
 
 function EmployeeDrawer({ row, onClose }: { row: EmployeeAttainmentRowDTO; onClose: () => void }) {
+  const allDetails = employeeAttainmentDetails(row);
   return <div className="report-focus-drawer-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><aside className="report-focus-drawer report-employee-drawer" role="dialog" aria-modal="true" aria-label={`${row.employee.name}每日达成详情`}><header><div><small>员工每日达成</small><h2>{row.employee.name}</h2><p>{row.employee.employeeNo} · {row.employee.team || row.employee.department || '未分组'} · {row.employee.position || '岗位未设置'}</p></div><button type="button" aria-label="关闭员工详情" onClick={onClose}><X /></button></header>
     <div className="report-employee-drawer-summary"><article><small>目标达成率</small><strong>{row.attainmentStream === 'batch' ? percentText(row.attainmentBasisPoints) : '不计入'}</strong><span>标准工时 / 合格人日目标产能</span></article><article><small>工时利用率</small><strong>{percentText(row.coverageBasisPoints)}</strong><span>实耗 + 免责异常 / 实际出勤</span></article><article><small>标准工时效率</small><strong>{percentText(row.processEfficiencyBasisPoints)}</strong><span>标准工时 / 生产实耗</span></article><article><small>待匹配标准工时</small><strong>{compactHours(row.unmatchedStandardLaborMilliseconds)}</strong><span>{row.attendanceMissingDays} 人日待核对</span></article></div>
     <section className="report-employee-day-section"><header><div><small>逐日证据</small><h3>考勤、加班、请假与报工明细</h3></div><span>{row.days.length} 天</span></header><div className="report-employee-day-list">{row.days.map(day => {
       const future = day.date > todayKey();
-      const claims = row.claimDetails.filter(item => item.workDate === day.date);
-      const executions = row.details.filter(item => dateOnly(item.endedAt) === day.date);
+      const details = allDetails.filter(item => item.date === day.date);
       const statusText = future ? '日期未到' : day.includedInAttainment ? '计入目标达成' : employeeExclusionText(day.exclusionReason);
-      return <details key={day.date} className={day.includedInAttainment ? 'included' : 'excluded'}><summary><span><strong>{day.date}</strong><small>{statusText}</small></span><span><b>{day.includedInAttainment ? percentText(day.targetAttainmentBasisPoints) : '—'}</b><small>目标达成</small></span><ChevronRight /></summary><div className="report-employee-day-metrics"><dl><div><dt>排班</dt><dd>{compactHours(day.scheduledMilliseconds)}</dd></div><div><dt>认可加班</dt><dd>{compactHours(day.recognizedOvertimeMilliseconds)}</dd></div><div><dt>请假扣减</dt><dd>{compactHours(day.leaveDeductionMilliseconds)}</dd></div><div><dt>净应出勤</dt><dd>{compactHours(day.netExpectedMilliseconds)}</dd></div><div><dt>实际出勤</dt><dd>{compactHours(day.attendanceMilliseconds)}</dd></div><div><dt>超额出勤</dt><dd>{compactHours(day.extraAttendanceMilliseconds)}</dd></div><div><dt>生产实耗</dt><dd>{compactHours(day.actualLaborMilliseconds)}</dd></div><div><dt>标准工时</dt><dd>{compactHours(day.standardLaborMilliseconds)}</dd></div><div><dt>工时利用率</dt><dd>{percentText(day.utilizationBasisPoints)}</dd></div><div><dt>标准效率</dt><dd>{percentText(day.efficiencyBasisPoints)}</dd></div></dl><p>加班来源：{day.overtimeSource === 'confirmed_plan' ? '已确认日计划' : day.overtimeSource === 'attendance_fallback' ? '已确认考勤回退' : '无认可加班'}；考勤状态：{day.attendanceStatus === 'confirmed' ? '已确认' : day.attendanceStatus === 'draft' ? '草稿' : '未登记'}。{day.overlapMilliseconds > 0 ? ` 实耗与免责异常重叠 ${compactHours(day.overlapMilliseconds)}，需核对。` : ''}</p>{Boolean(claims.length || executions.length) && <ul>{claims.slice(0, 6).map(item => <li key={item.id}><span>{item.workOrderCode} · {item.processName}</span><b>{item.quantity} {item.unitLabel} / {compactHours(item.standardLaborMilliseconds)}</b></li>)}{executions.slice(0, 6).map(item => <li key={item.id}><span>{item.workOrderCode} · {item.processName}</span><b>良品 {item.goodQty} / {compactHours(item.standardLaborMilliseconds)}</b></li>)}</ul>}</div></details>;
+      return <details key={day.date} className={day.includedInAttainment ? 'included' : 'excluded'}>
+        <summary><span><strong>{day.date}</strong><small>{statusText}</small></span><span><b>{day.includedInAttainment ? percentText(day.targetAttainmentBasisPoints) : '—'}</b><small>目标达成</small></span><ChevronRight /></summary>
+        <div className="report-employee-day-metrics">
+          <dl><div><dt>排班</dt><dd>{compactHours(day.scheduledMilliseconds)}</dd></div><div><dt>认可加班</dt><dd>{compactHours(day.recognizedOvertimeMilliseconds)}</dd></div><div><dt>请假扣减</dt><dd>{compactHours(day.leaveDeductionMilliseconds)}</dd></div><div><dt>净应出勤</dt><dd>{compactHours(day.netExpectedMilliseconds)}</dd></div><div><dt>实际出勤</dt><dd>{compactHours(day.attendanceMilliseconds)}</dd></div><div><dt>超额出勤</dt><dd>{compactHours(day.extraAttendanceMilliseconds)}</dd></div><div><dt>生产实耗</dt><dd>{compactHours(day.actualLaborMilliseconds)}</dd></div><div><dt>标准工时</dt><dd>{compactHours(day.standardLaborMilliseconds)}</dd></div><div><dt>工时利用率</dt><dd>{percentText(day.utilizationBasisPoints)}</dd></div><div><dt>标准效率</dt><dd>{percentText(day.efficiencyBasisPoints)}</dd></div></dl>
+          <p>加班来源：{day.overtimeSource === 'confirmed_plan' ? '已确认日计划' : day.overtimeSource === 'attendance_fallback' ? '已确认考勤回退' : '无认可加班'}；考勤状态：{day.attendanceStatus === 'confirmed' ? '已确认' : day.attendanceStatus === 'draft' ? '草稿' : '未登记'}。{day.overlapMilliseconds > 0 ? ` 实耗与免责异常重叠 ${compactHours(day.overlapMilliseconds)}，需核对。` : ''}</p>
+          {details.length > 0 ? <>
+            <h4 className="report-employee-detail-title">产品型号与工序 <span>{details.length} 条记录</span></h4>
+            <ul aria-label={`${day.date}产品工序明细`}>{details.map(item => <li key={item.id}>
+              <div className="report-employee-detail-identity">
+                <strong>型号：{item.specification?.trim() || '型号未维护'}</strong>
+                {item.productName && <span>产品：{item.productName}</span>}
+                <span>工序：{item.processName || '工序未维护'}{item.processCode ? `（${item.processCode}）` : ''}</span>
+                <small>工单：{item.workOrderCode}</small>
+              </div>
+              <div className="report-employee-detail-quantity"><b>{item.quantity} {item.unitLabel}</b><span>标准工时 {compactHours(item.standardLaborMilliseconds)}</span><small>{item.source === 'claim' ? '标准工时入账' : '直接报工'}</small></div>
+            </li>)}</ul>
+          </> : <p>当日暂无产品工序报工记录。</p>}
+        </div>
+      </details>;
     })}</div></section>
   </aside></div>;
 }

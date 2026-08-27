@@ -1,13 +1,15 @@
 import bcrypt from 'bcryptjs';
+import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   forbidden,
   ForbiddenError,
-  requireAdmin,
+  requireEmployeeAccountManager,
   unauthorized,
   UnauthorizedError,
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
+import { canManageEmployeeAccountTarget, isGlobalAccountManager } from '@/lib/employee-account-access';
 import {
   FIELD_REPORT_DEFAULT_PASSWORD,
   hasPureFieldReporterAccess,
@@ -23,33 +25,34 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     assertSameOriginMutationRequest(req);
-    const current = await requireAdmin();
+    const current = await requireEmployeeAccountManager();
     const body = await req.json().catch(() => ({})) as { password?: string };
     const password = String(body.password || '');
 
-    const old = await prisma.user.findUnique({
-      where: { id: params.id },
-      include: {
-        accessGrants: {
-          select: {
-            profile: true,
-            isActive: true,
-            effectiveFrom: true,
-            effectiveTo: true,
+    const result = await prisma.$transaction(async tx => {
+      const old = await tx.user.findUnique({
+        where: { id: params.id },
+        include: {
+          accessGrants: {
+            select: {
+              profile: true,
+              isActive: true,
+              effectiveFrom: true,
+              effectiveTo: true,
+            },
           },
         },
-      },
-    });
-    if (!old) return NextResponse.json({ ok: false, error: '账号不存在' }, { status: 404 });
-    const fieldPasswordOnly = hasPureFieldReporterAccess(old);
-    const nextPassword = fieldPasswordOnly ? FIELD_REPORT_DEFAULT_PASSWORD : password;
-    if (!fieldPasswordOnly) {
-      const passwordError = validateNewPassword(nextPassword, old.username);
-      if (passwordError) return NextResponse.json({ ok: false, error: passwordError }, { status: 400 });
-    }
+      });
+      if (!old) return NextResponse.json({ ok: false, error: '账号不存在' }, { status: 404 });
+      if (!canManageEmployeeAccountTarget(current, old)) throw new ForbiddenError('人事不能重置管理员账号或本人账号的密码');
+      const fieldPasswordOnly = hasPureFieldReporterAccess(old);
+      const nextPassword = fieldPasswordOnly ? FIELD_REPORT_DEFAULT_PASSWORD : password;
+      if (!fieldPasswordOnly) {
+        const passwordError = validateNewPassword(nextPassword, old.username);
+        if (passwordError) return NextResponse.json({ ok: false, error: passwordError }, { status: 400 });
+      }
 
-    const passwordHash = await bcrypt.hash(nextPassword, 10);
-    await prisma.$transaction(async tx => {
+      const passwordHash = await bcrypt.hash(nextPassword, 10);
       const updated = await tx.user.update({
         where: { id: params.id },
         data: {
@@ -67,7 +70,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           dedupeKey: `account:${updated.id}:password-reset:${updated.sessionVersion}`,
           category: 'ACCOUNT',
           priority: 'URGENT',
-          title: '管理员已重置你的登录密码',
+          title: `${isGlobalAccountManager(current) ? '管理员' : '人事'}已重置你的登录密码`,
           body: fieldPasswordOnly
             ? '旧登录已失效；请使用员工编号和现场临时密码重新扫码报工。'
             : '旧登录已失效；下次登录必须先修改临时密码。',
@@ -78,7 +81,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           recipientUserIds: [updated.id],
         });
       }
-    });
+      return { old, fieldPasswordOnly };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    if (result instanceof NextResponse) return result;
+    const { old, fieldPasswordOnly } = result;
     await logOp({
       userId: current.id,
       action: 'reset_user_password',
@@ -92,7 +98,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
-    if (e instanceof ForbiddenError) return forbidden('只有管理员可以重置其他账号密码');
+    if (e instanceof ForbiddenError) return forbidden(e.message || '需要人事员工账号管理权限');
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2034') {
+      return NextResponse.json({ ok: false, error: '账号状态已变化，请刷新后重试' }, { status: 409 });
+    }
     return NextResponse.json({ ok: false, error: '重置密码失败' }, { status: 500 });
   }
 }

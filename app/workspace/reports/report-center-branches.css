@@ -818,6 +818,13 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
 .report-employee-day-metrics ul { margin: 7px 0 0; padding: 0; display: grid; gap: 5px; list-style: none; }
 .report-employee-day-metrics li { padding: 7px 8px; display: flex; justify-content: space-between; gap: 10px; border: 1px solid #e5eaf0; border-radius: 7px; color: #637287; font-size: 9px; }
 .report-employee-day-metrics li b { color: #2d4055; }
+.report-employee-detail-title { margin: 14px 0 8px; display: flex; justify-content: space-between; color: #263d56; font-size: 12px; }
+.report-employee-detail-title > span { color: #738398; font-size: 11px; font-weight: 400; }
+.report-employee-day-metrics li .report-employee-detail-identity { min-width: 0; display: grid; gap: 5px; overflow-wrap: anywhere; font-size: 11px; }
+.report-employee-detail-identity strong { color: #163d66; font-size: 13px; }
+.report-employee-detail-identity small { color: #7b8898; }
+.report-employee-detail-quantity { flex-shrink: 0; display: flex; flex-direction: column; gap: 5px; align-items: flex-end; justify-content: center; font-size: 11px; }
+.report-employee-detail-quantity small { color: #7b8898; font-size: 10px; }
 
 .spin { animation: report-spin .8s linear infinite; }
 @keyframes report-spin { to { transform: rotate(360deg); } }

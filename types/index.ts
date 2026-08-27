@@ -327,7 +327,8 @@ export type AccessProfileKeyDTO =
   | 'PLANNING_COLLABORATOR'
   | 'PRODUCTION_COLLABORATOR'
   | 'MATERIAL_FOLLOW_UP_OPERATOR'
-  | 'TRAINING_COLLABORATOR';
+  | 'TRAINING_COLLABORATOR'
+  | 'PRODUCT_TIME_READER';
 export type AccessGrantTypeDTO = 'PRIMARY' | 'CONCURRENT' | 'ACTING';
 
 export type DepartmentRefDTO = {

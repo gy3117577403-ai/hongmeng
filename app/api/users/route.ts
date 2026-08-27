@@ -4,11 +4,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   forbidden,
   ForbiddenError,
-  requireAdmin,
+  requireEmployeeAccountManager,
   unauthorized,
   UnauthorizedError,
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
+import { canManageEmployeeAccountTarget, isGlobalAccountManager } from '@/lib/employee-account-access';
 import { FIELD_REPORT_DEFAULT_PASSWORD } from '@/lib/login-security';
 import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
@@ -55,9 +56,15 @@ function inferredProfile(
 
 export async function GET() {
   try {
-    await requireAdmin();
+    const current = await requireEmployeeAccountManager();
     const [users, departments, productionTeams] = await Promise.all([
       prisma.user.findMany({
+        where: isGlobalAccountManager(current) ? {} : {
+          id: { not: current.id },
+          employeeId: { not: null },
+          laborRole: { not: LaborAccessRole.ADMIN },
+          accessGrants: { none: { profile: AccessProfileKey.ADMIN_GLOBAL } },
+        },
         include: adminUserInclude,
         orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }],
       }),
@@ -73,13 +80,15 @@ export async function GET() {
     ]);
     return NextResponse.json({
       ok: true,
-      users: users.map(user => serializeAdminUser(user, { productionTeams })),
+      users: users.filter(user => canManageEmployeeAccountTarget(current, user))
+        .map(user => serializeAdminUser(user, { productionTeams })),
+      canManagePermissions: isGlobalAccountManager(current),
       departments,
       productionTeams,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof ForbiddenError) return forbidden('只有管理员可以查看账号');
+    if (error instanceof ForbiddenError) return forbidden('需要人事员工账号管理权限');
     console.error('account list failed', error);
     return NextResponse.json({ ok: false, error: '账号列表加载失败' }, { status: 500 });
   }
@@ -88,7 +97,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     assertSameOriginMutationRequest(request);
-    const current = await requireAdmin();
+    const current = await requireEmployeeAccountManager();
     const body = await request.json().catch(() => ({})) as {
       username?: string;
       displayName?: string;
@@ -118,6 +127,18 @@ export async function POST(request: NextRequest) {
       if (employeeId && !employee) throw new AccessGrantInputError('请选择有效的在职员工档案');
       const legacyRole = parseLaborRole(body.laborRole) || LaborAccessRole.EMPLOYEE;
       const profile = inferredProfile(body.profileKey, legacyRole, employee?.departmentRef?.code);
+      if (!isGlobalAccountManager(current)) {
+        const defaultProfile = inferredProfile(undefined, LaborAccessRole.EMPLOYEE, employee?.departmentRef?.code);
+        if (!employee || !employee.departmentId) throw new AccessGrantInputError('请先维护员工的有效部门');
+        if (profile !== defaultProfile || profile === AccessProfileKey.GM_OFFICE_READER_APPROVER
+          || legacyRole !== LaborAccessRole.EMPLOYEE
+          || (body.departmentId != null && body.departmentId !== employee.departmentId)
+          || (body.grantType != null && body.grantType !== 'PRIMARY')
+          || body.targetTeamId != null || body.effectiveFrom != null || body.effectiveTo != null
+          || body.fieldReportEnabled === true && profile !== AccessProfileKey.FIELD_REPORTER) {
+          throw new ForbiddenError('人事只能按员工所属部门开通基础账号，管理岗位和额外授权由管理员配置');
+        }
+      }
       if (profile !== AccessProfileKey.FIELD_REPORTER) {
         const passwordError = validateNewPassword(password, username);
         if (passwordError) throw new AccessGrantInputError(passwordError);
@@ -129,7 +150,7 @@ export async function POST(request: NextRequest) {
       const resolvedRole = legacyLaborRoleForProfile(profile);
       const isFieldOnlyAccount = profile === AccessProfileKey.FIELD_REPORTER;
       const fieldReportEnabled = isFieldOnlyAccount || body.fieldReportEnabled === true;
-      const mustChangePassword = !isFieldOnlyAccount && body.mustChangePassword === true;
+      const mustChangePassword = !isFieldOnlyAccount && (!isGlobalAccountManager(current) || body.mustChangePassword === true);
       const passwordMaterial = isFieldOnlyAccount ? FIELD_REPORT_DEFAULT_PASSWORD : password;
       const created = await tx.user.create({
         data: {
@@ -197,7 +218,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, user: serializeAdminUser(user) }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof ForbiddenError) return forbidden('只有管理员可以新增账号');
+    if (error instanceof ForbiddenError) return forbidden(error.message || '需要人事员工账号管理权限');
     if (error instanceof AccessGrantInputError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     }

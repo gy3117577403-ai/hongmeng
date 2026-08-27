@@ -40,6 +40,7 @@ export const ACCESS_PROFILE_CODES = [
   'PRODUCTION_COLLABORATOR',
   'MATERIAL_FOLLOW_UP_OPERATOR',
   'TRAINING_COLLABORATOR',
+  'PRODUCT_TIME_READER',
 ] as const;
 
 export type AccessProfileCode = typeof ACCESS_PROFILE_CODES[number];
@@ -469,6 +470,13 @@ export function resolveAccessContext(
       addWorkbenchCommon(capabilities, addScope, grant);
       addModuleActions(capabilities, 'DRAWING_LIBRARY', ['READ', 'CREATE', 'UPDATE']);
       addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', false));
+      continue;
+    }
+
+    if (grant.profile === 'PRODUCT_TIME_READER') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      capabilities.add(capabilityCode('PRODUCT_TIME', 'READ'));
+      addScope(scopeForGrant(grant, 'PRODUCT_TIME', 'GLOBAL', true));
       continue;
     }
 

@@ -69,6 +69,7 @@ test('stable department, profile and grant-type codes match the persistence cont
     'PRODUCTION_COLLABORATOR',
     'MATERIAL_FOLLOW_UP_OPERATOR',
     'TRAINING_COLLABORATOR',
+    'PRODUCT_TIME_READER',
   ]);
   assert.deepEqual(ACCESS_GRANT_TYPES, ['PRIMARY', 'CONCURRENT', 'ACTING']);
 });

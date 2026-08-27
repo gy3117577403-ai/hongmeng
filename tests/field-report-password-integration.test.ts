@@ -17,6 +17,48 @@ import { prisma } from '../lib/prisma';
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
 const NOW = new Date('2026-08-11T08:00:00.000Z');
 
+test('named technical-read migration is unique, idempotent, audited, and preserves weak-password protection',
+  { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
+  async () => {
+    const sql = await readFile(new URL('../prisma/migrations/202608280003_zhuyanjun_technical_read_access/migration.sql', import.meta.url), 'utf8');
+    const rollback = new Error('rollback isolated named-access migration fixture');
+    try {
+      await prisma.$transaction(async tx => {
+        assert.equal(await tx.employee.count({ where: { name: '朱艳军' } }), 0, 'integration fixture must not replace an existing named employee');
+        const employee = await tx.employee.create({ data: { employeeNo: `IT-TECH-${randomUUID().slice(0, 8)}`, name: '朱艳军', position: '储备生', department: '生产部' } });
+        const passwordHash = await bcrypt.hash(FIELD_REPORT_DEFAULT_PASSWORD, 10);
+        const user = await tx.user.create({ data: {
+          username: employee.employeeNo, displayName: employee.name, employeeId: employee.id,
+          passwordHash, fieldPasswordOnly: true,
+          accessGrants: { create: { profile: 'FIELD_REPORTER', scopeKey: `EMPLOYEE:${employee.id}`, effectiveFrom: NOW } },
+        } });
+        await tx.$executeRawUnsafe(sql);
+        const first = await tx.user.findUniqueOrThrow({ where: { id: user.id }, include: accountInclude });
+        assert.deepEqual(first.accessGrants.map(grant => grant.profile).sort(), ['DRAWING_LIBRARY_READER', 'FIELD_REPORTER', 'PRODUCT_TIME_READER']);
+        assert.equal(first.passwordHash, passwordHash);
+        assert.equal(first.fieldPasswordOnly, true);
+        assert.equal(first.sessionVersion, user.sessionVersion + 1);
+        assert.equal(requiresAdminPasswordSetup(first), true);
+        assert.equal(canIssuePasswordSession(first), false);
+        assert.equal(await tx.operationLog.count({ where: { action: 'grant_named_technical_read_access', targetId: user.id } }), 1);
+        await tx.$executeRawUnsafe(sql);
+        const second = await tx.user.findUniqueOrThrow({ where: { id: user.id }, include: accountInclude });
+        assert.equal(second.accessGrants.length, 3);
+        assert.equal(second.sessionVersion, first.sessionVersion);
+
+        const duplicate = await tx.employee.create({ data: { employeeNo: `IT-TECH-DUP-${randomUUID().slice(0, 8)}`, name: '朱艳军', position: '储备生', department: '生产部' } });
+        const duplicateUser = await tx.user.create({ data: { username: duplicate.employeeNo, displayName: duplicate.name, employeeId: duplicate.id, passwordHash } });
+        await tx.$executeRawUnsafe(sql);
+        assert.equal(await tx.userAccessGrant.count({ where: { userId: duplicateUser.id } }), 0);
+        assert.equal((await tx.user.findUniqueOrThrow({ where: { id: user.id } })).sessionVersion, first.sessionVersion);
+        const skip = await tx.operationLog.findFirstOrThrow({ where: { action: 'named_technical_access_skipped', detail: { path: ['matchedAccounts'], equals: 2 } } });
+        assert.equal(skip.userId, null, 'migration must be audited as system activity');
+        throw rollback;
+      }, { timeout: 20_000 });
+    } catch (error) { if (error !== rollback) throw error; }
+  },
+);
+
 const accountInclude = {
   accessGrants: {
     select: {

@@ -7,6 +7,33 @@ function context(grant: AccessGrant) {
   return resolveAccessContext([grant], { now: '2026-08-10T08:00:00.000Z' });
 }
 
+test('HR account routes allow basic employee management and reset but never grants or destructive administration', () => {
+  const hr = context({ profile: 'DEPARTMENT_FULL', departmentCode: 'HR', grantType: 'PRIMARY', scopeKey: 'DEPARTMENT:HR' });
+  for (const [path, method] of [['/api/users', 'GET'], ['/api/users', 'POST'], ['/api/users/person-1', 'PATCH'], ['/api/users/person-1/reset-password', 'POST']]) {
+    assert.equal(canAccessApiRoute(hr, path, method), true, `${method} ${path}`);
+  }
+  for (const [path, method] of [['/api/users/person-1', 'DELETE'], ['/api/users/person-1/access-grants', 'POST'], ['/api/users/person-1/access-grants/grant-1', 'PATCH'], ['/api/users/person-1/field-pin', 'POST'], ['/api/system/settings', 'PATCH']]) {
+    assert.equal(canAccessApiRoute(hr, path, method), false, `${method} ${path}`);
+  }
+  const trainer = context({ profile: 'TRAINING_COLLABORATOR', departmentCode: 'HR', grantType: 'CONCURRENT', scopeKey: 'GLOBAL:TRAINING' });
+  assert.equal(canAccessApiRoute(trainer, '/api/users', 'GET'), false);
+  assert.equal(canAccessApiRoute(trainer, '/api/users/person-1/reset-password', 'POST'), false);
+});
+
+test('technical reader can browse drawings and product times without any write or production authorization', () => {
+  const technical = resolveAccessContext([
+    { profile: 'DRAWING_LIBRARY_READER', grantType: 'CONCURRENT', scopeKey: 'GLOBAL:DRAWING_LIBRARY' },
+    { profile: 'PRODUCT_TIME_READER', grantType: 'CONCURRENT', scopeKey: 'GLOBAL:PRODUCT_TIME' },
+  ]);
+  for (const path of ['/api/drawing-library', '/api/drawing-library/item-1', '/api/product-time-profiles', '/api/product-time-profiles/item-1', '/api/product-time-profiles/export.xlsx']) {
+    assert.equal(canAccessApiRoute(technical, path, 'GET'), true, path);
+    assert.equal(canAccessApiRoute(technical, path, 'PATCH'), false, path);
+  }
+  assert.equal(canAccessApiRoute(technical, '/api/product-time-profiles/item-1/publish', 'POST'), false);
+  assert.equal(canAccessApiRoute(technical, '/api/product-time-profiles/import/commit', 'POST'), false);
+  assert.equal(canAccessApiRoute(technical, '/api/reports/employee-attainment', 'GET'), false);
+});
+
 test('department permission authorizes its own API reads and writes only', () => {
   const procurement = context({
     profile: 'DEPARTMENT_FULL',

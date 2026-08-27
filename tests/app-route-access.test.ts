@@ -15,6 +15,15 @@ function accessWithCapabilities(modules: AccessModuleCode[], capabilities: Capab
   return { modules, capabilities };
 }
 
+test('HR opens the employee account page without system dashboard or permissions access', () => {
+  const hr = accessWithCapabilities(['HR', 'TRAINING'], ['HR:READ', 'HR:UPDATE']);
+  assert.equal(canAccessAppRoute(hr, '/workspace/employees/accounts'), true);
+  assert.equal(canAccessAppRoute(hr, '/dashboard'), false);
+  assert.equal(canAccessAppRoute(hr, '/workspace/permissions'), false);
+  assert.equal(canAccessAppRoute(accessWithCapabilities(['HR'], ['HR:READ']), '/workspace/employees/accounts'), false);
+  assert.equal(canAccessAppRoute(accessWithCapabilities(['TRAINING'], ['TRAINING:UPDATE']), '/workspace/employees/accounts'), false);
+});
+
 test('finance account lands on account center and cannot open business pages', () => {
   const finance = access('ACCOUNT_SELF', 'NOTIFICATIONS');
   assert.equal(landingRouteForAccess(finance), '/account');

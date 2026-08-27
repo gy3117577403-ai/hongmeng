@@ -293,6 +293,7 @@ const accessProfileOptions: Array<{ value: AccessProfileKeyDTO; label: string; d
   { value: 'DEPARTMENT_FULL', label: '部门工作台', description: '继承主部门全部业务权限' },
   { value: 'PROCESS_SPECIALIST', label: '工艺专员', description: '工艺维护，问题与变更协同，生产和图纸只读' },
   { value: 'DRAWING_LIBRARY_READER', label: '图纸资料只读', description: '查看、搜索、预览和下载全部图纸资料' },
+  { value: 'PRODUCT_TIME_READER', label: '工序工时只读', description: '查看产品正式工序与标准工时，不开放维护、导入和发布' },
   { value: 'DRAWING_LIBRARY_EDITOR', label: '图纸资料编辑', description: '查看、新建、上传和更新图纸，不含删除与发布' },
   { value: 'REPORT_PEOPLE_READER', label: '人员效率报表', description: '查看并导出全厂人员、工时和效率数据' },
   { value: 'QUALITY_REVIEWER', label: '质量审核', description: '质量协同与审核，图纸资料只读，不含删除' },

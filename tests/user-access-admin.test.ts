@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Prisma } from '@prisma/client';
+import { resolveAccessContext } from '../lib/department-access';
+import { canManageEmployeeAccounts, canManageEmployeeAccountTarget, employeeAccountUpdateFieldsAllowed } from '../lib/employee-account-access';
 import {
   AccessGrantInputError,
   assertEmployeeRebindAllowed,
@@ -12,6 +14,27 @@ import {
   requiresAdminPasswordSetup,
   serializeAdminUser,
 } from '../lib/user-access-admin';
+
+test('HR can manage employee accounts without gaining system administration or access to administrator credentials', () => {
+  const actor = { id: 'hr-user', laborRole: 'EMPLOYEE', access: resolveAccessContext([{
+    profile: 'DEPARTMENT_FULL', departmentCode: 'HR', grantType: 'PRIMARY', scopeKey: 'DEPARTMENT:HR',
+  }]) };
+  assert.equal(canManageEmployeeAccounts(actor), true);
+  assert.equal(actor.access.capabilities.includes('ACCOUNT_ADMIN:MANAGE'), false);
+  const target = { id: 'employee-user', employeeId: 'employee-1', laborRole: 'EMPLOYEE', accessGrants: [{ profile: 'FIELD_REPORTER' }] };
+  assert.equal(canManageEmployeeAccountTarget(actor, target), true);
+  assert.equal(canManageEmployeeAccountTarget(actor, { ...target, id: actor.id }), false);
+  assert.equal(canManageEmployeeAccountTarget(actor, { ...target, employeeId: null }), false);
+  assert.equal(canManageEmployeeAccountTarget(actor, { ...target, laborRole: 'ADMIN' }), false);
+  assert.equal(canManageEmployeeAccountTarget(actor, { ...target, accessGrants: [{ profile: 'ADMIN_GLOBAL' }] }), false);
+  const trainer = { ...actor, access: resolveAccessContext([{ profile: 'TRAINING_COLLABORATOR', grantType: 'CONCURRENT', scopeKey: 'GLOBAL:TRAINING' }]) };
+  assert.equal(canManageEmployeeAccounts(trainer), false);
+  assert.equal(canManageEmployeeAccountTarget(trainer, target), false);
+  assert.equal(employeeAccountUpdateFieldsAllowed({ displayName: '姓名', accountStatus: 'DISABLED' }), true);
+  for (const key of ['profileKey', 'employeeId', 'laborRole', 'password', 'fieldReportEnabled', 'departmentId']) {
+    assert.equal(employeeAccountUpdateFieldsAllowed({ displayName: '姓名', [key]: 'new-value' }), false);
+  }
+});
 
 test('temporary-password FIELD_REPORTER promotion stays pending until administrator reset', () => {
   const now = new Date('2026-08-10T08:00:00.000Z');

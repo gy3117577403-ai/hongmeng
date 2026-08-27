@@ -15,7 +15,8 @@ test('report center exposes independent domain and branch routes', () => {
   assert.equal(reportDomain('delivery'), null);
   assert.equal(REPORT_DOMAINS.some(item => item.key === 'delivery'), false);
   assert.equal(reportBranch('people', 'team-hours'), null);
-  assert.equal(reportBranch('people', 'employee-attainment'), null);
+  assert.equal(reportBranch('people', 'employee-attainment')?.label, '员工每日达成');
+  assert.equal(reportDomain('people')?.branches.filter(item => item.key === 'employee-attainment').length, 1);
   assert.equal(reportRoute('governance', 'missing-drawing'), '/workspace/reports/governance/missing-drawing');
   assert.equal(reportBranch('quality', 'quantity-attainment'), null);
 });

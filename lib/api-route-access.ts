@@ -7,6 +7,7 @@ import {
 
 type ApiRule = {
   prefix: string;
+  allowedMethods?: readonly string[];
   anyOf: readonly AccessModuleCode[];
   /** Modules listed here may match this namespace only for read actions. */
   readOnlyModules?: readonly AccessModuleCode[];
@@ -274,6 +275,17 @@ function pathOnly(value: string): string {
 
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
+
+  // HR cannot enter access-grants, PIN administration, or system configuration.
+  if (path === '/api/users') {
+    return { prefix: path, anyOf: ['ACCOUNT_ADMIN', 'HR'], actionsByModule: { HR: 'UPDATE' }, allowedMethods: ['GET', 'HEAD', 'POST'] };
+  }
+  if (/^\/api\/users\/[^/]+\/reset-password$/.test(path)) {
+    return { prefix: path, anyOf: ['ACCOUNT_ADMIN', 'HR'], action: 'UPDATE', allowedMethods: ['POST'] };
+  }
+  if (/^\/api\/users\/[^/]+$/.test(path)) {
+    return { prefix: path, anyOf: ['ACCOUNT_ADMIN', 'HR'], action: 'UPDATE', allowedMethods: ['PATCH'] };
+  }
 
   if (/^\/api\/material-library\/sessions\/[^/]+\/complete$/.test(path)) {
     return {
@@ -673,6 +685,7 @@ export function canAccessApiRoute(
   const rule = apiRouteAccessRule(pathname);
   if (!rule) return null;
   const normalizedMethod = String(method || 'GET').toUpperCase();
+  if (rule.allowedMethods && !rule.allowedMethods.includes(normalizedMethod)) return false;
   const action = rule.actionsByMethod?.[normalizedMethod]
     ?? rule.action
     ?? apiActionForMethod(normalizedMethod);

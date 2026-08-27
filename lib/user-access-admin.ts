@@ -500,6 +500,7 @@ export async function prepareAccessGrant(
 
   let scopeKey = department ? `DEPARTMENT:${department.code}` : 'GLOBAL';
   if (profile === AccessProfileKey.DRAWING_LIBRARY_READER) scopeKey = 'GLOBAL:DRAWING_LIBRARY';
+  if (profile === AccessProfileKey.PRODUCT_TIME_READER) scopeKey = 'GLOBAL:PRODUCT_TIME';
   if (profile === AccessProfileKey.DRAWING_LIBRARY_EDITOR) scopeKey = 'GLOBAL:DRAWING_LIBRARY';
   if (profile === AccessProfileKey.REPORT_PEOPLE_READER) scopeKey = 'GLOBAL:REPORT_PEOPLE';
   if (profile === AccessProfileKey.QUALITY_REVIEWER) scopeKey = 'GLOBAL:QUALITY_REVIEW';

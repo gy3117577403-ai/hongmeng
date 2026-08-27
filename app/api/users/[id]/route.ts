@@ -4,11 +4,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   forbidden,
   ForbiddenError,
-  requireAdmin,
+  requireEmployeeAccountManager,
   unauthorized,
   UnauthorizedError,
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
+import { canManageEmployeeAccountTarget, employeeAccountUpdateFieldsAllowed, isGlobalAccountManager } from '@/lib/employee-account-access';
 import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
@@ -57,7 +58,7 @@ function inferProfile(
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   try {
     assertSameOriginMutationRequest(request);
-    const current = await requireAdmin();
+    const current = await requireEmployeeAccountManager();
     const body = await request.json().catch(() => ({})) as {
       displayName?: string;
       isActive?: boolean;
@@ -74,6 +75,37 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     const user = await prisma.$transaction(async tx => {
       const old = await tx.user.findUnique({ where: { id: params.id }, include: adminUserInclude });
       if (!old) return NextResponse.json({ ok: false, error: '账号不存在' }, { status: 404 });
+      if (!canManageEmployeeAccountTarget(current, old)) throw new ForbiddenError('人事不能管理管理员账号或本人账号');
+      if (!isGlobalAccountManager(current)) {
+        if (!employeeAccountUpdateFieldsAllowed(body)) {
+          throw new ForbiddenError('人事可维护显示名称和启停状态；密码请使用重置入口，权限和员工绑定由管理员维护');
+        }
+        if (body.isActive !== undefined && typeof body.isActive !== 'boolean') throw new AccessGrantInputError('账号启用状态不正确');
+        const requestedStatus = body.accountStatus === undefined ? null : parseAccountStatus(body.accountStatus);
+        if (body.accountStatus !== undefined && !requestedStatus) throw new AccessGrantInputError('账号状态不正确');
+        if (body.isActive !== undefined && requestedStatus && body.isActive !== (requestedStatus === 'ACTIVE')) {
+          throw new AccessGrantInputError('账号启用状态与账号状态不一致');
+        }
+        const nextStatus = requestedStatus || (body.isActive === undefined ? old.accountStatus : body.isActive ? AccountStatus.ACTIVE : AccountStatus.DISABLED);
+        const nextIsActive = nextStatus === AccountStatus.ACTIVE;
+        if (nextIsActive && (!old.employee?.isActive)) throw new AccessGrantInputError('离职或未绑定在职员工的账号不能启用');
+        const securityChanged = nextIsActive !== old.isActive || nextStatus !== old.accountStatus;
+        changedFields = [...(body.displayName !== undefined ? ['displayName'] : []), ...(securityChanged ? ['accountStatus', 'sessionVersion'] : [])];
+        disabledByRequest = !nextIsActive;
+        const saved = await tx.user.update({
+          where: { id: old.id },
+          data: {
+            ...(body.displayName !== undefined ? { displayName: (String(body.displayName).trim() || old.displayName).slice(0, 80) } : {}),
+            isActive: nextIsActive,
+            accountStatus: nextStatus,
+            ...(securityChanged ? { sessionVersion: { increment: 1 }, failedLoginAttempts: 0, lockedUntil: null } : {}),
+          },
+          include: adminUserInclude,
+        });
+        if (securityChanged) await reconcileFieldReportPinEligibility(tx, old.employeeId, { now: new Date(), resetById: current.id });
+        // Existing primary and concurrent grants are deliberately not rewritten.
+        return saved;
+      }
 
       const requestedRole = body.laborRole === undefined ? null : parseLaborRole(body.laborRole);
       if (body.laborRole !== undefined && !requestedRole) {
@@ -293,7 +325,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     return NextResponse.json({ ok: true, user: serializeAdminUser(user) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof ForbiddenError) return forbidden('只有管理员可以编辑账号');
+    if (error instanceof ForbiddenError) return forbidden(error.message || '需要人事员工账号管理权限');
     if (error instanceof AccessGrantInputError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     }

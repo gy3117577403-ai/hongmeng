@@ -5834,6 +5834,8 @@ button.skill-matrix-person:hover { background: #f7faff; }
   backdrop-filter: blur(18px);
 }
 
+.hr-account-management-entry { display: flex; justify-content: flex-end; padding: 0 0 10px; }
+.hr-account-management-entry a { display: inline-flex; align-items: center; gap: 7px; min-height: 38px; padding: 8px 13px; border: 1px solid #f3d2b7; border-radius: 9px; background: #fff8f1; color: #bd540c; font-size: 12px; text-decoration: none; }
 .hr-module-tab-list { gap: 5px; }
 
 .hr-module-tab-list button {

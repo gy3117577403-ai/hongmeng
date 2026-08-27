@@ -59,6 +59,7 @@ import { useToastBridge } from '@/components/ToastProvider';
 import { ResponsibilityMatrixWorkspace } from '@/components/ResponsibilityMatrixWorkspace';
 import SkillPerformanceWorkbench from '@/components/SkillPerformanceWorkbench';
 import TrainingDevelopmentWorkbench from '@/components/TrainingDevelopmentWorkbench';
+import { canManageEmployeeAccounts, isGlobalAccountManager } from '@/lib/employee-account-access';
 import {
   responsibilityPeople,
   responsibilityWorkItems,
@@ -472,6 +473,8 @@ function employeeAccessProfileLabel(value?: string | null): string {
   if (value === 'PRODUCTION_COLLABORATOR') return '生产协同只读';
   if (value === 'MATERIAL_FOLLOW_UP_OPERATOR') return '物料跟进经办';
   if (value === 'TRAINING_COLLABORATOR') return '培训发展协同';
+  if (value === 'DRAWING_LIBRARY_READER') return '图纸资料查看';
+  if (value === 'PRODUCT_TIME_READER') return '工序工时查看';
   return '旧权限兼容';
 }
 
@@ -675,7 +678,8 @@ function EmptyPanel({
 }
 
 export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO }) {
-  const canManageAccounts = user.laborRole === 'ADMIN';
+  const canManageAccounts = canManageEmployeeAccounts(user);
+  const accountSettingsBase = isGlobalAccountManager(user) ? '/dashboard?settings=accounts&' : '/workspace/employees/accounts?';
   const trainingOnly = user.access.modules.includes('TRAINING') && !user.access.modules.includes('HR');
   const availableNavigation = useMemo(
     () => trainingOnly ? hrNavigation.filter(item => item.id === 'training') : hrNavigation,
@@ -2181,7 +2185,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                       <header>
                         <span><ShieldCheck /></span>
                         <div><strong>账号与权限</strong><small>人员主档联动部门权限，兼岗与代班按授权期限生效</small></div>
-                        {canManageAccounts && <a href={`/dashboard?settings=accounts&employeeId=${encodeURIComponent(profileEmployee.id)}`}><UserRoundCog />打开账号设置</a>}
+                        {canManageAccounts && <a href={`${accountSettingsBase}employeeId=${encodeURIComponent(profileEmployee.id)}`}><UserRoundCog />打开账号设置</a>}
                       </header>
                       <div className="hr-account-state-grid">
                         <article><small>账号状态</small><strong className={`tone-${profileAccountStatus.tone}`}>{profileAccountStatus.label}</strong><span>{profileAccount?.username || '由管理员开通'}</span></article>
@@ -2362,7 +2366,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               </div>
             </section>
             <section>
-              <h3>账号与访问 {canManageAccounts && profileEmployee && <a href={`/dashboard?settings=accounts&employeeId=${encodeURIComponent(profileEmployee.id)}`}>设置</a>}</h3>
+              <h3>账号与访问 {canManageAccounts && profileEmployee && <a href={`${accountSettingsBase}employeeId=${encodeURIComponent(profileEmployee.id)}`}>设置</a>}</h3>
               <div className="hr-role-account-state">
                 <header><span className={`tone-${profileAccountStatus.tone}`}><KeyRound />{profileAccountStatus.label}</span><small>{profileAccount?.username || '未分配账号'}</small></header>
                 <div>{profileAccessMethods.map(method => <span key={method}>{method.includes('扫码') ? <QrCode /> : <Monitor />}{method}</span>)}{!profileAccessMethods.length && <span className="muted"><KeyRound />未开通访问方式</span>}</div>
@@ -3061,6 +3065,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
         </nav>
 
         <section className="hr-content">
+          {canManageAccounts && <div className="hr-account-management-entry"><a href="/workspace/employees/accounts"><UserRoundCog size={17} />员工账号管理与密码重置<ChevronRight size={16} /></a></div>}
           {error && <div className="hr-page-error" role="alert"><AlertTriangle size={17} />{error}<button type="button" onClick={() => void loadHumanResources()}>重新加载</button></div>}
           {auxiliaryWarning && !error && <div className="hr-auxiliary-warning" title={auxiliaryWarning}><AlertTriangle size={14} /><span>部分辅助数据暂不可用，员工档案仍可正常使用</span></div>}
           {renderActiveView()}

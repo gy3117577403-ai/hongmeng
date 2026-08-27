@@ -65,6 +65,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/workspace/product-times', anyOf: ['PROCESS', 'PRODUCT_TIME'] },
   { prefix: '/workspace/time-standards', anyOf: ['PROCESS'] },
   { prefix: '/workspace/processes', anyOf: ['PROCESS'] },
+  { prefix: '/workspace/employees/accounts', anyOf: ['HR', 'ACCOUNT_ADMIN'], action: 'UPDATE' },
   { prefix: '/workspace/employees', anyOf: ['HR', 'TRAINING'] },
   { prefix: '/workspace/attendance', anyOf: ['HR', 'ATTENDANCE'] },
   { prefix: '/workspace/abnormal-times', anyOf: ['HR', 'QUALITY', 'PRODUCTION'] },
