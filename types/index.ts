@@ -982,6 +982,7 @@ export type InternalQualityRiskDTO = {
   stopConditions?: string | null;
   escalationContact?: string | null;
   printPolicy: InternalQualityRiskPrintPolicy;
+  archiveRequirements: InternalQualityRiskArchiveRequirements;
   warningPublishedAt?: string | null;
   warningRevokedAt?: string | null;
   warningRevokeReason?: string | null;
@@ -1056,6 +1057,76 @@ export type InternalQualityRiskReadinessDTO = {
   issueCount: number;
   alertCount: number;
 };
+
+export type InternalQualityRiskPrintPreviewDTO = {
+  generatedAt: string;
+  previewState: 'DRAFT' | 'ARCHIVED';
+  readiness: InternalQualityRiskReadinessDTO;
+  orders: Array<{ id: string; label: string; productLabel: string }>;
+  order: {
+    id?: string | null;
+    workOrderCode: string;
+    businessWorkOrderCode?: string | null;
+    productName: string;
+    specification?: string | null;
+    customerName?: string | null;
+  };
+  warning: {
+    alertId: string;
+    reportId: string;
+    reportNo: string;
+    revisionId: string;
+    revisionNumber: number;
+    severity: string;
+    title: string;
+    warningSummary: string | null;
+    defectPhenomenon: string | null;
+    rootCause: string | null;
+    requiredAction: string | null;
+    inspectionMethod: string | null;
+    inspectionFrequency: string | null;
+    acceptanceCriteria: string | null;
+    stopConditions: string | null;
+    escalationContact: string | null;
+    applicableProcess: string | null;
+    effectiveFrom: string | null;
+    effectiveUntil: string | null;
+    printPolicy: InternalQualityRiskPrintPolicy;
+    archivedAt: string;
+    attachments: Array<{
+      id: string;
+      displayName: string;
+      mimeType: string;
+      caption: string | null;
+      category: string;
+      contentUrl: string;
+    }>;
+  };
+};
+
+export type InternalQualityRiskArchiveRequirementMode = 'REQUIRED' | 'OPTIONAL' | 'NOT_APPLICABLE';
+
+export type InternalQualityRiskArchiveRequirementKey =
+  | 'defectPhenomenon'
+  | 'occurrenceCause'
+  | 'escapeCause'
+  | 'rootCause'
+  | 'containmentAction'
+  | 'correctiveAction'
+  | 'verificationResult'
+  | 'warningSummary'
+  | 'requiredAction'
+  | 'inspectionMethod'
+  | 'inspectionFrequency'
+  | 'acceptanceCriteria'
+  | 'stopConditions'
+  | 'sourceIssue'
+  | 'evidence';
+
+export type InternalQualityRiskArchiveRequirements = Record<
+  InternalQualityRiskArchiveRequirementKey,
+  InternalQualityRiskArchiveRequirementMode
+>;
 
 export type WorkOrderQualityAlertAcknowledgementDTO = {
   id: string;

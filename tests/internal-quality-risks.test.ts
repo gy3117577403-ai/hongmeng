@@ -3,9 +3,11 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import {
+  DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS,
   evaluateInternalQualityRiskReadiness,
   InternalQualityRiskError,
   normalizeQualityRiskRelationIds,
+  normalizeInternalQualityRiskArchiveRequirements,
   parseInternalQualityRiskInput,
   qualityRiskPurgeEligibleAt,
   resolveArchivedQualityWarning,
@@ -19,6 +21,10 @@ const migration = readFileSync(
 );
 const collaborationMigration = readFileSync(
   resolve(repositoryRoot, 'prisma/migrations/202608270001_quality_anomaly_collaboration/migration.sql'),
+  'utf8',
+);
+const flexibleArchiveMigration = readFileSync(
+  resolve(repositoryRoot, 'prisma/migrations/202608270002_quality_risk_flexible_archive_preview/migration.sql'),
   'utf8',
 );
 const schema = readFileSync(resolve(repositoryRoot, 'prisma/schema.prisma'), 'utf8');
@@ -45,6 +51,7 @@ function readinessRecord(overrides: Record<string, unknown> = {}): InternalQuali
     stopConditions: '出现 1 件不合格立即停线并升级质量部',
     escalationContact: '质量部',
     printPolicy: 'REQUIRED',
+    archiveRequirements: DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS,
     severity: 'HIGH',
     issues: [{ issue: { deletedAt: null, isMajorQuality: false, majorApprovals: [] } }],
     workOrders: [{ workOrder: { deletedAt: null } }],
@@ -101,7 +108,11 @@ test('archive gate requires complete causes, conclusions, active impact and majo
   assert.equal(ready.ready, true);
   assert.equal(ready.alertCount, 1);
 
-  const incomplete = evaluateInternalQualityRiskReadiness(readinessRecord({ rootCause: null, finalConclusion: null }));
+  const incomplete = evaluateInternalQualityRiskReadiness(readinessRecord({
+    rootCause: null,
+    finalConclusion: null,
+    archiveRequirements: { ...DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS, rootCause: 'REQUIRED' },
+  }));
   assert.equal(incomplete.ready, false);
   assert.ok(incomplete.blockers.some(item => item.code === 'QUALITY_RISK_ROOT_CAUSE_REQUIRED'));
   assert.ok(incomplete.blockers.some(item => item.code === 'QUALITY_RISK_CONCLUSION_REQUIRED'));
@@ -118,15 +129,45 @@ test('archive gate requires complete causes, conclusions, active impact and majo
   assert.ok(majorWithoutApproval.blockers.some(item => item.code === 'QUALITY_RISK_MAJOR_APPROVAL_REQUIRED'));
 });
 
-test('high and critical risks require evidence summary or an associated 8D archive', () => {
-  const missingEvidence = evaluateInternalQualityRiskReadiness(readinessRecord({ evidenceSummary: null, eightDReports: [] }));
+test('archive evidence follows per-report required, optional and not-applicable policy', () => {
+  const missingEvidence = evaluateInternalQualityRiskReadiness(readinessRecord({
+    evidenceSummary: null,
+    eightDReports: [],
+    archiveRequirements: { ...DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS, evidence: 'REQUIRED' },
+  }));
   assert.ok(missingEvidence.blockers.some(item => item.code === 'QUALITY_RISK_EVIDENCE_REQUIRED'));
 
   const eightDBacked = evaluateInternalQualityRiskReadiness(readinessRecord({
     evidenceSummary: null,
     eightDReports: [{ eightDReport: { deletedAt: null } }],
+    archiveRequirements: { ...DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS, evidence: 'REQUIRED' },
   }));
   assert.equal(eightDBacked.ready, true);
+
+  const optionalEvidence = evaluateInternalQualityRiskReadiness(readinessRecord({ evidenceSummary: null, eightDReports: [], attachments: [] }));
+  assert.equal(optionalEvidence.ready, true);
+  assert.ok(optionalEvidence.warnings.some(item => item.code === 'QUALITY_RISK_EVIDENCE_RECOMMENDED'));
+
+  const notApplicableEvidence = evaluateInternalQualityRiskReadiness(readinessRecord({
+    evidenceSummary: null,
+    eightDReports: [],
+    attachments: [],
+    archiveRequirements: { ...DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS, evidence: 'NOT_APPLICABLE' },
+  }));
+  assert.equal(notApplicableEvidence.ready, true);
+  assert.ok(!notApplicableEvidence.warnings.some(item => item.code.includes('EVIDENCE')));
+});
+
+test('archive requirement parser keeps safe defaults and accepts per-field modes', () => {
+  const normalized = normalizeInternalQualityRiskArchiveRequirements({
+    rootCause: 'required',
+    inspectionMethod: 'NOT_APPLICABLE',
+    evidence: 'invalid-mode',
+  });
+  assert.equal(normalized.rootCause, 'REQUIRED');
+  assert.equal(normalized.inspectionMethod, 'NOT_APPLICABLE');
+  assert.equal(normalized.evidence, 'OPTIONAL');
+  assert.equal(normalized.warningSummary, 'REQUIRED');
 });
 
 test('recycle retention is exactly thirty days before irreversible deletion eligibility', () => {
@@ -153,6 +194,7 @@ test('migration persists report associations, immutable revisions and work-order
   assert.match(collaborationMigration, /CREATE TABLE "quality_risk_attachments"/);
   assert.match(collaborationMigration, /CREATE TABLE "quality_risk_revision_products"/);
   assert.match(collaborationMigration, /CREATE TABLE "quality_risk_revision_attachments"/);
+  assert.match(flexibleArchiveMigration, /ADD COLUMN "archive_requirements" JSONB/);
   assert.match(schema, /model InternalQualityRiskRevisionProduct[\s\S]*?@@id\(\[revisionId, drawingLibraryItemId\]\)/);
   assert.match(schema, /model InternalQualityRiskRevisionAttachment[\s\S]*?@@id\(\[revisionId, attachmentId\]\)/);
 });
@@ -211,4 +253,17 @@ test('quality risk workbench removes hidden-header spacing and offers searchable
   assert.match(workbench, /MAX_VISIBLE_FILTER_OPTIONS = 120/);
   assert.doesNotMatch(workbench, /<label>来源问题<select/);
   assert.doesNotMatch(workbench, /<label>工单<select/);
+});
+
+test('quality risk workbench exposes staged object-storage upload, flexible archive policy and shared print preview', () => {
+  assert.match(workbench, /function stageAttachments/);
+  assert.match(workbench, /uploadAttachmentToReport/);
+  assert.match(workbench, /multiple type="file"/);
+  assert.match(workbench, /image\/jpeg,image\/png,image\/webp,application\/pdf/);
+  assert.match(workbench, /保存草稿后自动上传到对象存储/);
+  assert.match(workbench, /失败：\$\{item\.error\}/);
+  assert.match(workbench, /归档字段要求/);
+  assert.match(workbench, /NOT_APPLICABLE/);
+  assert.match(workbench, /预览工单附页/);
+  assert.match(workbench, /\/print-preview/);
 });

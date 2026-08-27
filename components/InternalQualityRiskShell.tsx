@@ -23,6 +23,7 @@ import {
   Paperclip,
   Pencil,
   Plus,
+  Printer,
   RefreshCw,
   RotateCcw,
   Search,
@@ -46,6 +47,9 @@ import type {
   CurrentUserDTO,
   InternalQualityRiskDTO,
   InternalQualityRiskAttachmentDTO,
+  InternalQualityRiskArchiveRequirementKey,
+  InternalQualityRiskArchiveRequirementMode,
+  InternalQualityRiskArchiveRequirements,
   InternalQualityRiskOptionsDTO,
   InternalQualityRiskPrintPolicy,
   InternalQualityRiskReadinessDTO,
@@ -90,10 +94,18 @@ type RiskForm = {
   stopConditions: string;
   escalationContact: string;
   printPolicy: InternalQualityRiskPrintPolicy;
+  archiveRequirements: InternalQualityRiskArchiveRequirements;
   issueIds: string[];
   workOrderIds: string[];
   productIds: string[];
   eightDReportIds: string[];
+};
+
+type PendingRiskAttachment = {
+  id: string;
+  file: File;
+  category: InternalQualityRiskAttachmentDTO['category'];
+  error?: string;
 };
 
 type RiskTaskForm = {
@@ -111,12 +123,19 @@ type PreviewResponse = { ok: boolean; report: InternalQualityRiskDTO; readiness:
 
 const emptySummary: InternalQualityRiskSummaryDTO = { total: 0, draft: 0, submitted: 0, collaborating: 0, verifying: 0, pendingClose: 0, revising: 0, archived: 0, deleted: 0, critical: 0, activeAlerts: 0, unlinked: 0, overdueTasks: 0 };
 const emptyOptions: InternalQualityRiskOptionsDTO = { products: [], issues: [], workOrders: [], eightDReports: [] };
+const defaultArchiveRequirements: InternalQualityRiskArchiveRequirements = {
+  defectPhenomenon: 'REQUIRED', occurrenceCause: 'OPTIONAL', escapeCause: 'OPTIONAL', rootCause: 'OPTIONAL',
+  containmentAction: 'OPTIONAL', correctiveAction: 'OPTIONAL', verificationResult: 'OPTIONAL',
+  warningSummary: 'REQUIRED', requiredAction: 'REQUIRED', inspectionMethod: 'OPTIONAL', inspectionFrequency: 'OPTIONAL',
+  acceptanceCriteria: 'OPTIONAL', stopConditions: 'OPTIONAL', sourceIssue: 'OPTIONAL', evidence: 'OPTIONAL',
+};
 const emptyForm: RiskForm = {
   reportNo: '', title: '', severity: 'HIGH', occurrenceDate: '', workshopArea: '', processName: '', responsibleDepartment: '质量部',
   defectPhenomenon: '', occurrenceCause: '', escapeCause: '', systemCause: '', rootCause: '', secondaryCause: '',
   containmentAction: '', disposition: '', correctiveAction: '', preventiveAction: '', verificationResult: '', finalConclusion: '', evidenceSummary: '',
   riskScope: '', applicableProcess: '', effectiveFrom: '', effectiveUntil: '', issueIds: [], workOrderIds: [], productIds: [], eightDReportIds: [],
   warningSummary: '', requiredAction: '', inspectionMethod: '', inspectionFrequency: '', acceptanceCriteria: '', stopConditions: '', escalationContact: '质量部', printPolicy: 'OPTIONAL',
+  archiveRequirements: defaultArchiveRequirements,
 };
 const emptyTaskForm: RiskTaskForm = { taskType: 'COLLABORATION', title: '', department: '', ownerName: '', requirement: '', dueAt: '' };
 
@@ -124,6 +143,21 @@ const severityLabels: Record<InternalQualityRiskSeverity, string> = { LOW: '低�
 const taskStatusLabels: Record<InternalQualityRiskTaskStatus, string> = { TODO: '待处理', IN_PROGRESS: '处理中', COMPLETED: '待验证', VERIFIED: '已验证', CANCELLED: '已取消' };
 const taskTypeLabels: Record<RiskTaskForm['taskType'], string> = { CONTAINMENT: '临时遏制', CAUSE: '原因分析', ACTION: '改善措施', VERIFICATION: '效果验证', COLLABORATION: '部门协同' };
 const printPolicyLabels: Record<InternalQualityRiskPrintPolicy, string> = { REQUIRED: '必须随工单打印', OPTIONAL: '计划可选附页', SYSTEM_ONLY: '仅系统警示' };
+const archiveRequirementModeLabels: Record<InternalQualityRiskArchiveRequirementMode, string> = { REQUIRED: '必填', OPTIONAL: '选填', NOT_APPLICABLE: '不适用' };
+const archiveRequirementGroups: Array<{ title: string; hint: string; items: Array<{ key: InternalQualityRiskArchiveRequirementKey; label: string }> }> = [
+  { title: '异常分析与闭环', hint: '按这次异常实际复杂度设定', items: [
+    { key: 'defectPhenomenon', label: '不良现象' }, { key: 'occurrenceCause', label: '发生原因' }, { key: 'escapeCause', label: '流出原因' },
+    { key: 'rootCause', label: '根本原因' }, { key: 'containmentAction', label: '临时遏制' }, { key: 'correctiveAction', label: '纠正措施' },
+    { key: 'verificationResult', label: '验证结果' },
+  ] },
+  { title: '工单警示附页', hint: '空白选填项会使用安全默认文案', items: [
+    { key: 'warningSummary', label: '警示摘要' }, { key: 'requiredAction', label: '本批要求' }, { key: 'inspectionMethod', label: '检查方法' },
+    { key: 'inspectionFrequency', label: '检查频次' }, { key: 'acceptanceCriteria', label: '合格判定' }, { key: 'stopConditions', label: '停线条件' },
+  ] },
+  { title: '来源与证据', hint: '来源问题、照片、附件、摘要或8D', items: [
+    { key: 'sourceIssue', label: '来源问题' }, { key: 'evidence', label: '归档证据' },
+  ] },
+];
 const statusLabels: Record<StatusFilter | InternalQualityRiskDTO['status'], string> = {
   ALL: '全部异常', DRAFT: '草稿', SUBMITTED: '待遏制', CONTAINMENT: '遏制中', COLLABORATING: '协同中', VERIFYING: '待验证', PENDING_CLOSE: '待关闭', REVISING: '修订中', ARCHIVED: '已归档', UNLINKED: '关联不全', DELETED: '回收站',
 };
@@ -174,6 +208,7 @@ function reportToForm(report: InternalQualityRiskDTO): RiskForm {
     warningSummary: report.warningSummary || '', requiredAction: report.requiredAction || '', inspectionMethod: report.inspectionMethod || '',
     inspectionFrequency: report.inspectionFrequency || '', acceptanceCriteria: report.acceptanceCriteria || '', stopConditions: report.stopConditions || '',
     escalationContact: report.escalationContact || '', printPolicy: report.printPolicy || 'OPTIONAL',
+    archiveRequirements: report.archiveRequirements || defaultArchiveRequirements,
     issueIds: report.issues.map(item => item.id), workOrderIds: report.workOrders.map(item => item.id), productIds: report.products.map(item => item.id),
     eightDReportIds: report.eightDReports.map(item => item.id),
   };
@@ -352,6 +387,18 @@ function DetailValue({ label, value, wide = false }: { label: string; value?: st
   return <div className={wide ? 'wide' : ''}><span>{label}</span><strong>{value || '未填写'}</strong></div>;
 }
 
+function ArchiveRequirementPanel({ value, onChange }: {
+  value: InternalQualityRiskArchiveRequirements;
+  onChange: (key: InternalQualityRiskArchiveRequirementKey, mode: InternalQualityRiskArchiveRequirementMode) => void;
+}) {
+  const requiredCount = Object.values(value).filter(mode => mode === 'REQUIRED').length;
+  return <section className="risk-requirement-panel">
+    <header><span><ShieldAlert size={17} /><strong>归档字段要求</strong><small>每份异常单独设定，不再用同一套九项硬门槛</small></span><em>{requiredCount} 项必填</em></header>
+    <div className="risk-requirement-fixed"><CheckCircle2 size={14} /><span><strong>系统固定闭环</strong><small>最终结论 + 至少一个有效产品或工单；未完成的协同任务及重大审批仍会阻断归档。</small></span></div>
+    <div className="risk-requirement-groups">{archiveRequirementGroups.map(group => <section key={group.title}><header><strong>{group.title}</strong><small>{group.hint}</small></header><div>{group.items.map(item => <article key={item.key}><span>{item.label}</span><div role="group" aria-label={`${item.label}归档要求`}>{(['REQUIRED', 'OPTIONAL', 'NOT_APPLICABLE'] as const).map(mode => <button className={value[item.key] === mode ? `active mode-${mode.toLowerCase()}` : ''} type="button" key={mode} aria-pressed={value[item.key] === mode} onClick={() => onChange(item.key, mode)}>{archiveRequirementModeLabels[mode]}</button>)}</div></article>)}</div></section>)}</div>
+  </section>;
+}
+
 export default function InternalQualityRiskShell({ user, initialReportId = '', initialWorkOrderId = '' }: { user: CurrentUserDTO; initialReportId?: string; initialWorkOrderId?: string }) {
   const [reports, setReports] = useState<InternalQualityRiskDTO[]>([]);
   const [summary, setSummary] = useState(emptySummary);
@@ -380,6 +427,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
   const [taskForm, setTaskForm] = useState<RiskTaskForm>(emptyTaskForm);
   const [taskError, setTaskError] = useState('');
   const [attachmentCategory, setAttachmentCategory] = useState<InternalQualityRiskAttachmentDTO['category']>('EVIDENCE');
+  const [pendingAttachments, setPendingAttachments] = useState<PendingRiskAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [previewAttachment, setPreviewAttachment] = useState<InternalQualityRiskAttachmentDTO | null>(null);
   const [revokeOpen, setRevokeOpen] = useState(false);
@@ -388,6 +436,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
   const [purgeConfirmation, setPurgeConfirmation] = useState('');
   const requestSequence = useRef(0);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+  const draftAttachmentInputRef = useRef<HTMLInputElement | null>(null);
   useToastBridge(toast, setToast);
 
   const isAdmin = user.laborRole === 'ADMIN' || user.access.capabilities.includes('ACCOUNT_ADMIN:MANAGE');
@@ -451,6 +500,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
     setForm({ ...emptyForm, reportNo: `IQR-${date}-${time}`, occurrenceDate: dateInput(now.toISOString()), issueIds: issueId ? [issueId] : [], workOrderIds: workOrderId ? [workOrderId] : [], productIds: productId ? [productId] : [] });
     setFormStep(1);
     setFormError('');
+    setPendingAttachments([]);
     setFormOpen(true);
   }
 
@@ -460,7 +510,32 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
     setForm(reportToForm(report));
     setFormStep(1);
     setFormError('');
+    setPendingAttachments([]);
     setFormOpen(true);
+  }
+
+  function stageAttachments(files: FileList | null): void {
+    if (!files?.length) return;
+    const incoming = Array.from(files).map(file => ({
+      id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${file.name}-${file.lastModified}-${file.size}`,
+      file,
+      category: attachmentCategory,
+    }));
+    setPendingAttachments(current => {
+      const known = new Set(current.map(item => `${item.file.name}:${item.file.size}:${item.file.lastModified}`));
+      return [...current, ...incoming.filter(item => !known.has(`${item.file.name}:${item.file.size}:${item.file.lastModified}`))].slice(0, 20);
+    });
+    if (draftAttachmentInputRef.current) draftAttachmentInputRef.current.value = '';
+  }
+
+  async function uploadAttachmentToReport(reportId: string, attachment: PendingRiskAttachment): Promise<InternalQualityRiskDTO> {
+    const body = new FormData();
+    body.set('file', attachment.file);
+    body.set('category', attachment.category);
+    body.set('displayName', attachment.file.name);
+    const result = await jsonRequest<MutationResponse>(`/api/quality/internal-risks/${reportId}/attachments`, { method: 'POST', body });
+    if (!result.report) throw new Error(`${attachment.file.name} 上传结果为空`);
+    return result.report;
   }
 
   async function saveReport(event: FormEvent<HTMLFormElement>): Promise<void> {
@@ -474,9 +549,35 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
         method: editing ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       if (!result.report) throw new Error('保存结果为空');
-      updateReport(result.report);
+      let savedReport = result.report;
+      const failedAttachments: PendingRiskAttachment[] = [];
+      for (const attachment of pendingAttachments) {
+        try {
+          savedReport = await uploadAttachmentToReport(savedReport.id, attachment);
+        } catch (uploadError) {
+          failedAttachments.push({
+            ...attachment,
+            error: uploadError instanceof Error ? uploadError.message : '附件上传失败',
+          });
+        }
+      }
+      updateReport(savedReport);
+      if (failedAttachments.length) {
+        setEditing(savedReport);
+        setForm(reportToForm(savedReport));
+        setPendingAttachments(failedAttachments);
+        setFormStep(3);
+        const failureSummary = failedAttachments.slice(0, 2).map(item => `${item.file.name}：${item.error || '上传失败'}`).join('；');
+        setFormError(`草稿已保存，${pendingAttachments.length - failedAttachments.length} 个附件已上传，${failedAttachments.length} 个失败。${failureSummary}`);
+        setToast('异常草稿已保存，部分附件仍需重试');
+        void loadReports();
+        return;
+      }
+      setPendingAttachments([]);
       setFormOpen(false);
-      setToast(editing ? '异常汇总草稿已更新' : '内部重大异常草稿已建立');
+      setToast(pendingAttachments.length
+        ? `${editing ? '异常汇总草稿已更新' : '内部重大异常草稿已建立'}，${pendingAttachments.length} 个附件已上传到对象存储`
+        : editing ? '异常汇总草稿已更新' : '内部重大异常草稿已建立');
       void loadReports();
     } catch (saveError) {
       setFormError(saveError instanceof Error ? saveError.message : '保存失败');
@@ -576,11 +677,8 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
     if (!selected) return;
     setUploading(true);
     try {
-      const body = new FormData();
-      body.set('file', file); body.set('category', attachmentCategory); body.set('displayName', file.name);
-      const result = await jsonRequest<MutationResponse>(`/api/quality/internal-risks/${selected.id}/attachments`, { method: 'POST', body });
-      if (!result.report) throw new Error('附件上传结果为空');
-      updateReport(result.report); setDetailTab('warning'); setToast('异常证据已安全上传到对象存储');
+      const report = await uploadAttachmentToReport(selected.id, { id: `${file.name}-${file.lastModified}`, file, category: attachmentCategory });
+      updateReport(report); setDetailTab('warning'); setToast('异常证据已安全上传到对象存储');
     } catch (uploadError) { setToast(uploadError instanceof Error ? uploadError.message : '异常证据上传失败'); }
     finally { setUploading(false); if (attachmentInputRef.current) attachmentInputRef.current.value = ''; }
   }
@@ -733,6 +831,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
           {!selected ? <div className="risk-detail-empty"><ShieldAlert /><h2>选择一份内部重大异常</h2><p>查看原因、措施、关联、归档版本与工单预警。</p></div> : <>
             <header className="risk-detail-header"><div><span>{selected.reportNo} · {severityLabels[selected.severity]}</span><h2>{selected.title}</h2><small>{selected.workshopArea || '车间未填'} · {selected.processName || '工序未填'} · 更新于 {formatDate(selected.updatedAt, true)}</small></div><nav>
               {selected.deletedAt ? <>{isAdmin && <button type="button" disabled={saving} onClick={() => { void restoreReport(); }}><RotateCcw size={14} />恢复</button>}{isAdmin && <button className="danger" type="button" disabled={saving || !selected.canPurge} title={selected.canPurge ? '彻底删除' : `最早 ${formatDate(selected.purgeEligibleAt)} 且无活动预警后可彻底删除`} onClick={() => { setPurgeTarget(selected); setPurgeConfirmation(''); }}><Trash2 size={14} />彻底删除</button>}</> : <>
+                <Link className="print-preview" href={`/workspace/quality/internal-risks/${encodeURIComponent(selected.id)}/print-preview`} target="_blank"><Printer size={14} />工单附页预览</Link>
                 {selected.status !== 'ARCHIVED' && canUpdate && <button type="button" onClick={() => openEdit()}><Pencil size={14} />编辑</button>}
                 {selected.status === 'ARCHIVED' && canArchive && <button type="button" disabled={saving} onClick={() => { void startRevision(); }}><History size={14} />启动修订</button>}
                 {(selected.status === 'PENDING_CLOSE' || selected.status === 'REVISING') && canArchive && <button className="archive" type="button" disabled={saving} onClick={() => { void previewArchive(); }}><Archive size={14} />归档发布</button>}
@@ -755,7 +854,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
               {detailTab === 'warning' && <div className="risk-warning-view">
                 <section className={`risk-warning-banner state-${selected.warningState.toLowerCase()}`}><div><ShieldAlert size={24} /><span><strong>{selected.warningState === 'ACTIVE' ? '产品异常警示正在生效' : selected.warningState === 'REVOKED' ? '产品异常警示已撤销' : '产品异常警示尚未发布'}</strong><small>{selected.warningState === 'ACTIVE' ? `已覆盖 ${selected.alerts.length} 条工单，并持续匹配未来同产品工单` : selected.warningRevokeReason || '完成协同、质量验证与归档后自动发布'}</small></span></div><em>{printPolicyLabels[selected.printPolicy]}</em></section>
                 <section className="risk-warning-content"><header><strong>现场执行卡</strong><span>归档后同步到图纸库、计划、执行与打印附页</span></header><div><DetailValue label="警示摘要" value={selected.warningSummary} wide /><DetailValue label="必须执行" value={selected.requiredAction} wide /><DetailValue label="检查方法" value={selected.inspectionMethod} /><DetailValue label="检查频次" value={selected.inspectionFrequency} /><DetailValue label="合格判定" value={selected.acceptanceCriteria} /><DetailValue label="停线/升级条件" value={selected.stopConditions} /><DetailValue label="升级联系人" value={selected.escalationContact} /><DetailValue label="打印策略" value={printPolicyLabels[selected.printPolicy]} /></div></section>
-                <section className="risk-evidence-board"><header><div><FileImage size={15} /><span><strong>图文证据与解决方案</strong><small>照片、检验数据、处理前后对比及解决方案文件均存入对象存储</small></span></div>{canUpdate && selected.status !== 'ARCHIVED' && !selected.deletedAt && <div className="risk-evidence-upload"><select aria-label="证据分类" value={attachmentCategory} onChange={event => setAttachmentCategory(event.target.value as InternalQualityRiskAttachmentDTO['category'])}><option value="DEFECT">异常实物</option><option value="CAUSE">原因证据</option><option value="ACTION">措施证据</option><option value="VERIFICATION">验证证据</option><option value="SOLUTION">解决方案</option><option value="EVIDENCE">其他证据</option></select><input ref={attachmentInputRef} type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void uploadAttachment(file); }} /><button type="button" disabled={uploading} onClick={() => attachmentInputRef.current?.click()}>{uploading ? <Loader2 className="spin" size={14} /> : <UploadCloud size={14} />}上传证据</button></div>}</header><div>{selected.attachments.map(attachment => <article key={attachment.id}>{attachment.mimeType.startsWith('image/') ? <button className="risk-evidence-thumb" type="button" onClick={() => setPreviewAttachment(attachment)}><img src={attachment.contentUrl} alt={attachment.caption || attachment.displayName} /></button> : <button className="risk-evidence-file" type="button" onClick={() => setPreviewAttachment(attachment)}><Paperclip size={26} /><span>{attachment.mimeType.split('/').pop()?.toUpperCase()}</span></button>}<section><span>{attachment.category}</span><strong title={attachment.displayName}>{attachment.displayName}</strong><small>{Math.max(1, Math.round(attachment.fileSize / 1024))} KB · {formatDate(attachment.createdAt, true)}</small></section><footer><button type="button" title="预览" onClick={() => setPreviewAttachment(attachment)}><Eye size={13} /></button>{canUpdate && selected.status !== 'ARCHIVED' && <button className="danger" type="button" title="删除附件" onClick={() => { void removeAttachment(attachment); }}><Trash2 size={13} /></button>}</footer></article>)}{!selected.attachments.length && <div className="risk-empty compact"><Camera /><strong>尚无现场图文证据</strong><p>上传异常实物、测量过程、改善前后对比或解决方案文件。</p></div>}</div></section>
+                <section className="risk-evidence-board"><header><div><FileImage size={15} /><span><strong>图文证据与解决方案</strong><small>照片、检验数据、处理前后对比及解决方案文件均存入对象存储</small></span></div>{canUpdate && selected.status !== 'ARCHIVED' && !selected.deletedAt && <div className="risk-evidence-upload"><select aria-label="证据分类" value={attachmentCategory} onChange={event => setAttachmentCategory(event.target.value as InternalQualityRiskAttachmentDTO['category'])}><option value="DEFECT">异常实物</option><option value="CAUSE">原因证据</option><option value="ACTION">措施证据</option><option value="VERIFICATION">验证证据</option><option value="SOLUTION">解决方案</option><option value="EVIDENCE">其他证据</option></select><input ref={attachmentInputRef} type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" hidden onChange={event => { const file = event.target.files?.[0]; if (file) void uploadAttachment(file); }} /><button type="button" disabled={uploading} onClick={() => attachmentInputRef.current?.click()}>{uploading ? <Loader2 className="spin" size={14} /> : <UploadCloud size={14} />}上传证据</button></div>}</header><div>{selected.attachments.map(attachment => <article key={attachment.id}>{attachment.mimeType.startsWith('image/') ? <button className="risk-evidence-thumb" type="button" onClick={() => setPreviewAttachment(attachment)}><img src={attachment.contentUrl} alt={attachment.caption || attachment.displayName} /></button> : <button className="risk-evidence-file" type="button" onClick={() => setPreviewAttachment(attachment)}><Paperclip size={26} /><span>{attachment.mimeType.split('/').pop()?.toUpperCase()}</span></button>}<section><span>{attachment.category}</span><strong title={attachment.displayName}>{attachment.displayName}</strong><small>{Math.max(1, Math.round(attachment.fileSize / 1024))} KB · {formatDate(attachment.createdAt, true)}</small></section><footer><button type="button" title="预览" onClick={() => setPreviewAttachment(attachment)}><Eye size={13} /></button>{canUpdate && selected.status !== 'ARCHIVED' && <button className="danger" type="button" title="删除附件" onClick={() => { void removeAttachment(attachment); }}><Trash2 size={13} /></button>}</footer></article>)}{!selected.attachments.length && <div className="risk-empty compact"><Camera /><strong>尚无现场图文证据</strong><p>上传异常实物、测量过程、改善前后对比或解决方案文件。</p></div>}</div></section>
               </div>}
               {detailTab === 'causes' && <div className="risk-text-grid"><section><span>发生原因</span><p>{selected.occurrenceCause || '未填写'}</p></section><section><span>流出原因</span><p>{selected.escapeCause || '未填写'}</p></section><section><span>根本原因</span><p>{selected.rootCause || '未填写'}</p></section><section><span>系统原因</span><p>{selected.systemCause || '未填写'}</p></section><section><span>次要原因</span><p>{selected.secondaryCause || '未填写'}</p></section><section className="conclusion"><span>最终结论</span><p>{selected.finalConclusion || '未填写'}</p></section></div>}
               {detailTab === 'actions' && <div className="risk-text-grid"><section><span>临时遏制措施</span><p>{selected.containmentAction || '未填写'}</p></section><section><span>不良处置</span><p>{selected.disposition || '未填写'}</p></section><section><span>纠正措施</span><p>{selected.correctiveAction || '未填写'}</p></section><section><span>预防再发措施</span><p>{selected.preventiveAction || '未填写'}</p></section><section><span>验证结果</span><p>{selected.verificationResult || '未填写'}</p></section><section><span>证据摘要</span><p>{selected.evidenceSummary || '未填写'}</p></section></div>}
@@ -773,9 +872,27 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
       <div className="risk-form-body hm-scroll-region">
         {formStep === 1 && <><section className="risk-form-card"><header><strong>异常基本信息</strong><span>草稿阶段只强制编号和标题</span></header><div className="risk-form-grid"><label>异常汇总编号<input autoFocus value={form.reportNo} maxLength={80} onChange={event => setForm(current => ({ ...current, reportNo: event.target.value }))} /></label><label>风险等级<select value={form.severity} onChange={event => setForm(current => ({ ...current, severity: event.target.value as InternalQualityRiskSeverity }))}><option value="CRITICAL">重大风险</option><option value="HIGH">高风险</option><option value="MEDIUM">中风险</option><option value="LOW">低风险</option></select></label><label className="wide">异常标题<input value={form.title} maxLength={180} onChange={event => setForm(current => ({ ...current, title: event.target.value }))} placeholder="一句话说明不良或重大质量问题" /></label><label>发生日期<input type="date" value={form.occurrenceDate} onChange={event => setForm(current => ({ ...current, occurrenceDate: event.target.value }))} /></label><label>发现区域/车间<input value={form.workshopArea} onChange={event => setForm(current => ({ ...current, workshopArea: event.target.value }))} placeholder="如 前端裁线区" /></label><label>涉及工序<input value={form.processName} onChange={event => setForm(current => ({ ...current, processName: event.target.value }))} placeholder="如 端子压接" /></label><label>责任部门<input value={form.responsibleDepartment} onChange={event => setForm(current => ({ ...current, responsibleDepartment: event.target.value }))} /></label><label className="wide">不良现象<textarea rows={4} value={form.defectPhenomenon} onChange={event => setForm(current => ({ ...current, defectPhenomenon: event.target.value }))} placeholder="描述发现方式、批次、数量、失效表现和现场状态" /></label></div></section><div className="risk-picker-grid"><TogglePicker title="来源质量问题" icon={<ClipboardCheck size={14} />} items={issuePickerItems} selected={form.issueIds} onToggle={id => toggleFormRelation('issueIds', id)} emptyText="没有匹配的问题" /><TogglePicker title="关联工单" icon={<Link2 size={14} />} items={workOrderPickerItems} selected={form.workOrderIds} onToggle={id => toggleFormRelation('workOrderIds', id)} emptyText="没有匹配的工单" /></div></>}
         {formStep === 2 && <section className="risk-form-card"><header><strong>原因分析</strong><span>明确区分发生、流出、系统与根本原因</span></header><div className="risk-form-grid text"><label>发生原因<textarea rows={5} value={form.occurrenceCause} onChange={event => setForm(current => ({ ...current, occurrenceCause: event.target.value }))} placeholder="为什么会产生不良" /></label><label>流出原因<textarea rows={5} value={form.escapeCause} onChange={event => setForm(current => ({ ...current, escapeCause: event.target.value }))} placeholder="为什么未在前序检查中发现" /></label><label>系统原因<textarea rows={5} value={form.systemCause} onChange={event => setForm(current => ({ ...current, systemCause: event.target.value }))} placeholder="流程、标准、培训、设备或管理机制原因" /></label><label>根本原因<textarea rows={5} value={form.rootCause} onChange={event => setForm(current => ({ ...current, rootCause: event.target.value }))} placeholder="经证据确认的根因，避免只写现象" /></label><label className="wide">次要/促进原因<textarea rows={4} value={form.secondaryCause} onChange={event => setForm(current => ({ ...current, secondaryCause: event.target.value }))} placeholder="选填：放大风险或促成问题的其他因素" /></label></div></section>}
-        {formStep === 3 && <section className="risk-form-card"><header><strong>措施、验证与结论</strong><span>将临时止血、永久纠正和再发预防分开记录</span></header><div className="risk-form-grid text"><label>临时遏制措施<textarea rows={5} value={form.containmentAction} onChange={event => setForm(current => ({ ...current, containmentAction: event.target.value }))} /></label><label>不良品处置<textarea rows={5} value={form.disposition} onChange={event => setForm(current => ({ ...current, disposition: event.target.value }))} placeholder="返工、报废、隔离、让步等" /></label><label>纠正措施<textarea rows={5} value={form.correctiveAction} onChange={event => setForm(current => ({ ...current, correctiveAction: event.target.value }))} /></label><label>预防再发措施<textarea rows={5} value={form.preventiveAction} onChange={event => setForm(current => ({ ...current, preventiveAction: event.target.value }))} /></label><label>验证结果<textarea rows={5} value={form.verificationResult} onChange={event => setForm(current => ({ ...current, verificationResult: event.target.value }))} placeholder="说明样本、周期、数据和判定" /></label><label>最终结论<textarea rows={5} value={form.finalConclusion} onChange={event => setForm(current => ({ ...current, finalConclusion: event.target.value }))} /></label><label className="wide">证据摘要<textarea rows={4} value={form.evidenceSummary} onChange={event => setForm(current => ({ ...current, evidenceSummary: event.target.value }))} placeholder="检验记录、照片、附件或关联8D的关键证据；高/重大风险归档必填或关联8D" /></label></div></section>}
+        {formStep === 3 && <><section className="risk-form-card"><header><strong>措施、验证与结论</strong><span>将临时止血、永久纠正和再发预防分开记录</span></header><div className="risk-form-grid text"><label>临时遏制措施<textarea rows={5} value={form.containmentAction} onChange={event => setForm(current => ({ ...current, containmentAction: event.target.value }))} /></label><label>不良品处置<textarea rows={5} value={form.disposition} onChange={event => setForm(current => ({ ...current, disposition: event.target.value }))} placeholder="返工、报废、隔离、让步等" /></label><label>纠正措施<textarea rows={5} value={form.correctiveAction} onChange={event => setForm(current => ({ ...current, correctiveAction: event.target.value }))} /></label><label>预防再发措施<textarea rows={5} value={form.preventiveAction} onChange={event => setForm(current => ({ ...current, preventiveAction: event.target.value }))} /></label><label>验证结果<textarea rows={5} value={form.verificationResult} onChange={event => setForm(current => ({ ...current, verificationResult: event.target.value }))} placeholder="说明样本、周期、数据和判定" /></label><label>最终结论<textarea rows={5} value={form.finalConclusion} onChange={event => setForm(current => ({ ...current, finalConclusion: event.target.value }))} placeholder="闭环固定必填：说明是否有效、残余风险与后续状态" /></label><label className="wide">证据摘要<textarea rows={4} value={form.evidenceSummary} onChange={event => setForm(current => ({ ...current, evidenceSummary: event.target.value }))} placeholder="简述检验记录、照片、附件或关联8D；是否必填由第5步归档策略决定" /></label></div></section>
+        <section className="risk-draft-attachments">
+          <header>
+            <span><UploadCloud size={17} /><strong>附件与现场证据</strong><small>新建时可直接选择；保存草稿后自动上传到对象存储，不落本机服务器磁盘</small></span>
+            <div>
+              <select aria-label="待上传附件分类" value={attachmentCategory} onChange={event => setAttachmentCategory(event.target.value as InternalQualityRiskAttachmentDTO['category'])}><option value="DEFECT">异常实物</option><option value="CAUSE">原因证据</option><option value="ACTION">措施证据</option><option value="VERIFICATION">验证证据</option><option value="SOLUTION">解决方案</option><option value="EVIDENCE">其他证据</option></select>
+              <input ref={draftAttachmentInputRef} hidden multiple type="file" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" onChange={event => stageAttachments(event.target.files)} />
+              <button type="button" onClick={() => draftAttachmentInputRef.current?.click()}><Plus size={14} />选择附件</button>
+            </div>
+          </header>
+          <div className="risk-draft-attachment-list">
+            {pendingAttachments.map(item => <article className={item.error ? 'failed' : ''} key={item.id}>
+              <span className="risk-draft-file-icon">{item.file.type.startsWith('image/') ? <FileImage size={18} /> : <Paperclip size={18} />}</span>
+              <div><strong title={item.file.name}>{item.file.name}</strong><small>{item.category} · {Math.max(1, Math.round(item.file.size / 1024))} KB · {item.error ? `失败：${item.error}` : '待上传'}</small></div>
+              <button type="button" aria-label={`移除${item.file.name}`} title="移除待上传附件" onClick={() => setPendingAttachments(current => current.filter(file => file.id !== item.id))}><X size={14} /></button>
+            </article>)}
+            {!pendingAttachments.length && <button className="risk-draft-attachment-empty" type="button" onClick={() => draftAttachmentInputRef.current?.click()}><Camera size={22} /><span><strong>点击上传照片、检验记录或解决方案</strong><small>支持 JPG、PNG、WEBP 和 PDF 多选；服务端校验真实文件内容</small></span></button>}
+          </div>
+        </section></>}
         {formStep === 4 && <><section className="risk-product-suggestion automatic"><Sparkles size={17} /><div><strong>产品警示自动继承</strong><p>归档发布时会将所选产品现有工单全部纳入；以后新建或导入同产品工单，也会在计划/执行读取时自动收到同一警示。直接关联工单用于补充产品范围之外的特例。</p></div><span>{form.productIds.length} 个产品 · {form.workOrderIds.length} 个直接工单</span></section><div className="risk-picker-grid"><TogglePicker title="关联产品主数据（可一对多）" icon={<Boxes size={14} />} items={productPickerItems} selected={form.productIds} onToggle={id => toggleFormRelation('productIds', id)} emptyText="没有匹配的产品" /><TogglePicker title="8D证据档案" icon={<FileArchive size={14} />} items={eightDPickerItems} selected={form.eightDReportIds} onToggle={id => toggleFormRelation('eightDReportIds', id)} emptyText="没有匹配的8D档案" /></div></>}
-        {formStep === 5 && <><section className="risk-form-card"><header><strong>产品警示与归档范围</strong><span>这些结构化字段会进入图纸资料库、计划、生产执行及固定 A4 打印附页</span></header><div className="risk-form-grid text"><label className="wide">警示摘要<textarea rows={3} value={form.warningSummary} onChange={event => setForm(current => ({ ...current, warningSummary: event.target.value }))} placeholder="用现场作业者能直接理解的一段话说明异常和风险" /></label><label className="wide">本批必须执行<textarea rows={4} value={form.requiredAction} onChange={event => setForm(current => ({ ...current, requiredAction: event.target.value }))} placeholder={'每行一项，例如：\n1. 开工前完成首件确认\n2. 每小时抽检5只并记录'} /></label><label>检查方法<input value={form.inspectionMethod} onChange={event => setForm(current => ({ ...current, inspectionMethod: event.target.value }))} placeholder="如 数显千分尺测量" /></label><label>检查频次<input value={form.inspectionFrequency} onChange={event => setForm(current => ({ ...current, inspectionFrequency: event.target.value }))} placeholder="如 首件 + 每小时5只" /></label><label>合格判定<input value={form.acceptanceCriteria} onChange={event => setForm(current => ({ ...current, acceptanceCriteria: event.target.value }))} placeholder="如 压接高度1.80±0.05mm" /></label><label>停线/升级条件<input value={form.stopConditions} onChange={event => setForm(current => ({ ...current, stopConditions: event.target.value }))} placeholder="如 出现1只不合格立即停线" /></label><label>升级联系人<input value={form.escalationContact} onChange={event => setForm(current => ({ ...current, escalationContact: event.target.value }))} placeholder="部门或联系人" /></label><label>打印策略<select value={form.printPolicy} onChange={event => setForm(current => ({ ...current, printPolicy: event.target.value as InternalQualityRiskPrintPolicy }))}><option value="REQUIRED">必须随工单打印</option><option value="OPTIONAL">计划可选附页</option><option value="SYSTEM_ONLY">仅系统警示</option></select></label><label className="wide">风险影响范围<textarea rows={3} value={form.riskScope} onChange={event => setForm(current => ({ ...current, riskScope: event.target.value }))} placeholder="涉及批次、产品族、客户、设备、材料或供应商范围" /></label><label className="wide">适用工序/检查点<input value={form.applicableProcess} onChange={event => setForm(current => ({ ...current, applicableProcess: event.target.value }))} placeholder="如 压接首件确认、拉力抽检、后端终检" /></label><label>生效日期<input type="date" value={form.effectiveFrom} onChange={event => setForm(current => ({ ...current, effectiveFrom: event.target.value }))} /></label><label>失效日期<input type="date" value={form.effectiveUntil} onChange={event => setForm(current => ({ ...current, effectiveUntil: event.target.value }))} /><small>留空表示长期有效；需失效时单独撤销警示并保留原因</small></label></div></section><section className="risk-form-review"><header><strong>发布影响预览</strong><span>保存后先走协同与验证，待归档阶段才正式发布</span></header><div><article><ClipboardCheck /><span><b>{form.issueIds.length}</b><small>来源问题</small></span></article><article><Link2 /><span><b>{form.workOrderIds.length}</b><small>直接工单</small></span></article><article><Boxes /><span><b>{form.productIds.length}</b><small>自动继承产品</small></span></article><article><FileArchive /><span><b>{form.eightDReportIds.length}</b><small>8D证据</small></span></article></div><p><AlertTriangle size={14} />保存不会发布警示；协同任务必须完成并经质量验证，归档事务才会冻结版本、生成警示和打印快照。</p></section></>}
+        {formStep === 5 && <><section className="risk-form-card"><header><strong>产品警示与归档范围</strong><span>这些结构化字段会进入图纸资料库、计划、生产执行及固定 A4 打印附页</span></header><div className="risk-form-grid text"><label className="wide">警示摘要<textarea rows={3} value={form.warningSummary} onChange={event => setForm(current => ({ ...current, warningSummary: event.target.value }))} placeholder="用现场作业者能直接理解的一段话说明异常和风险" /></label><label className="wide">本批必须执行<textarea rows={4} value={form.requiredAction} onChange={event => setForm(current => ({ ...current, requiredAction: event.target.value }))} placeholder={'每行一项，例如：\n1. 开工前完成首件确认\n2. 每小时抽检5只并记录'} /></label><label>检查方法<input value={form.inspectionMethod} onChange={event => setForm(current => ({ ...current, inspectionMethod: event.target.value }))} placeholder="如 数显千分尺测量" /></label><label>检查频次<input value={form.inspectionFrequency} onChange={event => setForm(current => ({ ...current, inspectionFrequency: event.target.value }))} placeholder="如 首件 + 每小时5只" /></label><label>合格判定<input value={form.acceptanceCriteria} onChange={event => setForm(current => ({ ...current, acceptanceCriteria: event.target.value }))} placeholder="如 压接高度1.80±0.05mm" /></label><label>停线/升级条件<input value={form.stopConditions} onChange={event => setForm(current => ({ ...current, stopConditions: event.target.value }))} placeholder="如 出现1只不合格立即停线" /></label><label>升级联系人<input value={form.escalationContact} onChange={event => setForm(current => ({ ...current, escalationContact: event.target.value }))} placeholder="部门或联系人" /></label><label>打印策略<select value={form.printPolicy} onChange={event => setForm(current => ({ ...current, printPolicy: event.target.value as InternalQualityRiskPrintPolicy }))}><option value="REQUIRED">必须随工单打印</option><option value="OPTIONAL">计划可选附页</option><option value="SYSTEM_ONLY">仅系统警示</option></select></label><label className="wide">风险影响范围<textarea rows={3} value={form.riskScope} onChange={event => setForm(current => ({ ...current, riskScope: event.target.value }))} placeholder="涉及批次、产品族、客户、设备、材料或供应商范围" /></label><label className="wide">适用工序/检查点<input value={form.applicableProcess} onChange={event => setForm(current => ({ ...current, applicableProcess: event.target.value }))} placeholder="如 压接首件确认、拉力抽检、后端终检" /></label><label>生效日期<input type="date" value={form.effectiveFrom} onChange={event => setForm(current => ({ ...current, effectiveFrom: event.target.value }))} /></label><label>失效日期<input type="date" value={form.effectiveUntil} onChange={event => setForm(current => ({ ...current, effectiveUntil: event.target.value }))} /><small>留空表示长期有效；需失效时单独撤销警示并保留原因</small></label></div></section><ArchiveRequirementPanel value={form.archiveRequirements} onChange={(key, mode) => setForm(current => ({ ...current, archiveRequirements: { ...current.archiveRequirements, [key]: mode } }))} /><section className="risk-form-review"><header><strong>发布影响预览</strong><span>保存后先走协同与验证，待归档阶段才正式发布</span></header><div><article><ClipboardCheck /><span><b>{form.issueIds.length}</b><small>来源问题</small></span></article><article><Link2 /><span><b>{form.workOrderIds.length}</b><small>直接工单</small></span></article><article><Boxes /><span><b>{form.productIds.length}</b><small>自动继承产品</small></span></article><article><FileArchive /><span><b>{form.eightDReportIds.length + pendingAttachments.length}</b><small>8D / 待传附件</small></span></article></div><p><AlertTriangle size={14} />保存不会发布警示；归档仅阻断本单设为“必填”的字段、固定闭环项、未完成协同任务与重大审批。</p></section></>}
         {formError && <div className="risk-form-error"><AlertTriangle size={15} />{formError}</div>}
       </div>
       <footer><span>{editing ? `并发版本 ${editing.version}` : '新建草稿'} · {form.issueIds.length} 问题 · {form.workOrderIds.length} 工单 · {form.productIds.length} 产品</span><div><button type="button" disabled={saving || formStep === 1} onClick={() => setFormStep((formStep - 1) as FormStep)}><ChevronLeft size={14} />上一步</button>{formStep < 5 ? <button className="primary" type="button" onClick={() => setFormStep((formStep + 1) as FormStep)}>下一步<ChevronRight size={14} /></button> : <button className="primary" type="submit" disabled={saving}>{saving && <Loader2 className="spin" size={14} />}{editing ? '保存修订稿' : '保存异常草稿'}</button>}</div></footer>
@@ -787,7 +904,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
 
     {revokeOpen && selected && <div className="risk-modal-backdrop"><section className="risk-confirm-modal warning-withdraw" role="alertdialog" aria-modal="true"><Ban size={28} /><h2>撤销产品异常警示？</h2><p>{selected.reportNo} · 当前覆盖 {activeAlertCount} 条活动工单预警</p><span>撤销会停止计划、生产执行和图纸资料库中的活动警示，但不会删除归档版本、打印历史或人员知悉记录。若需重新发布，必须启动新修订并重新归档。</span><label>撤销原因<textarea autoFocus rows={4} value={revokeReason} maxLength={500} onChange={event => setRevokeReason(event.target.value)} placeholder="请填写问题已永久消除、适用期结束或警示替换依据" /></label><footer><button type="button" disabled={saving} onClick={() => setRevokeOpen(false)}>保持生效</button><button className="danger" type="button" disabled={saving || !revokeReason.trim()} onClick={() => { void revokeWarning(); }}>{saving && <Loader2 className="spin" size={14} />}确认撤销警示</button></footer></section></div>}
 
-    {archivePreview && <div className="risk-modal-backdrop"><section className="risk-archive-modal" role="alertdialog" aria-modal="true"><header><div><span>归档发布门禁与同步预览</span><h2>{archivePreview.report.reportNo} · 将生成 R{archivePreview.readiness.revisionNumber}</h2><p>冻结归档版本、发布产品警示和创建工单投影在同一数据库事务中完成，任一步失败都不会部分生效。</p></div><button type="button" disabled={saving} onClick={() => setArchivePreview(null)}><X size={18} /></button></header><div className="risk-archive-modal-body"><section className={`archive-readiness ${archivePreview.readiness.ready ? 'ready' : 'blocked'}`}>{archivePreview.readiness.ready ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}<div><strong>{archivePreview.readiness.ready ? '已满足归档发布条件' : `存在 ${archivePreview.readiness.blockers.length} 个阻断项`}</strong><p>{archivePreview.readiness.ready ? `确认后冻结 R${archivePreview.readiness.revisionNumber}，同步 ${archivePreview.readiness.alertCount} 条工单质量预警。` : '请返回异常工作台补齐后重新检查。'}</p></div></section><div className="archive-impact-grid"><article><span>来源问题</span><strong>{archivePreview.readiness.issueCount}</strong></article><article><span>关联产品</span><strong>{archivePreview.readiness.productCount}</strong></article><article><span>覆盖工单</span><strong>{archivePreview.readiness.workOrderCount}</strong></article><article><span>新增预警</span><strong>{archivePreview.readiness.alertCount}</strong></article></div>{archivePreview.readiness.blockers.length > 0 && <section className="archive-check-list blockers"><header><strong>阻断项</strong><span>必须全部处理</span></header>{archivePreview.readiness.blockers.map(item => <div key={item.code}><AlertTriangle size={14} /><span><b>{item.message}</b><small>{item.code}</small></span></div>)}</section>}{archivePreview.readiness.warnings.length > 0 && <section className="archive-check-list warnings"><header><strong>提醒项</strong><span>不阻断归档</span></header>{archivePreview.readiness.warnings.map(item => <div key={item.code}><AlertTriangle size={14} /><span><b>{item.message}</b><small>{item.code}</small></span></div>)}</section>}</div><footer><span>知悉不等于风险解除；活动警示必须先单独撤销，异常才可进入回收站。</span><div><button type="button" disabled={saving} onClick={() => setArchivePreview(null)}>返回工作台</button><button className="primary" type="button" disabled={saving || !archivePreview.readiness.ready} onClick={() => { void confirmArchive(); }}>{saving && <Loader2 className="spin" size={14} />}确认归档并发布警示</button></div></footer></section></div>}
+    {archivePreview && <div className="risk-modal-backdrop"><section className="risk-archive-modal" role="alertdialog" aria-modal="true"><header><div><span>归档发布门禁与同步预览</span><h2>{archivePreview.report.reportNo} · 将生成 R{archivePreview.readiness.revisionNumber}</h2><p>冻结归档版本、发布产品警示和创建工单投影在同一数据库事务中完成，任一步失败都不会部分生效。</p></div><button type="button" disabled={saving} onClick={() => setArchivePreview(null)}><X size={18} /></button></header><div className="risk-archive-modal-body"><section className={`archive-readiness ${archivePreview.readiness.ready ? 'ready' : 'blocked'}`}>{archivePreview.readiness.ready ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}<div><strong>{archivePreview.readiness.ready ? '已满足归档发布条件' : `存在 ${archivePreview.readiness.blockers.length} 个阻断项`}</strong><p>{archivePreview.readiness.ready ? `确认后冻结 R${archivePreview.readiness.revisionNumber}，同步 ${archivePreview.readiness.alertCount} 条工单质量预警。` : '仅需处理本单设为必填的字段与固定闭环项；选填和不适用不会阻断。'}</p></div></section><div className="archive-impact-grid"><article><span>来源问题</span><strong>{archivePreview.readiness.issueCount}</strong></article><article><span>关联产品</span><strong>{archivePreview.readiness.productCount}</strong></article><article><span>覆盖工单</span><strong>{archivePreview.readiness.workOrderCount}</strong></article><article><span>新增预警</span><strong>{archivePreview.readiness.alertCount}</strong></article></div><section className="archive-policy-summary"><span><strong>{Object.values(archivePreview.report.archiveRequirements).filter(mode => mode === 'REQUIRED').length}</strong><small>本单必填</small></span><span><strong>{Object.values(archivePreview.report.archiveRequirements).filter(mode => mode === 'OPTIONAL').length}</strong><small>选填</small></span><span><strong>{Object.values(archivePreview.report.archiveRequirements).filter(mode => mode === 'NOT_APPLICABLE').length}</strong><small>不适用</small></span><p>最终结论、有效产品/工单、未关闭协同任务及重大问题审批属于固定闭环条件。</p></section>{archivePreview.readiness.blockers.length > 0 && <section className="archive-check-list blockers"><header><strong>本次必须处理</strong><span>按当前字段策略生成</span></header>{archivePreview.readiness.blockers.map(item => <div key={item.code} title={item.code}><AlertTriangle size={14} /><span><b>{item.message}</b></span></div>)}</section>}{archivePreview.readiness.warnings.length > 0 && <section className="archive-check-list warnings"><header><strong>建议补充</strong><span>不阻断归档</span></header>{archivePreview.readiness.warnings.map(item => <div key={item.code} title={item.code}><AlertTriangle size={14} /><span><b>{item.message}</b></span></div>)}</section>}</div><footer><span>预览使用与正式工单相同组件；未归档版本会带“不可用于生产”水印。</span><div><Link className="print-preview" href={`/workspace/quality/internal-risks/${encodeURIComponent(archivePreview.report.id)}/print-preview`} target="_blank"><Eye size={14} />预览工单附页</Link><button type="button" disabled={saving} onClick={() => setArchivePreview(null)}>返回工作台</button><button className="primary" type="button" disabled={saving || !archivePreview.readiness.ready} onClick={() => { void confirmArchive(); }}>{saving && <Loader2 className="spin" size={14} />}确认归档并发布警示</button></div></footer></section></div>}
 
     {deleteTarget && <div className="risk-modal-backdrop"><section className="risk-confirm-modal" role="alertdialog" aria-modal="true"><Archive size={28} /><h2>将异常汇总移入回收站？</h2><p>{deleteTarget.reportNo} · {deleteTarget.title}</p><span>异常正文、关联、协同任务、证据元数据和审计历史会保留，可在30天内恢复。已撤销的警示不会因恢复自动重发。</span><label>删除原因<textarea autoFocus rows={4} value={deleteReason} maxLength={500} onChange={event => setDeleteReason(event.target.value)} placeholder="请填写重复建立、内容作废或其他业务原因" /></label><footer><button type="button" disabled={saving} onClick={() => setDeleteTarget(null)}>取消</button><button className="danger" type="button" disabled={saving || !deleteReason.trim()} onClick={() => { void confirmDelete(); }}>{saving && <Loader2 className="spin" size={14} />}移入回收站</button></footer></section></div>}
 

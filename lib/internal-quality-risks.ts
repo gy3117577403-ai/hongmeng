@@ -8,11 +8,50 @@ export const QUALITY_ALERT_ACTIVE_STATES = ['ACTIVE', 'ACKNOWLEDGED'] as const;
 export const INTERNAL_QUALITY_RISK_TASK_STATUSES = ['TODO', 'IN_PROGRESS', 'COMPLETED', 'VERIFIED', 'CANCELLED'] as const;
 export const INTERNAL_QUALITY_RISK_TASK_TYPES = ['CONTAINMENT', 'CAUSE', 'ACTION', 'VERIFICATION', 'COLLABORATION'] as const;
 export const INTERNAL_QUALITY_RISK_PRINT_POLICIES = ['REQUIRED', 'OPTIONAL', 'SYSTEM_ONLY'] as const;
+export const INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENT_MODES = ['REQUIRED', 'OPTIONAL', 'NOT_APPLICABLE'] as const;
+export const INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENT_KEYS = [
+  'defectPhenomenon',
+  'occurrenceCause',
+  'escapeCause',
+  'rootCause',
+  'containmentAction',
+  'correctiveAction',
+  'verificationResult',
+  'warningSummary',
+  'requiredAction',
+  'inspectionMethod',
+  'inspectionFrequency',
+  'acceptanceCriteria',
+  'stopConditions',
+  'sourceIssue',
+  'evidence',
+] as const;
 export const QUALITY_RISK_PURGE_RETENTION_DAYS = 30;
 
 export type InternalQualityRiskStatus = typeof INTERNAL_QUALITY_RISK_STATUSES[number];
 export type InternalQualityRiskSeverity = typeof INTERNAL_QUALITY_RISK_SEVERITIES[number];
 export type InternalQualityRiskActor = { id: string; name: string };
+export type InternalQualityRiskArchiveRequirementMode = typeof INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENT_MODES[number];
+export type InternalQualityRiskArchiveRequirementKey = typeof INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENT_KEYS[number];
+export type InternalQualityRiskArchiveRequirements = Record<InternalQualityRiskArchiveRequirementKey, InternalQualityRiskArchiveRequirementMode>;
+
+export const DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS: InternalQualityRiskArchiveRequirements = {
+  defectPhenomenon: 'REQUIRED',
+  occurrenceCause: 'OPTIONAL',
+  escapeCause: 'OPTIONAL',
+  rootCause: 'OPTIONAL',
+  containmentAction: 'OPTIONAL',
+  correctiveAction: 'OPTIONAL',
+  verificationResult: 'OPTIONAL',
+  warningSummary: 'REQUIRED',
+  requiredAction: 'REQUIRED',
+  inspectionMethod: 'OPTIONAL',
+  inspectionFrequency: 'OPTIONAL',
+  acceptanceCriteria: 'OPTIONAL',
+  stopConditions: 'OPTIONAL',
+  sourceIssue: 'OPTIONAL',
+  evidence: 'OPTIONAL',
+};
 
 export class InternalQualityRiskError extends Error {
   constructor(
@@ -57,11 +96,25 @@ export type InternalQualityRiskInput = {
   stopConditions: string | null;
   escalationContact: string | null;
   printPolicy: typeof INTERNAL_QUALITY_RISK_PRINT_POLICIES[number];
+  archiveRequirements: InternalQualityRiskArchiveRequirements;
   issueIds: string[];
   workOrderIds: string[];
   productIds: string[];
   eightDReportIds: string[];
 };
+
+export function normalizeInternalQualityRiskArchiveRequirements(value: unknown): InternalQualityRiskArchiveRequirements {
+  const input = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  return Object.fromEntries(INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENT_KEYS.map(key => {
+    const rawMode = String(input[key] || DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS[key]).toUpperCase();
+    const mode = INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENT_MODES.includes(rawMode as InternalQualityRiskArchiveRequirementMode)
+      ? rawMode as InternalQualityRiskArchiveRequirementMode
+      : DEFAULT_INTERNAL_QUALITY_RISK_ARCHIVE_REQUIREMENTS[key];
+    return [key, mode];
+  })) as InternalQualityRiskArchiveRequirements;
+}
 
 function cleanText(value: unknown, max: number): string | null {
   if (typeof value !== 'string') return null;
@@ -152,6 +205,7 @@ export function parseInternalQualityRiskInput(input: Record<string, unknown>): I
     stopConditions: longText(input.stopConditions, 2_000),
     escalationContact: cleanText(input.escalationContact, 500),
     printPolicy: printPolicy as typeof INTERNAL_QUALITY_RISK_PRINT_POLICIES[number],
+    archiveRequirements: normalizeInternalQualityRiskArchiveRequirements(input.archiveRequirements),
     issueIds: normalizeQualityRiskRelationIds(input.issueIds),
     workOrderIds: normalizeQualityRiskRelationIds(input.workOrderIds),
     productIds: normalizeQualityRiskRelationIds(input.productIds),
@@ -383,6 +437,7 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
     stopConditions: report.stopConditions,
     escalationContact: report.escalationContact,
     printPolicy: report.printPolicy,
+    archiveRequirements: normalizeInternalQualityRiskArchiveRequirements(report.archiveRequirements),
     warningPublishedAt: report.warningPublishedAt?.toISOString() || null,
     warningRevokedAt: report.warningRevokedAt?.toISOString() || null,
     warningRevokeReason: report.warningRevokeReason,
@@ -568,6 +623,7 @@ function reportData(input: InternalQualityRiskInput) {
     stopConditions: input.stopConditions,
     escalationContact: input.escalationContact,
     printPolicy: input.printPolicy,
+    archiveRequirements: input.archiveRequirements as unknown as Prisma.InputJsonValue,
   };
 }
 
@@ -673,7 +729,8 @@ export function evaluateInternalQualityRiskReadiness(report: InternalQualityRisk
   const warnings: QualityRiskReadiness['warnings'] = [];
   const activeWorkOrders = report.workOrders.filter(link => !link.workOrder.deletedAt);
   const activeProducts = report.products.filter(link => !link.product.deletedAt);
-  const required: Array<[keyof InternalQualityRiskRecord, string, string]> = [
+  const archiveRequirements = normalizeInternalQualityRiskArchiveRequirements(report.archiveRequirements);
+  const configurableFields: Array<[Exclude<InternalQualityRiskArchiveRequirementKey, 'sourceIssue' | 'evidence'>, string, string]> = [
     ['defectPhenomenon', 'QUALITY_RISK_DEFECT_REQUIRED', '请完整填写不良现象'],
     ['occurrenceCause', 'QUALITY_RISK_OCCURRENCE_CAUSE_REQUIRED', '请填写发生原因'],
     ['escapeCause', 'QUALITY_RISK_ESCAPE_CAUSE_REQUIRED', '请填写流出原因'],
@@ -681,7 +738,6 @@ export function evaluateInternalQualityRiskReadiness(report: InternalQualityRisk
     ['containmentAction', 'QUALITY_RISK_CONTAINMENT_REQUIRED', '请填写临时遏制措施'],
     ['correctiveAction', 'QUALITY_RISK_CORRECTIVE_REQUIRED', '请填写纠正措施'],
     ['verificationResult', 'QUALITY_RISK_VERIFICATION_REQUIRED', '请填写措施验证结果'],
-    ['finalConclusion', 'QUALITY_RISK_CONCLUSION_REQUIRED', '请填写最终结论'],
     ['warningSummary', 'QUALITY_RISK_WARNING_SUMMARY_REQUIRED', '请填写给现场人员看的异常警示摘要'],
     ['requiredAction', 'QUALITY_RISK_REQUIRED_ACTION_REQUIRED', '请填写本批工单必须执行的处理要求'],
     ['inspectionMethod', 'QUALITY_RISK_INSPECTION_METHOD_REQUIRED', '请填写检查方法'],
@@ -689,8 +745,13 @@ export function evaluateInternalQualityRiskReadiness(report: InternalQualityRisk
     ['acceptanceCriteria', 'QUALITY_RISK_ACCEPTANCE_CRITERIA_REQUIRED', '请填写合格判定标准'],
     ['stopConditions', 'QUALITY_RISK_STOP_CONDITIONS_REQUIRED', '请填写停线与升级条件'],
   ];
-  required.forEach(([field, code, message]) => { if (!report[field]) blockers.push({ code, message }); });
-  if (!report.issues.length) blockers.push({ code: 'QUALITY_RISK_SOURCE_ISSUE_REQUIRED', message: '至少关联一个有效来源质量问题' });
+  configurableFields.forEach(([field, code, message]) => {
+    if (archiveRequirements[field] === 'REQUIRED' && !report[field]) blockers.push({ code, message });
+  });
+  if (!report.finalConclusion) blockers.push({ code: 'QUALITY_RISK_CONCLUSION_REQUIRED', message: '请填写最终结论（闭环固定必填）' });
+  if (archiveRequirements.sourceIssue === 'REQUIRED' && !report.issues.length) {
+    blockers.push({ code: 'QUALITY_RISK_SOURCE_ISSUE_REQUIRED', message: '来源问题已设为必填，请至少关联一个有效质量问题' });
+  }
   if (!activeWorkOrders.length && !activeProducts.length) {
     blockers.push({ code: 'QUALITY_RISK_IMPACT_REQUIRED', message: '至少关联一个未删除的工单或产品' });
   }
@@ -702,9 +763,12 @@ export function evaluateInternalQualityRiskReadiness(report: InternalQualityRisk
   if (unapprovedMajor.length) {
     blockers.push({ code: 'QUALITY_RISK_MAJOR_APPROVAL_REQUIRED', message: `${unapprovedMajor.length} 个重大质量问题尚未完成质量复核与总经理终审` });
   }
-  if ((report.severity === 'HIGH' || report.severity === 'CRITICAL')
-    && !report.evidenceSummary && !report.eightDReports.length && !report.attachments.length) {
-    blockers.push({ code: 'QUALITY_RISK_EVIDENCE_REQUIRED', message: '高风险/重大风险归档前需填写证据摘要或关联8D档案' });
+  const hasEvidence = Boolean(report.evidenceSummary || report.eightDReports.length || report.attachments.length);
+  if (archiveRequirements.evidence === 'REQUIRED' && !hasEvidence) {
+    blockers.push({ code: 'QUALITY_RISK_EVIDENCE_REQUIRED', message: '证据已设为必填，请填写摘要、上传附件或关联8D档案' });
+  } else if (archiveRequirements.evidence === 'OPTIONAL'
+    && (report.severity === 'HIGH' || report.severity === 'CRITICAL') && !hasEvidence) {
+    warnings.push({ code: 'QUALITY_RISK_EVIDENCE_RECOMMENDED', message: '高/重大风险尚无证据，当前策略允许归档，但建议补充附件、摘要或8D档案' });
   }
   const skippedImpacts = (report.workOrders.length - activeWorkOrders.length) + (report.products.length - activeProducts.length);
   if (skippedImpacts) warnings.push({ code: 'QUALITY_RISK_DELETED_IMPACT_SKIPPED', message: `${skippedImpacts} 个已删除的工单或产品不会进入归档预警范围` });
@@ -788,6 +852,7 @@ function snapshotFor(report: InternalQualityRiskRecord, revisionNumber: number):
     stopConditions: report.stopConditions,
     escalationContact: report.escalationContact,
     printPolicy: report.printPolicy,
+    archiveRequirements: normalizeInternalQualityRiskArchiveRequirements(report.archiveRequirements),
     issues: report.issues.map(link => ({ id: link.issue.id, code: issueCode(link.issue.sequence), title: link.issue.title, version: link.issue.version })),
     workOrders: report.workOrders.map(link => ({ id: link.workOrder.id, code: link.workOrder.code, businessCode: link.workOrder.businessCode, source: link.source })),
     products: report.products.map(link => ({ id: link.product.id, specification: link.product.specification, customerName: link.product.customerName })),
@@ -932,6 +997,88 @@ export function archivedQualityWarningAttachmentIds(revisionSnapshot: unknown): 
   return attachments
     .map(item => jsonObject(item)?.id)
     .filter((id): id is string => typeof id === 'string' && Boolean(id));
+}
+
+export async function loadInternalQualityRiskPrintPreview(reportId: string, requestedWorkOrderId = '') {
+  const report = await prisma.internalQualityRiskReport.findFirst({
+    where: { id: reportId, deletedAt: null },
+    include: internalQualityRiskInclude,
+  });
+  if (!report) throw new InternalQualityRiskError('内部重大异常不存在', 404, 'QUALITY_RISK_NOT_FOUND');
+
+  const activeProductIds = report.products.filter(link => !link.product.deletedAt).map(link => link.drawingLibraryItemId);
+  const directOrders = report.workOrders.filter(link => !link.workOrder.deletedAt).map(link => link.workOrder);
+  const productOrders = activeProductIds.length ? await prisma.workOrder.findMany({
+    where: { drawingLibraryItemId: { in: activeProductIds }, deletedAt: null },
+    select: workOrderSelect,
+    orderBy: [{ createdAt: 'desc' }],
+    take: 200,
+  }) : [];
+  const orderCandidates = [...directOrders, ...productOrders].filter((order, index, all) => all.findIndex(item => item.id === order.id) === index);
+  const selectedOrder = orderCandidates.find(order => order.id === requestedWorkOrderId) || orderCandidates[0] || null;
+  const selectedProduct = report.products.find(link => !link.product.deletedAt && link.drawingLibraryItemId === selectedOrder?.drawingLibraryItemId)?.product
+    || report.products.find(link => !link.product.deletedAt)?.product
+    || null;
+  const useArchiveSnapshot = report.status === 'ARCHIVED' ? report.currentRevision?.snapshot : undefined;
+  const warning = resolveArchivedQualityWarning(report, useArchiveSnapshot);
+  const revisionNumber = report.status === 'ARCHIVED'
+    ? report.currentRevision?.revisionNumber || report.revisions[0]?.revisionNumber || 1
+    : (report.revisions[0]?.revisionNumber || 0) + 1;
+  const archivedAttachmentIds = report.status === 'ARCHIVED' && report.currentRevision
+    ? new Set(report.currentRevision.attachments.map(item => item.attachmentId))
+    : null;
+  const attachments = report.attachments
+    .filter(attachment => !archivedAttachmentIds || archivedAttachmentIds.has(attachment.id))
+    .map(attachment => ({
+      id: attachment.id,
+      displayName: attachment.displayName,
+      mimeType: attachment.mimeType,
+      caption: attachment.caption,
+      category: attachment.category,
+      contentUrl: `/api/quality/internal-risk-attachments/${attachment.id}/content`,
+    }));
+  return {
+    generatedAt: new Date().toISOString(),
+    previewState: report.status === 'ARCHIVED' ? 'ARCHIVED' as const : 'DRAFT' as const,
+    readiness: evaluateInternalQualityRiskReadiness(report),
+    orders: orderCandidates.map(order => ({
+      id: order.id,
+      label: order.businessCode || order.specification || order.code,
+      productLabel: `${order.specification || order.productName} · ${order.customerName || '客户未填'}`,
+    })),
+    order: {
+      id: selectedOrder?.id || null,
+      workOrderCode: selectedOrder?.code || '归档后按产品匹配',
+      businessWorkOrderCode: selectedOrder?.businessCode || null,
+      productName: selectedOrder?.productName || selectedProduct?.productName || '关联产品待选择',
+      specification: selectedOrder?.specification || selectedProduct?.specification || null,
+      customerName: selectedOrder?.customerName || selectedProduct?.customerName || null,
+    },
+    warning: {
+      alertId: `preview-${report.id}-${revisionNumber}`,
+      reportId: report.id,
+      reportNo: report.reportNo,
+      revisionId: report.status === 'ARCHIVED' ? report.currentRevisionId || `R${revisionNumber}` : `preview-R${revisionNumber}`,
+      revisionNumber,
+      severity: warning.severity,
+      title: warning.title,
+      warningSummary: warning.warningSummary,
+      defectPhenomenon: warning.defectPhenomenon,
+      rootCause: warning.rootCause,
+      requiredAction: warning.requiredAction,
+      inspectionMethod: warning.inspectionMethod,
+      inspectionFrequency: warning.inspectionFrequency,
+      acceptanceCriteria: warning.acceptanceCriteria,
+      stopConditions: warning.stopConditions,
+      escalationContact: warning.escalationContact,
+      applicableProcess: warning.applicableProcess,
+      effectiveFrom: warning.effectiveFrom?.toISOString() || null,
+      effectiveUntil: warning.effectiveUntil?.toISOString() || null,
+      printPolicy: warning.printPolicy,
+      archivedAt: report.status === 'ARCHIVED' && report.archivedAt ? report.archivedAt.toISOString() : new Date().toISOString(),
+      attachments,
+    },
+  };
 }
 
 function alertCreateData(

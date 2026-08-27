@@ -20,6 +20,7 @@ import {
 import QRCode from 'qrcode';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { calculateStandardHourlyCapacity } from '@/lib/process-capacity';
+import { QualityWarningPrintSheet } from '@/components/QualityWarningPrintSheet';
 import { workOrderPrintReturnLabel } from '@/lib/work-order-print-navigation';
 import type { WorkOrderTravelerPrintRecord } from '@/lib/work-order-qr-service';
 import {
@@ -44,10 +45,6 @@ type PacketState = {
 type TravelerStep = WorkOrderTravelerPrintRecord['snapshot']['steps'][number];
 type TravelerPage = TravelerPageChunk<TravelerStep>;
 type QualityWarning = WorkOrderTravelerPrintRecord['snapshot']['qualityWarnings'][number];
-
-function warningLines(value?: string | null): string[] {
-  return String(value || '').split(/\r?\n|[；;]/).map(item => item.replace(/^\s*[\d一二三四五六七八九十]+[.、)）]\s*/, '').trim()).filter(Boolean).slice(0, 6);
-}
 
 const TRAVELER_LAYOUT_OPTIONS: Array<{
   value: TravelerLayoutMode;
@@ -540,49 +537,21 @@ export default function WorkOrderTravelerPrint({
 
   function warningSheet(record: WorkOrderTravelerPrintRecord, warning: QualityWarning, pageNumber: number, capture = false) {
     const snapshot = record.snapshot;
-    const actions = warningLines(warning.requiredAction);
-    const photos = warning.attachments.filter(item => item.mimeType.startsWith('image/')).slice(0, 3);
-    return <article
-      className="quality-warning-sheet"
+    return <QualityWarningPrintSheet
       key={`${record.printId}-warning-${warning.alertId}`}
-      ref={capture ? node => { warningRefs.current[warningPageKey(record.printId, pageNumber)] = node; } : undefined}
-      data-warning-source={capture ? `${record.printId}:${pageNumber}` : undefined}
-    >
-      <header className="quality-warning-print-head">
-        <div><ShieldAlert /><span><strong>产品质量异常作业警示单</strong><small>归档异常自动同步 · 随工单执行并留存</small></span></div>
-        <em>R{warning.revisionNumber} · {warning.printPolicy === 'REQUIRED' ? '必须随单打印' : '可选附页'}</em>
-      </header>
-      <section className="quality-warning-meta">
-        <div className="wide"><span>异常标题</span><strong>{warning.title}</strong></div>
-        <div><span>异常编号</span><strong>{warning.reportNo}</strong></div>
-        <div><span>风险等级</span><strong className={`risk-${warning.severity.toLowerCase()}`}>{warning.severity === 'CRITICAL' ? '重大' : warning.severity === 'HIGH' ? '高' : warning.severity === 'MEDIUM' ? '中' : '低'}</strong></div>
-        <div className="wide"><span>产品</span><strong>{snapshot.specification || snapshot.productName}</strong></div>
-        <div><span>关联工单</span><strong>{snapshot.businessWorkOrderCode || snapshot.workOrderCode}</strong></div>
-        <div><span>归档时间</span><strong>{dateTimeText(warning.archivedAt)}</strong></div>
-      </section>
-      <section className="quality-warning-analysis">
-        <div><h3>异常现象与风险</h3><p>{warning.warningSummary || warning.defectPhenomenon || '见异常归档记录'}</p><small><b>确认根因：</b>{warning.rootCause || '见归档分析'}</small></div>
-        <aside>{photos.length ? photos.map(photo => <figure key={photo.id}><img src={photo.contentUrl} alt={photo.caption || photo.displayName} /><figcaption>{photo.caption || photo.category}</figcaption></figure>) : <div className="quality-warning-no-photo"><ShieldAlert /><span>本版本无图片证据<br />请扫码查看完整归档</span></div>}</aside>
-      </section>
-      <section className="quality-warning-actions">
-        <h3>本批工单执行要求（必须执行）</h3>
-        <div>{(actions.length ? actions : ['按归档解决方案执行，并完成首件确认与过程复核。']).map((action, index) => <article key={`${warning.alertId}-action-${index}`}><b>{String(index + 1).padStart(2, '0')}</b><span>{action}</span></article>)}</div>
-      </section>
-      <section className="quality-warning-controls">
-        <div><span>检查方法</span><strong>{warning.inspectionMethod || '按归档方案执行'}</strong></div>
-        <div><span>检查频次</span><strong>{warning.inspectionFrequency || '首件及巡检'}</strong></div>
-        <div><span>合格判定</span><strong>{warning.acceptanceCriteria || '满足图纸与检验标准'}</strong></div>
-        <div><span>停线 / 升级条件</span><strong>{warning.stopConditions || '发现同类异常立即停线并上报质量'}</strong></div>
-      </section>
-      <section className="quality-warning-knowledge">
-        <div className="quality-warning-qr">{warningQrImages[warning.alertId] ? <img src={warningQrImages[warning.alertId]} alt="异常归档二维码" /> : <span>二维码生成中</span>}</div>
-        <div><h3>扫码查看完整异常归档</h3><p>原因、措施、证据图片、版本历史与关联产品均以系统归档版本为准。</p><small>适用工序：{warning.applicableProcess || '全部相关工序'} · 升级联系人：{warning.escalationContact || '质量部'}</small></div>
-      </section>
-      <section className="quality-warning-signatures">
-        {['工艺确认', '质量确认', '生产确认', '操作员确认'].map(label => <div key={label}><strong>{label}</strong><span>姓名：</span><span>签字：</span><span>日期：</span></div>)}
-      </section>
-      <footer><span>警示快照 {warning.reportNo}-R{warning.revisionNumber}</span><strong>请随工单一同下发与归档</strong><small>第 {pageNumber} / {snapshot.qualityWarnings.length} 张警示附页</small></footer>
-    </article>;
+      sheetRef={capture ? node => { warningRefs.current[warningPageKey(record.printId, pageNumber)] = node; } : undefined}
+      sourceKey={capture ? `${record.printId}:${pageNumber}` : undefined}
+      order={{
+        workOrderCode: snapshot.workOrderCode,
+        businessWorkOrderCode: snapshot.businessWorkOrderCode,
+        productName: snapshot.productName,
+        specification: snapshot.specification,
+      }}
+      warning={warning}
+      qrImage={warningQrImages[warning.alertId]}
+      pageNumber={pageNumber}
+      totalPages={snapshot.qualityWarnings.length}
+    />;
   }
 
   const combinedState = packetStates.all;

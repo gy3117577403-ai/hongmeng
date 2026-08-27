@@ -3648,6 +3648,7 @@ model InternalQualityRiskReport {
   stopConditions        String?                           @map("stop_conditions")
   escalationContact     String?                           @map("escalation_contact")
   printPolicy           String                            @default("OPTIONAL") @map("print_policy")
+  archiveRequirements   Json?                             @map("archive_requirements")
   warningPublishedAt    DateTime?                         @map("warning_published_at")
   warningRevokedAt      DateTime?                         @map("warning_revoked_at")
   warningRevokeReason   String?                           @map("warning_revoke_reason")
