@@ -44,6 +44,8 @@ import { PortalMenu } from '@/components/PortalMenu';
 import { QualityModuleTabs } from '@/components/QualityModuleTabs';
 import { useToastBridge } from '@/components/ToastProvider';
 import QualityRiskInitiateDialog from '@/components/QualityRiskInitiateDialog';
+import QualityWorkflowPanel from '@/components/QualityWorkflowPanel';
+import { QUALITY_PROBLEM_CATEGORIES } from '@/lib/quality-workflow-shared';
 import { QualityAssigneeSelect } from '@/components/QualityAssigneeSelect';
 import { QualityTaskActions } from '@/components/QualityTaskActions';
 import { QualityEvidencePrintEditor } from '@/components/QualityEvidencePrintEditor';
@@ -416,6 +418,9 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
   const [status, setStatus] = useState<StatusFilter>('ALL');
   const [severity, setSeverity] = useState<'ALL' | InternalQualityRiskSeverity>('ALL');
   const [keyword, setKeyword] = useState('');
+  const [problemCategory, setProblemCategory] = useState('');
+  const [department, setDepartment] = useState('');
+  const [intakeDraft, setIntakeDraft] = useState<InternalQualityRiskDTO | null>(null);
   const [productId, setProductId] = useState('');
   const [issueId, setIssueId] = useState('');
   const [workOrderId, setWorkOrderId] = useState(initialWorkOrderId);
@@ -473,6 +478,8 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
     try {
       const params = new URLSearchParams({ status: status === 'ALL' ? 'all' : status, limit: '400' });
       if (keyword.trim()) params.set('keyword', keyword.trim());
+      if (problemCategory) params.set('problemCategory', problemCategory);
+      if (department) params.set('department', department);
       if (severity !== 'ALL') params.set('severity', severity);
       if (productId) params.set('productId', productId);
       if (issueId) params.set('issueId', issueId);
@@ -488,7 +495,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
     } finally {
       if (requestSequence.current === sequence) setLoading(false);
     }
-  }, [issueId, keyword, productId, severity, status, workOrderId]);
+  }, [issueId, keyword, productId, severity, status, workOrderId, problemCategory, department]);
 
   useEffect(() => { void loadOptions(); }, [loadOptions]);
   useEffect(() => { const timer = window.setTimeout(() => { void loadReports(); }, 180); return () => window.clearTimeout(timer); }, [loadReports]);
@@ -505,7 +512,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
     setForm(current => ({ ...current, [field]: current[field].includes(id) ? current[field].filter(item => item !== id) : [...current[field], id] }));
   }
 
-  function openCreate(): void { setInitiateOpen(true); }
+  function openCreate(): void { setIntakeDraft(null); setInitiateOpen(true); }
 
   function openEdit(report = selected): void {
     if (!report || report.status === 'ARCHIVED' || report.deletedAt) return;
@@ -782,7 +789,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
   }[selected.status] || []) : [];
 
   return <main className="hm-workbench-root hm-cockpit-root internal-risk-shell">
-    {initiateOpen && <QualityRiskInitiateDialog options={options} initialProductId={productId} onClose={() => setInitiateOpen(false)} onSaved={report => { updateReport(report); void loadReports(); }} />}
+    {initiateOpen && <QualityRiskInitiateDialog initialReport={intakeDraft} options={options} initialProductId={productId} onClose={() => setInitiateOpen(false)} onSaved={report => { updateReport(report); void loadReports(); }} />}
     <AppWorkbenchHeader user={user} activeHref="/workspace/quality/internal-risks" subtitle="车间重大不良闭环与工单风险预知" menuItems={[]} hideHeader sidebarTriggerTargetId="internal-risk-navigation-trigger" />
     <div className="internal-risk-frame">
       <WorkbenchCockpitCommand
@@ -803,6 +810,9 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
           <header><div><Link2 size={15} /><strong>风险筛选</strong></div>{(severity !== 'ALL' || productId || issueId || workOrderId) && <button type="button" onClick={() => { setSeverity('ALL'); setProductId(''); setIssueId(''); setWorkOrderId(''); }}>清空</button>}</header>
           <section><strong>风险等级</strong><div className="risk-severity-filter">{(['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const).map(key => <button className={severity === key ? 'active' : ''} type="button" key={key} onClick={() => setSeverity(key)}><span className={`severity-dot severity-${key.toLowerCase()}`} />{key === 'ALL' ? '全部等级' : severityLabels[key]}</button>)}</div></section>
           <section className="risk-select-filters">
+            <label>问题归属<select value={problemCategory} onChange={event => setProblemCategory(event.target.value)}><option value="">全部归属</option>{QUALITY_PROBLEM_CATEGORIES.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
+            <label>问题归属部门<select value={department} onChange={event => setDepartment(event.target.value)}><option value="">全部部门</option>{QUALITY_PROBLEM_CATEGORIES.map(item => <option value={item.department} key={item.id}>{item.department}</option>)}</select></label>
+            <Link href="/workspace/quality-tasks">我的待处理任务</Link><Link href="/workspace/quality-confirmation">品质确认</Link>
             <strong>关联对象</strong>
             <SearchableRiskFilter label="产品" allLabel="全部产品" searchPlaceholder="搜索规格、品名或客户" value={productId} options={productFilterItems} onChange={setProductId} />
             <SearchableRiskFilter label="来源问题" allLabel="全部问题" searchPlaceholder="搜索问题编号、标题或工单" value={issueId} options={issueFilterItems} onChange={setIssueId} />
@@ -831,15 +841,15 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
             <header className="risk-detail-header"><div><span>{selected.reportNo} · {severityLabels[selected.severity]}</span><h2>{selected.title}</h2><small>{selected.workshopArea || '车间未填'} · {selected.processName || '工序未填'} · 更新于 {formatDate(selected.updatedAt, true)}</small></div><nav>
               {selected.deletedAt ? <>{isAdmin && <button type="button" disabled={saving} onClick={() => { void restoreReport(); }}><RotateCcw size={14} />恢复</button>}{isAdmin && <button className="danger" type="button" disabled={saving} title="查看彻底删除条件" onClick={() => { setPurgeTarget(selected); setPurgeConfirmation(''); setPurgeReason(''); }}><Trash2 size={14} />彻底删除</button>}</> : <>
                 <Link className="print-preview" href={`/workspace/quality/internal-risks/${encodeURIComponent(selected.id)}/print-preview`} target="_blank"><Printer size={14} />工单附页预览</Link>
-                {selected.status !== 'ARCHIVED' && canUpdate && <button type="button" onClick={() => openEdit()}><Pencil size={14} />编辑</button>}
                 {selected.status === 'ARCHIVED' && canArchive && <button type="button" disabled={saving} onClick={() => { void startRevision(); }}><History size={14} />启动修订</button>}
                 {(selected.status === 'PENDING_CLOSE' || selected.status === 'REVISING') && canArchive && <button className="archive" type="button" disabled={saving} onClick={() => { void previewArchive(); }}><Archive size={14} />归档发布</button>}
                 {selected.warningState === 'ACTIVE' && canArchive && <button className="warning-revoke" type="button" disabled={saving} title="撤销产品警示后才可回收异常" onClick={() => { setRevokeOpen(true); setRevokeReason(''); }}><Ban size={14} />撤销警示</button>}
                 {isAdmin && <button className="danger icon" type="button" disabled={saving || selected.warningState === 'ACTIVE'} title={selected.warningState === 'ACTIVE' ? '请先撤销活动产品警示' : '移入回收站'} onClick={() => { setDeleteTarget(selected); setDeleteReason(''); }}><Trash2 size={14} /></button>}
               </>}
             </nav></header>
-            <div className="risk-detail-tabs" role="tablist">{([['overview', '工作台'], ['collaboration', '协同任务'], ['warning', '警示与证据'], ['causes', '原因结论'], ['actions', '措施验证'], ['relations', '关联对象'], ['archive', '归档同步']] as Array<[DetailTab, string]>).map(([key, label]) => <button className={detailTab === key ? 'active' : ''} type="button" key={key} onClick={() => setDetailTab(key)}>{label}{key === 'collaboration' && <em>{selected.tasks.length}</em>}{key === 'warning' && <em>{selected.attachments.length}</em>}{key === 'relations' && <em>{selected.issues.length + selected.workOrders.length + selected.products.length + selected.eightDReports.length}</em>}{key === 'archive' && <em>{selected.revisions.length}</em>}</button>)}</div>
+            <div className="risk-detail-tabs" role="tablist">{([['overview', '处理流程'], ['warning', '警示与证据'], ['relations', '关联对象'], ['archive', '归档同步']] as Array<[DetailTab, string]>).map(([key, label]) => <button className={detailTab === key ? 'active' : ''} type="button" key={key} onClick={() => setDetailTab(key)}>{label}{key === 'collaboration' && <em>{selected.tasks.length}</em>}{key === 'warning' && <em>{selected.attachments.length}</em>}{key === 'relations' && <em>{selected.issues.length + selected.workOrders.length + selected.products.length + selected.eightDReports.length}</em>}{key === 'archive' && <em>{selected.revisions.length}</em>}</button>)}</div>
             <div className="risk-detail-body hm-scroll-region">
+              {['overview', 'collaboration', 'causes', 'actions'].includes(detailTab) ? <QualityWorkflowPanel key={selected.id} report={selected} user={user} users={options.assignees || []} onUpdated={updateReport} onEditDraft={() => { setIntakeDraft(selected); setInitiateOpen(true); }} /> : <>
               {detailTab === 'overview' && <>
                 <section className={`risk-hero severity-${selected.severity.toLowerCase()}`}><div><span>{selected.deletedAt ? '已进入回收站' : `${statusLabels[selected.status]} · ${selected.warningState === 'ACTIVE' ? '产品警示已发布' : '警示未发布'}`}</span><h3>{selected.defectPhenomenon || '不良现象待完善'}</h3><p>{selected.riskScope || '风险影响范围待填写'}</p></div><dl><div><dt>协同任务</dt><dd>{completedTaskCount}/{selected.tasks.length}</dd></div><div><dt>覆盖工单</dt><dd>{selected.workOrders.length}</dd></div><div><dt>活动预警</dt><dd>{activeAlertCount}</dd></div></dl></section>
                 <section className="risk-workflow-card"><header><div><CircleDot size={15} /><strong>异常协同处理流程</strong></div><span>每个阶段均写入审计活动</span></header><div className="risk-workflow-line">{workflowOrder.map((item, index) => { const current = selected.status === item || (['REVISING', 'CONTAINMENT'].includes(selected.status) && item === 'COLLABORATING'); const done = selected.status === 'ARCHIVED' || index < workflowActiveIndex; return <article className={`${current ? 'current' : ''} ${done ? 'done' : ''}`} key={item}><b>{done ? <Check size={13} /> : index + 1}</b><span><strong>{workflowLabel[item]}</strong><small>{item === 'COLLABORATING' ? `${selected.tasks.length} 项任务` : item === 'ARCHIVED' ? `R${selected.currentRevisionNumber || '—'}` : statusLabels[item]}</small></span></article>; })}</div>{!selected.deletedAt && canArchive && nextWorkflowActions.length > 0 && <footer>{nextWorkflowActions.map(action => <button className={action.status === 'COLLABORATING' && selected.status === 'VERIFYING' ? '' : 'primary'} type="button" disabled={saving} key={action.status} onClick={() => { void transitionWorkflow(action.status); }}>{action.status === 'SUBMITTED' ? <Send size={14} /> : <ChevronRight size={14} />}{action.label}</button>)}</footer>}</section>
@@ -859,6 +869,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
               {detailTab === 'actions' && <div className="risk-text-grid"><section><span>临时遏制措施</span><p>{selected.containmentAction || '未填写'}</p></section><section><span>不良处置</span><p>{selected.disposition || '未填写'}</p></section><section><span>纠正措施</span><p>{selected.correctiveAction || '未填写'}</p></section><section><span>预防再发措施</span><p>{selected.preventiveAction || '未填写'}</p></section><section><span>验证结果</span><p>{selected.verificationResult || '未填写'}</p></section><section><span>证据摘要</span><p>{selected.evidenceSummary || '未填写'}</p></section></div>}
               {detailTab === 'relations' && <div className="risk-relation-sections"><section><header><ClipboardCheck size={14} /><strong>来源质量问题</strong><em>{selected.issues.length}</em></header>{selected.issues.map(item => <Link href={`/workspace/issues?issueId=${encodeURIComponent(item.id)}`} key={item.id}><span><b>{item.code} · {item.title}</b><small>{item.isMajorQuality ? `重大质量 · ${item.majorApproval?.status === 'APPROVED' ? '审批通过' : '审批未完成'}` : item.status}</small></span><ChevronRight size={14} /></Link>)}{!selected.issues.length && <p>未关联来源问题</p>}</section><section><header><Link2 size={14} /><strong>关联工单</strong><em>{selected.workOrders.length}</em></header>{selected.workOrders.map(item => <Link href={`/production?workOrderId=${encodeURIComponent(item.id)}`} key={item.id}><span><b>{item.displayCode}</b><small>{item.customerName || '客户未填'} · {item.source === 'PRODUCT_AUTO' ? '产品自动继承' : item.source === 'PRODUCT_CONFIRMATION' ? '历史产品确认' : '直接关联'}</small></span><ChevronRight size={14} /></Link>)}{!selected.workOrders.length && <p>未关联工单；归档时仍会自动匹配关联产品的工单</p>}</section><section><header><Boxes size={14} /><strong>关联产品</strong><em>{selected.products.length}</em></header>{selected.products.map(item => <div key={item.id}><span><b>{item.specification}</b><small>{item.customerName}{item.productName ? ` · ${item.productName}` : ''}</small></span></div>)}{!selected.products.length && <p>未关联产品</p>}</section><section><header><FileArchive size={14} /><strong>8D证据档案</strong><em>{selected.eightDReports.length}</em></header>{selected.eightDReports.map(item => <Link href={`/workspace/quality/8d?reportId=${encodeURIComponent(item.id)}`} key={item.id}><span><b>{item.reportNo}</b><small>{item.title}</small></span><ChevronRight size={14} /></Link>)}{!selected.eightDReports.length && <p>未关联8D档案</p>}</section></div>}
               {detailTab === 'archive' && <div className="risk-archive-view"><section className="risk-archive-summary"><header><div><Archive size={16} /><strong>归档版本与工单预警</strong></div><span>{selected.status === 'ARCHIVED' ? `当前 R${selected.currentRevisionNumber}` : selected.status === 'REVISING' ? `修订中 · 当前生效 R${selected.currentRevisionNumber}` : '尚未归档'}</span></header><div><article><span>归档版本</span><strong>{selected.revisions.length}</strong></article><article><span>生成预警</span><strong>{selected.alerts.length}</strong></article><article><span>活动预警</span><strong>{activeAlertCount}</strong></article><article><span>工单知悉</span><strong>{selected.alerts.reduce((sum, item) => sum + item.acknowledgementCount, 0)}</strong></article></div></section><section className="risk-alert-list"><header><strong>工单预警投影</strong><span>知悉不等于风险解除</span></header>{selected.alerts.map(alert => <article className={`state-${alert.state.toLowerCase()}`} key={alert.id}><span className={`severity-${alert.severity.toLowerCase()}`}><ShieldAlert size={14} /></span><div><strong>{alert.workOrder.displayCode}</strong><small>R{alert.revisionNumber} · {alert.source === 'DIRECT_ARCHIVE' ? '归档直接同步' : alert.source === 'PRODUCT_AUTO_ARCHIVE' ? '同产品自动继承' : '历史产品确认'} · {alert.state}</small></div><em>{alert.acknowledgementCount} 人知悉</em></article>)}{!selected.alerts.length && <p>尚未生成工单预警</p>}</section><section className="risk-activity-list"><header><strong>审计活动</strong><span>{selected.activities.length}</span></header>{selected.activities.map(item => <article key={item.id}><i /><div><header><strong>{activityLabels[item.action] || item.action}</strong><time>{formatDate(item.createdAt, true)}</time></header><p>{item.content || '无补充说明'}</p><small>{item.actorName}</small></div></article>)}</section></div>}
+              </>}
             </div>
           </>}
         </section>

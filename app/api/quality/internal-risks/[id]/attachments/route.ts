@@ -30,8 +30,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const categoryText = String(form.get('category') || 'EVIDENCE').trim().toUpperCase();
     if (!categories.includes(categoryText as typeof categories[number])) return NextResponse.json({ ok: false, error: '证据分类无效' }, { status: 400 });
     const taskId = String(form.get('taskId') || '').trim() || null;
-    const ownership = await prisma.internalQualityRiskReport.findUnique({ where: { id: params.id }, select: { ownerUserId: true } });
-    if (!qualityRiskActor(user).canManage && ownership?.ownerUserId !== user.id) {
+    const ownership = await prisma.internalQualityRiskReport.findUnique({ where: { id: params.id }, select: { ownerUserId: true, createdById: true, status: true } });
+    const isDraftCreator = ownership?.status === 'DRAFT' && ownership.createdById === user.id && qualityRiskActor(user).canCreate;
+    if (!qualityRiskActor(user).canManage && ownership?.ownerUserId !== user.id && !isDraftCreator) {
       const ownTask = taskId ? await prisma.internalQualityRiskTask.findFirst({ where: { id: taskId, reportId: params.id, ownerUserId: user.id } }) : null;
       if (!ownTask) return NextResponse.json({ ok: false, error: '协同人只能上传到自己的任务' }, { status: 403 });
     }
@@ -55,9 +56,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`internal-quality-risk:${params.id}`}))`;
       const current = await tx.internalQualityRiskReport.findFirst({ where: { id: params.id, deletedAt: null, status: { not: 'ARCHIVED' } } });
       if (!current) throw new InternalQualityRiskError('归档或删除后不可继续上传', 409);
+      if (current.workflowVersion >= 3 && ['VERIFYING', 'PENDING_CLOSE'].includes(current.status)) throw new InternalQualityRiskError('当前审核版本已冻结；请先由品质定向退回再补充证据', 409);
       const currentTask = taskId ? await tx.internalQualityRiskTask.findFirst({ where: { id: taskId, reportId: params.id } }) : null;
       if (taskId && !currentTask) throw new InternalQualityRiskError('关联任务已变化，请刷新后重试', 409);
-      if (!qualityRiskActor(user).canManage && current.ownerUserId !== user.id && currentTask?.ownerUserId !== user.id) {
+      if (current.workflowVersion >= 3 && currentTask && (currentTask.ownerUserId !== user.id || !['TODO', 'IN_PROGRESS'].includes(currentTask.status))) throw new InternalQualityRiskError('只能向自己未完成的任务上传照片', 403);
+      if (!qualityRiskActor(user).canManage && current.ownerUserId !== user.id && currentTask?.ownerUserId !== user.id && !(current.status === 'DRAFT' && current.createdById === user.id && qualityRiskActor(user).canCreate)) {
         throw new InternalQualityRiskError('任务已改派，不能继续上传证据', 403);
       }
       const attachment = await tx.internalQualityRiskAttachment.create({ data: {

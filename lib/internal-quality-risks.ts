@@ -68,6 +68,10 @@ export class InternalQualityRiskError extends Error {
 }
 
 export type InternalQualityRiskInput = {
+  workflowVersion: number;
+  problemCategory: string | null;
+  responsibleUserIds: string[];
+  reviewerUserId: string | null;
   reportNo: string;
   title: string;
   severity: InternalQualityRiskSeverity;
@@ -180,6 +184,10 @@ export function parseInternalQualityRiskInput(input: Record<string, unknown>): I
     throw new InternalQualityRiskError('工单打印策略不正确');
   }
   return {
+    workflowVersion: input.workflowVersion === 3 ? 3 : 2,
+    problemCategory: cleanText(input.problemCategory, 30),
+    responsibleUserIds: normalizeQualityRiskRelationIds(input.responsibleUserIds, 30),
+    reviewerUserId: cleanText(input.reviewerUserId, 100),
     reportNo,
     title,
     severity: severity as InternalQualityRiskSeverity,
@@ -246,6 +254,9 @@ const workOrderSelect = {
 } as const;
 
 export const internalQualityRiskInclude = Prisma.validator<Prisma.InternalQualityRiskReportInclude>()({
+  reviewer: { select: userSelect },
+  reviews: { orderBy: { round: 'desc' } },
+  notifications: { orderBy: { createdAt: 'desc' }, take: 80 },
   owner: { select: userSelect },
   currentRevision: {
     include: {
@@ -417,6 +428,15 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
     ...(report.revisions.length || report.alerts.length ? ['已形成归档/工单预警历史，保留版本、附件与打印追溯；可留在回收站或恢复'] : []),
   ];
   return {
+    workflowVersion: report.workflowVersion,
+    problemCategory: report.problemCategory,
+    responsibleUserIds: report.responsibleUserIds,
+    reviewerUserId: report.reviewerUserId,
+    reviewerName: actorLabel(report.reviewer),
+    createdById: report.createdById,
+    reviewRound: report.reviewRound,
+    reviews: (report.reviews || []).map(review => ({ ...review, submittedAt: review.submittedAt.toISOString(), decidedAt: review.decidedAt?.toISOString() || null })),
+    notifications: (report.notifications || []).map(item => ({ id: item.id, recipientId: item.recipientId, title: item.title, state: item.state, attempts: item.attempts, lastError: item.lastError, targetRoute: item.targetRoute, acceptedAt: item.acceptedAt?.toISOString() || null, createdAt: item.createdAt.toISOString() })),
     id: report.id,
     sequence: report.sequence,
     reportNo: report.reportNo,
@@ -543,6 +563,7 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
       verifiedById: task.verifiedById,
       requirement: task.requirement,
       result: task.result,
+      actionTaken: task.actionTaken,
       status: task.status,
       dueAt: task.dueAt?.toISOString() || null,
       completedAt: task.completedAt?.toISOString() || null,
@@ -622,6 +643,10 @@ async function assertQualityRiskRelations(tx: Prisma.TransactionClient, input: I
 
 function reportData(input: InternalQualityRiskInput) {
   return {
+    workflowVersion: input.workflowVersion,
+    problemCategory: input.problemCategory,
+    responsibleUserIds: input.responsibleUserIds,
+    reviewerUserId: input.reviewerUserId,
     reportNo: input.reportNo,
     title: input.title,
     severity: input.severity,
@@ -725,6 +750,9 @@ export async function updateInternalQualityRiskRecord(
   await lockRiskReport(tx, reportId);
   const report = await activeRiskForMutation(tx, reportId);
   assertExpectedVersion(report.version, expectedVersion);
+  if (report.workflowVersion >= 3 && (report.status !== 'DRAFT' || input.workflowVersion !== 3)) {
+    throw new InternalQualityRiskError('请在当前流程阶段完成操作；已提交内容不能通过全局编辑覆盖', 409, 'QUALITY_STAGE_REQUIRED');
+  }
   if (report.status === 'ARCHIVED') {
     throw new InternalQualityRiskError('已归档版本不可直接覆盖，请先启动修订', 409, 'QUALITY_RISK_ARCHIVED_IMMUTABLE');
   }
@@ -1196,6 +1224,9 @@ export async function archiveInternalQualityRisk(
     throw new InternalQualityRiskError('异常必须完成部门协同与质量验证，进入待关闭状态后才能归档', 409, 'QUALITY_RISK_WORKFLOW_NOT_READY');
   }
   const report = await tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
+  if (report.workflowVersion >= 3 && (report.status !== 'PENDING_CLOSE' || report.reviews[0]?.decision !== 'APPROVED' || !report.verifiedAt || !report.verificationResult?.trim())) {
+    throw new InternalQualityRiskError('必须由指定品质确认人完成本轮验证后才能归档', 409, 'QUALITY_REVIEW_REQUIRED');
+  }
   const readiness = evaluateInternalQualityRiskReadiness(report);
   if (!readiness.ready) {
     throw new InternalQualityRiskError(readiness.blockers.map(item => item.message).join('；'), 409, 'QUALITY_RISK_ARCHIVE_BLOCKED');
@@ -1334,6 +1365,7 @@ export async function transitionInternalQualityRiskWorkflow(
   await lockRiskReport(tx, reportId);
   const report = await activeRiskForMutation(tx, reportId);
   assertExpectedVersion(report.version, expectedVersion);
+  if (report.workflowVersion >= 3) throw new InternalQualityRiskError('请使用阶段处理或品质确认页面，不能跳过阶段校验', 409, 'QUALITY_STAGE_REQUIRED');
   const target = String(targetStatus || '').trim().toUpperCase();
   if (!INTERNAL_QUALITY_RISK_STATUSES.includes(target as InternalQualityRiskStatus) || target === 'ARCHIVED') {
     throw new InternalQualityRiskError('目标流程状态无效', 400, 'QUALITY_RISK_WORKFLOW_STATUS_INVALID');
@@ -1397,6 +1429,7 @@ export async function createInternalQualityRiskTask(
   await lockRiskReport(tx, reportId);
   const report = await activeRiskForMutation(tx, reportId);
   if (report.status === 'ARCHIVED') throw new InternalQualityRiskError('已归档异常不能新增协同任务，请先启动修订', 409, 'QUALITY_RISK_ARCHIVED_IMMUTABLE');
+  if (report.workflowVersion >= 3) throw new InternalQualityRiskError('请在阶段处理页面增补责任任务，不能绕过人员与分工校验', 409, 'QUALITY_STAGE_REQUIRED');
   const title = cleanText(input.title, 180);
   const department = cleanText(input.department, 120);
   if (!title || !department) throw new InternalQualityRiskError('任务标题和责任部门不能为空');
@@ -1433,6 +1466,7 @@ export async function updateInternalQualityRiskTask(
   await lockRiskReport(tx, reportId);
   const report = await activeRiskForMutation(tx, reportId);
   if (report.status === 'ARCHIVED') throw new InternalQualityRiskError('已归档异常不可修改任务，请启动修订', 409);
+  if (report.workflowVersion >= 3) throw new InternalQualityRiskError('请在阶段处理页面更新任务，品质确认使用独立页面', 409, 'QUALITY_STAGE_REQUIRED');
   const task = await tx.internalQualityRiskTask.findFirst({ where: { id: taskId, reportId } });
   if (!task) throw new InternalQualityRiskError('协同任务不存在', 404);
   assertExpectedVersion(task.version, expectedInternalQualityRiskVersion(input.expectedVersion));
@@ -1601,11 +1635,15 @@ export async function loadInternalQualityRisks(input: {
   workOrderId?: string;
   limit?: number;
   assignedUserId?: string;
+  problemCategory?: string;
+  department?: string;
 } = {}) {
   const keyword = cleanText(input.keyword, 180) || '';
   const status = String(input.status || 'all');
   const deletedMode = status === 'DELETED';
   const and: Prisma.InternalQualityRiskReportWhereInput[] = [];
+  if (input.problemCategory) and.push({ problemCategory: input.problemCategory });
+  if (input.department) and.push({ responsibleDepartment: input.department });
   if (input.assignedUserId) and.push({ OR: [{ ownerUserId: input.assignedUserId }, { tasks: { some: { ownerUserId: input.assignedUserId } } }] });
   if (status === 'SUBMITTED') and.push({ status: { in: ['SUBMITTED', 'CONTAINMENT'] } });
   else if (INTERNAL_QUALITY_RISK_STATUSES.includes(status as InternalQualityRiskStatus)) and.push({ status });

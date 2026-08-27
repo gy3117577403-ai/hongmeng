@@ -911,6 +911,7 @@ export type InternalQualityRiskActivityDTO = {
 };
 
 export type InternalQualityRiskTaskDTO = {
+  actionTaken?: string | null;
   ownerUserId?: string | null;
   isPrimary?: boolean;
   version: number;
@@ -956,6 +957,15 @@ export type InternalQualityRiskAttachmentDTO = {
 };
 
 export type InternalQualityRiskDTO = {
+  workflowVersion?: number;
+  problemCategory?: string | null;
+  responsibleUserIds?: string[];
+  reviewerUserId?: string | null;
+  reviewerName?: string | null;
+  createdById?: string | null;
+  reviewRound?: number;
+  reviews?: Array<{ id: string; round: number; reviewerId: string; submittedById: string; snapshot: unknown; result: string | null; decision: string; returnReason: string | null; returnedTaskIds: string[]; submittedAt: string; decidedAt: string | null }>;
+  notifications?: Array<{ id: string; recipientId: string; title: string; state: string; attempts: number; lastError: string | null; targetRoute: string; acceptedAt: string | null; createdAt: string }>;
   ownerUserId?: string | null;
   ownerName?: string | null;
   printPhotoLayout?: 'PAIR' | 'SINGLE';
@@ -1056,7 +1066,7 @@ export type InternalQualityRiskOptionEightDDTO = {
 };
 
 export type InternalQualityRiskOptionsDTO = {
-  assignees?: Array<{ id: string; displayName: string; username: string }>;
+  assignees?: Array<{ id: string; displayName: string; username: string; department?: string; canReview?: boolean; notificationHint?: string }>;
   products: EightDReportProductDTO[];
   issues: InternalQualityRiskOptionIssueDTO[];
   workOrders: InternalQualityRiskWorkOrderDTO[];

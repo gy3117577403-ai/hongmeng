@@ -62,6 +62,9 @@ server_pid=$!
     if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/process-route-change-outbox', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(10000)}).then(async response=>{if(!response.ok){throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,200))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
       echo "process route change outbox poll failed; it will retry after ${outbox_poll_seconds}s" >&2
     fi
+    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/quality-risk-outbox', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(10000)}).then(response=>{if(!response.ok)throw new Error('HTTP '+response.status)}).catch(()=>{console.error('quality notification poll failed');process.exit(1)})"; then
+      echo "quality notification outbox will retry on next poll" >&2
+    fi
   done
 ) &
 worker_pid=$!

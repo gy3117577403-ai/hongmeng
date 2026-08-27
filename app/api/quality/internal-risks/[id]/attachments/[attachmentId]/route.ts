@@ -18,6 +18,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`internal-quality-risk:${params.id}`}))`;
       const report = await tx.internalQualityRiskReport.findFirst({ where: { id: params.id, deletedAt: null, status: { not: 'ARCHIVED' } } });
       if (!report) throw new InternalQualityRiskError('归档版本不可修改，请先启动修订', 409);
+      if (report.workflowVersion >= 3 && ['VERIFYING', 'PENDING_CLOSE'].includes(report.status)) throw new InternalQualityRiskError('审核版本已冻结，请先退回再调整证据', 409);
       if (Number(body.expectedVersion) !== report.version) throw new InternalQualityRiskError('版本已变化，请刷新后重试', 409);
       const attachment = await tx.internalQualityRiskAttachment.findFirst({ where: { id: params.attachmentId, reportId: params.id, deletedAt: null } });
       if (!attachment) throw new InternalQualityRiskError('附件不存在', 404);
@@ -51,6 +52,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       const report = await tx.internalQualityRiskReport.findFirst({ where: { id: params.id, deletedAt: null } });
       if (!report) throw new InternalQualityRiskError('内部质量异常不存在或已进入回收站', 404);
       if (report.status === 'ARCHIVED') throw new InternalQualityRiskError('已归档证据不可删除，请先启动修订', 409);
+      if (report.workflowVersion >= 3 && report.reviewRound > 0) throw new InternalQualityRiskError('证据已进入审核历史，不可删除；可在退回后补充替代照片', 409);
       const attachment = await tx.internalQualityRiskAttachment.findFirst({ where: { id: params.attachmentId, reportId: params.id, deletedAt: null } });
       if (!attachment) throw new InternalQualityRiskError('证据文件不存在或已删除', 404);
       const reference = await tx.internalQualityRiskRevisionAttachment.findFirst({ where: { attachmentId: attachment.id }, select: { revision: { select: { revisionNumber: true } } } });

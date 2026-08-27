@@ -1,69 +1,47 @@
 'use client';
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { QualityTaskActions } from '@/components/QualityTaskActions';
-import { QualityAssigneeSelect, type QualityAssignee } from '@/components/QualityAssigneeSelect';
-import { RefreshCw, ClipboardCheck, UploadCloud, Save, Send } from 'lucide-react';
+import QualityWorkflowPanel from '@/components/QualityWorkflowPanel';
+import type { QualityAssignee } from '@/components/QualityAssigneeSelect';
+import { RefreshCw, ClipboardCheck, ShieldCheck, Search } from 'lucide-react';
+import { QUALITY_PROBLEM_CATEGORIES } from '@/lib/quality-workflow-shared';
 import type { CurrentUserDTO, InternalQualityRiskDTO } from '@/types';
 
-const solutionFields = [['rootCause', '已确认的原因'], ['correctiveAction', '具体解决方案'], ['containmentAction', '临时遏制措施（选填）'], ['preventiveAction', '防止再发（选填）'], ['requiredAction', '本批作业要求（选填）'], ['finalConclusion', '处理结论']] as const;
-export default function QualityTasksShell({ user }: { user: CurrentUserDTO }) {
+export default function QualityTasksShell({ user, reviewMode = false }: { user: CurrentUserDTO; reviewMode?: boolean }) {
   const [reports, setReports] = useState<InternalQualityRiskDTO[]>([]);
   const [users, setUsers] = useState<QualityAssignee[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [query, setQuery] = useState('');
+  const [category, setCategory] = useState('');
+  const [pendingOnly, setPendingOnly] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [draft, setDraft] = useState<Record<string, string>>({});
-  const [newTask, setNewTask] = useState({ title: '', department: '', ownerUserId: '', requirement: '', dueAt: '' });
-  const [taskOpen, setTaskOpen] = useState(false);
+  const path = reviewMode ? '/workspace/quality-confirmation' : '/workspace/quality-tasks';
   const selected = reports.find(item => item.id === selectedId);
-  const ownReport = selected?.ownerUserId === user.id;
-  const canVerify = user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW');
-  const update = useCallback((report: InternalQualityRiskDTO) => {
-    setReports(items => items.map(item => item.id === report.id ? report : item));
-    setDraft(Object.fromEntries(solutionFields.map(([key]) => [key, report[key] || ''])));
-  }, []);
+  const pending = (report: InternalQualityRiskDTO) => reviewMode ? report.status === 'VERIFYING' || report.status === 'PENDING_CLOSE' :
+    ['SUBMITTED', 'CONTAINMENT', 'COLLABORATING', 'REVISING'].includes(report.status) && (report.ownerUserId === user.id || report.tasks.some(task => task.ownerUserId === user.id && ['TODO', 'IN_PROGRESS'].includes(task.status)));
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const response = await fetch('/api/quality-tasks', { cache: 'no-store' }); const body = await response.json();
+      const response = await fetch(reviewMode ? '/api/quality-confirmation' : '/api/quality-tasks', { cache: 'no-store' }); const body = await response.json();
       if (!response.ok) throw new Error(body.error || '加载失败');
       setReports(body.reports); setUsers(body.assignees);
-      setSelectedId(current => body.reports.some((item: InternalQualityRiskDTO) => item.id === current) ? current : new URLSearchParams(window.location.search).get('reportId') || body.reports[0]?.id || '');
+      const linkId = new URLSearchParams(window.location.search).get('reportId');
+      if (linkId && !body.reports.some((item: InternalQualityRiskDTO) => item.id === linkId)) setError('链接所指事件不在你的处理范围，或已回收。请联系发起质量确认分工。');
+      setSelectedId(current => body.reports.some((item: InternalQualityRiskDTO) => item.id === current) ? current : linkId || body.reports[0]?.id || '');
+      if (linkId) setPendingOnly(false);
     } catch (e) { setError(e instanceof Error ? e.message : '加载失败'); }
     finally { setLoading(false); }
-  }, []);
+  }, [reviewMode]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { setDraft(Object.fromEntries(solutionFields.map(([key]) => [key, selected?.[key] || '']))); }, [selectedId, selected?.version]); // eslint-disable-line react-hooks/exhaustive-deps
-  async function mutate(url: string, data: unknown, method = 'POST') {
-    setBusy(true); setError('');
-    try {
-      const response = await fetch(url, { method, headers: data instanceof FormData ? undefined : { 'Content-Type': 'application/json' }, body: data instanceof FormData ? data : JSON.stringify(data) }); const body = await response.json();
-      if (!response.ok) throw new Error(body.error || '操作失败');
-      if (body.report) update(body.report);
-      setTaskOpen(false);
-      return body.report as InternalQualityRiskDTO | undefined;
-    } catch (e) { setError(e instanceof Error ? e.message : '操作失败'); }
-    finally { setBusy(false); }
-  }
-  async function submitOverallVerification() {
-    if (!selected) return;
-    const dirty = solutionFields.some(([key]) => (draft[key] || '') !== (selected[key] || ''));
-    const current = dirty ? await mutate(`/api/quality-tasks/${selected.id}/solution`, { ...draft, expectedVersion: selected.version }, 'PATCH') : selected;
-    if (current) await mutate(`/api/quality/internal-risks/${current.id}/workflow`, { status: 'VERIFYING', expectedVersion: current.version });
-  }
-  const displayed = reports.filter(item => `${item.reportNo} ${item.title}`.toLowerCase().includes(query.toLowerCase()));
-  return <main className="hm-workbench-root hm-cockpit-root quality-tasks-root"><AppWorkbenchHeader user={user} activeHref="/workspace/quality-tasks" subtitle="分配给我的质量任务" menuItems={[]} hideHeader />
-    <header className="quality-tasks-head"><ClipboardCheck /><div><h1>我的质量任务</h1><small>只显示分配给你的事件；接单、补充方案、提交质量验证。</small></div><button disabled={loading} onClick={() => void load()}><RefreshCw size={18} />刷新</button></header>
-    {error && <p role="alert" className="risk-form-error">{error}</p>}
-    <div className="quality-tasks-grid"><aside><input aria-label="搜索我的任务" placeholder="搜索编号 / 标题" value={query} onChange={event => setQuery(event.target.value)} />{displayed.map(report => <button key={report.id} className={report.id === selectedId ? 'active' : ''} onClick={() => setSelectedId(report.id)}><small>{report.reportNo}</small><strong>{report.title}</strong><span>{report.tasks.filter(task => task.ownerUserId === user.id && !['VERIFIED', 'CANCELLED'].includes(task.status)).length} 项待处理 · {report.ownerUserId === user.id ? '我主责' : '我协同'}</span></button>)}{!displayed.length && <p>{loading ? '正在加载…' : '暂无分配给你的质量任务'}</p>}</aside>
-      <section className="quality-task-detail">{selected ? <><header><small>{selected.reportNo} · {selected.ownerName} 主责</small><h2>{selected.title}</h2><p><b>实际问题：</b>{selected.defectPhenomenon}</p><p><b>产品：</b>{selected.products.map(product => product.specification || product.productName).join('、')}</p></header>
-        {selected.tasks.filter(task => ownReport || canVerify || task.ownerUserId === user.id).map(task => <article className="quality-assigned-task" key={task.id}><h3>{task.isPrimary ? '主责处理' : task.department} · {task.title}</h3><p>{task.ownerName} · {task.dueAt ? `截止 ${task.dueAt.slice(0, 10)}` : '未设置期限'} · {({ TODO: '待接单', IN_PROGRESS: '处理中', COMPLETED: '待验证', VERIFIED: '已通过', CANCELLED: '已取消' })[task.status]}</p>{task.result && <p><b>处理结果：</b>{task.result}</p>}{selected.status !== 'ARCHIVED' && <><QualityTaskActions reportId={selected.id} task={task} canManage={Boolean(ownReport)} canVerify={canVerify} canHandle={task.ownerUserId === user.id} users={users} onUpdated={update} />{task.ownerUserId === user.id && <label className="quality-task-upload"><UploadCloud size={16} />上传本任务证据<input type="file" disabled={busy} accept="image/jpeg,image/png,image/webp,application/pdf" onChange={event => { const file = event.target.files?.[0]; if (!file) return; const data = new FormData(); data.set('file', file); data.set('taskId', task.id); data.set('category', 'SOLUTION'); void mutate(`/api/quality/internal-risks/${selected.id}/attachments`, data); event.target.value = ''; }} /></label>}</>}</article>)}
-        {ownReport && selected.status !== 'ARCHIVED' && <><section className="quality-task-solution"><header><h3>汇总处理方案</h3><button onClick={() => setTaskOpen(!taskOpen)}>分派协同子任务</button></header>{solutionFields.map(([key, label]) => <label key={key}>{label}<textarea rows={3} value={draft[key] || ''} onChange={event => setDraft({ ...draft, [key]: event.target.value })} /></label>)}<footer><button className="primary" disabled={busy} onClick={() => void mutate(`/api/quality-tasks/${selected.id}/solution`, { ...draft, expectedVersion: selected.version }, 'PATCH')}><Save size={16} />保存方案</button>{['COLLABORATING', 'REVISING'].includes(selected.status) && <button disabled={busy} onClick={() => void submitOverallVerification()}><Send size={16} />提交整体验证</button>}</footer></section>
-          {taskOpen && <section className="quality-task-solution"><h3>新增协同任务</h3>{(['title', 'department', 'requirement', 'dueAt'] as const).map(key => <label key={key}>{{ title: '任务标题', department: '责任部门', requirement: '交付要求', dueAt: '截止日期' }[key]}<input type={key === 'dueAt' ? 'date' : 'text'} value={newTask[key]} onChange={event => setNewTask({ ...newTask, [key]: event.target.value })} /></label>)}<QualityAssigneeSelect value={newTask.ownerUserId} users={users} onChange={ownerUserId => setNewTask({ ...newTask, ownerUserId })} /><button className="primary" disabled={busy} onClick={() => void mutate(`/api/quality/internal-risks/${selected.id}/tasks`, newTask)}>分派任务</button></section>}</>}
-        <section><h3>证据与方案附件</h3><div className="quality-task-attachments">{selected.attachments.map(item => <a key={item.id} href={item.contentUrl} target="_blank" rel="noreferrer">{item.mimeType.startsWith('image/') && <img src={item.contentUrl} alt={item.caption || item.displayName} />}<span>{item.caption || item.displayName}</span></a>)}</div></section>
-      </> : <p>选择左侧事件开始处理</p>}</section></div>
+  useEffect(() => { const task = new URLSearchParams(window.location.search).get('taskId'); if (task && selected) document.getElementById('task-' + task)?.scrollIntoView({ block: 'start' }); }, [selectedId, loading]); // eslint-disable-line react-hooks/exhaustive-deps
+  const displayed = reports.filter(item => (!pendingOnly || pending(item)) && (!category || item.problemCategory === category) && (item.reportNo + ' ' + item.title + ' ' + item.defectPhenomenon + ' ' + item.products.map(product => product.specification).join(' ')).toLowerCase().includes(query.toLowerCase()));
+  return <main className="hm-workbench-root hm-cockpit-root quality-tasks-root qv3-root"><AppWorkbenchHeader user={user} activeHref={path} subtitle={reviewMode ? '品质确认' : '我的质量任务'} menuItems={[]} hideHeader sidebarTriggerTargetId="quality-workflow-navigation-trigger" />
+    <header className="qv3-head"><div id="quality-workflow-navigation-trigger" className="hm-cockpit-navigation-trigger" />{reviewMode ? <ShieldCheck /> : <ClipboardCheck />}<div><h1>{reviewMode ? '品质确认' : '我的质量任务'}</h1><small>{reviewMode ? '核对冻结方案 · 验证通过或定向退回' : '先看清问题 · 处理自己的任务 · 牵头人汇总提交'}</small></div><Link href={reviewMode ? '/workspace/quality-tasks' : '/workspace/quality/internal-risks'}>{reviewMode ? '我的处理任务' : '异常中心'}</Link><button disabled={loading} onClick={() => void load()}><RefreshCw size={18} />刷新</button></header>
+    {error && <p role="alert" className="qv3-error">{error}</p>}
+    <div className="qv3-shell-grid"><aside className="qv3-list"><header><b>{reviewMode ? '待我确认' : '待我处理'} <em>{reports.filter(pending).length}</em></b><label><input type="checkbox" checked={pendingOnly} onChange={event => setPendingOnly(event.target.checked)} />仅待办</label></header><label className="qv3-search"><Search size={17} /><input aria-label="搜索质量任务" placeholder="问题、产品、编号" value={query} onChange={event => setQuery(event.target.value)} /></label><select aria-label="按问题归属筛选" value={category} onChange={event => setCategory(event.target.value)}><option value="">全部问题归属</option>{QUALITY_PROBLEM_CATEGORIES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
+      {displayed.map(report => <button key={report.id} className={report.id === selectedId ? 'active' : ''} onClick={() => { setSelectedId(report.id); window.history.replaceState(null, '', path + '?reportId=' + encodeURIComponent(report.id)); }}><small>{report.reportNo}</small><strong>{report.title}</strong><p>{report.defectPhenomenon}</p><span>{report.ownerName} 牵头 · {report.tasks.filter(task => ['COMPLETED', 'VERIFIED', 'CANCELLED'].includes(task.status)).length}/{report.tasks.length} 已完成</span></button>)}{!displayed.length && <p>{loading ? '正在加载…' : '当前筛选下没有任务'}</p>}
+    </aside><section className="qv3-workspace">{selected ? <QualityWorkflowPanel key={selected.id} report={selected} user={user} users={users} reviewMode={reviewMode} onUpdated={report => setReports(items => items.map(item => item.id === report.id ? report : item))} /> : <div className="qv3-empty"><ClipboardCheck size={42} /><h2>选择一个事件</h2><p>所有操作按你的责任和当前阶段显示。</p></div>}</section></div>
   </main>;
 }

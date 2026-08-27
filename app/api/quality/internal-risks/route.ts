@@ -11,6 +11,8 @@ import {
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
+import { qualityRiskActor } from '@/lib/quality-risk-access';
+import { actOnQualityWorkflow } from '@/lib/quality-workflow-v3';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +28,8 @@ export async function GET(req: NextRequest) {
       keyword: req.nextUrl.searchParams.get('keyword') || '',
       status: req.nextUrl.searchParams.get('status') || 'all',
       severity: req.nextUrl.searchParams.get('severity') || '',
+      problemCategory: req.nextUrl.searchParams.get('problemCategory') || '',
+      department: req.nextUrl.searchParams.get('department') || '',
       productId: req.nextUrl.searchParams.get('productId') || '',
       issueId: req.nextUrl.searchParams.get('issueId') || '',
       workOrderId: req.nextUrl.searchParams.get('workOrderId') || '',
@@ -42,10 +46,10 @@ export async function POST(req: NextRequest) {
     assertSameOriginMutationRequest(req);
     const user = await requireCapability('QUALITY', 'CREATE');
     const body = await req.json() as Record<string, unknown>;
-    const input = parseInternalQualityRiskInput(body);
+    const input = parseInternalQualityRiskInput({ ...body, workflowVersion: 3 });
     const report = await prisma.$transaction(async tx => {
       const draft = await createInternalQualityRiskRecord(tx, input, actor(user));
-      return body.submit === true ? transitionInternalQualityRiskWorkflow(tx, draft.id, draft.version, 'SUBMITTED', actor(user)) : draft;
+      return body.submit === true ? actOnQualityWorkflow(tx, draft.id, draft.version, 'SUBMIT', {}, qualityRiskActor(user)) : draft;
     });
     await logOp({
       userId: user.id,

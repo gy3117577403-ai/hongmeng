@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { UnauthorizedError, requireUser, unauthorized } from '@/lib/auth';
+import { UnauthorizedError, ForbiddenError, requireAdmin, requireUser, unauthorized } from '@/lib/auth';
+import { qualityNotificationOrigin } from '@/lib/quality-risk-notifications';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { maskEmployeeMobile } from '@/lib/employee-contact';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -68,6 +70,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       config: inspectWeComRobotConfig(),
+      quality: { originReady: Boolean(qualityNotificationOrigin()), workerConfigured: Boolean(process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN) },
       recipients,
       counts: {
         activeWithMobile: employees.length,
@@ -92,7 +95,8 @@ export async function POST(req: NextRequest) {
   let employeeNos: string[] = [];
   let userId: string | null = null;
   try {
-    const user = await requireUser();
+    assertSameOriginMutationRequest(req);
+    const user = await requireAdmin();
     userId = user.id;
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     if (body.confirmed !== true) {
@@ -186,6 +190,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return NextResponse.json({ ok: false, error: '只有管理员可以发送真实测试消息' }, { status: 403 });
     const normalized = error instanceof WeComRobotError
       ? error
       : new WeComRobotError('企业微信试发失败，请稍后重试', { status: 500, code: 'WECOM_TEST_FAILED' });

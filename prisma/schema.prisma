@@ -469,6 +469,7 @@ model User {
   eightDReportActivities         EightDReportActivity[]                 @relation("EightDReportActivityActor")
   createdInternalQualityRisks    InternalQualityRiskReport[]            @relation("InternalQualityRiskCreatedBy")
   ownedInternalQualityRisks      InternalQualityRiskReport[]            @relation("InternalQualityRiskOwner")
+  reviewingInternalQualityRisks  InternalQualityRiskReport[]            @relation("QualityRiskReviewer")
   assignedQualityRiskTasks       InternalQualityRiskTask[]              @relation("QualityRiskTaskOwner")
   updatedInternalQualityRisks    InternalQualityRiskReport[]            @relation("InternalQualityRiskUpdatedBy")
   archivedInternalQualityRisks   InternalQualityRiskReport[]            @relation("InternalQualityRiskArchivedBy")
@@ -3625,6 +3626,11 @@ model InternalQualityRiskReport {
   processName           String?                           @map("process_name")
   responsibleDepartment String?                           @map("responsible_department")
   ownerUserId           String?                           @map("owner_user_id")
+  workflowVersion       Int                               @default(3) @map("workflow_version")
+  problemCategory       String?                           @map("problem_category")
+  responsibleUserIds    String[]                          @default([]) @map("responsible_user_ids")
+  reviewerUserId        String?                           @map("reviewer_user_id")
+  reviewRound           Int                               @default(0) @map("review_round")
   printPhotoLayout      String                            @default("PAIR") @map("print_photo_layout")
   verifiedById          String?                           @map("verified_by_id")
   verifiedAt            DateTime?                         @map("verified_at")
@@ -3681,11 +3687,16 @@ model InternalQualityRiskReport {
   alerts                WorkOrderQualityAlert[]
   createdBy             User?                             @relation("InternalQualityRiskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   owner                 User?                             @relation("InternalQualityRiskOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  reviewer              User?                             @relation("QualityRiskReviewer", fields: [reviewerUserId], references: [id], onDelete: SetNull)
+  reviews               QualityRiskReview[]
+  notifications         QualityRiskNotification[]
   updatedBy             User?                             @relation("InternalQualityRiskUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   archivedBy            User?                             @relation("InternalQualityRiskArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
   deletedBy             User?                             @relation("InternalQualityRiskDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
   @@index([status, updatedAt])
+  @@index([reviewerUserId, status])
+  @@index([problemCategory, status])
   @@index([severity, status])
   @@index([occurrenceDate])
   @@index([deletedAt])
@@ -3710,6 +3721,7 @@ model InternalQualityRiskTask {
   verifiedById String?                        @map("verified_by_id")
   requirement String?
   result      String?
+  actionTaken String?                         @map("action_taken")
   status      String                          @default("TODO")
   dueAt       DateTime?                       @map("due_at")
   completedAt DateTime?                       @map("completed_at")
@@ -3725,6 +3737,59 @@ model InternalQualityRiskTask {
   @@index([department, status])
   @@index([ownerUserId, status])
   @@map("quality_risk_tasks")
+}
+
+// Each review freezes the submitted facts. Later returns/revisions never overwrite it.
+model QualityRiskReview {
+  id            String   @id @default(uuid())
+  reportId      String   @map("report_id")
+  round         Int
+  reviewerId    String   @map("reviewer_id")
+  submittedById String   @map("submitted_by_id")
+  snapshot      Json
+  result        String?
+  decision      String   @default("PENDING")
+  returnReason  String?  @map("return_reason")
+  returnedTaskIds String[] @default([]) @map("returned_task_ids")
+  submittedAt   DateTime @default(now()) @map("submitted_at")
+  decidedAt     DateTime? @map("decided_at")
+  report        InternalQualityRiskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, round])
+  @@map("quality_risk_reviews")
+}
+
+// One durable recipient/event record; contains no webhook secret or phone number.
+model QualityRiskNotification {
+  id              String   @id @default(uuid())
+  reportId        String   @map("report_id")
+  recipientId     String   @map("recipient_id")
+  taskId          String?  @map("task_id")
+  reviewRound     Int?     @map("review_round")
+  dedupeKey       String   @unique @map("dedupe_key")
+  eventType       String   @map("event_type")
+  title           String
+  summary         String
+  targetRoute     String   @map("target_route")
+  state           String   @default("PENDING")
+  attempts        Int      @default(0)
+  availableAt     DateTime @default(now()) @map("available_at")
+  leaseToken      String?  @map("lease_token")
+  lastError       String?  @map("last_error")
+  acceptedAt      DateTime? @map("accepted_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  report          InternalQualityRiskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@index([state, availableAt])
+  @@index([reportId, createdAt])
+  @@map("quality_risk_notifications")
+}
+
+model QualityRobotDispatchClock {
+  id String @id
+  lastAttemptAt DateTime @map("last_attempt_at")
+  @@map("quality_robot_dispatch_clock")
 }
 
 model InternalQualityRiskAttachment {
