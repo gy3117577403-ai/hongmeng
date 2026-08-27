@@ -17,7 +17,11 @@ import {
   calculateCompletionLaborSnapshot,
   redistributeStandardLaborByExistingShares,
 } from '@/lib/process-completion-domain';
-import { autoAssignCompletionLaborPool } from '@/lib/process-completion-service';
+import {
+  autoAssignCompletionLaborPool,
+  ProcessCompletionServiceError,
+  reconcileSupplementRouteCompletion,
+} from '@/lib/process-completion-service';
 import { chinaTodayDateKey } from '@/lib/attendance';
 import {
   assertActionFlowDoesNotExceedReportedOutput,
@@ -4339,54 +4343,24 @@ export async function completeProcessSupplementObligation(
         quantityVersion: { increment: 1 },
       },
     });
-    const remainingObligations = await tx.processSupplementObligation.count({
-      where: {
-        routeId: obligation.routeId,
-        status: ProcessSupplementObligationStatus.ACTIVE,
-        id: { not: obligation.id },
-      },
+    const completionReconciliation = await reconcileSupplementRouteCompletion(tx, {
+      routeId: obligation.routeId,
+      expectedRouteVersion: obligation.route.version,
+      userId: identity.userId,
+      actor: identity.actor,
+      now,
+    }).catch(error => {
+      if (error instanceof ProcessCompletionServiceError) {
+        throw new ProcessRouteChangeServiceError(error.message, error.status, error.code);
+      }
+      throw error;
     });
-    const unfinishedNormalSteps = await tx.workOrderProcessStep.count({
-      where: {
-        routeId: obligation.routeId,
-        executionMode: ProcessStepExecutionMode.NORMAL,
-        retiredAt: null,
-        status: { notIn: ['completed', 'skipped'] },
-      },
-    });
-    const routeCompleted = nextState.status === 'FULFILLED'
-      && remainingObligations === 0
-      && unfinishedNormalSteps === 0;
-    const routeUpdate = await tx.workOrderProcessRoute.updateMany({
-      where: { id: obligation.routeId, version: obligation.route.version },
-      data: {
-        version: { increment: 1 },
-        status: routeCompleted ? 'completed' : 'in_progress',
-        completedAt: routeCompleted ? now : null,
-      },
-    });
-    if (routeUpdate.count !== 1) {
-      throw new ProcessRouteChangeServiceError('工艺路线版本冲突', 409, 'PROCESS_ROUTE_VERSION_CONFLICT');
-    }
     const dailyTaskSync = await synchronizeRouteChangeDailyTasks(tx, {
       changeId: sourceKey,
       routeId: obligation.routeId,
       actorId: identity.userId,
       reason: `补充工序 ${obligation.processName} 已报工，同步日任务进度`,
     });
-    if (routeCompleted) {
-      await tx.workOrder.update({
-        where: { id: obligation.workOrderId },
-        data: {
-          stage: 'completed',
-          status: 'done',
-          completedAt: now,
-          lastProgressAt: now,
-          latestProgressRemark: '补充工序义务已完成；成品数量保持原值',
-          executionVersion: { increment: 1 },
-        },
-      });
-    }
     await tx.processRouteActivity.create({
       data: {
         routeId: obligation.routeId,
@@ -4405,6 +4379,7 @@ export async function completeProcessSupplementObligation(
           reportedQty: nextReportedQty,
           remainingQty: nextState.remainingQty,
           releasePolicy: obligation.releasePolicy,
+          completionReconciliation,
           quantityMovementCount: 0,
           completedQtyDelta: 0,
         }),

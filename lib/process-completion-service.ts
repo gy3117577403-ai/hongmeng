@@ -2020,7 +2020,7 @@ async function reconcileQuantityStepStatuses(
   steps: QuantityStep[],
   input: {
     targetQty: number;
-    userId: string;
+    userId: string | null;
     now: Date;
   },
 ): Promise<boolean> {
@@ -2074,6 +2074,110 @@ async function reconcileQuantityStepStatuses(
     priorGroupClosed = groupClosed;
   }
   return steps.every(step => step.status === 'completed' || step.status === 'skipped');
+}
+
+/** Reconcile lifecycle projections only; supplemental reports never move material. */
+export async function reconcileSupplementRouteCompletion(
+  tx: Prisma.TransactionClient,
+  input: {
+    routeId: string;
+    expectedRouteVersion: number;
+    userId: string | null;
+    actor: string;
+    now: Date;
+  },
+) {
+  const route = await tx.workOrderProcessRoute.findUniqueOrThrow({
+    where: { id: input.routeId },
+    include: completionRouteInclude,
+  });
+  if (route.version !== input.expectedRouteVersion || route.status !== 'in_progress') {
+    throw new ProcessCompletionServiceError(
+      '工艺路线已被其他操作更新，请刷新后重试', 409, 'PROCESS_ROUTE_VERSION_CONFLICT',
+    );
+  }
+  const before = new Map(route.steps.map(step => [step.id, step.status]));
+  const stepsClosed = route.steps.length > 0 && await reconcileQuantityStepStatuses(tx, route.steps, {
+    targetQty: targetQuantity(route.workOrder), userId: input.userId, now: input.now,
+  });
+  const remainingObligations = await tx.processSupplementObligation.count({
+    where: { routeId: route.id, status: 'ACTIVE' },
+  });
+  const pendingCoverage = await tx.processCompletion.count({
+    where: { routeId: route.id, voidedAt: null, coverageStatus: { not: 'COVERED' } },
+  });
+  const routeCompleted = stepsClosed && remainingObligations === 0 && pendingCoverage === 0;
+  const deferredLaborPoolIds = await createDeferredPerBatchLaborPools(tx, route, input);
+  const updated = await tx.workOrderProcessRoute.updateMany({
+    where: { id: route.id, version: route.version, status: 'in_progress' },
+    data: {
+      version: { increment: 1 },
+      status: routeCompleted ? 'completed' : 'in_progress',
+      completedAt: routeCompleted ? input.now : null,
+    },
+  });
+  if (updated.count !== 1) {
+    throw new ProcessCompletionServiceError(
+      '工艺路线已被其他操作更新，请刷新后重试', 409, 'PROCESS_ROUTE_VERSION_CONFLICT',
+    );
+  }
+
+  // Finished quantities have already been credited by ordinary reporting.
+  // Close this order (and already-credited ancestors) without crediting them again.
+  const completedWorkOrderIds: string[] = [];
+  if (routeCompleted) {
+    let order: CompletionRouteRecord['workOrder'] | null = route.workOrder;
+    const visited = new Set<string>();
+    while (order) {
+      if (visited.has(order.id)) {
+        throw new ProcessCompletionServiceError(
+          '工单分支层级存在循环，无法确认生产完成状态', 409, 'PROCESS_BRANCH_ANCESTRY_CYCLE',
+        );
+      }
+      visited.add(order.id);
+      if (order.deletedAt || order.planClearedAt || order.branchStatus === 'CANCELLED') break;
+      const ownRoute = await tx.workOrderProcessRoute.findUnique({
+        where: { workOrderId: order.id }, select: { status: true },
+      });
+      if (ownRoute && ownRoute.status !== 'completed') break;
+      if (parseStoredQuantity(order.completedQty) !== targetQuantity(order)) break;
+      if (await hasActiveDescendantBranches(tx, order.id)) break;
+      if (order.stage !== 'completed' || order.status !== 'done' || !order.completedAt
+        || (order.branchType && order.branchStatus !== 'RESOLVED')) {
+        const remark = '补充工序与普通工序已闭环；成品数量保持原值';
+        await tx.workOrder.update({
+          where: { id: order.id },
+          data: {
+            stage: 'completed', status: 'done', progress: 100,
+            completedAt: order.completedAt || input.now,
+            lastProgressAt: input.now, latestProgressRemark: remark,
+            executionVersion: { increment: 1 },
+            ...(order.branchType ? { branchStatus: 'RESOLVED' } : {}),
+          },
+        });
+        await tx.workOrderProgressLog.create({
+          data: {
+            workOrderId: order.id,
+            previousStage: normalizeWorkOrderStage(order.stage || order.status) || 'not_issued',
+            stage: 'completed', completedQty: order.completedQty,
+            productionOwner: order.productionOwner, workstation: order.workstation,
+            remark, createdBy: input.actor,
+          },
+        });
+        completedWorkOrderIds.push(order.id);
+      }
+      order = order.parentWorkOrderId
+        ? await tx.workOrder.findUnique({ where: { id: order.parentWorkOrderId } })
+        : null;
+    }
+  }
+  return {
+    routeCompleted,
+    routeVersion: route.version + 1,
+    changedStepIds: route.steps.filter(step => before.get(step.id) !== step.status).map(step => step.id),
+    completedWorkOrderIds,
+    deferredLaborPoolIds,
+  };
 }
 
 async function hasActiveDescendantBranches(
@@ -2221,7 +2325,7 @@ export async function autoAssignCompletionLaborPool(
     poolId: string;
     completionId: string;
     employeeIds: string[];
-    userId: string;
+    userId: string | null;
     now: Date;
   },
 ): Promise<{ employeeCount: number; standardLaborMilliseconds: number }> {
@@ -2324,7 +2428,7 @@ async function createDeferredPerBatchLaborPools(
   tx: Prisma.TransactionClient,
   route: CompletionRouteRecord,
   input: {
-    userId: string;
+    userId: string | null;
     now: Date;
   },
 ): Promise<string[]> {

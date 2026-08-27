@@ -20,7 +20,7 @@ export type ProcessRouteChangeInsertedDailyStep = {
 export type ProcessRouteChangeDailyTaskSyncInput = {
   changeId: string;
   routeId: string;
-  actorId: string;
+  actorId: string | null;
   insertedSteps?: readonly ProcessRouteChangeInsertedDailyStep[];
   timeChangedStepIds?: readonly string[];
   reason?: string;
@@ -41,6 +41,25 @@ export class ProcessRouteChangeDailyTaskSyncError extends Error {
     super(message);
     this.name = 'ProcessRouteChangeDailyTaskSyncError';
     this.code = code;
+  }
+}
+
+async function recordTaskSyncRevision(
+  tx: Prisma.TransactionClient,
+  actorId: string | null,
+  data: Omit<Prisma.DailyPlanRevisionUncheckedCreateInput, 'actorId'>,
+) {
+  if (actorId) {
+    await tx.dailyPlanRevision.create({ data: { ...data, actorId } });
+  } else {
+    // Background recovery must not impersonate the original reporter. The
+    // user-owned revision table requires an actor; use the system audit instead.
+    await tx.operationLog.create({
+      data: {
+        action: data.action, targetType: 'DailyProcessTask', targetId: data.taskId,
+        detail: JSON.parse(JSON.stringify({ ...data, source: 'supplement_completion_recovery' })) as Prisma.InputJsonValue,
+      },
+    });
   }
 }
 
@@ -481,39 +500,36 @@ export async function syncDailyTasksAfterProcessRouteChange(
       }
       synchronizedAssignments += 1;
     }
-    await tx.dailyPlanRevision.create({
-      data: {
-        planId: task.planId,
-        taskId: task.id,
-        action: 'PROCESS_ROUTE_CHANGE_TASK_SYNCHRONIZED',
-        beforeData: {
-          routeVersion: task.routeVersion,
-          processCode: task.processCode,
-          processName: task.processName,
-          position: task.position,
-          sequenceGroup: task.sequenceGroup,
-          standardMillisecondsPerUnit: task.standardMillisecondsPerUnit,
-          status: task.status,
-          availableQty: task.availableQty,
-        },
-        afterData: {
-          changeId: input.changeId,
-          routeVersion: route.version,
-          processCode: step.processCode,
-          processName: step.processName,
-          position: step.position,
-          sequenceGroup: step.sequenceGroup,
-          standardMillisecondsPerUnit: time.standardMillisecondsPerUnit,
-          status: projected.status,
-          availableQty: projected.availableQty,
-          synchronizedAssignmentCount: task.assignments.filter(assignment => (
-            MUTABLE_ASSIGNMENT_STATUSES.has(assignment.status)
-          )).length,
-        },
-        reason: input.reason || `工艺变更 ${input.changeId} 已启用，同步未完成日任务`,
-        actorId: input.actorId,
-        idempotencyKey: `route-change-task-sync:${input.changeId}:${route.version}:${task.id}:${task.version}`.slice(0, 190),
+    await recordTaskSyncRevision(tx, input.actorId, {
+      planId: task.planId,
+      taskId: task.id,
+      action: 'PROCESS_ROUTE_CHANGE_TASK_SYNCHRONIZED',
+      beforeData: {
+        routeVersion: task.routeVersion,
+        processCode: task.processCode,
+        processName: task.processName,
+        position: task.position,
+        sequenceGroup: task.sequenceGroup,
+        standardMillisecondsPerUnit: task.standardMillisecondsPerUnit,
+        status: task.status,
+        availableQty: task.availableQty,
       },
+      afterData: {
+        changeId: input.changeId,
+        routeVersion: route.version,
+        processCode: step.processCode,
+        processName: step.processName,
+        position: step.position,
+        sequenceGroup: step.sequenceGroup,
+        standardMillisecondsPerUnit: time.standardMillisecondsPerUnit,
+        status: projected.status,
+        availableQty: projected.availableQty,
+        synchronizedAssignmentCount: task.assignments.filter(assignment => (
+          MUTABLE_ASSIGNMENT_STATUSES.has(assignment.status)
+        )).length,
+      },
+      reason: input.reason || `工艺变更 ${input.changeId} 已启用，同步未完成日任务`,
+      idempotencyKey: `route-change-task-sync:${input.changeId}:${route.version}:${task.id}:${task.version}`.slice(0, 190),
     });
     synchronizedTasks += 1;
   }
@@ -640,26 +656,23 @@ export async function syncDailyTasksAfterProcessRouteChange(
         },
         select: { id: true },
       });
-      await tx.dailyPlanRevision.create({
-        data: {
-          planId: template.planId,
-          taskId: created.id,
-          action: 'PROCESS_ROUTE_CHANGE_TASK_CREATED',
-          afterData: {
-            changeId: input.changeId,
-            routeVersion: route.version,
-            stepId: step.id,
-            processCode: step.processCode,
-            processName: step.processName,
-            executionMode: step.executionMode,
-            plannedQty,
-            availableQty: projected.availableQty,
-            status: projected.status,
-          },
-          reason: input.reason || `工艺变更 ${input.changeId} 新增工序已同步到日计划`,
-          actorId: input.actorId,
-          idempotencyKey: `route-change-task-create:${input.changeId}:${template.planId}:${step.id}`.slice(0, 190),
+      await recordTaskSyncRevision(tx, input.actorId, {
+        planId: template.planId,
+        taskId: created.id,
+        action: 'PROCESS_ROUTE_CHANGE_TASK_CREATED',
+        afterData: {
+          changeId: input.changeId,
+          routeVersion: route.version,
+          stepId: step.id,
+          processCode: step.processCode,
+          processName: step.processName,
+          executionMode: step.executionMode,
+          plannedQty,
+          availableQty: projected.availableQty,
+          status: projected.status,
         },
+        reason: input.reason || `工艺变更 ${input.changeId} 新增工序已同步到日计划`,
+        idempotencyKey: `route-change-task-create:${input.changeId}:${template.planId}:${step.id}`.slice(0, 190),
       });
       createdPlanIds.add(template.planId);
       createdTasks += 1;
@@ -672,7 +685,7 @@ export async function syncDailyTasksAfterProcessRouteChange(
     if (!originalPlan) continue;
     const planUpdate = await tx.dailyProductionPlan.updateMany({
       where: { id: planId, version: originalPlan.version, status: originalPlan.status },
-      data: { updatedById: input.actorId, version: { increment: 1 } },
+      data: { ...(input.actorId ? { updatedById: input.actorId } : {}), version: { increment: 1 } },
     });
     if (planUpdate.count !== 1) {
       throw new ProcessRouteChangeDailyTaskSyncError(
