@@ -38,7 +38,7 @@ function integer(value: string | null, fallback: number, max: number): number {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
     const params = req.nextUrl.searchParams;
     const keyword = String(params.get('keyword') || '').trim().slice(0, 160);
     const status = params.get('status');
@@ -110,7 +110,7 @@ export async function GET(req: NextRequest) {
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     return NextResponse.json({
       ok: true,
-      issues: records.map(serializeIssue),
+      issues: records.map(issue => serializeIssue(issue, user)),
       summary,
       pagination: { page, pageSize, total, totalPages },
     });
@@ -285,7 +285,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({
       ok: true,
-      issue: serializeIssue(result.issue),
+      issue: serializeIssue(result.issue, user),
       createdWorkOrder: result.createdWorkOrder
         ? serializeIssueWorkOrderOption(result.createdWorkOrder)
         : null,

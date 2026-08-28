@@ -588,6 +588,7 @@ export type IssueUserDTO = {
   id: string;
   username: string;
   displayName: string;
+  employee?: { employeeNo: string; name: string } | null;
 };
 
 export type IssueEmployeeDTO = {
@@ -680,6 +681,16 @@ export type IssueAttachmentDTO = {
   downloadUrl: string;
 };
 
+export type IssueWorkflowDTO = {
+  waitingFor: string;
+  currentTaskForUser: 'processing' | 'verifying' | 'confirmation' | null;
+  canEdit: boolean;
+  permissionReason: string | null;
+  checklist: Array<{ key: string; label: string; done: boolean }>;
+  verification: { kind: 'verification' | 'major_approval' | 'missing'; text: string; approvalId?: string; round?: number };
+  actions: Array<{ target: IssueStatus; label: string; allowed: boolean; blockers: string[]; requiresComment: boolean; adminOverride: boolean }>;
+};
+
 export type IssueDTO = {
   id: string;
   sequence: number;
@@ -713,6 +724,7 @@ export type IssueDTO = {
   isMajorQuality: boolean;
   majorQualityReason?: string | null;
   version: number;
+  workflow?: IssueWorkflowDTO;
   majorApproval?: IssueMajorApprovalSummaryDTO | null;
   resolvedAt?: string | null;
   verifiedAt?: string | null;

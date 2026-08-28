@@ -17,10 +17,10 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    await requireUser();
+    const user = await requireUser();
     const issue = await loadIssueById(params.id);
     if (!issue) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
-    return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
+    return NextResponse.json({ ok: true, issue: serializeIssue(issue, user) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     console.error('issue detail failed', error);
@@ -54,6 +54,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ ok: false, error: '已完结问题为只读归档，请先重新打开后再修改内容' }, { status: 409 });
     }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    if (body.expectedVersion !== undefined && (!Number.isInteger(body.expectedVersion) || body.expectedVersion !== current.version)) {
+      return NextResponse.json({ ok: false, code: 'ISSUE_VERSION_CONFLICT', error: '问题记录已变化，未保存的修改已保留，请刷新核对后再保存' }, { status: 409 });
+    }
     const parsed = parseIssueInput(body, true);
     if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
     const values = parsed.data;
@@ -176,7 +179,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         data: {
           issueId: current.id,
           action,
-          content: action === 'assign' ? '更新负责人' : '更新问题信息',
+          content: `更新：${changed.map(field => ({ title: '标题', description: '问题描述', assigneeEmployeeId: '负责人', verifierEmployeeId: '验证人', collaboratorEmployeeIds: '协同人员', priority: '优先级', dueAt: '截止时间', rootCause: '原因分析', solution: '处理措施', verificationResult: '验证结果' } as Record<string, string>)[field] || field).join('、')}`,
           actorId: user.id,
           detail: { fields: changed },
         },
@@ -220,7 +223,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ ok: false, error: '问题或审批状态已变化，请刷新后重试' }, { status: 409 });
     }
     await logOp({ userId: user.id, action: action === 'assign' ? 'assign_issue' : 'update_issue', targetType: 'issue', targetId: current.id, detail: { fields: changed } });
-    return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
+    return NextResponse.json({ ok: true, issue: serializeIssue(issue, user) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     if (error instanceof IssueAssigneeAccessError) {

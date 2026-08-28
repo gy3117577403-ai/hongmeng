@@ -120,7 +120,7 @@ export async function PATCH(req: Request, { params }: { params: { attachmentId: 
       targetId: attachment.id,
       detail: { issueId: attachment.issueId, fromCategory: attachment.category, toCategory: category },
     });
-    return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
+    return NextResponse.json({ ok: true, issue: serializeIssue(issue, user) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     if (error instanceof IssueAttachmentConflictError) {
@@ -205,7 +205,7 @@ export async function DELETE(req: Request, { params }: { params: { attachmentId:
       return tx.issue.findUniqueOrThrow({ where: { id: attachment.issueId }, include: issueDetailInclude });
     });
     await logOp({ userId: user.id, action: 'delete_issue_attachment', targetType: 'issue_attachment', targetId: attachment.id, detail: { issueId: attachment.issueId } });
-    return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
+    return NextResponse.json({ ok: true, issue: serializeIssue(issue, user) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     if (error instanceof IssueAttachmentConflictError) {

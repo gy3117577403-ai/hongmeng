@@ -10,6 +10,7 @@ import {
   submitMajorQualityApproval,
 } from '../lib/major-quality-approval';
 import { prisma } from '../lib/prisma';
+import { issueDetailInclude, issueVerificationBasis, transitionIssueData } from '../lib/issues';
 import {
   createSystemNotification,
   loadNotificationInbox,
@@ -74,7 +75,7 @@ test('major quality approval is transactional, separated by person, and notifica
         isMajorQuality: true,
         majorQualityReason: '同批次多客户产品存在失效风险',
         solution: '隔离批次并完成全检',
-        verificationResult: '复检结果符合要求',
+        verificationResult: null,
         reporterId: submitter.id,
       },
     });
@@ -129,6 +130,13 @@ test('major quality approval is transactional, separated by person, and notifica
     assert.equal(awaitingRequesterIssue.status, 'awaiting_confirmation');
     assert.equal(awaitingRequesterIssue.closedAt, null);
     assert.ok(awaitingRequesterIssue.verifiedAt);
+    const closureRecord = await prisma.issue.findUniqueOrThrow({ where: { id: issue.id }, include: issueDetailInclude });
+    assert.equal(closureRecord.verificationResult, null);
+    assert.equal(issueVerificationBasis(closureRecord).kind, 'major_approval');
+    const close = transitionIssueData(closureRecord, 'closed', { comment: '发起人核对真实审批结论' }, new Date(), submitter.id);
+    assert.equal(close.error, null);
+    assert.equal((await prisma.issue.updateMany({ where: { id: issue.id, version: closureRecord.version }, data: close.data })).count, 1);
+    assert.equal((await prisma.issue.findUniqueOrThrow({ where: { id: issue.id } })).requesterConfirmedById, submitter.id);
     assert.equal(await prisma.issueMajorApprovalEvent.count({ where: { approvalId } }), 3);
 
     await prisma.issue.update({ where: { id: issue.id }, data: { title: `${prefix} 后续整改标题` } });

@@ -133,7 +133,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       targetId: result.attachmentId,
       detail: { issueId: issue.id, fileType: fileType(upload.name, mimeType), size: upload.size, category, stage: issue.status },
     });
-    return NextResponse.json({ ok: true, issue: serializeIssue(result.issue) });
+    return NextResponse.json({ ok: true, issue: serializeIssue(result.issue, user) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     if (error instanceof IssueAttachmentConflictError) {

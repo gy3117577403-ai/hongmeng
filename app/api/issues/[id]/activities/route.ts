@@ -19,6 +19,7 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+class IssueActivityConflictError extends Error {}
 
 function detailText(value: unknown, key: string): string | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         title: true,
         priority: true,
         status: true,
+        version: true,
         type: true,
         isMajorQuality: true,
         reporterId: true,
@@ -59,6 +61,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ ok: false, error: parsed.errors[0] || '协同记录格式不正确' }, { status: 400 });
     }
     const input = parsed.data;
+    if (input.kind !== 'comment' && !['pending', 'processing'].includes(issue.status)) {
+      return NextResponse.json({ ok: false, error: '验证及确认阶段不能修改协同任务或决策，请先退回整改' }, { status: 409 });
+    }
     const taskAssignee = input.kind === 'task'
       ? await requireIssueAssigneeReady(prisma, input.assigneeEmployeeId)
       : null;
@@ -109,6 +114,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           : undefined;
 
     const activity = await prisma.$transaction(async tx => {
+      const changed = await tx.issue.updateMany({
+        where: { id: issue.id, status: issue.status, version: issue.version, deletedAt: null },
+        data: { updatedAt: new Date(), ...(input.kind === 'comment' ? {} : { version: { increment: 1 } }) },
+      });
+      if (changed.count !== 1) throw new IssueActivityConflictError();
       if (input.targetActivityId) {
         const duplicate = await tx.issueActivity.findFirst({
           where: {
@@ -120,7 +130,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           },
           select: { id: true },
         });
-        if (duplicate) return null;
+        if (duplicate) throw new IssueActivityConflictError();
       }
       const created = await tx.issueActivity.create({
         data: {
@@ -131,7 +141,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           detail,
         },
       });
-      await tx.issue.update({ where: { id: issue.id }, data: { updatedAt: new Date() } });
 
       const participantIds = await issueParticipantUserIds(tx, issue.id, { excludeUserIds: [user.id] });
       const taskRecipientIds = taskAssignee
@@ -178,9 +187,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       targetId: issue.id,
       detail: { activityId: activity.id, targetActivityId: input.targetActivityId || null },
     });
-    return NextResponse.json({ ok: true, issue: serializeIssue(updated) });
+    return NextResponse.json({ ok: true, issue: serializeIssue(updated, user) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
+    if (error instanceof IssueActivityConflictError) return NextResponse.json({ ok: false, error: '问题状态已变化，请刷新后重试' }, { status: 409 });
     if (error instanceof IssueAssigneeAccessError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     }

@@ -122,7 +122,7 @@ export async function POST(req: NextRequest) {
         detail: { workOrderId: order.id, alertCode: alert.code },
       });
     }
-    return NextResponse.json({ ok: true, created: result.created, restored: result.restored, issue: serializeIssue(result.issue) }, { status: result.created ? 201 : 200 });
+    return NextResponse.json({ ok: true, created: result.created, restored: result.restored, issue: serializeIssue(result.issue, user) }, { status: result.created ? 201 : 200 });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     console.error('create issue from production alert failed', error);

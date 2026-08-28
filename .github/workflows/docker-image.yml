@@ -78,6 +78,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:issue-work-order-integration
+      - name: Issue closure PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/issues.test.ts
       - name: 8D PDF archive PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -278,6 +282,9 @@ jobs:
           CONTROL_QA_BASE=http://127.0.0.1:3000 \
             CONTROL_QA_EVIDENCE=artifacts/production-control-v13469/runtime-ci.json \
             node scripts/smoke-production-control.mjs
+          ISSUE_QA_BASE=http://127.0.0.1:3000 \
+            ISSUE_QA_EVIDENCE=artifacts/issue-closure-v13470/runtime-ci.json \
+            node scripts/smoke-issue-closure.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image

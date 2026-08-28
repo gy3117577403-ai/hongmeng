@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { hasCapability } from '@/lib/department-access';
 import {
   ISSUE_STATUSES,
+  issueCollaborationBlockers,
   issueDetailInclude,
   issueTransitionAuthority,
   issueVerificationBlockers,
+  issueVerificationBasis,
   serializeIssue,
   transitionIssueData,
 } from '@/lib/issues';
@@ -31,20 +34,21 @@ export const dynamic = 'force-dynamic';
 class IssueTransitionConflictError extends Error {}
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  const requestId = randomUUID();
   try {
     assertSameOriginMutationRequest(req);
     const user = await requireUser();
     const current = await prisma.issue.findFirst({
       where: { id: params.id, deletedAt: null },
-      include: {
-        collaborators: { select: { employeeId: true } },
-        _count: { select: { attachments: { where: { deletedAt: null } } } },
-      },
+      include: issueDetailInclude,
     });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const target = typeof body.status === 'string' ? body.status as IssueStatus : null;
     if (!target || !ISSUE_STATUSES.includes(target)) return NextResponse.json({ ok: false, error: '目标状态不正确' }, { status: 400 });
+    if (!Number.isInteger(body.expectedVersion) || body.expectedVersion !== current.version) {
+      return NextResponse.json({ ok: false, code: 'ISSUE_VERSION_CONFLICT', error: '问题记录已变化或页面版本过旧，请刷新核对后再操作' }, { status: 409 });
+    }
     const comment = typeof body.comment === 'string' ? body.comment.trim().slice(0, 2000) : '';
     const authority = issueTransitionAuthority({
       currentStatus: current.status as IssueStatus,
@@ -72,8 +76,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (authority.adminOverride && !comment) {
       return NextResponse.json({ ok: false, error: '管理员代操作必须填写审计说明' }, { status: 400 });
     }
-    if ((current.status === 'awaiting_confirmation' && target === 'processing')
-      || (current.status === 'closed' && target === 'processing')) {
+    if (target === 'processing' && current.status !== 'pending') {
       if (!comment) return NextResponse.json({ ok: false, error: '退回或重新打开时必须填写说明' }, { status: 400 });
     }
     const transition = transitionIssueData(current, target, body, new Date(), user.id);
@@ -86,8 +89,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         verifierEmployeeId: current.verifierEmployeeId,
         rootCause,
         solution,
-        attachmentCount: current._count.attachments,
+        attachmentCount: current.attachments.length,
         isMajorQuality: current.isMajorQuality,
+        activities: current.activities,
       });
       if (blockers.length) {
         return NextResponse.json({
@@ -96,6 +100,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           blockers,
         }, { status: 409 });
       }
+    }
+    if (target === 'awaiting_confirmation' || target === 'closed') {
+      const blockers = issueCollaborationBlockers(current.activities);
+      if (blockers.length) return NextResponse.json({ ok: false, code: 'ISSUE_CLOSURE_BLOCKED', error: blockers.join('；'), blockers }, { status: 409 });
     }
     if (current.isMajorQuality && current.status === 'verifying' && target === 'awaiting_confirmation') {
       return NextResponse.json({ ok: false, error: '重大质量问题须先完成质量复核和总经办终审' }, { status: 409 });
@@ -129,6 +137,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             adminOverride: authority.adminOverride,
             actorLaborRole: user.laborRole,
             actorUserId: user.id,
+            verificationBasis: target === 'closed' ? issueVerificationBasis(current) : null,
           },
         },
       });
@@ -178,16 +187,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         comment: comment || null,
       },
     });
-    return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
+    return NextResponse.json({ ok: true, issue: serializeIssue(issue, user) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     if (error instanceof IssueTransitionConflictError) {
-      return NextResponse.json({ ok: false, error: '问题状态已发生变化，请刷新后重试' }, { status: 409 });
+      return NextResponse.json({ ok: false, code: 'ISSUE_VERSION_CONFLICT', error: '问题状态已发生变化，请刷新后重试' }, { status: 409 });
     }
     if (error instanceof MajorQualityApprovalError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }
-    console.error('issue transition failed', error);
-    return NextResponse.json({ ok: false, error: '问题状态流转失败' }, { status: 500 });
+    console.error('issue transition failed', { requestId, error });
+    return NextResponse.json({ ok: false, code: 'ISSUE_TRANSITION_FAILED', requestId, error: '问题操作未能确认成功，请刷新核对结果后重试；持续失败请联系管理员并提供追踪号' }, { status: 500 });
   }
 }

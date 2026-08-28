@@ -44,6 +44,7 @@ import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
 import { EmployeeMultiPicker, EmployeePicker, WorkOrderPicker } from '@/components/issues/IssuePickers';
+import { IssueCurrentTask } from '@/components/issues/IssueCurrentTask';
 import type {
   CurrentUserDTO,
   DetectedIssueDTO,
@@ -104,7 +105,8 @@ type IssueFormState = {
   majorQualityReason: string;
 };
 
-type TransitionState = { target: IssueStatus; rootCause: string; solution: string; verificationResult: string; comment: string };
+type TransitionState = { issueId: string; expectedVersion: number; target: IssueStatus; rootCause: string; solution: string; verificationResult: string; comment: string };
+type ContextForm = { assigneeEmployeeId: string; verifierEmployeeId: string; collaboratorEmployeeIds: string[]; dueAt: string; priority: IssuePriority };
 type ComposerMode = 'comment' | 'task' | 'decision';
 type AttachmentDeleteState = { id: string; name: string };
 type DetailBranch = 'overview' | 'analysis' | 'collaboration' | 'decisions' | 'files' | 'verification' | 'logs';
@@ -127,13 +129,9 @@ const attachmentCategoryLabels: Record<IssueAttachmentCategory, string> = {
   other: '其他未分类',
 };
 const detailBranches: Array<{ key: DetailBranch; label: string; hint: string }> = [
-  { key: 'overview', label: '问题总览', hint: '事实与当前状态' },
-  { key: 'analysis', label: '原因与方案', hint: '根因和处理措施' },
-  { key: 'collaboration', label: '协同任务', hint: '回复与待办' },
-  { key: 'decisions', label: '决策记录', hint: '审批和结论' },
-  { key: 'files', label: '文件与证据', hint: '分类归档资料' },
-  { key: 'verification', label: '验证与关闭', hint: '验证和发起人确认' },
-  { key: 'logs', label: '全量日志', hint: '完整审计轨迹' },
+  { key: 'overview', label: '处理与验证', hint: '当前任务与解决情况' },
+  { key: 'files', label: '文件证据', hint: '查看与补充依据' },
+  { key: 'logs', label: '历史记录', hint: '完整审计轨迹' },
 ];
 const activityLabels: Record<string, string> = {
   create: '创建问题', created: '创建问题', create_from_source: '由生产异常转入', restore_from_source: '从来源恢复',
@@ -271,8 +269,6 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const canUpdateIssues = isAdmin || user.access.capabilities.includes('QUALITY:UPDATE')
     || user.access.capabilities.includes('ISSUE_MANAGEMENT:UPDATE');
   const canDeleteIssues = isAdmin || user.access.capabilities.includes('QUALITY:DELETE');
-  const canExecuteIssueWorkflow = isAdmin || user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
-    || user.access.capabilities.includes('ISSUE_MANAGEMENT:EXECUTE_WORKFLOW');
   const canConvertDetectedIssues = user.access.capabilities.includes('QUALITY:CREATE');
   const defaultIssueForm = useMemo<IssueFormState>(() => ({
     ...emptyForm,
@@ -310,6 +306,10 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [duplicateIssue, setDuplicateIssue] = useState<DuplicateIssue | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [transition, setTransition] = useState<TransitionState | null>(null);
+  const [transitionError, setTransitionError] = useState('');
+  const [transitionConflict, setTransitionConflict] = useState(false);
+  const [operationResult, setOperationResult] = useState('');
+  const [contextError, setContextError] = useState('');
   const [composerMode, setComposerMode] = useState<ComposerMode>('comment');
   const [composerContent, setComposerContent] = useState('');
   const [composerAssigneeEmployeeId, setComposerAssigneeEmployeeId] = useState('');
@@ -322,13 +322,26 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [compactContext, setCompactContext] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<IssueDTO | null>(null);
   const [confirmAttachmentDelete, setConfirmAttachmentDelete] = useState<AttachmentDeleteState | null>(null);
-  const [contextForm, setContextForm] = useState({
-    assigneeEmployeeId: '',
-    verifierEmployeeId: '',
-    collaboratorEmployeeIds: [] as string[],
-    dueAt: '',
-    priority: 'normal' as IssuePriority,
-  });
+  const [contextDrafts, setContextDrafts] = useState<Record<string, { value: ContextForm; baseline: string; version: number }>>({});
+  const serverContext: ContextForm = {
+    assigneeEmployeeId: selected?.assignee?.id || '', verifierEmployeeId: selected?.verifier?.id || '',
+    collaboratorEmployeeIds: selected?.collaborators.map(item => item.id) || [], dueAt: localDateTime(selected?.dueAt), priority: selected?.priority || 'normal',
+  };
+  const contextDraft = selected ? contextDrafts[selected.id] : undefined;
+  const contextDirty = !!contextDraft && JSON.stringify(contextDraft.value) !== contextDraft.baseline;
+  const contextForm = contextDirty ? contextDraft!.value : serverContext;
+  const anyContextDirty = Object.values(contextDrafts).some(draft => JSON.stringify(draft.value) !== draft.baseline);
+  function setContextForm(update: (current: ContextForm) => ContextForm): void {
+    if (!selected || saving) return;
+    setContextError('');
+    setContextDrafts(current => ({ ...current, [selected.id]: {
+      value: update(contextForm), baseline: contextDirty ? contextDraft!.baseline : JSON.stringify(serverContext), version: contextDirty ? contextDraft!.version : selected.version,
+    } }));
+  }
+  function discardContextDraft(id: string): void {
+    setContextDrafts(current => { const next = { ...current }; delete next[id]; return next; });
+    setContextError('');
+  }
   const selectedApprovalPending = ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL']
     .includes(selected?.majorApproval?.status || '');
   const selectedMajorFinalApproved = selected?.majorApproval?.status === 'APPROVED'
@@ -345,7 +358,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         || issue.verifier?.id === user.employeeId
         || issue.collaborators.some(employee => employee.id === user.employeeId)
       )));
-  const canMaintainSelected = canMaintainIssue(selected);
+  const canMaintainSelected = selected?.workflow?.canEdit ?? canMaintainIssue(selected);
   const queueRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<HTMLElement>(null);
   const contextTriggerRef = useRef<HTMLButtonElement>(null);
@@ -393,7 +406,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         || filters.unassigned
         || !!workOrderId;
       if (match) setSelected(match);
-      else if (desired && !listIsScoped) {
+      else if (desired && (preferredId || !listIsScoped)) {
         try {
           const detail = await jsonRequest<IssueMutationResponse>(`/api/issues/${encodeURIComponent(desired)}`);
           setSelected(detail.issue || data.issues[0] || null);
@@ -455,17 +468,23 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   useEffect(() => {
     if (!selected) return;
     sessionStorage.setItem('hm-issue-selected', selected.id);
-    setContextForm({
-      assigneeEmployeeId: selected.assignee?.id || '',
-      verifierEmployeeId: selected.verifier?.id || '',
-      collaboratorEmployeeIds: selected.collaborators.map(item => item.id),
-      dueAt: localDateTime(selected.dueAt),
-      priority: selected.priority,
-    });
     const params = new URLSearchParams(window.location.search);
     params.set('issueId', selected.id);
     window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}`);
   }, [selected]);
+
+  useEffect(() => {
+    if (!anyContextDirty && !composerContent.trim() && !transition?.comment.trim()) return;
+    const beforeUnload = (event: BeforeUnloadEvent): void => { event.preventDefault(); event.returnValue = ''; };
+    const leaving = (event: MouseEvent): void => {
+      const link = event.target instanceof Element ? event.target.closest('a[href]') : null;
+      if (!(link instanceof HTMLAnchorElement) || link.target === '_blank' || link.pathname === window.location.pathname) return;
+      if (!window.confirm('有未保存的责任信息或操作说明，确定离开并放弃这些修改吗？')) { event.preventDefault(); event.stopPropagation(); }
+    };
+    window.addEventListener('beforeunload', beforeUnload);
+    document.addEventListener('click', leaving, true);
+    return () => { window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('click', leaving, true); };
+  }, [anyContextDirty, composerContent, transition?.comment]);
 
   useEffect(() => {
     const element = queueRef.current;
@@ -481,7 +500,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     const media = window.matchMedia('(max-width: 1100px)');
     const sync = (): void => {
       setCompactContext(media.matches);
-      setContextOpen(!media.matches);
+      setContextOpen(false);
     };
     sync();
     media.addEventListener('change', sync);
@@ -655,7 +674,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         allowDuplicate,
       };
       const data = await jsonRequest<IssueMutationResponse>(editingIssue ? `/api/issues/${editingIssue.id}` : '/api/issues', {
-        method: editingIssue ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        method: editingIssue ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, ...(editingIssue ? { expectedVersion: editingIssue.version } : {}) }),
       });
       if (!data.issue) throw new Error('问题保存结果为空');
       let savedIssue = data.issue;
@@ -705,9 +724,11 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   async function saveContext(): Promise<void> {
     if (!selected) return;
     setSaving(true);
+    setContextError('');
     try {
       const data = await jsonRequest<IssueMutationResponse>(`/api/issues/${selected.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          expectedVersion: contextDraft && contextDraft.baseline !== JSON.stringify(serverContext) ? contextDraft.version : selected.version,
           assigneeEmployeeId: contextForm.assigneeEmployeeId || null,
           verifierEmployeeId: contextForm.verifierEmployeeId || null,
           collaboratorEmployeeIds: contextForm.collaboratorEmployeeIds.filter(id => id !== contextForm.assigneeEmployeeId),
@@ -715,27 +736,57 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           priority: contextForm.priority,
         }),
       });
-      if (data.issue) updateIssue(data.issue);
+      if (data.issue) { discardContextDraft(data.issue.id); updateIssue(data.issue); }
       setToast('责任信息已保存');
-    } catch (saveError) { setToast(saveError instanceof Error ? saveError.message : '保存失败'); }
+    } catch (saveError) { setContextError(saveError instanceof Error ? saveError.message : '保存失败'); }
     finally { setSaving(false); }
   }
 
   async function submitTransition(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!selected || !transition) return;
+    if (contextDirty) { setTransitionError('责任信息尚未保存，请先保存或放弃修改后再操作'); return; }
+    if (selected.id !== transition.issueId) { setTransitionError('当前问题已切换，请取消后重新核对'); return; }
     setSaving(true);
+    setTransitionError('');
+    setTransitionConflict(false);
     try {
       const data = await jsonRequest<IssueMutationResponse>(`/api/issues/${selected.id}/transition`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...transition, status: transition.target }),
+        body: JSON.stringify({ status: transition.target, expectedVersion: transition.expectedVersion, comment: transition.comment,
+          ...(transition.target === 'verifying' ? { rootCause: transition.rootCause, solution: transition.solution } : {}),
+          ...(transition.target === 'awaiting_confirmation' ? { verificationResult: transition.verificationResult } : {}),
+        }),
       });
       if (data.issue) updateIssue(data.issue);
       setTransition(null);
-      setToast(`问题已流转为${statusLabels[transition.target]}`);
+      setOperationResult(`${data.issue?.code || selected.code} ${transition.target === 'closed' ? '已完结并归档' : `已更新为${statusLabels[transition.target]}`}`);
       await loadIssues(data.issue?.id);
-    } catch (transitionError) { setToast(transitionError instanceof Error ? transitionError.message : '状态流转失败'); }
+    } catch (failure) {
+      const requestId = failure instanceof ApiRequestError ? failure.data.requestId : null;
+      setTransitionError(`${failure instanceof Error ? failure.message : '提交失败，请重试'}${requestId ? `（追踪号：${String(requestId)}）` : ''}`);
+      setTransitionConflict(failure instanceof ApiRequestError && failure.data.code === 'ISSUE_VERSION_CONFLICT');
+    }
+    finally { setSaving(false); }
+  }
+
+  async function refreshTransition(): Promise<void> {
+    if (!transition) return;
+    setSaving(true);
+    try {
+      const data = await jsonRequest<IssueMutationResponse>(`/api/issues/${transition.issueId}`);
+      if (!data.issue) throw new Error('问题记录未找到');
+      const latest = data.issue;
+      updateIssue(latest);
+      if (!latest.workflow?.actions.some(action => action.target === transition.target && action.allowed)) {
+        setTransitionError('当前问题阶段或操作资格已变化，请取消并重新选择下一步');
+        return;
+      }
+      setTransition(current => current ? { ...current, expectedVersion: latest.version, rootCause: latest.rootCause || '', solution: latest.solution || '', verificationResult: latest.verificationResult || '' } : null);
+      setTransitionConflict(false);
+      setTransitionError('');
+    } catch (failure) { setTransitionError(failure instanceof Error ? failure.message : '刷新失败，原输入已保留'); }
     finally { setSaving(false); }
   }
 
@@ -860,8 +911,14 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   }
 
   function beginTransition(target: IssueStatus): void {
+    if (!selected) return;
+    if (contextDirty) { setContextError('请先保存或放弃未保存的责任信息，再推进流程'); openContext(); return; }
+    if (!selected.workflow?.actions.some(action => action.target === target && action.allowed)) return;
     modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setTransitionError('');
+    setTransitionConflict(false);
     setTransition({
+      issueId: selected.id, expectedVersion: selected.version,
       target,
       rootCause: selected?.rootCause || '',
       solution: selected?.solution || '',
@@ -881,6 +938,8 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   }
 
   function selectIssue(issue: IssueDTO): void {
+    setOperationResult('');
+    setContextError('');
     setSelected(issue);
     setDetailBranch('overview');
     setAttachmentCaption('');
@@ -928,25 +987,26 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
   const queueGroups = useMemo(() => {
     const groups: Array<{ key: string; label: string; hint: string; items: IssueDTO[] }> = [
-      { key: 'mine', label: '需我处理', hint: '负责人、协同人或我发起', items: [] },
+      { key: 'mine', label: '待我处理', hint: '需要我推进的处理任务', items: [] },
       { key: 'waiting', label: '等待他人', hint: '协同处理中', items: [] },
-      { key: 'verifying', label: '待验证', hint: '等待验证结论', items: [] },
-      { key: 'confirmation', label: '待发起人确认', hint: '验证通过，等待完结确认', items: [] },
+      { key: 'verifying', label: '待我验证', hint: '需要我核对验证依据', items: [] },
+      { key: 'confirmation', label: '待我确认', hint: '验证通过，需要我确认完结', items: [] },
       { key: 'closed', label: '已完结问题库', hint: '按问题类型归档', items: [] },
     ];
     issues.forEach(issue => {
       if (issue.status === 'closed') groups[4].items.push(issue);
-      else if (issue.status === 'awaiting_confirmation') groups[3].items.push(issue);
-      else if (issue.status === 'verifying') groups[2].items.push(issue);
+      else if (issue.workflow?.currentTaskForUser === 'confirmation') groups[3].items.push(issue);
+      else if (issue.workflow?.currentTaskForUser === 'verifying') groups[2].items.push(issue);
+      else if (issue.status === 'awaiting_confirmation' || issue.status === 'verifying') groups[1].items.push(issue);
       else {
-        const mine = issue.reporter?.id === user.id
+        const mine = issue.workflow?.actions.some(action => action.allowed) && (issue.reporter?.id === user.id
           || issue.assignee?.id === user.employeeId
           || issue.verifier?.id === user.employeeId
-          || issue.collaborators.some(employee => employee.id === user.employeeId);
+          || issue.collaborators.some(employee => employee.id === user.employeeId));
         groups[mine ? 0 : 1].items.push(issue);
       }
     });
-    return groups.filter(group => group.items.length);
+    return [groups[0], groups[2], groups[3], groups[1], groups[4]].filter(group => group.items.length);
   }, [issues, user.employeeId, user.id]);
 
   const completedTaskIds = useMemo(() => new Set(
@@ -965,35 +1025,15 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     .filter(activity => activity.action === 'task_create' && !completedTaskIds.has(activity.id)).length;
   const openDecisionCount = (selected?.activities || [])
     .filter(activity => activity.action === 'decision_create' && !respondedDecisionIds.has(activity.id)).length;
-  const closureChecklist = selected ? [
-    { key: 'assignee', label: '负责人已明确', done: !!selected.assignee },
-    { key: 'rootCause', label: '原因分析已填写', done: !!selected.rootCause?.trim() },
-    { key: 'solution', label: '处理方案已填写', done: !!selected.solution?.trim() },
-    { key: 'evidence', label: '处理证据已上传', done: selected.attachmentCount > 0 },
-    { key: 'verifier', label: selected.isMajorQuality ? '重大审批链已建立' : '验证人已指定', done: selected.isMajorQuality || !!selected.verifier },
-    { key: 'tasks', label: '协同待办已清零', done: openTaskCount === 0 },
-    { key: 'decisions', label: '协同决策已有结论', done: openDecisionCount === 0 },
-  ] : [];
+  const closureChecklist = selected?.workflow?.checklist || [];
   const closureReady = closureChecklist.every(item => item.done);
-  const canVerifySelected = !!selected && (
-    isAdmin
-    ||
-    selected.verifier?.id === user.employeeId
-    || user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
-  );
-  const canConfirmSelected = !!selected && (isAdmin || selected.reporter?.id === user.id);
-  const canTransitionSelected = !!selected && (
-    isAdmin
-    || ((selected.status === 'pending' || selected.status === 'processing') && canExecuteIssueWorkflow && canMaintainSelected)
-    || (selected.status === 'verifying' && canVerifySelected)
-    || ((selected.status === 'awaiting_confirmation' || selected.status === 'closed') && canConfirmSelected)
-  );
+  const transitionAction = selected?.workflow?.actions.find(action => action.target === transition?.target);
   const visibleActivities = useMemo(() => {
     const activities = selected?.activities || [];
     if (detailBranch === 'logs') return activities;
     if (detailBranch === 'overview') return activities.slice(-5);
     if (detailBranch === 'collaboration') {
-      return activities.filter(activity => ['comment', 'task_create', 'task_complete'].includes(activity.action));
+      return activities.filter(activity => ['comment', 'task_create', 'task_complete'].includes(activity.action) || activity.action.startsWith('decision_'));
     }
     if (detailBranch === 'decisions') {
       return activities.filter(activity => activity.action.startsWith('decision_')
@@ -1009,10 +1049,10 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   })), [selected?.attachments]);
   const lifecycleStatuses: IssueStatus[] = ['pending', 'processing', 'verifying', 'awaiting_confirmation', 'closed'];
   const lifecycleIndex = selected ? lifecycleStatuses.indexOf(selected.status) : 0;
-  const workflowProgress = selected ? Math.round((lifecycleIndex + 1) / lifecycleStatuses.length * 100) : 0;
+  const mainBranch = detailBranch === 'files' || detailBranch === 'logs' ? detailBranch : 'overview';
 
   return (
-    <main className="hm-issue-workbench issue-case-room hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay">
+    <main className={`hm-issue-workbench issue-case-room hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay ${contextOpen ? '' : 'context-collapsed'}`}>
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/issues"
@@ -1113,10 +1153,18 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
               </header>
 
               <nav className="issue-detail-branches" aria-label="问题内容分支">
-                {detailBranches.map(branch => <button type="button" className={detailBranch === branch.key ? 'active' : ''} aria-current={detailBranch === branch.key ? 'page' : undefined} key={branch.key} onClick={() => setDetailBranch(branch.key)}><strong>{branch.label}</strong><span>{branch.hint}</span></button>)}
+                {detailBranches.map(branch => <button type="button" className={mainBranch === branch.key ? 'active' : ''} aria-current={mainBranch === branch.key ? 'page' : undefined} key={branch.key} onClick={() => setDetailBranch(branch.key)}><strong>{branch.label}</strong><span>{branch.hint}</span></button>)}
               </nav>
 
               <div className="issue-detail-scroll hm-scroll-region">
+                {operationResult && <p className="issue-operation-result" role="status"><CheckCircle2 size={18} />{operationResult}</p>}
+                <IssueCurrentTask issue={selected} accountName={user.displayName || user.username} saving={saving} dirty={contextDirty} onAction={beginTransition} onContext={openContext} onEvidence={() => setDetailBranch('files')} />
+                {mainBranch === 'overview' && <div className="issue-workflow-tools">
+                  <button type="button" aria-pressed={detailBranch === 'overview'} onClick={() => setDetailBranch('overview')}>解决情况</button>
+                  {canMaintainSelected && !selectedContentLocked && <button type="button" onClick={() => openEdit(selected)}>编辑原因与措施</button>}
+                  <button type="button" aria-pressed={detailBranch === 'collaboration'} onClick={() => setDetailBranch('collaboration')}>协同事项 · {openTaskCount + openDecisionCount} 待处理</button>
+                  <button type="button" aria-pressed={detailBranch === 'verification'} onClick={() => setDetailBranch('verification')}>验证与确认详情</button>
+                </div>}
                 {selected.status === 'closed' && <section className="issue-archive-banner"><div><ShieldCheck size={18} /><p><strong>已归档至“{typeLabels[selected.type]}”</strong><span>{selected.requesterConfirmedAt ? '内容只读，完整保留验证、发起人确认与文件历史。' : '历史关闭记录已只读归档；新流程将额外记录发起人确认。'}</span></p></div><time>完结于 {formatDate(selected.closedAt)}</time></section>}
 
                 {detailBranch === 'overview' && <section className="case-room-intro">
@@ -1134,14 +1182,14 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                 {(detailBranch === 'overview' || detailBranch === 'analysis') && <section className="case-resolution-strip" aria-label="闭环关键结论">
                   <article className={selected.rootCause ? 'complete' : ''}><span>01</span><div><strong>原因分析</strong><p>{selected.rootCause || '待负责人补充根因'}</p></div></article>
                   <article className={selected.solution ? 'complete' : ''}><span>02</span><div><strong>处理方案</strong><p>{selected.solution || '待形成可执行方案'}</p></div></article>
-                  <article className={selected.verificationResult ? 'complete' : ''}><span>03</span><div><strong>验证结论</strong><p>{selected.verificationResult || '待验证人填写结论'}</p></div></article>
+                  <article className={selected.workflow?.verification.kind !== 'missing' ? 'complete' : ''}><span>03</span><div><strong>验证结论</strong><p>{selected.workflow?.verification.text || '待验证人填写结论'}</p></div></article>
                 </section>}
 
                 {detailBranch === 'verification' && <section className="case-verification-branch">
                   <header><div><span>验证与关闭</span><h3>{selected.status === 'closed' ? selected.requesterConfirmedAt ? '发起人已确认完结' : '历史关闭记录' : selected.status === 'awaiting_confirmation' ? '等待发起人确认' : '验证流程进行中'}</h3></div><strong className={`status-${selected.status}`}>{statusLabels[selected.status]}</strong></header>
                   <div className="case-verification-grid">
                     <article><span>独立验证人</span><strong>{selected.verifier?.name || (selected.isMajorQuality ? '质量复核与总经办终审' : '尚未指定')}</strong><small>{selected.verifiedAt ? `验证完成 ${formatDate(selected.verifiedAt)}` : '尚未完成验证'}</small></article>
-                    <article><span>验证结论</span><strong>{selected.verificationResult || '尚未填写验证结论'}</strong><small>验证通过后不会直接关闭，必须由发起人确认</small></article>
+                    <article><span>验证结论</span><strong>{selected.workflow?.verification.text || '尚未填写验证结论'}</strong><small>验证通过后不会直接关闭，必须由发起人确认</small></article>
                     <article><span>问题发起人</span><strong>{selected.reporter?.displayName || selected.reporter?.username || '未知发起人'}</strong><small>{selected.requesterConfirmedAt ? `确认于 ${formatDate(selected.requesterConfirmedAt)}` : '尚未确认完结'}</small></article>
                     <article><span>完结说明</span><strong>{selected.requesterConfirmationNote || (selected.requesterConfirmedAt ? '发起人确认问题已闭环' : selected.status === 'closed' ? '迁移前历史关闭记录，无发起人确认字段' : '等待发起人核对')}</strong><small>{selected.requesterConfirmedBy ? `操作人 ${selected.requesterConfirmedBy.displayName || selected.requesterConfirmedBy.username}` : '管理员代操作将显示真实操作账号'}</small></article>
                   </div>
@@ -1153,7 +1201,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                   <div className="case-file-groups">{attachmentGroups.map(group => <article className={group.files.length ? '' : 'empty'} key={group.category}><header><strong>{group.label}</strong><span>{group.files.length}</span></header><div>{group.files.map(file => <section key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{file.caption || `${formatBytes(file.size)} · ${formatDate(file.createdAt)}`}</small>{canMaintainSelected && !selectedContentLocked && <select className="case-file-category-select" aria-label={`调整 ${file.displayName || file.originalName} 的分类`} value={file.category} disabled={saving} onChange={event => { void classifyAttachment(file, event.target.value as IssueAttachmentCategory); }}>{Object.entries(attachmentCategoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>}</div><em>{statusLabels[file.stage]}</em><a href={file.contentUrl} target="_blank" rel="noreferrer" title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} title="下载"><Download size={14} /></a>{canDeleteIssues && !selectedContentLocked && <button type="button" title="删除附件" onClick={() => openAttachmentDelete(file.id, file.displayName || file.originalName)}><Trash2 size={14} /></button>}</section>)}{!group.files.length && <p>暂无{group.label}</p>}</div></article>)}</div>
                 </section>}
 
-                {(['overview', 'collaboration', 'decisions', 'logs'] as DetailBranch[]).includes(detailBranch) && <section className="case-room-stream">
+                {(['collaboration', 'decisions', 'logs'] as DetailBranch[]).includes(detailBranch) && <section className="case-room-stream">
                   <header><div><h3>{detailBranch === 'overview' ? '最近动态' : detailBranch === 'collaboration' ? '协同任务与回复' : detailBranch === 'decisions' ? '决策与审批记录' : '全量审计日志'}</h3><span>{detailBranch === 'logs' ? `完整保留 ${selected.activityCount} 条记录` : '所有部门共享同一条记录'}</span></div><div><em>{openTaskCount} 待办</em><em>{openDecisionCount} 决策待定</em></div></header>
                   <div className="case-stream-list">
                     {visibleActivities.map(activity => {
@@ -1174,11 +1222,11 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                           {activity.content && <p>{activity.content}</p>}
                           {activity.action === 'task_create' && <section className={`case-task-card ${taskDone ? 'done' : ''}`}>
                             <div><ListChecks size={17} /><div><strong>{taskDone ? '待办已完成' : '协同待办'}</strong><span>负责人 {taskAssignee?.name || String(activity.detail?.assigneeName || '待确认')} · 截止 {formatDate(String(activity.detail?.dueAt || ''))}</span></div></div>
-                            {!taskDone && canMaintainSelected && <button type="button" disabled={saving} onClick={() => { void actOnCollaboration('task_complete', activity.id); }}><Check size={14} />标记完成</button>}
+                            {!taskDone && canMaintainSelected && ['pending', 'processing'].includes(selected.status) && <button type="button" disabled={saving} onClick={() => { void actOnCollaboration('task_complete', activity.id); }}><Check size={14} />标记完成</button>}
                           </section>}
                           {activity.action === 'decision_create' && <section className={`case-decision-card ${decisionDone ? 'done' : ''}`}>
                             <div><ThumbsUp size={17} /><div><strong>{decisionDone ? '决策已有结论' : '等待协同决策'}</strong><span>{decisionResponse ? `${activityLabels[decisionResponse.action]} · ${decisionResponse.actor?.displayName || decisionResponse.actor?.username || '系统'}` : `截止 ${formatDate(String(activity.detail?.dueAt || ''))}`}</span></div></div>
-                            {!decisionDone && canMaintainSelected && <div><button type="button" disabled={saving} onClick={() => { void actOnCollaboration('decision_response', activity.id, 'return'); }}><RotateCcw size={13} />退回</button><button className="primary" type="button" disabled={saving} onClick={() => { void actOnCollaboration('decision_response', activity.id, 'approve'); }}><Check size={13} />通过</button></div>}
+                            {!decisionDone && canMaintainSelected && ['pending', 'processing'].includes(selected.status) && <div><button type="button" disabled={saving} onClick={() => { void actOnCollaboration('decision_response', activity.id, 'return'); }}><RotateCcw size={13} />退回</button><button className="primary" type="button" disabled={saving} onClick={() => { void actOnCollaboration('decision_response', activity.id, 'approve'); }}><Check size={13} />通过</button></div>}
                           </section>}
                           {evidence && <a className="case-evidence-card" href={evidence.contentUrl} target="_blank" rel="noreferrer">
                             {evidence.fileType === 'image' ? <Image src={evidence.contentUrl} alt={evidence.displayName || evidence.originalName} width={220} height={124} unoptimized /> : <span><FileText size={24} /></span>}
@@ -1195,22 +1243,17 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
               {detailBranch === 'collaboration' && canMaintainSelected && selected.status !== 'closed' && !selectedMajorFinalApproved && <form className="case-room-composer" onSubmit={submitCollaboration}>
                 <div className="case-composer-tabs" role="tablist" aria-label="协同记录类型">
                   <button className={composerMode === 'comment' ? 'active' : ''} type="button" role="tab" aria-selected={composerMode === 'comment'} onClick={() => setComposerMode('comment')}><MessageSquareText size={14} />回复</button>
-                  <button className={composerMode === 'task' ? 'active' : ''} type="button" role="tab" aria-selected={composerMode === 'task'} onClick={() => setComposerMode('task')}><ListChecks size={14} />创建待办</button>
-                  <button className={composerMode === 'decision' ? 'active' : ''} type="button" role="tab" aria-selected={composerMode === 'decision'} onClick={() => setComposerMode('decision')}><ThumbsUp size={14} />发起决策</button>
+                  <button className={composerMode === 'task' ? 'active' : ''} type="button" role="tab" aria-selected={composerMode === 'task'} disabled={!['pending', 'processing'].includes(selected.status)} onClick={() => setComposerMode('task')}><ListChecks size={14} />创建待办</button>
+                  <button className={composerMode === 'decision' ? 'active' : ''} type="button" role="tab" aria-selected={composerMode === 'decision'} disabled={!['pending', 'processing'].includes(selected.status)} onClick={() => setComposerMode('decision')}><ThumbsUp size={14} />发起决策</button>
                 </div>
                 {composerMode === 'task' && <div className="case-composer-meta"><div><span>负责人</span><EmployeePicker employees={employees} value={composerAssigneeEmployeeId} disabled={saving} onChange={setComposerAssigneeEmployeeId} /></div><label>截止时间<input type="datetime-local" value={composerDueAt} onChange={event => setComposerDueAt(event.target.value)} /></label></div>}
                 {composerMode === 'decision' && <div className="case-composer-meta decision"><label>决策截止时间<input type="datetime-local" value={composerDueAt} onChange={event => setComposerDueAt(event.target.value)} /></label><p>协同人可直接在时间线通过或退回，结论永久留痕。</p></div>}
                 <div className="case-composer-input"><textarea value={composerContent} onChange={event => setComposerContent(event.target.value)} rows={2} maxLength={2000} placeholder={composerMode === 'task' ? '写清交付物、完成标准和需要上传的证据…' : composerMode === 'decision' ? '说明需要确认的方案、风险和决策边界…' : '回复处理进展，可 @ 协同人并补充现场事实…'} /><button type="button" aria-label="上传凭证" title="上传凭证" onClick={() => fileInputRef.current?.click()}><Paperclip size={16} /></button><button className="primary" type="submit" disabled={saving || !composerContent.trim() || (composerMode === 'task' && !composerAssigneeEmployeeId)}><Send size={15} />发布</button></div>
               </form>}
-              {canTransitionSelected && <div className="issue-transition-actions case-transition-actions">
-                {canMaintainSelected && !selectedContentLocked && <a className="issue-change-link" href={`/workspace/changes?action=new&issueId=${encodeURIComponent(selected.id)}${selected.workOrderId ? `&workOrderId=${encodeURIComponent(selected.workOrderId)}` : ''}`}><GitPullRequestArrow size={15} />发起变更</a>}
-                {selected.status === 'pending' && <button className="primary" type="button" onClick={() => beginTransition('processing')}>开始处理</button>}
-                {selected.status === 'processing' && <button className="primary" type="button" disabled={!closureReady} title={closureReady ? '资料完整，可以提交验证' : '请先完成右侧提交验证准备度'} onClick={() => beginTransition('verifying')}>{selected.isMajorQuality ? '提交重大复核' : '提交验证'}</button>}
-                {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('processing')}>{selected.isMajorQuality ? '撤回审批并退回处理' : '验证退回处理'}</button>{selected.isMajorQuality ? <Link className="issue-approval-link" href={`/workspace/approvals?approvalId=${encodeURIComponent(selected.majorApproval?.id || '')}`}>打开重大审批</Link> : canVerifySelected && <button className="primary" type="button" onClick={() => beginTransition('awaiting_confirmation')}>验证通过，交发起人确认</button>}</>}
-                {selected.status === 'awaiting_confirmation' && <><button type="button" onClick={() => beginTransition('processing')}>退回继续处理</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>{isAdmin && selected.reporter?.id !== user.id ? '管理员代确认完结' : '确认问题完结'}</button></>}
-                {selected.status === 'closed' && <button type="button" onClick={() => beginTransition('processing')}>重新打开问题</button>}
-                <button className="context-mobile" type="button" onClick={openContext}><ShieldCheck size={15} />闭环控制台</button>
-              </div>}
+              <div className="issue-transition-actions case-transition-actions">
+                {selected.isMajorQuality && selected.status === 'verifying' && <Link className="issue-approval-link" href={`/workspace/approvals?approvalId=${encodeURIComponent(selected.majorApproval?.id || '')}`}>打开重大审批</Link>}
+                <button type="button" onClick={contextOpen ? closeContext : openContext}><UsersRound size={16} />{contextOpen ? '收起责任信息' : '责任信息与关联资料'}</button>
+              </div>
             </>}
           </section>
 
@@ -1219,24 +1262,24 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             <header><div><span>闭环控制台</span><strong>{selected?.code || '未选择问题'}</strong></div><button type="button" aria-label="关闭闭环控制台" title="关闭" onClick={closeContext}><X size={18} /></button></header>
             {!selected ? <div className="issue-context-empty">选择问题后查看闭环门槛、责任链和关联应用。</div> : <div className="issue-context-scroll hm-scroll-region">
               <section className="case-lifecycle context-section">
-                <header><div><h3><ShieldCheck size={15} />流程进度</h3><span>第 {lifecycleIndex + 1}/{lifecycleStatuses.length} 阶段</span></div><strong>{workflowProgress}%</strong></header>
+                <header><div><h3><ShieldCheck size={15} />流程进度</h3><span>第 {lifecycleIndex + 1}/{lifecycleStatuses.length} 阶段</span></div><strong>{statusLabels[selected.status]}</strong></header>
                 <div className="case-lifecycle-track">{lifecycleStatuses.map((status, index) => {
                   return <div className={index <= lifecycleIndex ? 'complete' : ''} key={status}><span>{index < lifecycleIndex ? <Check size={12} /> : index + 1}</span><em>{statusLabels[status]}</em></div>;
                 })}</div>
               </section>
 
-              <section className="case-closure-checklist context-section">
+              <details className="case-closure-checklist context-section" open={selected.status === 'pending' || selected.status === 'processing'}><summary>提交验证前的资料清单{!['pending', 'processing'].includes(selected.status) && '（历史阶段）'}</summary>
                 <header><h3><ListChecks size={15} />提交验证准备度</h3><em className={closureReady ? 'ready' : ''}>{closureReady ? '资料已齐' : '有阻塞项'}</em></header>
                 <div>{closureChecklist.map(item => <article className={item.done ? 'done' : ''} key={item.key}><span>{item.done ? <Check size={13} /> : <Circle size={13} />}</span><strong>{item.label}</strong></article>)}</div>
-              </section>
+              </details>
 
               <section className="context-section responsibility case-responsibility">
-                <h3><UsersRound size={15} />责任与验证</h3>
-                <div className="context-picker-field"><span>问题负责人</span><EmployeePicker employees={employees} value={contextForm.assigneeEmployeeId} disabled={!canMaintainSelected || selectedContentLocked} onChange={value => setContextForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
-                <div className="context-picker-field"><span>独立验证人</span><EmployeePicker employees={employees} value={contextForm.verifierEmployeeId} disabled={!canMaintainSelected || selectedContentLocked || selected.isMajorQuality} onChange={value => setContextForm(current => ({ ...current, verifierEmployeeId: value }))} /></div>
-                <div className="context-picker-field collaborators"><span>协同人员</span><EmployeeMultiPicker employees={employees} values={contextForm.collaboratorEmployeeIds} excludeIds={contextForm.assigneeEmployeeId ? [contextForm.assigneeEmployeeId] : []} disabled={!canMaintainSelected || selectedContentLocked} onChange={values => setContextForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
-                <div className="case-responsibility-grid"><label>优先级<select disabled={!canMaintainSelected || selectedContentLocked} value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>截止时间<input type="datetime-local" disabled={!canMaintainSelected || selectedContentLocked} value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label></div>
-                {canMaintainSelected && !selectedContentLocked && <button className="primary" type="button" disabled={saving} onClick={() => { void saveContext(); }}>保存责任链</button>}
+                <h3><UsersRound size={15} />责任与验证</h3>{contextDirty && <p className="issue-draft-notice">有未保存修改 · 切换问题时保留草稿</p>}{contextError && <div className="issue-action-error" role="alert"><p>{contextError}</p><button type="button" onClick={() => { discardContextDraft(selected.id); void loadIssues(selected.id); }}>放弃草稿并载入最新记录</button></div>}
+                <div className="context-picker-field"><span>问题负责人</span><EmployeePicker fallbackLabel={selected.assignee?.name} employees={employees} value={contextForm.assigneeEmployeeId} disabled={saving || !canMaintainSelected || selectedContentLocked} onChange={value => setContextForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
+                <div className="context-picker-field"><span>独立验证人</span><EmployeePicker label="验证人" fallbackLabel={selected.verifier?.name} employees={employees} value={contextForm.verifierEmployeeId} disabled={saving || !canMaintainSelected || selectedContentLocked || selected.isMajorQuality} onChange={value => setContextForm(current => ({ ...current, verifierEmployeeId: value }))} /></div>
+                <div className="context-picker-field collaborators"><span>协同人员</span><EmployeeMultiPicker employees={employees} values={contextForm.collaboratorEmployeeIds} excludeIds={contextForm.assigneeEmployeeId ? [contextForm.assigneeEmployeeId] : []} disabled={saving || !canMaintainSelected || selectedContentLocked} onChange={values => setContextForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
+                <div className="case-responsibility-grid"><label>优先级<select disabled={saving || !canMaintainSelected || selectedContentLocked} value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>截止时间<input type="datetime-local" disabled={saving || !canMaintainSelected || selectedContentLocked} value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label></div>
+                {canMaintainSelected && !selectedContentLocked && <button className="primary" type="button" disabled={saving || !contextDirty} onClick={() => { void saveContext(); }}>保存责任信息</button>}{contextDirty && <button type="button" disabled={saving} onClick={() => discardContextDraft(selected.id)}>放弃未保存修改</button>}
                 {selectedContentLocked && <p className="issue-context-lock-note">{selectedApprovalPending ? '审批进行中，责任信息和附件已锁定；可继续追加协同记录。' : selectedMajorFinalApproved && selected.status !== 'closed' ? '重大质量终审已通过，正文和证据已锁定；等待发起人确认完结或退回整改。' : '问题已由发起人确认完结并只读归档；如需整改，请先重新打开问题。'}</p>}
               </section>
 
@@ -1316,13 +1359,19 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
       {duplicateIssue && <div className="issue-modal-backdrop"><section className="issue-confirm duplicate-warning" role="alertdialog" aria-modal="true" aria-labelledby="issue-duplicate-title"><AlertTriangle /><h2 id="issue-duplicate-title">发现可能重复的问题</h2><p>{duplicateIssue.code} · {duplicateIssue.title}</p><span>同一工单下已有相同标题或工序的未关闭问题。建议先打开核对，确有不同再继续创建。</span><footer><button type="button" disabled={saving} onClick={() => { setDuplicateIssue(null); closeFormNow(); setQueueMode('issues'); void loadIssues(duplicateIssue.id); }}>打开已有问题</button><button className="danger" type="button" disabled={saving} onClick={() => { setDuplicateIssue(null); void persistForm(true); }}>仍然创建</button></footer></section></div>}
       {confirmDiscard && <div className="issue-modal-backdrop"><section className="issue-confirm discard-warning" role="alertdialog" aria-modal="true" aria-labelledby="issue-discard-title"><AlertTriangle /><h2 id="issue-discard-title">放弃未保存的修改？</h2><p>表单内容或待上传附件尚未保存</p><span>关闭后这些修改不会保留，已经存在的问题和附件不会受到影响。</span><footer><button type="button" onClick={() => setConfirmDiscard(false)}>继续编辑</button><button className="danger" type="button" onClick={closeFormNow}>放弃修改</button></footer></section></div>}
 
-      {transition && selected && <div className="issue-modal-backdrop"><form className="issue-modal transition-modal" role="dialog" aria-modal="true" aria-labelledby="issue-transition-title" onSubmit={submitTransition}><header><div><span>状态流转</span><h2 id="issue-transition-title">{statusLabels[selected.status]} → {statusLabels[transition.target]}</h2></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={() => setTransition(null)}><X size={19} /></button></header><div className="issue-modal-body">
-        {transition.target === 'verifying' && selected.isMajorQuality && <div className="issue-major-transition-note"><AlertTriangle /><div><b>将发起第 {(selected.majorApproval?.round || 0) + 1} 轮重大质量审批</b><span>系统会通知其他质量人员二次复核；复核通过后再通知总经办终审。三名关键人员必须相互独立。</span></div></div>}
-        {transition.target === 'verifying' && <><label className="wide">原因分析<textarea autoFocus required rows={4} value={transition.rootCause} onChange={event => setTransition(current => current ? { ...current, rootCause: event.target.value } : current)} placeholder="说明已经核实的根本原因，避免只写现象" /></label><label className="wide">处理方案<textarea required rows={4} value={transition.solution} onChange={event => setTransition(current => current ? { ...current, solution: event.target.value } : current)} placeholder="说明已经采取的处理措施及复测标准" /></label></>}
-        {transition.target === 'awaiting_confirmation' && <label className="wide">验证结果<textarea autoFocus required rows={5} value={transition.verificationResult} onChange={event => setTransition(current => current ? { ...current, verificationResult: event.target.value } : current)} placeholder="说明验证方法、样本、结果与通过依据；提交后由发起人确认完结" /></label>}
-        {transition.target === 'closed' && <div className="issue-requester-confirm-note"><ShieldCheck /><div><strong>确认问题已解决并完结</strong><span>本次操作会写入发起人确认记录；管理员代确认会保留管理员真实账号和说明。</span></div></div>}
-        <label className="wide">流转备注{(isAdmin || (transition.target === 'processing' && (selected.status === 'awaiting_confirmation' || selected.status === 'closed' || selected.isMajorQuality))) ? '' : '（可选）'}<textarea required={isAdmin || (transition.target === 'processing' && (selected.status === 'awaiting_confirmation' || selected.status === 'closed' || selected.isMajorQuality))} autoFocus={transition.target === 'processing' || transition.target === 'closed'} rows={3} value={transition.comment} onChange={event => setTransition(current => current ? { ...current, comment: event.target.value } : current)} placeholder={isAdmin ? '管理员代操作必须填写审计说明' : transition.target === 'processing' ? '说明退回或重新打开的具体原因' : transition.target === 'closed' ? '补充发起人确认说明（选填）' : '补充本次状态变更说明'} /></label>
-      </div><footer><button type="button" disabled={saving} onClick={() => setTransition(null)}>取消</button><button className="primary" type="submit" disabled={saving}>{saving && <Loader2 className="spin" size={15} />}确认流转</button></footer></form></div>}
+      {transition && selected && <div className="issue-modal-backdrop"><form className="issue-modal transition-modal" role="dialog" aria-modal="true" aria-labelledby="issue-transition-title" onSubmit={submitTransition}>
+        <header><div><span>{selected.code} · {statusLabels[selected.status]}</span><h2 id="issue-transition-title">{transitionAction?.label || '核对当前操作'}</h2></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={() => setTransition(null)}><X size={19} /></button></header>
+        <div className="issue-modal-body">
+          <div className="issue-confirm-summary"><strong>当前待办人：{selected.workflow?.waitingFor}</strong><span>本次操作人：{user.displayName || user.username}</span>{selected.workflow?.verification.kind !== 'missing' && <p>{selected.workflow?.verification.text}</p>}</div>
+          {transition.target === 'verifying' && selected.isMajorQuality && <p className="issue-task-notice">将提交第 {(selected.majorApproval?.round || 0) + 1} 轮重大质量审批，依次进行质量复核及总经办终审。</p>}
+          {transition.target === 'verifying' && <><label className="wide">原因分析<textarea autoFocus required maxLength={4000} rows={3} value={transition.rootCause} onChange={event => setTransition(current => current ? { ...current, rootCause: event.target.value } : current)} /></label><label className="wide">处理措施<textarea required maxLength={4000} rows={3} value={transition.solution} onChange={event => setTransition(current => current ? { ...current, solution: event.target.value } : current)} /></label></>}
+          {transition.target === 'awaiting_confirmation' && <label className="wide">验证结果<textarea autoFocus required maxLength={4000} rows={4} value={transition.verificationResult} onChange={event => setTransition(current => current ? { ...current, verificationResult: event.target.value } : current)} placeholder="填写验证方法、样本、结果与通过依据" /></label>}
+          {transition.target === 'closed' && <p className="issue-confirm-warning">请核对处理结果与验证依据。提交成功后问题将只读归档，并记录本次实际确认人和时间。</p>}
+          <label className="wide">操作说明{transitionAction?.requiresComment ? '（必填）' : '（选填）'}<textarea required={transitionAction?.requiresComment} autoFocus={transition.target === 'processing' || transition.target === 'closed'} maxLength={2000} rows={3} value={transition.comment} onChange={event => setTransition(current => current ? { ...current, comment: event.target.value } : current)} placeholder={transitionAction?.adminOverride ? '请填写管理员操作原因，真实账号将记入审计' : transition.target === 'processing' ? '说明退回或重新打开的原因' : '补充本次确认说明'} /></label>
+          {transitionError && <div className="issue-action-error" role="alert"><strong>本次操作未完成</strong><p>{transitionError}</p>{transitionConflict && <button type="button" disabled={saving} onClick={() => { void refreshTransition(); }}>载入最新资料并重新核对</button>}</div>}
+        </div>
+        <footer><button type="button" disabled={saving} onClick={() => setTransition(null)}>取消</button><button className="primary" type="submit" disabled={saving || !transitionAction?.allowed || transitionConflict}>{saving ? '正在提交…' : transitionAction?.label || '确认操作'}</button></footer>
+      </form></div>}
 
       {confirmDelete && <div className="issue-modal-backdrop"><section className="issue-confirm" role="alertdialog" aria-modal="true" aria-labelledby="issue-delete-title"><AlertTriangle /><h2 id="issue-delete-title">确认删除问题？</h2><p>{confirmDelete.code} · {confirmDelete.title}</p><span>问题将被软删除，关联工单和 S3 附件原文件不会被物理删除。</span><footer><button type="button" disabled={saving} onClick={() => setConfirmDelete(null)}>取消</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteIssue(); }}>确认删除</button></footer></section></div>}
       {confirmAttachmentDelete && <div className="issue-modal-backdrop"><section className="issue-confirm" role="alertdialog" aria-modal="true" aria-labelledby="issue-attachment-delete-title"><AlertTriangle /><h2 id="issue-attachment-delete-title">确认删除附件？</h2><p title={confirmAttachmentDelete.name}>{confirmAttachmentDelete.name}</p><span>附件记录将被软删除，对象存储中的原文件不会立即物理清除。</span><footer><button type="button" disabled={saving} onClick={() => setConfirmAttachmentDelete(null)}>取消</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteAttachment(); }}>确认删除</button></footer></section></div>}

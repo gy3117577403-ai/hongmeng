@@ -9,6 +9,8 @@ import {
 } from '@/lib/production-execution';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { prisma } from '@/lib/prisma';
+import { hasCapability, type AccessContext } from '@/lib/department-access';
+import { canMutateIssueForProcess } from '@/lib/process-collaboration-access';
 import type {
   DetectedIssueDTO,
   IssueAttachmentCategory,
@@ -17,6 +19,7 @@ import type {
   IssueStatus,
   IssueSummaryDTO,
   IssueType,
+  IssueWorkflowDTO,
 } from '@/types';
 
 export const ISSUE_STATUSES: IssueStatus[] = ['pending', 'processing', 'verifying', 'awaiting_confirmation', 'closed'];
@@ -83,6 +86,7 @@ const issueUserSelect = Prisma.validator<Prisma.UserSelect>()({
   id: true,
   username: true,
   displayName: true,
+  employee: { select: { employeeNo: true, name: true } },
 });
 
 const issueEmployeeSelect = Prisma.validator<Prisma.EmployeeSelect>()({
@@ -327,6 +331,7 @@ export function issueVerificationBlockers(input: {
   solution?: string | null;
   attachmentCount: number;
   isMajorQuality?: boolean;
+  activities?: ReadonlyArray<{ id: string; action: string; detail?: unknown }>;
 }): string[] {
   const blockers: string[] = [];
   if (!input.assigneeEmployeeId) blockers.push('未指定负责人');
@@ -334,7 +339,98 @@ export function issueVerificationBlockers(input: {
   if (!String(input.solution || '').trim()) blockers.push('未填写处理方案');
   if (input.attachmentCount < 1) blockers.push('未上传处理证据');
   if (!input.isMajorQuality && !input.verifierEmployeeId) blockers.push('未指定验证人');
+  blockers.push(...issueCollaborationBlockers(input.activities || []));
   return blockers;
+}
+
+export function issueCollaborationBlockers(activities: ReadonlyArray<{ id: string; action: string; detail?: unknown }>): string[] {
+  const completed = new Set<string>();
+  const decided = new Set<string>();
+  for (const activity of activities) {
+    const detail = activity.detail && typeof activity.detail === 'object' ? activity.detail as Record<string, unknown> : {};
+    if (activity.action === 'task_complete') completed.add(String(detail.targetActivityId || ''));
+    if (activity.action === 'decision_approve' || activity.action === 'decision_return') decided.add(String(detail.targetActivityId || ''));
+  }
+  const blockers: string[] = [];
+  if (activities.some(activity => activity.action === 'task_create' && !completed.has(activity.id))) blockers.push('协同待办尚未完成');
+  if (activities.some(activity => activity.action === 'decision_create' && !decided.has(activity.id))) blockers.push('协同决策尚无结论');
+  return blockers;
+}
+
+type IssueVerificationSource = {
+  isMajorQuality?: boolean;
+  verificationResult: string | null;
+  verifiedAt?: Date | null;
+  majorApprovals?: ReadonlyArray<{
+    id: string; round: number; status: string; qualityReviewedById: string | null; finalReviewedById: string | null;
+    qualityReviewNote: string | null; finalReviewNote: string | null; qualityReviewedAt: Date | null; finalReviewedAt: Date | null;
+  }>;
+};
+
+// The approval record is the evidence. Do not fabricate a second verification
+// result or silently close historical records whose general result is empty.
+export function issueVerificationBasis(issue: IssueVerificationSource): IssueWorkflowDTO['verification'] {
+  if (issue.isMajorQuality) {
+    const approval = issue.majorApprovals?.[0];
+    if (approval?.status === 'APPROVED' && approval.qualityReviewedById && approval.finalReviewedById
+      && approval.qualityReviewedAt && approval.finalReviewedAt && approval.qualityReviewNote?.trim() && approval.finalReviewNote?.trim()
+      && issue.verifiedAt?.getTime() === approval.finalReviewedAt.getTime()) {
+      return { kind: 'major_approval', approvalId: approval.id, round: approval.round,
+        text: `第${approval.round}轮质量复核：${approval.qualityReviewNote}\n总经办终审：${approval.finalReviewNote}` };
+    }
+    return { kind: 'missing', text: '尚无有效的重大质量复核与终审结论，请退回处理后重新提交审批' };
+  }
+  return issue.verificationResult?.trim()
+    ? { kind: 'verification', text: issue.verificationResult }
+    : { kind: 'missing', text: '尚未填写验证结果' };
+}
+
+export type IssueWorkflowActor = { id: string; employeeId?: string | null; laborRole?: string | null; access: Pick<AccessContext, 'capabilities'> };
+
+export function buildIssueWorkflow(issue: IssueDetailRecord, user: IssueWorkflowActor): IssueWorkflowDTO {
+  const status = issue.status as IssueStatus;
+  const isAdmin = user.laborRole === 'ADMIN';
+  const moduleWorkflow = isAdmin || hasCapability(user.access, 'QUALITY', 'EXECUTE_WORKFLOW') || hasCapability(user.access, 'ISSUE_MANAGEMENT', 'EXECUTE_WORKFLOW');
+  const preparation = issueVerificationBlockers({ ...issue, attachmentCount: issue.attachments.length });
+  const collaboration = issueCollaborationBlockers(issue.activities);
+  const verification = issueVerificationBasis(issue);
+  const pendingApproval = ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL'].includes(issue.majorApprovals[0]?.status || '');
+  const locked = status === 'closed' || pendingApproval || (status === 'awaiting_confirmation' && issue.majorApprovals[0]?.status === 'APPROVED');
+  const name = (person?: { displayName?: string; username?: string; name?: string; employeeNo?: string; employee?: { employeeNo: string } | null } | null): string => person
+    ? `${person.displayName || person.name || person.username}${person.employee?.employeeNo || person.employeeNo ? ` · ${person.employee?.employeeNo || person.employeeNo}` : ''}`
+    : '尚未指定';
+  const waitingFor = status === 'awaiting_confirmation' || status === 'closed' ? name(issue.reporter)
+    : status === 'verifying' && issue.isMajorQuality ? (issue.majorApprovals[0]?.status === 'PENDING_GM_APPROVAL' ? '总经办终审人员' : '独立质量复核人员')
+      : status === 'verifying' ? name(issue.verifierEmployee) : name(issue.assigneeEmployee || issue.assignee);
+  const actions = (allowedTransitions[status] || []).map(target => {
+    const authority = issueTransitionAuthority({ currentStatus: status, targetStatus: target, userId: user.id, employeeId: user.employeeId,
+      laborRole: user.laborRole, reporterId: issue.reporterId, verifierEmployeeId: issue.verifierEmployeeId,
+      hasWorkflowAccess: canMutateIssueForProcess(user, issue, 'EXECUTE_WORKFLOW'), hasQualityWorkflow: hasCapability(user.access, 'QUALITY', 'EXECUTE_WORKFLOW') });
+    const allowed = moduleWorkflow && authority.allowed && !(issue.isMajorQuality && status === 'verifying' && target === 'awaiting_confirmation');
+    const blockers = target === 'verifying' ? preparation.slice() : target === 'closed'
+      ? [...collaboration, ...(verification.kind === 'missing' ? [verification.text] : [])] : [];
+    const label = target === 'closed' ? (authority.adminOverride ? '管理员代确认' : '确认完结')
+      : target === 'verifying' ? '提交验证' : target === 'awaiting_confirmation' ? '验证通过'
+        : status === 'pending' ? '接单并开始处理' : status === 'closed' ? '重新打开' : '退回整改';
+    return { target, label, allowed, blockers, adminOverride: authority.adminOverride,
+      requiresComment: authority.adminOverride || (target === 'processing' && status !== 'pending') };
+  });
+  const permissionReason = actions.some(action => action.allowed) ? null : !moduleWorkflow
+    ? '当前账号仅可查看，未开通问题流程操作权限；请由有权限的发起人或管理员处理'
+    : issue.isMajorQuality && status === 'verifying' ? `等待${waitingFor}完成审批`
+      : `当前阶段等待${waitingFor}操作，当前账号不能代其确认`;
+  return { waitingFor, verification, actions, permissionReason,
+    canEdit: !locked && (isAdmin || canMutateIssueForProcess(user, issue, 'UPDATE')),
+    currentTaskForUser: !moduleWorkflow ? null : status === 'awaiting_confirmation' && issue.reporterId === user.id ? 'confirmation'
+      : status === 'verifying' && issue.verifierEmployeeId === user.employeeId ? 'verifying'
+        : ['pending', 'processing'].includes(status) && (issue.assigneeEmployeeId === user.employeeId || issue.collaborators.some(item => item.employeeId === user.employeeId)) ? 'processing' : null,
+    checklist: [
+      ['assignee', '负责人已明确', '未指定负责人'], ['rootCause', '原因分析已填写', '未填写原因分析'],
+      ['solution', '处理方案已填写', '未填写处理方案'], ['evidence', '处理证据已上传', '未上传处理证据'],
+      ['verifier', issue.isMajorQuality ? '按重大质量审批流程验证' : '验证人已指定', '未指定验证人'],
+      ['tasks', '协同待办已完成', '协同待办尚未完成'], ['decisions', '协同决策已有结论', '协同决策尚无结论'],
+    ].map(([key, label, blocker]) => ({ key, label, done: !preparation.includes(blocker) })),
+  };
 }
 
 function simpleDetail(value: Prisma.JsonValue | null): Record<string, string | number | boolean | null> | null {
@@ -350,7 +446,7 @@ export function issueCode(sequence: number): string {
   return `ISS-${String(sequence).padStart(6, '0')}`;
 }
 
-export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
+export function serializeIssue(issue: IssueDetailRecord, user?: IssueWorkflowActor): IssueDTO {
   const now = Date.now();
   const majorApproval = issue.majorApprovals[0] || null;
   const assigneeEmployee = issue.assigneeEmployee || issue.assignee?.employee || null;
@@ -438,6 +534,7 @@ export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
     isMajorQuality: issue.isMajorQuality,
     majorQualityReason: issue.majorQualityReason,
     version: issue.version,
+    ...(user ? { workflow: buildIssueWorkflow(issue, user) } : {}),
     majorApproval: majorApproval ? {
       id: majorApproval.id,
       round: majorApproval.round,
@@ -547,12 +644,12 @@ export function issueTransitionAuthority(input: IssueTransitionAuthorityInput): 
 }
 
 export function transitionIssueData(
-  issue: { status: string; solution: string | null; verificationResult: string | null },
+  issue: IssueVerificationSource & { status: string; solution: string | null },
   target: IssueStatus,
   body: Record<string, unknown>,
   now = new Date(),
   actorId?: string,
-): { data: Prisma.IssueUpdateInput; error: string | null } {
+): { data: Prisma.IssueUncheckedUpdateManyInput; error: string | null } {
   const current = issue.status as IssueStatus;
   if (!ISSUE_STATUSES.includes(current) || !canTransitionIssue(current, target)) {
     return { data: {}, error: `不能从“${issueStatusLabels[current] || current}”流转到“${issueStatusLabels[target]}”` };
@@ -563,15 +660,18 @@ export function transitionIssueData(
   if (target === 'awaiting_confirmation' && !verificationResult) {
     return { data: {}, error: '提交发起人确认前请填写验证结果' };
   }
-  if (target === 'closed' && !issue.verificationResult && !verificationResult) {
-    return { data: {}, error: '确认完结前缺少验证结果' };
+  if (target === 'closed' && issueVerificationBasis(issue).kind === 'missing') {
+    return { data: {}, error: issue.isMajorQuality ? '确认完结前缺少有效的重大审批结论' : '确认完结前缺少验证结果' };
   }
 
-  const data: Prisma.IssueUpdateInput = { status: target };
+  const data: Prisma.IssueUncheckedUpdateManyInput = { status: target };
   data.version = { increment: 1 };
-  if (body.solution !== undefined) data.solution = solution;
-  if (body.verificationResult !== undefined) data.verificationResult = verificationResult;
-  if (body.rootCause !== undefined) data.rootCause = text(body.rootCause, 4000);
+  // A confirmation/return is not an edit of the approved evidence.
+  if (target === 'verifying') {
+    if (body.solution !== undefined) data.solution = solution;
+    if (body.rootCause !== undefined) data.rootCause = text(body.rootCause, 4000);
+  }
+  if (target === 'awaiting_confirmation') data.verificationResult = verificationResult;
   if (target === 'verifying') data.resolvedAt = now;
   if (target === 'awaiting_confirmation') {
     data.verifiedAt = now;
@@ -581,7 +681,8 @@ export function transitionIssueData(
     data.closedAt = now;
     data.requesterConfirmedAt = now;
     data.requesterConfirmationNote = text(body.comment, 2000);
-    if (actorId) data.requesterConfirmedBy = { connect: { id: actorId } };
+    if (!actorId) return { data: {}, error: '缺少确认操作人' };
+    data.requesterConfirmedById = actorId;
   }
   if (target === 'processing') {
     data.resolvedAt = null;
@@ -589,7 +690,8 @@ export function transitionIssueData(
     data.closedAt = null;
     data.requesterConfirmedAt = null;
     data.requesterConfirmationNote = null;
-    data.requesterConfirmedBy = { disconnect: true };
+    data.requesterConfirmedById = null;
+    data.verificationResult = null;
   }
   return { data, error: null };
 }

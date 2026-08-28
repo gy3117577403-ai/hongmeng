@@ -1798,3 +1798,68 @@
   .hm-issue-workbench.issue-case-room .case-file-groups { grid-template-columns: 1fr; }
   .hm-issue-workbench.issue-case-room .case-file-upload-bar { grid-template-columns: 1fr; }
 }
+/* Current-stage work area: readable controls without changing shared workbench tokens. */
+.hm-issue-workbench.issue-case-room .issue-current-task {
+  flex: 0 0 auto; padding: 20px; margin-bottom: 14px; border: 1px solid #f3c4a1;
+  border-radius: 12px; background: #fffaf5; color: #263446;
+}
+.hm-issue-workbench.issue-case-room .issue-current-task > header { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+.hm-issue-workbench.issue-case-room .issue-current-task > header span { color: #9b4b14; font-size: 12px; }
+.hm-issue-workbench.issue-case-room .issue-current-task h3 { margin: 5px 0 0; font-size: 21px; line-height: 1.4; }
+.hm-issue-workbench.issue-case-room .issue-current-task > header > svg { color: #e96708; width: 28px; height: 28px; }
+.hm-issue-workbench.issue-case-room .issue-current-task dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
+.hm-issue-workbench.issue-case-room .issue-current-task dt { font-size: 12px; color: #69758a; margin-bottom: 5px; }
+.hm-issue-workbench.issue-case-room .issue-current-task dd { margin: 0; font-weight: 650; font-size: 15px; overflow-wrap: anywhere; }
+.hm-issue-workbench.issue-case-room .issue-current-task small { display: block; margin-top: 4px; font-size: 12px; font-weight: 400; color: #657287; line-height: 1.6; }
+.hm-issue-workbench.issue-case-room .issue-task-evidence { display: flex; gap: 10px; padding: 12px; background: #f0faf5; border: 1px solid #c9e5d7; border-radius: 8px; }
+.hm-issue-workbench.issue-case-room .issue-task-evidence > svg { flex-shrink: 0; color: #16805b; margin-top: 2px; }
+.hm-issue-workbench.issue-case-room .issue-task-evidence strong { font-size: 13px; }
+.hm-issue-workbench.issue-case-room .issue-task-evidence p { margin: 5px 0; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hm-issue-workbench.issue-case-room .issue-task-notice,
+.hm-issue-workbench.issue-case-room .issue-task-closed { display: flex; align-items: flex-start; gap: 8px; margin: 12px 0; font-size: 14px; line-height: 1.6; }
+.hm-issue-workbench.issue-case-room .issue-task-notice > svg { flex-shrink: 0; margin-top: 3px; }
+.hm-issue-workbench.issue-case-room .issue-task-blockers { margin: 12px 0; padding: 12px; border-radius: 8px; background: #fff2df; font-size: 13px; line-height: 1.65; }
+.hm-issue-workbench.issue-case-room .issue-task-blockers ul { margin: 6px 0 0; padding-left: 22px; }
+.hm-issue-workbench.issue-case-room .issue-current-task > footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; margin-top: 16px; padding-top: 15px; border-top: 1px solid #ecd9c9; }
+.hm-issue-workbench.issue-case-room .issue-task-links,
+.hm-issue-workbench.issue-case-room .issue-task-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.hm-issue-workbench.issue-case-room .issue-task-links button,
+.hm-issue-workbench.issue-case-room .issue-task-actions button,
+.hm-issue-workbench.issue-case-room .issue-workflow-tools button { min-height: 44px; padding: 10px 14px; border: 1px solid #d9dfe6; border-radius: 8px; background: #fff; color: #34445b; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; cursor: pointer; }
+.hm-issue-workbench.issue-case-room .issue-task-actions button.primary { color: #fff; background: #e86100; border-color: #e86100; font-weight: 700; }
+.hm-issue-workbench.issue-case-room button:disabled { cursor: not-allowed; }
+.hm-issue-workbench.issue-case-room .issue-task-actions button:disabled { opacity: .5; }
+.hm-issue-workbench.issue-case-room .issue-workflow-tools { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.hm-issue-workbench.issue-case-room .issue-workflow-tools button[aria-pressed="true"] { color: #bd4d00; border-color: #f0b88f; background: #fff5e9; }
+.hm-issue-workbench.issue-case-room .issue-operation-result { display: flex; align-items: center; gap: 9px; padding: 14px; margin: 0 0 14px; background: #eaf8ef; color: #157446; border: 1px solid #b9dfc7; border-radius: 8px; font-size: 15px; font-weight: 650; }
+.hm-issue-workbench.issue-case-room .issue-action-error { padding: 14px; border: 1px solid #e9acaa; background: #fff3f2; color: #a82925; border-radius: 8px; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.hm-issue-workbench.issue-case-room .issue-action-error p { margin: 5px 0; white-space: pre-wrap; }
+.hm-issue-workbench.issue-case-room .issue-action-error button { min-height: 44px; padding: 8px 12px; margin-top: 8px; background: white; color: #962a25; border: 1px solid #deaaa7; border-radius: 7px; font-size: 13px; }
+.hm-issue-workbench.issue-case-room .issue-draft-notice { background: #fff3d9; border-radius: 7px; padding: 10px; color: #8b5714; font-size: 13px; }
+.hm-issue-workbench.issue-case-room .issue-confirm-summary { display: grid; gap: 7px; padding: 14px; background: #f4f7fa; border-radius: 8px; font-size: 14px; line-height: 1.6; }
+.hm-issue-workbench.issue-case-room .issue-confirm-summary p { margin: 0; white-space: pre-wrap; }
+.hm-issue-workbench.issue-case-room .issue-confirm-warning { font-size: 14px; line-height: 1.65; color: #556276; margin: 0; }
+@media (min-width: 1101px) {
+  .hm-issue-workbench.issue-case-room.context-collapsed .issue-workspace-grid { grid-template-columns: 270px minmax(0, 1fr); }
+  .hm-issue-workbench.issue-case-room.context-collapsed .issue-context { display: none; }
+}
+@media (max-width: 760px) {
+  .hm-issue-workbench.issue-case-room .issue-current-task { padding: 14px; }
+  .hm-issue-workbench.issue-case-room .issue-current-task dl { grid-template-columns: 1fr; gap: 12px; }
+}
+
+/* Keep the established tablet layout, with readable primary task controls. */
+.hm-issue-workbench.issue-case-room .issue-detail-branches { flex-basis: 60px; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; }
+.hm-issue-workbench.issue-case-room .issue-detail-branches button { min-height: 48px; }
+.hm-issue-workbench.issue-case-room .issue-detail-branches strong { font-size: 14px; }
+.hm-issue-workbench.issue-case-room .issue-detail-branches span { font-size: 12px; }
+.hm-issue-workbench.issue-case-room .case-room-intro p,
+.hm-issue-workbench.issue-case-room .case-resolution-strip p,
+.hm-issue-workbench.issue-case-room .case-stream-body > p { font-size: 14px; line-height: 1.65; }
+.hm-issue-workbench.issue-case-room .case-resolution-strip strong,
+.hm-issue-workbench.issue-case-room .context-picker-field > span,
+.hm-issue-workbench.issue-case-room .case-responsibility-grid label { font-size: 12px; }
+.hm-issue-workbench.issue-case-room .case-closure-checklist article strong { font-size: 12px; white-space: normal; }
+.hm-issue-workbench.issue-case-room .transition-modal label { font-size: 14px; }
+.hm-issue-workbench.issue-case-room .transition-modal textarea { font-size: 15px; line-height: 1.6; }
+.hm-issue-workbench.issue-case-room .transition-modal footer button { min-height: 44px; font-size: 14px; }

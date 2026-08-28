@@ -458,11 +458,15 @@ export function EmployeePicker({
   onChange,
   disabled,
   placeholder = '搜索姓名、工号、部门或岗位',
+  label = '负责人',
+  fallbackLabel,
 }: BasePickerProps & {
   employees: IssueAssigneeOptionDTO[];
   value: string;
   onChange: (id: string) => void;
   placeholder?: string;
+  label?: string;
+  fallbackLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -475,7 +479,7 @@ export function EmployeePicker({
   const grouped = useMemo(() => groupEmployees(filterEmployees(employees, query)), [employees, query]);
   const visibleEmployees = useMemo(() => grouped.flatMap(group => group.employees), [grouped]);
   const matchCount = grouped.reduce((total, group) => total + group.employees.length, 0);
-  const displayValue = open ? query : selected ? employeeLabel(selected) : '';
+  const displayValue = open ? query : selected ? employeeLabel(selected) : value ? fallbackLabel || '已选人员' : '';
   const popoverLayout = useAdaptivePickerPopover(open, rootRef);
 
   useEffect(() => {
@@ -483,6 +487,7 @@ export function EmployeePicker({
   }, [open, query, visibleEmployees.length]);
 
   const chooseEmployee = (employee: IssueAssigneeOptionDTO): void => {
+    if (disabled) return;
     onChange(employee.id);
     close();
   };
@@ -494,7 +499,7 @@ export function EmployeePicker({
         type="search"
         name={inputName}
         role="combobox"
-        aria-label="筛选系统员工列表"
+        aria-label={`选择${label}`}
         aria-expanded={open}
         aria-controls={listboxId}
         aria-autocomplete="list"
@@ -528,11 +533,11 @@ export function EmployeePicker({
           }
         }}
       />
-      {selected && <button type="button" className="clear" aria-label="清除负责人" title="清除负责人" onClick={() => { onChange(''); close(); }}><X /></button>}
-      <button type="button" className="toggle" aria-label="展开员工列表" title="展开员工列表" onClick={() => { if (open) close(); else setOpen(true); }}><ChevronDown /></button>
+      {selected && <button type="button" disabled={disabled} className="clear" aria-label={`清除${label}`} title={`清除${label}`} onClick={() => { onChange(''); close(); }}><X /></button>}
+      <button type="button" disabled={disabled} className="toggle" aria-label="展开员工列表" title="展开员工列表" onClick={() => { if (open) close(); else setOpen(true); }}><ChevronDown /></button>
     </div>
-    {open && <div className={`issue-picker-popover employees adaptive ${popoverLayout?.side === 'up' ? 'placement-up' : 'placement-down'}`} style={popoverLayout?.style} id={listboxId} role="listbox">
-      <header><strong>按部门选择负责人</strong><span>{matchCount} 人</span></header>
+    {open && !disabled && <div className={`issue-picker-popover employees adaptive ${popoverLayout?.side === 'up' ? 'placement-up' : 'placement-down'}`} style={popoverLayout?.style} id={listboxId} role="listbox">
+      <header><strong>按部门选择{label}</strong><span>{matchCount} 人</span></header>
       {!query && <button type="button" className={`issue-picker-option none ${!value ? 'selected' : ''}`} onClick={() => { onChange(''); close(); }}><span>暂不分派</span><small>创建后可在责任信息中补充分派</small>{!value && <Check />}</button>}
       {grouped.map(group => <section className="employee-group" key={group.department}>
         <h4>{group.department}<span>{group.employees.length}</span></h4>
@@ -627,10 +632,10 @@ export function EmployeeMultiPicker({
           }
         }}
       />
-      {!!values.length && <button type="button" className="clear" aria-label="清空协同人员" title="清空协同人员" onClick={() => onChange([])}><X /></button>}
-      <button type="button" className="toggle" aria-label="展开员工列表" title="展开员工列表" onClick={() => { if (open) close(); else setOpen(true); }}><ChevronDown /></button>
+      {!!values.length && <button type="button" disabled={disabled} className="clear" aria-label="清空协同人员" title="清空协同人员" onClick={() => onChange([])}><X /></button>}
+      <button type="button" disabled={disabled} className="toggle" aria-label="展开员工列表" title="展开员工列表" onClick={() => { if (open) close(); else setOpen(true); }}><ChevronDown /></button>
     </div>
-    {open && <div className={`issue-picker-popover employees multi-options adaptive ${popoverLayout?.side === 'up' ? 'placement-up' : 'placement-down'}`} style={popoverLayout?.style} id={listboxId} role="listbox" aria-multiselectable="true">
+    {open && !disabled && <div className={`issue-picker-popover employees multi-options adaptive ${popoverLayout?.side === 'up' ? 'placement-up' : 'placement-down'}`} style={popoverLayout?.style} id={listboxId} role="listbox" aria-multiselectable="true">
       <header><strong>按部门选择协同人员</strong><span>已选 {values.length} 人</span></header>
       {grouped.map(group => <section className="employee-group" key={group.department}>
         <h4>{group.department}<span>{group.employees.length}</span></h4>
