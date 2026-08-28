@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   REPORT_DOMAINS,
   defaultReportRoute,
+  hasFullReportAccess,
   legacyReportRoute,
   reportBranch,
   reportDomain,
@@ -23,7 +24,19 @@ test('report center exposes independent domain and branch routes', () => {
 
 test('full report users and report-only users land on an allowed independent branch', () => {
   assert.equal(defaultReportRoute(['PRODUCTION']), '/workspace/reports/production/weekly-plan-attainment');
+  assert.equal(defaultReportRoute(['HR']), '/workspace/reports/production/weekly-plan-attainment');
   assert.equal(defaultReportRoute(['REPORT_CENTER']), '/workspace/reports/people/unmatched-labor');
+});
+
+test('HR reads every report without upgrading personnel-only readers or training collaborators', () => {
+  assert.equal(hasFullReportAccess(['HR', 'TRAINING']), true);
+  assert.equal(hasFullReportAccess(['HR', 'REPORT_CENTER']), true);
+  assert.equal(hasFullReportAccess(['REPORT_CENTER']), false);
+  assert.equal(hasFullReportAccess(['TRAINING']), false);
+  assert.equal(
+    legacyReportRoute({ view: 'operations', section: 'matrix' }, ['HR']),
+    '/workspace/reports/people/employee-matrix',
+  );
 });
 
 test('legacy report links redirect to their closest independent branch', () => {

@@ -63,17 +63,20 @@ try {
   const leader = await employee('QA-1003', '验收组长', production, '一组', { attainmentEligible: false, attainmentFactorBasisPoints: 0, attainmentStream: 'excluded', position: '组长' });
   const supervisor = await employee('QA-1004', '验收主管', production, '主管', { attainmentEligible: false, attainmentFactorBasisPoints: 0, attainmentStream: 'excluded', position: '主管' });
   const hrEmployee = await employee('QA-1005', '验收人事', hr);
+  const hrOnlyEmployee = await employee('QA-1008', '仅人事主权限验收', hr);
   const trainee = await employee('QA-1006', '朱艳军', production, '储备生', { attainmentEligible: false, attainmentFactorBasisPoints: 0, attainmentStream: 'excluded', position: '储备生' });
   const otherTrainee = await employee('QA-1007', '其他储备生验收', production, '储备生', { attainmentEligible: false, attainmentFactorBasisPoints: 0, attainmentStream: 'excluded' });
   await account('admin', null, 'ADMIN_GLOBAL');
   await account('hr', hrEmployee, 'DEPARTMENT_FULL');
   await db.userAccessGrant.create({ data: { userId: users.hr.id, profile: 'REPORT_PEOPLE_READER', grantType: 'CONCURRENT', departmentId: hr.id, scopeKey: 'GLOBAL:REPORT_PEOPLE' } });
+  await account('hrOnly', hrOnlyEmployee, 'DEPARTMENT_FULL');
+  await account('peopleReader', null, 'REPORT_PEOPLE_READER');
   await account('supervisor', supervisor, 'WORKSHOP_SUPERVISOR');
   await account('leader', leader, 'WORKSHOP_TEAM_LEADER', { laborRole: 'TEAM_LEAD' });
   await account('worker', workerA, 'FIELD_REPORTER');
   await account('trainee', trainee, 'FIELD_REPORTER', { fieldPasswordOnly: true, passwordHash: await bcrypt.hash('123456', 10) });
   await account('other', otherTrainee, 'FIELD_REPORTER');
-  for (const key of ['admin', 'hr', 'supervisor', 'leader', 'worker', 'other']) await login(key);
+  for (const key of ['admin', 'hr', 'hrOnly', 'peopleReader', 'supervisor', 'leader', 'worker', 'other']) await login(key);
 
   for (const employee of [workerA, workerB, supervisor]) await db.attendanceRecord.create({ data: {
     employeeId: employee.id, departmentSnapshot: '生产部', teamSnapshot: employee.team, workDate, status: 'confirmed',
@@ -115,7 +118,7 @@ try {
   const adminReport = await request(reportPath, 'admin');
   assert.equal(adminReport.status, 200, JSON.stringify(adminReport.data));
   const projection = report => report.rows.map(row => [row.employee.id, row.standardLaborMilliseconds, row.attainmentBasisPoints]).sort();
-  for (const key of ['supervisor', 'leader', 'hr']) {
+  for (const key of ['supervisor', 'leader', 'hr', 'hrOnly']) {
     const response = await request(reportPath, key);
     assert.equal(response.status, 200, `${key}: ${JSON.stringify(response.data)}`);
     assert.deepEqual(projection(response.data.report), projection(adminReport.data.report), `${key} must see the shared production dataset`);
@@ -139,6 +142,83 @@ try {
   assert.equal(workerRow.details[0].processName, '成品检验');
   results.push('Supervisor with legacy EMPLOYEE role, team leader and HR receive the same per-employee data as administrator, including another team; field and anonymous accounts denied');
   results.push('Eight claims plus one direct report preserve exact product/model/process/quantity and six standard hours without truncation');
+
+  // Exercise every real report page and data source with and without the old
+  // personnel-reader grant. Merely showing a navigation tab is insufficient.
+  const reportBranches = {
+    production: ['weekly-plan-attainment', 'process-bottlenecks'],
+    people: ['attendance-attainment', 'employee-attainment', 'employee-matrix', 'labor-ledger', 'unmatched-labor'],
+    quality: ['affected-labor', 'cause-distribution', 'open-events', 'event-ledger'],
+    governance: ['completeness', 'missing-route', 'missing-standard', 'missing-drawing', 'missing-material'],
+    sample: ['sample-tasks', 'sample-attainment', 'pending-review', 'published-materials', 'review-attainment'],
+  };
+  const event = await db.abnormalTimeEvent.create({ data: {
+    workDate, category: 'process', title: '跨班组异常报表验收', durationMilliseconds: hour / 2,
+    workOrderId: workOrder.id, processStepId: route.steps[0].id, createdById: users.admin.id,
+    allocations: { create: [workerA, workerB].map(employee => ({ employeeId: employee.id, workDate, durationMilliseconds: hour / 2 })) },
+  } });
+  const factsBeforeRead = {
+    event: await db.abnormalTimeEvent.findUniqueOrThrow({ where: { id: event.id } }),
+    pools: await db.processLaborPool.findMany({ orderBy: { id: 'asc' } }),
+    workOrder: await db.workOrder.findUniqueOrThrow({ where: { id: workOrder.id } }),
+  };
+  const reportApiPaths = ['overview', 'operations', 'abnormal-time', 'completed-batches'];
+  const reportRange = 'period=custom&date=2026-08-04&startDate=2026-08-01&endDate=2026-08-04';
+  const reportData = ({ generatedAt: _generatedAt, ...data }) => data;
+  const adminData = {};
+  for (const name of reportApiPaths) {
+    const response = await request(`/api/reports/${name}?${reportRange}`, 'admin');
+    assert.equal(response.status, 200, `administrator baseline: ${name}`);
+    assert.ok(response.data.report, name);
+    adminData[name] = reportData(response.data.report);
+  }
+  const poolPath = '/api/process-labor-pools?workDate=2026-08-04&includeExhausted=true';
+  const adminPools = await request(poolPath, 'admin');
+  assert.equal(adminPools.status, 200);
+  assert.equal(adminPools.data.pools.length, 8);
+  for (const key of ['hr', 'hrOnly']) {
+    for (const [domain, branches] of Object.entries(reportBranches)) {
+      for (const branch of branches) {
+        const path = `/workspace/reports/${domain}/${branch}?period=month&date=2026-08-04`;
+        const page = await fetch(base + path, { headers: { Cookie: cookies[key] }, redirect: 'manual' });
+        assert.equal(page.status, 200, `${key}: ${path} must not redirect`);
+        const html = await page.text();
+        assert.match(html, /导出 Excel/, `${key}: export on ${path}`);
+        for (const label of ['生产结果', '人员工时', '质量异常', '数据治理', '样品资料']) assert.ok(html.includes(label), `${key}: missing domain ${label}`);
+      }
+    }
+    for (const name of reportApiPaths) {
+      const response = await request(`/api/reports/${name}?${reportRange}`, key);
+      assert.equal(response.status, 200, `${key}: ${name}`);
+      assert.deepEqual(reportData(response.data.report), adminData[name], `${key}: shared ${name} dataset`);
+    }
+    const quality = await request('/api/reports/abnormal-time?period=month&date=2026-08-04', key);
+    assert.equal(quality.data.report.summary.eventCount, 1);
+    assert.equal(quality.data.report.summary.affectedPersonMilliseconds, hour);
+    const pools = await request(poolPath, key);
+    assert.equal(pools.status, 200);
+    assert.deepEqual(pools.data.pools, adminPools.data.pools, `${key}: all employee labor claims`);
+    const poolId = pools.data.pools[0].id;
+    for (const [path, method, body] of [
+      [`/api/process-labor-pools/${poolId}/claims`, 'POST', { employeeId: workerA.id, quantity: 1 }],
+      [`/api/work-orders/${workOrder.id}`, 'PATCH', { productName: 'FORBIDDEN' }],
+      [`/api/abnormal-time-events/${event.id}/quality`, 'POST', { decision: 'confirmed', employeeExempt: true }],
+      [`/api/users/${users.worker.id}/access-grants`, 'POST', { profileKey: 'ADMIN_GLOBAL' }],
+    ]) assert.equal((await request(path, key, body, method)).status, 403, `${key} must not gain ${method} ${path}`);
+  }
+  assert.deepEqual(await db.abnormalTimeEvent.findUniqueOrThrow({ where: { id: event.id } }), factsBeforeRead.event);
+  assert.deepEqual(await db.processLaborPool.findMany({ orderBy: { id: 'asc' } }), factsBeforeRead.pools);
+  assert.deepEqual(await db.workOrder.findUniqueOrThrow({ where: { id: workOrder.id } }), factsBeforeRead.workOrder);
+  for (const name of reportApiPaths) {
+    assert.equal((await request(`/api/reports/${name}`, 'peopleReader')).status, 403, `personnel-only reader remains restricted: ${name}`);
+    assert.equal((await request(`/api/reports/${name}`, 'worker')).status, 403, `field worker remains restricted: ${name}`);
+    assert.equal((await request(`/api/reports/${name}`, null)).status, 401, `anonymous remains restricted: ${name}`);
+  }
+  const readerPage = await fetch(base + '/workspace/reports/people/employee-attainment', { headers: { Cookie: cookies.peopleReader }, redirect: 'manual' });
+  assert.equal(readerPage.status, 307);
+  assert.match(readerPage.headers.get('location'), /\/workspace\/reports\/people\/unmatched-labor$/);
+  results.push('Both HR-only and HR plus legacy reader accounts open all 21 report pages with export; all report APIs match administrator datasets, including cross-team abnormal time and labor claims');
+  results.push('HR report reads leave work orders, abnormal events and labor pools unchanged; production edits, quality review, labor claims and access grants remain denied; non-HR reader, field and anonymous boundaries preserved');
 
   const hrAccounts = await request('/api/users', 'hr');
   assert.equal(hrAccounts.status, 200);

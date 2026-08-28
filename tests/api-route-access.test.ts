@@ -358,6 +358,31 @@ test('drawing reader and editor share data while write and destructive actions r
   assert.equal(canAccessApiRoute(editor, '/api/drawing-library/item-1/sop/publish', 'POST'), false);
 });
 
+test('HR reads every report and shared labor details without business write permissions', () => {
+  const hr = context({ profile: 'DEPARTMENT_FULL', departmentCode: 'HR', grantType: 'PRIMARY', scopeKey: 'DEPARTMENT:HR' });
+  const reportPaths = [
+    '/api/reports/employee-attainment', '/api/reports/overview', '/api/reports/operations',
+    '/api/reports/abnormal-time', '/api/reports/completed-batches',
+  ];
+  for (const path of reportPaths) {
+    assert.equal(canAccessApiRoute(hr, path, 'GET'), true, path);
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      assert.equal(canAccessApiRoute(hr, path, method), false, `${method} ${path}`);
+    }
+  }
+  assert.equal(canAccessApiRoute(hr, '/api/process-labor-pools', 'GET'), true);
+  for (const [path, method] of [
+    ['/api/process-labor-pools/pool-1/claims', 'POST'],
+    ['/api/process-labor-claims/claim-1', 'DELETE'],
+    ['/api/work-orders/order-1', 'PATCH'],
+    ['/api/planning/weekly-plan-export/preview', 'GET'],
+    ['/api/major-quality-approvals/approval-1/decision', 'POST'],
+    ['/api/users/user-1/access-grants', 'POST'],
+  ]) {
+    assert.equal(canAccessApiRoute(hr, path, method), false, `${method} ${path}`);
+  }
+});
+
 test('personnel report reader receives only read-only people report APIs', () => {
   const people = context({
     profile: 'REPORT_PEOPLE_READER',

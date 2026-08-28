@@ -130,8 +130,8 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/process-templates', anyOf: ['PROCESS'] },
   {
     prefix: '/api/process-labor-pools',
-    anyOf: ['PROCESS', 'PRODUCTION', 'BUSINESS', 'PLANNING', 'MAJOR_APPROVAL', 'REPORT_CENTER'],
-    readOnlyModules: ['BUSINESS', 'PLANNING', 'MAJOR_APPROVAL', 'REPORT_CENTER'],
+    anyOf: ['PROCESS', 'PRODUCTION', 'BUSINESS', 'PLANNING', 'MAJOR_APPROVAL', 'REPORT_CENTER', 'HR'],
+    readOnlyModules: ['BUSINESS', 'PLANNING', 'MAJOR_APPROVAL', 'REPORT_CENTER', 'HR'],
     productionMinimumScope: 'WORKSHOP',
   },
   {
@@ -247,12 +247,14 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   },
   {
     prefix: '/api/reports/employee-attainment',
-    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL', 'REPORT_CENTER'],
+    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL', 'REPORT_CENTER', 'HR'],
+    allowedMethods: ['GET', 'HEAD', 'OPTIONS'],
     action: 'READ',
   },
   {
     prefix: '/api/reports',
-    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL'],
+    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL', 'HR'],
+    allowedMethods: ['GET', 'HEAD', 'OPTIONS'],
     action: 'READ',
   },
   { prefix: '/api/dashboard/field-summary', anyOf: ['BUSINESS', 'ENGINEERING', 'PRODUCTION'] },

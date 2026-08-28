@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
     const end = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     let scopedEmployeeIds: string[] | null = null;
     const canReadGlobalReport = hasCapability(actor.access, 'BUSINESS', 'READ')
+      || hasCapability(actor.access, 'HR', 'READ')
       || hasCapability(actor.access, 'PLANNING', 'READ')
       || hasCapability(actor.access, 'MAJOR_APPROVAL', 'READ')
       || actor.laborRole === 'ADMIN';

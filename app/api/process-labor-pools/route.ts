@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
       includeExhausted: req.nextUrl.searchParams.get('includeExhausted') === 'true',
       userId: user.id,
       globalReadOnly: hasCapability(user.access, 'REPORT_CENTER', 'READ')
+        || hasCapability(user.access, 'HR', 'READ')
         || hasCapability(user.access, 'BUSINESS', 'READ')
         || hasCapability(user.access, 'PLANNING', 'READ')
         || hasCapability(user.access, 'MAJOR_APPROVAL', 'READ'),

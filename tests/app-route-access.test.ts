@@ -6,6 +6,7 @@ import {
   routeAccessRule,
 } from '../lib/app-route-access';
 import type { AccessModuleCode, CapabilityCode } from '../lib/department-access';
+import { REPORT_DOMAINS, reportRoute } from '../lib/report-center-navigation';
 
 function access(...modules: AccessModuleCode[]) {
   return { modules };
@@ -22,6 +23,20 @@ test('HR opens the employee account page without system dashboard or permissions
   assert.equal(canAccessAppRoute(hr, '/workspace/permissions'), false);
   assert.equal(canAccessAppRoute(accessWithCapabilities(['HR'], ['HR:READ']), '/workspace/employees/accounts'), false);
   assert.equal(canAccessAppRoute(accessWithCapabilities(['TRAINING'], ['TRAINING:UPDATE']), '/workspace/employees/accounts'), false);
+});
+
+test('HR opens all report routes without receiving production, planning or quality workspaces', () => {
+  const hr = access('HR');
+  assert.equal(canAccessAppRoute(hr, '/workspace/reports'), true);
+  for (const domain of REPORT_DOMAINS) {
+    for (const branch of domain.branches) {
+      assert.equal(canAccessAppRoute(hr, reportRoute(domain.key, branch.key)), true);
+    }
+  }
+  for (const path of ['/production', '/weekly-plan-center', '/workspace/quality', '/workspace/permissions']) {
+    assert.equal(canAccessAppRoute(hr, path), false, path);
+  }
+  assert.equal(canAccessAppRoute(access('TRAINING'), '/workspace/reports'), false);
 });
 
 test('finance account lands on account center and cannot open business pages', () => {

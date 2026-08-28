@@ -121,7 +121,7 @@ export function reportRoute(domain: ReportDomainKey, branch: ReportBranchKey): s
 }
 
 export function hasFullReportAccess(modules: readonly string[]): boolean {
-  return ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL'].some(module => modules.includes(module));
+  return ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL', 'HR'].some(module => modules.includes(module));
 }
 
 export function defaultReportRoute(modules: readonly string[]): string {
