@@ -1,5 +1,6 @@
 import { getProductionQuantitySummary, type ProductionQuantityInput } from '@/lib/production-quantity';
 import { hasEffectiveIssuedDrawing } from '@/lib/production-drawing-readiness';
+import { productionCustomerDate, productionEstimatedDate } from '@/lib/production-control';
 
 export type ProductionAlertCode =
   | 'DRAWING_NOT_ISSUED'
@@ -8,6 +9,7 @@ export type ProductionAlertCode =
   | 'DRAWING_CHANGE_REQUIRED'
   | 'MATERIAL_NOT_READY'
   | 'OVERDUE'
+  | 'INTERNAL_PLAN_DELAY'
   | 'TAIL_REMAINING'
   | 'REWORK'
   | 'SPECIFICATION_INVALID';
@@ -30,6 +32,8 @@ export type ProductionAlertInput = ProductionQuantityInput & {
   warehouseExpectedAt?: string | Date | null;
   latestProgressRemark?: string | null;
   plannedAt?: string | Date | null;
+  deliveryDay?: string | null;
+  estimatedCompletionAt?: string | Date | null;
 };
 
 const drawingConfirmationCodes = new Set<ProductionAlertCode>([
@@ -109,8 +113,10 @@ export function getProductionAlerts(input: ProductionAlertInput, now = new Date(
     alerts.push({ code: 'MATERIAL_NOT_READY', label: warehouseAlertLabel(input, now), tone: critical ? 'red' : 'orange' });
   }
 
-  const days = stageCompleted ? 0 : overdueDays(input.plannedAt, now);
-  if (days > 0) alerts.push({ code: 'OVERDUE', label: `逾期${days}天`, tone: 'red' });
+  const days = stageCompleted ? 0 : overdueDays(productionCustomerDate(input), now);
+  if (days > 0) alerts.push({ code: 'OVERDUE', label: `客户交期逾期${days}天`, tone: 'red' });
+  const internalDays = stageCompleted ? 0 : overdueDays(productionEstimatedDate(input), now);
+  if (internalDays > 0) alerts.push({ code: 'INTERNAL_PLAN_DELAY', label: `内部预计延期${internalDays}天`, tone: 'amber' });
   if (quantity.status === 'tail_remaining' && quantity.remainingQty !== null) {
     alerts.push({ code: 'TAIL_REMAINING', label: `剩余${quantity.remainingQty}套`, tone: 'orange' });
   }

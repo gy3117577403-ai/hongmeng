@@ -85,10 +85,13 @@ export async function GET(request: NextRequest) {
         { icon: '!', label: '剩余数量', value: remainingQty.toLocaleString('zh-CN'), note: '待排产或待报工数量', tone: remainingQty > 0 ? 'red' : 'green' },
       ],
       headers: [
-        '规格', '客户', '品名', '生产状态', '优先级', '交期', '工单数量', '生产日期', '班次', '班组',
+        '序号',
+        '规格', '客户', '品名', '生产状态', '优先级', '客户交期', '工单数量', '生产日期', '班次', '班组',
         '排班状态', '工序范围', '计划数量', '已报数量', '剩余数量', '安排人员', '人员分配', '计划工时(小时)',
+        '内部预计完成', '历史基准', '当前问题备注', '暂停原因', '工单标识',
       ],
-      rows: rows.map(row => [
+      rows: rows.map((row, index) => [
+        index + 1,
         row.specification,
         row.customer,
         row.productName,
@@ -107,6 +110,7 @@ export async function GET(request: NextRequest) {
         row.employees,
         row.employeeQuantities,
         row.plannedHours,
+        row.estimatedDate, row.baselineDates, row.note, row.pauseReason, row.workOrderId,
       ]),
     });
     const buffer = await workbook.xlsx.writeBuffer();

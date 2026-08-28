@@ -685,6 +685,16 @@ model WorkOrder {
   completedAt              DateTime?                      @map("completed_at")
   lastProgressAt           DateTime?                      @map("last_progress_at")
   latestProgressRemark     String?                        @map("latest_progress_remark")
+  operationalNote          Json?                          @map("operational_note")
+  productionPausedAt       DateTime?                      @map("production_paused_at")
+  productionPause          Json?                          @map("production_pause")
+  productionControlVersion Int                            @default(0) @map("production_control_version")
+  estimatedCompletionAt    DateTime?                      @map("estimated_completion_at")
+  deliveryBaselineDay      String?                        @map("delivery_baseline_day")
+  planBaselineAt           DateTime?                      @map("plan_baseline_at")
+  dateBaselineSource       String                         @default("initial") @map("date_baseline_source")
+  deliveryAdjustmentCount  Int                            @default(0) @map("delivery_adjustment_count")
+  productionControlEvents  ProductionControlEvent[]
   createdAt                DateTime                       @default(now()) @map("created_at")
   updatedAt                DateTime                       @updatedAt @map("updated_at")
   deletedAt                DateTime?                      @map("deleted_at")
@@ -726,6 +736,7 @@ model WorkOrder {
   @@index([customerName])
   @@index([stage])
   @@index([plannedAt])
+  @@index([productionPausedAt])
   @@index([createdAt])
   @@index([priority])
   @@index([status])
@@ -1374,6 +1385,7 @@ model DailyProcessTask {
   priority                    Int                     @default(0)
   priorityReason              String?                 @map("priority_reason")
   riskWarnings                Json?                   @map("risk_warnings")
+  productionSuspendedAt       DateTime?               @map("production_suspended_at")
   status                      DailyProcessTaskStatus  @default(UNPLANNED)
   sortOrder                   Int                     @default(0) @map("sort_order")
   version                     Int                     @default(0)
@@ -2920,6 +2932,10 @@ model ProductionPlanOrder {
   planningUnitMilliseconds Int?                   @map("planning_unit_milliseconds")
   orderDate                DateTime               @map("order_date")
   customerDueDate          DateTime               @map("customer_due_date")
+  customerDueDateConfirmed Boolean                @default(true) @map("customer_due_date_confirmed")
+  deliveryBaselineDate     DateTime?              @map("delivery_baseline_date")
+  dateBaselineSource       String                 @default("initial") @map("date_baseline_source")
+  deliveryVersion          Int                    @default(0) @map("delivery_version")
   priority                 String                 @default("normal")
   status                   String                 @default("pending")
   remark                   String?
@@ -2953,6 +2969,8 @@ model ProductionPlanBatch {
   weekStartDate             DateTime                @map("week_start_date")
   weekEndDate               DateTime                @map("week_end_date")
   plannedCompletionDate     DateTime                @map("planned_completion_date")
+  planBaselineDate          DateTime?               @map("plan_baseline_date")
+  estimatedCompletionDate   DateTime?               @map("estimated_completion_date")
   releaseState              String                  @default("draft") @map("release_state")
   workOrderId               String?                 @unique @map("work_order_id")
   productTimeProfileId      String?                 @map("product_time_profile_id")
@@ -3007,6 +3025,24 @@ model ProductionCarryover {
   @@index([sourceWeekStartDate, status])
   @@index([workOrderId, targetWeekStartDate])
   @@map("production_carryovers")
+}
+
+model ProductionControlEvent {
+  id          String    @id @default(uuid())
+  workOrderId String    @map("work_order_id")
+  action      String
+  reason      String?
+  actorId     String    @map("actor_id")
+  actorName   String    @map("actor_name")
+  requestId   String    @unique @map("request_id")
+  requestHash String    @map("request_hash")
+  beforeData  Json      @map("before_data")
+  afterData   Json      @map("after_data")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+
+  @@index([workOrderId, createdAt])
+  @@map("production_control_events")
 }
 
 model ProductionPlanChange {

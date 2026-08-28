@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { ReportDateRangeError, reportRangeQuery } from '@/lib/report-date-range';
 import { prisma } from '@/lib/prisma';
+import { PRODUCTION_CONTROL_SELECT, productionCustomerDate, serializeProductionControl } from '@/lib/production-control';
 import {
   parseReportQuantity,
   reportBasisPoints,
@@ -26,6 +27,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const workOrderSelect = Prisma.validator<Prisma.WorkOrderSelect>()({
+  ...PRODUCTION_CONTROL_SELECT,
   id: true,
   code: true,
   customerName: true,
@@ -98,10 +100,7 @@ function dateInRange(value: Date | null, start: Date, end: Date): boolean {
 }
 
 function workOrderDueAt(order: WorkOrderRecord): Date | null {
-  return order.plannedAt
-    || order.productionPlanBatch?.plannedCompletionDate
-    || order.productionPlanBatch?.planOrder.customerDueDate
-    || null;
+  return productionCustomerDate(order);
 }
 
 function workOrderQuantity(order: WorkOrderRecord): { planned: number | null; completed: number | null } {
@@ -143,6 +142,7 @@ function workOrderFocusItem(order: WorkOrderRecord, referenceAt: Date): ReportCe
   const completed = Boolean(order.completedAt || order.stage === 'completed' || order.status === 'completed');
   const started = Boolean(order.startedAt || order.progress > 0 || (quantity.completed || 0) > 0 || currentIndex >= 0);
   const state = reportWorkOrderStatus({ completed, started, dueAt, referenceAt });
+  const control = serializeProductionControl(order);
   const dueInDays = dueAt ? Math.ceil((dueAt.getTime() - referenceAt.getTime()) / 86_400_000) : null;
   let risk = reportRisk({
     status: state.status,
@@ -168,8 +168,8 @@ function workOrderFocusItem(order: WorkOrderRecord, referenceAt: Date): ReportCe
     progressBasisPoints: quantity.planned && quantity.completed !== null
       ? reportBasisPoints(quantity.completed, quantity.planned)
       : null,
-    status: state.status,
-    statusLabel: state.label,
+    status: control.pausedAt && !completed ? 'paused' : state.status,
+    statusLabel: control.pausedAt && !completed ? '已暂停' : state.label,
     currentProcess: current?.processName || null,
     nextProcess: next?.processName || null,
     owner: order.productionOwner || null,
@@ -179,7 +179,7 @@ function workOrderFocusItem(order: WorkOrderRecord, referenceAt: Date): ReportCe
     startedAt: order.startedAt?.toISOString() || null,
     completedAt: order.completedAt?.toISOString() || null,
     risk: risk.risk,
-    riskLabel: risk.label,
+    riskLabel: [risk.label, control.pause?.reason ? `暂停：${control.pause.reason}` : '', control.note?.text || ''].filter(Boolean).join(' · '),
     missingData,
   };
 }
@@ -513,7 +513,7 @@ export async function GET(req: NextRequest) {
     const completedOrders = allFocusItems.filter(item => item.status === 'completed').length;
     const activeOrders = allFocusItems.filter(item => item.status === 'in_progress' || item.status === 'review').length;
     const pendingOrders = allFocusItems.filter(item => item.status === 'pending').length;
-    const overdueOrders = allFocusItems.filter(item => item.status === 'overdue').length;
+    const overdueOrders = allFocusItems.filter(item => item.status === 'overdue' || (item.status === 'paused' && item.dueAt && new Date(item.dueAt) < referenceAt)).length;
     const dueSoonOrders = allFocusItems.filter(item => {
       if (!item.dueAt || item.status === 'completed' || item.status === 'overdue') return false;
       const days = Math.ceil((new Date(item.dueAt).getTime() - referenceAt.getTime()) / 86_400_000);
@@ -525,6 +525,7 @@ export async function GET(req: NextRequest) {
       { key: 'review', label: '待审核' },
       { key: 'pending', label: '待开始' },
       { key: 'overdue', label: '已逾期' },
+      { key: 'paused', label: '已暂停' },
     ];
     const statusDistribution = statusKeys.map(item => {
       const count = allFocusItems.filter(focus => focus.status === item.key).length;

@@ -289,7 +289,7 @@ export async function syncDailyTasksAfterProcessRouteChange(
   }
 
   const tasks = await tx.dailyProcessTask.findMany({
-    where: { routeId: input.routeId },
+    where: { routeId: input.routeId, productionSuspendedAt: null },
     orderBy: [{ workDate: 'asc' }, { sortOrder: 'asc' }, { position: 'asc' }, { createdAt: 'asc' }],
     select: {
       id: true,

@@ -196,7 +196,7 @@ test('due-soon uses the customer delivery day and a stable China-time 0-2 day wi
   assert.equal(isProductionDueSoon(order('2026-08-06'), now), false);
   assert.equal(isProductionDueSoon(order('2026-08-02'), now), false);
   assert.equal(isProductionDueSoon(order('2026-08-05', 'completed'), now), false);
-  assert.equal(isProductionDueSoon(order(null, 'frontend', new Date('2026-08-04T04:00:00.000Z')), now), true);
+  assert.equal(isProductionDueSoon(order(null, 'frontend', new Date('2026-08-04T04:00:00.000Z')), now), false, 'internal dates are not a customer promise');
 });
 
 test('production documents require both an original drawing and an SOP', () => {

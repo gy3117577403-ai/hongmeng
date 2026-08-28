@@ -1,3 +1,5 @@
+import { productionDateKey, type ProductionControlView } from '@/lib/production-control';
+
 type DispatchEmployee = {
   employeeNo?: string;
   name?: string;
@@ -29,6 +31,7 @@ export type ProductionDispatchDocumentOrder = {
   priority?: string;
   deliveryDay?: string | null;
   plannedAt?: string | null;
+  productionControl?: ProductionControlView;
   productionTargetQty?: number | null;
   arrangements?: DispatchArrangement[];
 };
@@ -41,6 +44,10 @@ export type ProductionDispatchDocumentRow = {
   productionStatus: string;
   priority: string;
   deliveryDate: string;
+  estimatedDate: string;
+  baselineDates: string;
+  note: string;
+  pauseReason: string;
   targetQty: number | string;
   workDate: string;
   shift: string;
@@ -84,9 +91,13 @@ export function buildProductionDispatchDocumentRows(
           specification: text(order.specification) || text(order.code),
           customer: text(order.customerName),
           productName: text(order.productName),
-          productionStatus: text(order.stageText),
+          productionStatus: order.productionControl?.pausedAt ? '已暂停' : text(order.stageText),
           priority: order.priority === 'urgent' ? '紧急' : order.priority === 'high' ? '高' : '一般',
-          deliveryDate: text(order.deliveryDay) || text(order.plannedAt),
+          deliveryDate: productionDateKey(order.deliveryDay) || '客户交期待确认',
+          estimatedDate: order.productionControl?.estimatedCompletionDate || productionDateKey(order.plannedAt) || '',
+          baselineDates: `原承诺 ${order.productionControl?.deliveryBaselineDate || '待确认'} / 原计划 ${order.productionControl?.planBaselineDate || productionDateKey(order.plannedAt) || '待确认'}`,
+          note: [order.productionControl?.note?.text, order.productionControl?.note?.owner].filter(Boolean).join(' · '),
+          pauseReason: order.productionControl?.pause?.reason || '',
           targetQty: order.productionTargetQty ?? '',
           workDate: text(arrangement?.workDate),
           shift: arrangement ? (arrangement.shiftCode === 'NIGHT' ? '夜班' : '白班') : '',
@@ -127,8 +138,8 @@ export function renderProductionDispatchPrintHtml(input: {
     <td>${escapeHtml(row.processes || '待安排')}</td>
     <td>${escapeHtml(row.employees || '待安排')}<small>${escapeHtml(row.employeeQuantities)}</small></td>
     <td>${escapeHtml(row.plannedQty)}</td><td>${escapeHtml(row.completedQty)}</td><td>${escapeHtml(row.remainingQty)}</td>
-    <td>${escapeHtml(row.deliveryDate || '待补')}<small>${escapeHtml(row.productionStatus)}</small></td>
-    <td></td>
+    <td>${escapeHtml(row.deliveryDate || '待确认')}<small>预计 ${escapeHtml(row.estimatedDate)} · ${escapeHtml(row.productionStatus)}</small><small>${escapeHtml(row.baselineDates)}</small></td>
+    <td>${escapeHtml(row.note)}<small>${escapeHtml(row.pauseReason ? `暂停：${row.pauseReason}` : '')}</small></td>
   </tr>`).join('');
   const employeeCount = new Set(input.rows.flatMap(row => row.employees.split('、').map(text).filter(Boolean))).size;
   const arrangementCount = input.rows.filter(row => row.workDate).length;

@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+import { canAdjustProductionDates, serializeProductionControl } from '@/lib/production-control';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -58,7 +60,8 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       if (!existing || existing.deletedAt) {
         return NextResponse.json({ ok: false, error: '计划订单不存在' }, { status: 404 });
       }
-      const parsed = parseProductionPlanOrderInput(body, currentInput(existing));
+      const retainsUnknownDate = !existing.customerDueDateConfirmed && !String(body.customerDueDate || '').trim();
+      const parsed = parseProductionPlanOrderInput(retainsUnknownDate ? { ...body, customerDueDate: existing.customerDueDate.toISOString() } : body, currentInput(existing));
       if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
       const references = await resolvePlanningReferences(tx, parsed.data);
       if (!references.drawingLibraryItemId || !references.customerName || !references.specification || !references.productName) {
@@ -101,6 +104,15 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         || canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds
         || canonical.customerDueDate.getTime() !== existing.customerDueDate.getTime();
       const reason = String(body.reason || '').trim().slice(0, 300);
+      const dateChanged = !retainsUnknownDate && (canonical.customerDueDate.getTime() !== existing.customerDueDate.getTime() || !existing.customerDueDateConfirmed);
+      if (canonical.status === 'paused' && existing.status !== 'paused') {
+        return NextResponse.json({ ok: false, error: '请在批次的“暂停生产”入口填写原因并确认影响，不能仅修改订单状态' }, { status: 409 });
+      }
+      if (dateChanged) {
+        if (!canAdjustProductionDates(user)) return NextResponse.json({ ok: false, error: '只有计划和管理员可以调整客户交期' }, { status: 403 });
+        if (Number(body.expectedDeliveryVersion) !== existing.deliveryVersion) return NextResponse.json({ ok: false, error: '订单交期版本已更新，请刷新后重试' }, { status: 409 });
+        if (!reason || !String(body.confirmation || '').trim()) return NextResponse.json({ ok: false, error: '修改客户交期必须填写变更原因和客户确认说明' }, { status: 400 });
+      }
       if (released.length && impactful && !reason) {
         return NextResponse.json({ ok: false, error: '已下达订单变更必须填写原因' }, { status: 400 });
       }
@@ -119,7 +131,10 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       }
       await tx.productionPlanOrder.update({
         where: { id: existing.id },
-        data: { ...canonical, updatedById: user.id },
+        data: { ...canonical, updatedById: user.id, ...(dateChanged ? {
+          customerDueDateConfirmed: true, deliveryVersion: { increment: 1 },
+          deliveryBaselineDate: existing.deliveryBaselineDate || (existing.customerDueDateConfirmed ? existing.customerDueDate : canonical.customerDueDate),
+        } : {}) },
       });
       const linkedIds = released.map(batch => batch.workOrderId).filter((id): id is string => Boolean(id));
       if (linkedIds.length) {
@@ -131,12 +146,26 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
             productName: canonical.productName,
             specification: canonical.specification,
             orderDate: canonical.orderDate,
-            deliveryDay: canonical.customerDueDate.toISOString().slice(0, 10),
             priority: canonical.priority === 'insert' ? 'urgent' : canonical.priority,
             remark: canonical.remark,
             drawingLibraryItemId: references.drawingLibraryItemId,
           },
         });
+      }
+      if (dateChanged && linkedIds.length) {
+        const date = canonical.customerDueDate.toISOString().slice(0, 10);
+        const openOrders = await tx.workOrder.findMany({ where: { id: { in: linkedIds }, deletedAt: null, planClearedAt: null, stage: { not: 'completed' } } });
+        for (const order of openOrders) {
+          const next = await tx.workOrder.update({ where: { id: order.id }, data: {
+            deliveryDay: date, deliveryBaselineDay: order.deliveryBaselineDay || order.deliveryDay || date,
+            productionControlVersion: { increment: 1 }, deliveryAdjustmentCount: { increment: 1 },
+          } });
+          await tx.productionControlEvent.create({ data: { workOrderId: order.id, action: 'adjust_date', reason,
+            actorId: user.id, actorName: user.displayName || user.username, requestId: randomUUID(), requestHash: 'planning-order-date-change',
+            beforeData: JSON.parse(JSON.stringify(serializeProductionControl(order))) as Prisma.InputJsonValue,
+            afterData: JSON.parse(JSON.stringify({ ...serializeProductionControl(next), confirmation: String(body.confirmation).trim() })) as Prisma.InputJsonValue,
+          } });
+        }
       }
       if (canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds) {
         const effectiveUnitMilliseconds = effectiveOrderUnitMilliseconds;
@@ -170,7 +199,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
           planOrderId: existing.id,
           action: released.length ? 'update_released_plan_order' : 'update_plan_order',
           beforeData: planOrderSnapshot(currentInput(existing)),
-          afterData: planOrderSnapshot(canonical),
+          afterData: { ...planOrderSnapshot(canonical), ...(dateChanged ? { customerConfirmation: String(body.confirmation).trim() } : {}) },
           impactData: { releasedBatchCount: released.length, linkedWorkOrderCount: linkedIds.length },
           reason: reason || null,
           actorId: user.id,

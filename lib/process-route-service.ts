@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { sanitizeSnapshotValue, workOrderSnapshot } from '@/lib/change-snapshots';
 import { prisma } from '@/lib/prisma';
+import { ProductionControlError } from '@/lib/production-control';
+import { assertProductionMayRun, lockProductionWorkOrder } from '@/lib/production-pause-guard';
 import {
   normalizeProcessStageGroup,
   processRouteInclude,
@@ -113,6 +115,7 @@ function targetQuantity(order: Parameters<typeof resolveEffectiveFrontendTransfe
 }
 
 function normalizeServiceError(error: unknown): ProcessRouteServiceError {
+  if (error instanceof ProductionControlError) return new ProcessRouteServiceError(error.message, error.status, error.code);
   if (error instanceof ProcessRouteServiceError) return error;
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') return conflict();
   if (error instanceof Error && (
@@ -525,6 +528,7 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
       include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
     });
     if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
+    await assertProductionMayRun(tx, route.workOrder.id);
     ensureExecutableWeeklyOrder(route.workOrder);
     if (route.status === 'draft') {
       throw new ProcessRouteServiceError('请先由工艺确认路线后再上报生产进度', 409, 'PROCESS_ROUTE_NOT_CONFIRMED');
@@ -977,6 +981,11 @@ export async function startConfirmedProcessRoute(
     include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
   });
   if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return false;
+  const control = await lockProductionWorkOrder(tx, route.workOrder.id);
+  if (control.productionPausedAt) {
+    if (input.trigger && input.trigger !== 'manual_start') return false;
+    throw new ProcessRouteServiceError('工单已暂停，请先确认恢复生产', 409, 'PRODUCTION_PAUSED');
+  }
   ensureExecutableWeeklyOrder(route.workOrder);
   const timeReadiness = processRouteExecutionReadiness(route.steps);
   if (!timeReadiness.ready) {

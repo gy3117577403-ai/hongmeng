@@ -35,6 +35,8 @@ import {
   isProductionWorkforceEmployee,
   productionEmployeeWhere,
 } from '@/lib/production-workforce';
+import { assertProductionMayRun, runningProductionWorkOrderWhere } from '@/lib/production-pause-guard';
+import { ProductionControlError } from '@/lib/production-control';
 import {
   rebuildProductionArrangementRemaining,
   splitProductionArrangementQuantity,
@@ -365,6 +367,7 @@ function assertAdmin(scope: ActorScope): void {
 }
 
 function mapPrismaError(error: unknown): never {
+  if (error instanceof ProductionControlError) throw new DailyPlanServiceError(error.message, error.code, error.status);
   if (error instanceof DailyPlanServiceError) throw error;
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2002') {
@@ -759,7 +762,7 @@ export async function previewDailyPlanSuggestions(input: {
         ],
       }),
       planOrder: { deletedAt: null },
-      workOrder: { is: { deletedAt: null } },
+      workOrder: { is: { deletedAt: null, ...runningProductionWorkOrderWhere } },
     },
     include: {
       planOrder: true,
@@ -994,7 +997,7 @@ export async function previewDailyPlanSuggestions(input: {
       where: {
         employeeId: { in: employeeIds },
         status: { not: DailyTaskAssignmentStatus.CANCELLED },
-        task: { workDate, shiftCode, status: { not: DailyProcessTaskStatus.CANCELLED } },
+        task: { workDate, shiftCode, productionSuspendedAt: null, workOrder: runningProductionWorkOrderWhere, status: { not: DailyProcessTaskStatus.CANCELLED } },
       },
       select: { employeeId: true, plannedStandardMilliseconds: true },
     }) : [],
@@ -1158,6 +1161,7 @@ export async function createDailyProductionPlan(input: {
     const targetPlanId = plan.id;
     let createdTaskCount = 0;
     for (const candidate of candidates) {
+      await assertProductionMayRun(tx, candidate.workOrderId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`weekly-process:${candidate.productionPlanBatchId}:${candidate.stepId}`}))`;
       const existing = await tx.dailyProcessTask.findMany({
         where: {
@@ -1254,6 +1258,8 @@ export async function confirmDailyProductionPlan(input: {
     const scope = await resolveActorScope(input.actorUserId, plan.workDate);
     assertTeamMutation(scope, plan.teamId);
     const before = plan;
+    const tasks = await tx.dailyProcessTask.findMany({ where: { planId: plan.id, status: { notIn: ['COMPLETED', 'CANCELLED', 'CARRIED_OVER'] } }, select: { workOrderId: true } });
+    for (const id of [...new Set(tasks.map(task => task.workOrderId))].sort()) await assertProductionMayRun(tx, id);
     await ensurePlanVersion(tx, plan.id, expectedVersion(input.expectedVersion), {
       status: DailyProductionPlanStatus.CONFIRMED,
       confirmedAt: new Date(),
@@ -1522,6 +1528,7 @@ export async function scheduleProductionArrangements(input: {
         taskIds: Array.isArray(afterData?.taskIds) ? afterData.taskIds.map(String) : [],
       };
     }
+    for (const id of [...workOrderIds].sort()) await assertProductionMayRun(tx, id);
     await assertProductionEmployeesCanBeScheduled(tx, employeeIds);
     let plan = await tx.dailyProductionPlan.findUnique({
       where: { workDate_shiftCode_teamId: { workDate, shiftCode, teamId } },
@@ -1746,6 +1753,7 @@ export async function continueProductionArrangement(input: {
     }
     await assertProductionEmployeesCanBeScheduled(tx, employeeIds);
     for (const source of sources) {
+      await assertProductionMayRun(tx, source.workOrderId);
       assertPlanAllowsAssignments(source.plan.status);
       if (targetDate <= source.workDate) {
         throw new DailyPlanServiceError('续排日期必须晚于原生产日期', 'DAILY_PLAN_CARRY_DATE_INVALID');
@@ -2220,6 +2228,10 @@ export async function reassignProductionArrangementRemaining(input: {
     let redistributedQty = 0;
     for (let index = 0; index < tasks.length; index += 1) {
       const task = tasks[index];
+      await assertProductionMayRun(tx, task.workOrderId);
+      if (task.productionSuspendedAt && formatWorkDate(task.workDate) < formatWorkDate(new Date())) {
+        throw new DailyPlanServiceError('暂停前的过期安排不能重新启用，请续排到新的生产日期', 'DAILY_PLAN_SUSPENDED', 409);
+      }
       const expected = expectedByTask.get(task.id)!;
       assertPlanAllowsAssignments(task.plan.status);
       assertTeamMutation(scope, task.plan.teamId);
@@ -2265,7 +2277,7 @@ export async function reassignProductionArrangementRemaining(input: {
       }
       await assertProductionEmployeesCanBeScheduled(tx, rebuild.finalEmployeeIds);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-reassignment:${task.id}`}))`;
-      await ensureTaskVersion(tx, task.id, task.version, { version: { increment: 1 } });
+      await ensureTaskVersion(tx, task.id, task.version, { productionSuspendedAt: null, version: { increment: 1 } });
       for (const assignment of task.assignments) {
         const cancelled = await tx.dailyTaskAssignment.updateMany({
           where: {
@@ -2430,6 +2442,8 @@ export async function assignDailyProcessTask(input: {
     const duplicate = await tx.dailyPlanRevision.findUnique({ where: { idempotencyKey } });
     if (duplicate?.taskId) return { taskId: duplicate.taskId };
     const task = await loadTask(tx, input.taskId);
+    await assertProductionMayRun(tx, task.workOrderId);
+    if (task.productionSuspendedAt) throw new DailyPlanServiceError('该安排因暂停停用，请使用续排或重新分配剩余人员确认恢复', 'DAILY_PLAN_SUSPENDED', 409);
     assertPlanAllowsAssignments(task.plan.status);
     const scope = await resolveActorScope(input.actorUserId, task.plan.workDate);
     assertTeamMutation(scope, task.plan.teamId);
@@ -2532,6 +2546,8 @@ export async function updateDailyTaskAssignment(input: {
     if (assignment.status === DailyTaskAssignmentStatus.CANCELLED) {
       throw new DailyPlanServiceError('已撤回的分配不能再调整', 'DAILY_PLAN_ASSIGNMENT_CANCELLED', 409);
     }
+    await assertProductionMayRun(tx, assignment.task.workOrderId);
+    if (assignment.task.productionSuspendedAt) throw new DailyPlanServiceError('该安排因暂停停用，请重新分配剩余人员确认恢复', 'DAILY_PLAN_SUSPENDED', 409);
     assertPlanAllowsAssignments(assignment.task.plan.status);
     const scope = await resolveActorScope(input.actorUserId, assignment.task.plan.workDate);
     assertTeamMutation(scope, assignment.task.plan.teamId);
@@ -2662,6 +2678,8 @@ export async function reviseDailyTaskAssignments(input: {
     const duplicate = await tx.dailyPlanRevision.findUnique({ where: { idempotencyKey } });
     if (duplicate?.taskId) return { taskId: duplicate.taskId };
     const task = await loadTask(tx, input.taskId);
+    await assertProductionMayRun(tx, task.workOrderId);
+    if (task.productionSuspendedAt) throw new DailyPlanServiceError('该安排因暂停停用，请续排或重新分配剩余人员', 'DAILY_PLAN_SUSPENDED', 409);
     assertPlanAllowsAssignments(task.plan.status);
     const scope = await resolveActorScope(input.actorUserId, task.plan.workDate);
     assertTeamMutation(scope, task.plan.teamId);
@@ -2724,6 +2742,7 @@ export async function reorderEmployeeDailyTaskAssignments(input: {
     const duplicate = await tx.dailyPlanRevision.findUnique({ where: { idempotencyKey } });
     if (duplicate?.taskId) return { taskId: duplicate.taskId };
     const anchor = await loadTask(tx, input.anchorTaskId);
+    await assertProductionMayRun(tx, anchor.workOrderId);
     assertPlanAllowsAssignments(anchor.plan.status);
     const scope = await resolveActorScope(input.actorUserId, anchor.plan.workDate);
     assertTeamMutation(scope, anchor.plan.teamId);
@@ -2743,6 +2762,8 @@ export async function reorderEmployeeDailyTaskAssignments(input: {
       throw new DailyPlanServiceError('只能调整同一日计划内的任务顺序', 'DAILY_PLAN_REORDER_PLAN_MISMATCH');
     }
     const expectedById = new Map(input.assignments.map(item => [item.assignmentId, item]));
+    for (const id of [...new Set(rows.map(row => row.task.workOrderId))].sort()) await assertProductionMayRun(tx, id);
+    if (rows.some(row => row.task.productionSuspendedAt)) throw new DailyPlanServiceError('不能排序已停用的安排，请先重新确认安排', 'DAILY_PLAN_SUSPENDED', 409);
     for (const row of rows) {
       const next = expectedById.get(row.id)!;
       const updated = await tx.dailyTaskAssignment.updateMany({
@@ -2807,6 +2828,7 @@ export async function carryOverDailyProcessTask(input: {
       if (carriedTask) return { taskId: carriedTask.id, targetPlanId: carriedTask.planId };
     }
     const source = await loadTask(tx, input.taskId);
+    await assertProductionMayRun(tx, source.workOrderId);
     assertPlanAllowsAssignments(source.plan.status);
     if (targetDate <= source.plan.workDate) {
       throw new DailyPlanServiceError('顺延日期必须晚于原计划日期', 'DAILY_PLAN_CARRY_DATE_INVALID');
@@ -2917,6 +2939,8 @@ export async function requestDailyCrossTeamAssignment(input: {
     const duplicate = await tx.dailyCrossTeamRequest.findUnique({ where: { idempotencyKey } });
     if (duplicate) return duplicate;
     const task = await loadTask(tx, input.taskId);
+    await assertProductionMayRun(tx, task.workOrderId);
+    if (task.productionSuspendedAt) throw new DailyPlanServiceError('该安排因暂停停用，请先重新确认安排', 'DAILY_PLAN_SUSPENDED', 409);
     assertPlanAllowsAssignments(task.plan.status);
     const scope = await resolveActorScope(input.actorUserId, task.plan.workDate);
     assertTeamMutation(scope, task.plan.teamId);
@@ -2980,6 +3004,8 @@ export async function reviewDailyCrossTeamRequest(input: {
       throw new DailyPlanServiceError('该借调申请已经处理', 'DAILY_PLAN_CROSS_TEAM_REVIEWED', 409);
     }
     if (input.decision === 'APPROVE') {
+      await assertProductionMayRun(tx, request.task.workOrderId);
+      if (request.task.productionSuspendedAt) throw new DailyPlanServiceError('该安排因暂停停用，不能批准借调', 'DAILY_PLAN_SUSPENDED', 409);
       const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT "id"
         FROM "daily_process_tasks"

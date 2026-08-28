@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { canAdjustProductionDates } from '@/lib/production-control';
 import {
   loadProcessQuantityLedgerState,
   processQuantityLedgerIsLocked,
@@ -64,6 +65,10 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         }, { status: 409 });
       }
       const released = existing.releaseState !== 'draft';
+      if (parsed.data.plannedCompletionDate.getTime() !== existing.plannedCompletionDate.getTime()) {
+        if (!canAdjustProductionDates(user)) return NextResponse.json({ ok: false, error: '只有计划和管理员可以调整日期' }, { status: 403 });
+        if (released) return NextResponse.json({ ok: false, error: '已下达批次请使用“调整日期”维护当前预计完成日，原计划基准保持不变' }, { status: 409 });
+      }
       if (releasedBatchWeekChangeLocked({
         released,
         weekStartChanged: parsed.data.weekStartDate.getTime() !== existing.weekStartDate.getTime(),

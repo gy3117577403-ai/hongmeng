@@ -1,4 +1,7 @@
 'use client';
+import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
+import { canManageProductionControl, canAdjustProductionDates, type ProductionControlView } from '@/lib/production-control';
+
 
 import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
 import Link from 'next/link';
@@ -33,13 +36,13 @@ import type {
 type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
 type WeekScope = 'current' | 'carryover' | 'next' | 'afterNext' | 'history';
-type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'due_soon' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'in_production' | 'not_started' | 'has_next_process' | 'waiting_transfer' | 'arrangement_unassigned' | 'arrangement_scheduled' | 'arrangement_today' | 'arrangement_overdue' | 'arrangement_partial';
+type QuickFilter = 'paused' | 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'due_soon' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'in_production' | 'not_started' | 'has_next_process' | 'waiting_transfer' | 'arrangement_unassigned' | 'arrangement_scheduled' | 'arrangement_today' | 'arrangement_overdue' | 'arrangement_partial';
 type DetailTab = 'production' | 'quality' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
 type ProductionFlowAction = 'start_process_route';
 type DispatchDensity = 'comfortable' | 'compact';
-type DispatchPreset = 'all' | 'today' | 'in_production' | 'not_started' | 'next_process' | 'due_soon' | 'exceptions' | 'completed';
+type DispatchPreset = 'paused' | 'all' | 'today' | 'in_production' | 'not_started' | 'next_process' | 'due_soon' | 'exceptions' | 'completed';
 type DispatchTone = 'normal' | 'warning' | 'danger';
 
 type DispatchRisk = {
@@ -89,7 +92,7 @@ type ProductionQuantityFlow = {
   error: { code: string; field: string; message: string } | null;
 };
 
-type ProductionArrangementStatus = 'planned' | 'today' | 'partial' | 'completed' | 'overdue' | 'carried_over' | 'needs_review';
+type ProductionArrangementStatus = 'suspended' | 'planned' | 'today' | 'partial' | 'completed' | 'overdue' | 'carried_over' | 'needs_review';
 
 type ProductionArrangementWorker = {
   employeeId: string;
@@ -264,6 +267,7 @@ type ProductionReassignmentForm = {
 };
 
 type ProductionOrder = {
+  productionControl?: ProductionControlView;
   id: string;
   code: string;
   businessCode?: string | null;
@@ -391,6 +395,7 @@ type ProductionSummary = {
   stageCounts: Record<StageKey, number>;
   stageQuantityTotals: Record<StageKey, number>;
   dispatchMetrics: {
+    paused?: number;
     inProduction: number;
     notStarted: number;
     withNextProcess: number;
@@ -699,7 +704,7 @@ const productionBoardCache = new Map<string, BoardPayload>();
 const validQuickFilters = new Set<QuickFilter>([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed', 'due_today', 'updated_today', 'completed_today',
   'delivery_missing', 'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
-  'due_soon', 'in_production', 'not_started', 'has_next_process', 'waiting_transfer',
+  'due_soon', 'paused', 'in_production', 'not_started', 'has_next_process', 'waiting_transfer',
   'arrangement_unassigned', 'arrangement_scheduled', 'arrangement_today', 'arrangement_overdue', 'arrangement_partial',
 ]);
 
@@ -749,6 +754,7 @@ function durationHours(value: string | number | bigint | null | undefined): numb
 }
 
 const arrangementStatusText: Record<ProductionArrangementStatus, string> = {
+  suspended: '暂停停用 · 待重排',
   planned: '已安排',
   today: '今日生产',
   partial: '部分完成',
@@ -789,7 +795,7 @@ function branchStatusText(status?: ProductionOrder['branchStatus']): string {
 }
 
 function deliveryText(order: ProductionOrder): string {
-  return order.deliveryDay?.trim() || dateText(order.plannedAt);
+  return order.deliveryDay?.trim() || '';
 }
 
 function warehouseMaterialText(order: ProductionOrder): string {
@@ -866,7 +872,7 @@ function dateKeyNumber(value: string): number | null {
 }
 
 function daysUntilDelivery(order: ProductionOrder): number | null {
-  const delivery = dateKeyNumber(shanghaiDateKey(order.deliveryDay || order.plannedAt));
+  const delivery = dateKeyNumber(shanghaiDateKey(order.deliveryDay));
   const today = dateKeyNumber(new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date()));
@@ -1168,6 +1174,7 @@ export default function ProductionExecutionCenter({
   const [page, setPage] = useState(1);
   const [dispatchPageSize, setDispatchPageSize] = useState(12);
   const [refreshToken, setRefreshToken] = useState(0);
+  useEffect(() => { const refreshControl = () => setRefreshToken(value => value + 1); window.addEventListener('production-control-updated', refreshControl); return () => window.removeEventListener('production-control-updated', refreshControl); }, []);
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1729,7 +1736,7 @@ export default function ProductionExecutionCenter({
   const processLoads = useMemo<DispatchProcessLoad[]>(() => {
     const totals = new Map<string, number>();
     for (const order of board?.items || []) {
-      if (order.stage === 'completed') continue;
+      if (order.stage === 'completed' || order.productionControl?.pausedAt) continue;
       const process = currentProcessName(order);
       const stageQuantity = primaryCardView(order).stageQuantity;
       const pendingQuantity = stageQuantity === null
@@ -1753,7 +1760,7 @@ export default function ProductionExecutionCenter({
   }), [summary]);
   const initialBoardLoading = loading && !board;
 
-  const dispatchPreset: DispatchPreset = view === 'today'
+  const dispatchPreset: DispatchPreset = quick.includes('paused') ? 'paused' : view === 'today'
     ? 'today'
     : view === 'exceptions'
       ? 'exceptions'
@@ -1793,6 +1800,7 @@ export default function ProductionExecutionCenter({
       return;
     }
     setView('board');
+    if (preset === 'paused') setQuick(['paused']);
     if (preset === 'in_production') setQuick(['in_production']);
     if (preset === 'not_started') setQuick(['not_started']);
     if (preset === 'next_process') setQuick(['has_next_process']);
@@ -2837,6 +2845,7 @@ export default function ProductionExecutionCenter({
             <button className={dispatchPreset === 'next_process' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'next_process'} onClick={() => applyDispatchPreset('next_process')}>有后续工序</button>
             <button className={dispatchPreset === 'due_soon' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'due_soon'} onClick={() => applyDispatchPreset('due_soon')}>即将超时</button>
             <button className={dispatchPreset === 'exceptions' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'exceptions'} onClick={() => applyDispatchPreset('exceptions')}>异常</button>
+            <button className={dispatchPreset === 'paused' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'paused'} onClick={() => applyDispatchPreset('paused')}>已暂停 {summary?.dispatchMetrics.paused || 0}</button>
             <button className={dispatchPreset === 'completed' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'completed'} onClick={() => applyDispatchPreset('completed')}>已完成</button>
           </div>
           <button ref={filterButtonRef} className={`production-dispatch-filter ${filtersOpen || activeFilterCount ? 'active' : ''}`.trim()} type="button" aria-expanded={filtersOpen} onClick={() => { setDraftAdvanced(cloneAdvanced(advanced)); setFiltersOpen(value => !value); }}>更多筛选{activeFilterCount ? ` ${activeFilterCount}` : ''}</button>
@@ -2872,12 +2881,15 @@ export default function ProductionExecutionCenter({
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
           <section className="production-dispatch-list-panel" aria-label="生产工单调度列表">
             <header className="production-dispatch-list-head">
-              <span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>工时完成进度</span><span>交期 / 风险</span><span>现场操作</span>
+              <span>序号</span><span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>工时完成进度</span><span>交期 / 风险</span><span>备注</span><span>现场操作</span>
             </header>
             <div ref={boardShellRef} className="production-dispatch-list hm-scroll-region" tabIndex={0} aria-label={initialBoardLoading ? '生产工单列表，正在加载' : `生产工单列表，共 ${board?.pagination.total || 0} 项`}>
-              {dispatchItems.map(item => <ProductionDispatchRow
+              {dispatchItems.map((item, rowIndex) => <ProductionDispatchRow
                 key={item.order.id}
                 item={item}
+                rowNumber={rowIndex + 1}
+                canManageControl={canManageProductionControl(user)}
+                canAdjustDates={canAdjustProductionDates(user)}
                 readOnly={board?.readOnly || (scope === 'history' && item.order.stage === 'completed')}
                 canAdministerProduction={canAdministerProduction}
                 canSelectProduction={canSelectProduction}
@@ -3032,6 +3044,9 @@ export default function ProductionExecutionCenter({
 }
 
 type ProductionDispatchRowProps = {
+  rowNumber: number;
+  canManageControl: boolean;
+  canAdjustDates: boolean;
   item: ProductionCardView;
   readOnly: boolean;
   canAdministerProduction: boolean;
@@ -3080,6 +3095,7 @@ function scheduledEmployeeOptions(orders: ProductionOrder[]): Array<{ employeeId
 }
 
 function ProductionDispatchRow({
+  rowNumber, canManageControl, canAdjustDates,
   item,
   readOnly,
   canAdministerProduction,
@@ -3134,7 +3150,7 @@ function ProductionDispatchRow({
   const visibleArrangements = arrangements.slice(0, 2);
   const activeArrangements = arrangements.filter(arrangement => arrangement.status !== 'completed' && arrangement.status !== 'carried_over');
   const continuableArrangement = arrangements.find(arrangement => arrangement.continuable);
-  const canCreateArrangement = !readOnly && canScheduleProduction && displayStage !== 'completed'
+  const canCreateArrangement = !order.productionControl?.pausedAt && !readOnly && canScheduleProduction && displayStage !== 'completed'
     && (Boolean(continuableArrangement) || activeArrangements.length === 0);
   const unitLabel = route?.currentStep?.unitLabel || route?.steps[0]?.unitLabel || '件';
   const routeReadiness = processRouteExecutionReadiness(route?.steps || []);
@@ -3171,6 +3187,7 @@ function ProductionDispatchRow({
   }
 
   return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${order.carryover ? 'is-carryover' : ''} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-production-stage={displayStage}>
+    <div className="production-list-sequence">{rowNumber}</div>
     <div className="production-dispatch-row-identity">
       <div className="production-dispatch-row-select">
         {canSelectProduction && batchMode && !readOnly
@@ -3215,7 +3232,7 @@ function ProductionDispatchRow({
 
     <div className="production-arrangement-worker-cell">
       {visibleArrangements.map(arrangement => {
-        const adjustable = !readOnly && canScheduleProduction && arrangement.remainingQty > 0 && arrangement.status !== 'completed' && arrangement.status !== 'carried_over';
+        const adjustable = !order.productionControl?.pausedAt && !readOnly && canScheduleProduction && arrangement.remainingQty > 0 && arrangement.status !== 'completed' && arrangement.status !== 'carried_over';
         return <button className={`production-arrangement-worker-record status-${arrangement.status} ${adjustable ? 'adjustable' : ''}`.trim()} type="button" disabled={!adjustable} title={adjustable ? '点击调整未完成数量的作业人员' : '已完成或历史安排仅供查看'} onClick={() => openReassignment(order, arrangement)} key={arrangement.id}>
         <span>{arrangement.employees.slice(0, 3).map(employee => <b title={`${employee.employeeNo} · ${employee.name}`} key={employee.employeeId}>{employee.name}</b>)}{arrangement.employees.length > 3 && <em>+{arrangement.employees.length - 3}</em>}</span>
         <small>{arrangement.shiftCode === 'NIGHT' ? '夜班' : '白班'}{arrangement.remainingQty > 0 ? ` · 余 ${formatProductionQuantity(arrangement.remainingQty)}` : ' · 已完成'}{adjustable && <Pencil size={11} aria-hidden="true" />}</small>
@@ -3234,7 +3251,9 @@ function ProductionDispatchRow({
     </div>
 
     <div className={`production-dispatch-risk ${risk.tone}`}>
-      <strong>{deliveryText(order) || '交期待补'}</strong>
+      <strong>客户 {deliveryText(order) || '待确认'}</strong><small>预计 {order.productionControl?.estimatedCompletionDate || '未设置'}</small>
+      {!!order.productionControl?.adjustmentCount && <small>已调整 {order.productionControl.adjustmentCount} 次</small>}
+      {canAdjustDates && !readOnly && displayStage !== 'completed' && <ProductionControlButton workOrderId={order.id} mode="adjust_date">调整</ProductionControlButton>}
       {risk.quality
         ? <button type="button" title="查看该工单质量问题预警" onClick={() => openDetail(order, 'quality')}>{risk.label}</button>
         : risk.alert
@@ -3243,8 +3262,12 @@ function ProductionDispatchRow({
       <small>{risk.detail}</small>
     </div>
 
+    <div className="production-dispatch-note"><ProductionControlButton workOrderId={order.id} mode="note" className="production-note-button"><ProductionNoteSummary control={order.productionControl} /></ProductionControlButton></div>
     <div className="production-dispatch-row-actions">
-      <button className="primary" type="button" disabled={saving} onClick={runPrimaryAction}>{primaryText}</button>
+      <>{order.productionControl?.pausedAt
+        ? <ProductionControlButton workOrderId={order.id} mode={canManageControl && !readOnly ? "resume" : "history"} className="primary">{canManageControl && !readOnly ? "恢复生产" : "查看暂停"}</ProductionControlButton>
+        : <button className="primary" type="button" disabled={saving} onClick={runPrimaryAction}>{primaryText}</button>}
+      {canManageControl && !readOnly && !order.productionControl?.pausedAt && displayStage !== "completed" && <ProductionControlButton workOrderId={order.id} mode="pause">暂停生产</ProductionControlButton>}</>
     </div>
   </article>;
 }

@@ -653,6 +653,8 @@ export function alertsForProductionOrder(order: ProductionExecutionOrderRecord, 
     warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
+    deliveryDay: order.deliveryDay,
+    estimatedCompletionAt: order.estimatedCompletionAt,
   }, now);
 }
 

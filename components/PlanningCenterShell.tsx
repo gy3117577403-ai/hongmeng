@@ -1,4 +1,6 @@
 'use client';
+import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
+import { canAdjustProductionDates, canManageProductionControl } from '@/lib/production-control';
 
 import {
   Archive,
@@ -137,6 +139,7 @@ type PlanningPayload = {
 };
 
 type OrderForm = {
+  confirmation: string;
   drawingLibraryItemId: string;
   customerName: string;
   salesperson: string;
@@ -348,12 +351,13 @@ function emptyOrderForm(): OrderForm {
   return {
     drawingLibraryItemId: '',
     customerName: '', salesperson: '', productName: '', specification: '',
-    orderQuantity: '', planningUnitMinutes: '', orderDate: today, customerDueDate: '', priority: 'normal', remark: '', reason: '',
+    orderQuantity: '', planningUnitMinutes: '', orderDate: today, customerDueDate: '', priority: 'normal', remark: '', reason: '', confirmation: '',
   };
 }
 
 function orderForm(order: ProductionPlanOrderDTO): OrderForm {
   return {
+    confirmation: '',
     drawingLibraryItemId: order.drawingLibraryItemId || '',
     customerName: order.customerName,
     salesperson: order.salesperson || '',
@@ -601,6 +605,7 @@ export default function PlanningCenterShell({
   const [toast, setToast] = useState('');
   useToastBridge(toast, setToast);
   const [refreshToken, setRefreshToken] = useState(0);
+  useEffect(() => { const refreshControl = () => setRefreshToken(value => value + 1); window.addEventListener('production-control-updated', refreshControl); return () => window.removeEventListener('production-control-updated', refreshControl); }, []);
   const [expandedOrderId, setExpandedOrderId] = useState('');
   const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
   const [travelerPrintIds, setTravelerPrintIds] = useState<string[]>([]);
@@ -1372,6 +1377,7 @@ export default function PlanningCenterShell({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...orderDraft,
+          expectedDeliveryVersion: orders.find(order => order.id === orderDialog.orderId)?.deliveryVersion,
           planningUnitMilliseconds: orderDraftUnitMilliseconds,
           confirmImpact,
           createDrawingLibraryProduct: productEntryMode === 'create',
@@ -2082,7 +2088,7 @@ export default function PlanningCenterShell({
                   <strong title={order.specification}>{order.specification}</strong>
                   <p title={`${order.customerName} · ${order.productName}`}>{order.customerName}<small>{order.productName}</small></p>
                   <div className="planning-pool-resources" title={sopStageInfo(order).title}><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><span className={`sop-stage ${sopStageInfo(order).stage}`}><FlaskConical size={11} />{sopStageInfo(order).label}</span>{Boolean(order.qualityWarningCount) && <span className={`quality-warning severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />警示 {order.qualityWarningCount}{order.qualityWarningPrintRequired ? ' · 必打' : ''}</span>}</div>
-                  <dl><div><dt>未排数量</dt><dd>{order.remainingQuantity.toLocaleString()}</dd></div><div><dt>客户交期</dt><dd>{order.customerDueDate.slice(5)}</dd></div><div><dt>单件工时</dt><dd>{duration(planningUnitMilliseconds(order))}</dd></div></dl>
+                  <dl><div><dt>未排数量</dt><dd>{order.remainingQuantity.toLocaleString()}</dd></div><div><dt>客户交期</dt><dd>{order.customerDueDate ? order.customerDueDate.slice(5) : '待确认'}</dd></div><div><dt>单件工时</dt><dd>{duration(planningUnitMilliseconds(order))}</dd></div></dl>
                   <div className="planning-pool-actions">
                     <button className="schedule" type="button" disabled={saving} onClick={event => { setOrderPoolOpen(false); openBatch(order, orderPoolTriggerRef.current || event.currentTarget); }}><Plus size={15} />安排批次</button>
                     <button className="delete" type="button" disabled={saving} title="从计划系统删除，保留图纸与产品工时" aria-label={`删除计划 ${order.specification}`} onClick={() => { void deleteOrder(order); }}><Trash2 size={15} /></button>
@@ -2136,8 +2142,8 @@ export default function PlanningCenterShell({
             </section>
             <div ref={scheduleScrollRef} className="planning-table-scroll hm-scroll-region" tabIndex={0}>
               <table className="planning-table">
-                <thead><tr><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>生产资料</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>打印</th><th>操作</th></tr></thead>
-                <tbody>{scheduleRows.map(({ order, batch }) => {
+                <thead><tr><th className="production-list-sequence">序号</th><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>生产资料</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>打印</th><th className="planning-control-note">备注</th><th className="planning-control-actions">操作</th></tr></thead>
+                <tbody>{scheduleRows.map(({ order, batch }, rowIndex) => {
                   const flow = planningFlow(order, batch);
                   const processFinishedAt = batch.processCompletedAt || batch.processConfirmedAt;
                   const flowFinishedAt = batch.workOrderCompletedAt;
@@ -2155,12 +2161,13 @@ export default function PlanningCenterShell({
                   const sopInfo = sopStageInfo(order);
                   return <Fragment key={batch.id}>
                   <tr data-batch-id={batch.id} className={`state-${batch.releaseState} ${expandedOrderId === batch.id ? 'expanded' : ''}`}>
+                    <td className="production-list-sequence">{rowIndex + 1}</td>
                     <td className="select-cell"><input type="checkbox" aria-label={`选择 ${order.specification} 第 ${batch.batchNo} 批`} checked={selectedBatchIds.includes(batch.id)} disabled={batch.releaseState === 'archived'} onChange={() => toggleBatch(batch.id)} /></td>
                     <td><button className="planning-product-link" type="button" title={`${order.specification} · ${order.productName}${order.qualityWarningCount ? ` · ${order.qualityWarningCount}条质量警示` : ''}`} onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><strong>{order.specification}{Boolean(order.qualityWarningCount) && <em className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']} · {order.qualityWarningCount}</em>}</strong><span>{order.customerName} · {order.productName}</span><small>{order.salesperson ? `业务员 ${order.salesperson} · ` : ''}第 {batch.batchNo} 批{order.qualityWarningPrintRequired ? ' · 警示附页必打' : ''}</small></button></td>
                     <td><b>{batch.quantity.toLocaleString()}</b><small>订单 {order.orderQuantity.toLocaleString()}</small></td>
                     <td><strong title={`${batch.weekStartDate} 至 ${batch.weekEndDate}`}>{weekLabel(batch, periods)}</strong><small>{batch.weekStartDate.slice(5)} - {batch.weekEndDate.slice(5)}</small></td>
-                    <td><strong>{batch.plannedCompletionDate.slice(5)}</strong></td>
-                    <td><strong className={batch.plannedCompletionDate > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate.slice(5)}</strong></td>
+                    <td><strong>{(batch.estimatedCompletionDate || batch.plannedCompletionDate).slice(5)}</strong><small>原计划 {batch.plannedCompletionDate.slice(5)}</small>{batch.workOrderId && canAdjustProductionDates(user) && <ProductionControlButton workOrderId={batch.workOrderId} mode="adjust_date">调整日期</ProductionControlButton>}</td>
+                    <td><strong className={Boolean(order.customerDueDate) && (batch.estimatedCompletionDate || batch.plannedCompletionDate) > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate ? order.customerDueDate.slice(5) : '待确认'}</strong></td>
                     <td><strong>{duration(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
                     <td><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><a className={`planning-sop-stage ${sopInfo.stage}`} href={drawingLibraryHref} onClick={rememberPlanningState} title={sopInfo.title} aria-label={`SOP 状态 ${sopInfo.label}，进入图纸档案`}><FlaskConical size={12} />{sopInfo.label}</a>{Boolean(order.qualityWarningCount) && <a className={`planning-warning-link severity-${order.highestQualityWarningSeverity?.toLowerCase()}`} href={`${drawingLibraryHref}#quality-warning`} onClick={rememberPlanningState} title={`${order.qualityWarningCount} 条已归档产品异常警示`}><ShieldAlert size={12} />警示 {order.qualityWarningCount}</a>}</div></td>
                     <td><span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span></td>
@@ -2172,9 +2179,10 @@ export default function PlanningCenterShell({
                       const label = material === 'TRAVELER' ? '码' : material === 'QUALITY_WARNING' ? '警' : material === 'SOP' ? 'SOP' : '图';
                       return <em key={material} className={item.status} title={`${material === 'TRAVELER' ? '二维码流转单' : material === 'QUALITY_WARNING' ? '质量异常警示附页' : material === 'SOP' ? 'SOP' : '原图'}：${item.status === 'printed' ? '已打印' : item.status === 'needs_reprint' ? '待重打' : item.status === 'legacy_unverified' ? '待核验' : '待确认'}`}>{label}</em>;
                     })}</span>}</span>{batch.workOrderId && <button type="button" title="打印生产资料" aria-label={`打印 ${order.specification} 生产资料`} onClick={() => setTravelerPrintIds([batch.workOrderId!])}><Printer size={15} /></button>}</div></td>
-                    <td><div className="planning-row-actions"><button type="button" title="调整批次" aria-label="调整批次" onClick={event => openBatch(order, event.currentTarget, batch)}><Pencil size={15} /></button>{batch.releaseState === 'draft' && <button className="danger" type="button" title="删除批次" aria-label="删除批次" onClick={() => { void deleteBatch(batch); }}><Trash2 size={15} /></button>}<button type="button" title="展开详情" aria-label="展开详情" onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><ChevronDown size={15} /></button></div></td>
+                    <td className="planning-control-note">{batch.workOrderId ? <ProductionControlButton workOrderId={batch.workOrderId} className="production-note-button"><ProductionNoteSummary control={batch.productionControl} /></ProductionControlButton> : <span>下达后可维护生产备注</span>}</td>
+                    <td className="planning-control-actions"><div className="planning-row-actions">{batch.workOrderId && canManageProductionControl(user) && !batch.workOrderCompletedAt && <ProductionControlButton workOrderId={batch.workOrderId} mode={batch.productionControl?.pausedAt ? "resume" : "pause"}>{batch.productionControl?.pausedAt ? "恢复生产" : "暂停"}</ProductionControlButton>}<button type="button" title="调整批次" aria-label="调整批次" onClick={event => openBatch(order, event.currentTarget, batch)}><Pencil size={15} /></button>{batch.releaseState === 'draft' && <button className="danger" type="button" title="删除批次" aria-label="删除批次" onClick={() => { void deleteBatch(batch); }}><Trash2 size={15} /></button>}<button type="button" title="展开详情" aria-label="展开详情" onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><ChevronDown size={15} /></button></div></td>
                   </tr>
-                  {expandedOrderId === batch.id && <tr className="planning-inspector-row" key={`${batch.id}-detail`}><td colSpan={13}><div className="planning-inline-inspector">
+                  {expandedOrderId === batch.id && <tr className="planning-inspector-row" key={`${batch.id}-detail`}><td colSpan={15}><div className="planning-inline-inspector">
                     <div><span>订单信息</span><strong>{order.salesperson ? `业务员 ${order.salesperson}` : '业务员未设置'}</strong><small>{order.remark || '无备注'}</small></div>
                     <div><span>流程状态</span><strong>{flow.label}</strong><small>仓库 {batch.warehouseStatus} · 工艺 {batch.processStatus}</small></div>
                     <div><span>数据来源</span><strong>{order.currentProductTimeVersion ? `产品工时 V${order.currentProductTimeVersion}` : order.planningUnitMilliseconds ? '订单计划工时' : '工时待维护'}</strong><small>{order.currentProductTimeVersion ? '正式工序工时' : '计划估算，投产前仍需发布工序工时'}</small></div>
@@ -2192,7 +2200,7 @@ export default function PlanningCenterShell({
 
         {view === 'orders' && <section className="planning-orders-view">
           <header><div><span>实时订单</span><h2>生产订单池</h2><p>订单变化直接在这里维护，不再依赖重复上传 Excel。</p></div><b>{readinessFilters.length ? `筛选 ${filteredOrders.length} / ${baseFilteredOrders.length} 单` : `${filteredOrders.length} 单`}</b></header>
-          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th>客户 / 产品</th><th>业务员</th><th>规格 / 警示</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>单件 / 总工时</th><th>操作</th></tr></thead><tbody>{filteredOrders.map(order => <tr key={order.id}><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b>{Boolean(order.qualityWarningCount) && <span className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']}风险 · {order.qualityWarningCount}{order.qualityWarningPrintRequired ? ' · 必打' : ''}</span>}</td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${planningUnitMilliseconds(order) ? 'ready' : 'warning'}`}>{duration(planningUnitMilliseconds(order))}<small>{totalDuration(order.planningTotalMilliseconds)}</small></span></td><td><div className="planning-row-actions text"><button type="button" disabled={saving} onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" disabled={saving} onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>{readinessFilters.length ? '没有符合准备状态的订单' : '订单池为空'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '点击右上角“新建订单”开始建立实时计划。'}</span></div>}</div>
+          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th className="production-list-sequence">序号</th><th>客户 / 产品</th><th>业务员</th><th>规格 / 警示</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>单件 / 总工时</th><th>操作</th></tr></thead><tbody>{filteredOrders.map((order, rowIndex) => <tr key={order.id}><td className="production-list-sequence">{rowIndex + 1}</td><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b>{Boolean(order.qualityWarningCount) && <span className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']}风险 · {order.qualityWarningCount}{order.qualityWarningPrintRequired ? ' · 必打' : ''}</span>}</td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate || '客户交期待确认'}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${planningUnitMilliseconds(order) ? 'ready' : 'warning'}`}>{duration(planningUnitMilliseconds(order))}<small>{totalDuration(order.planningTotalMilliseconds)}</small></span></td><td><div className="planning-row-actions text"><button type="button" disabled={saving} onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" disabled={saving} onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>{readinessFilters.length ? '没有符合准备状态的订单' : '订单池为空'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '点击右上角“新建订单”开始建立实时计划。'}</span></div>}</div>
         </section>}
 
         {view === 'preparation' && <section className="planning-preparation-view">
@@ -2422,9 +2430,9 @@ export default function PlanningCenterShell({
           <label className="planning-total-time"><span>订单总工时</span><output>{orderDraftTotalMilliseconds ? duration(orderDraftTotalMilliseconds) : '待维护'}</output><small>{orderDraftTotalMilliseconds ? '单件工时 × 订单数量' : '补齐单件工时后自动计算'}</small></label>
           <label><span>优先级</span><select value={orderDraft.priority} onChange={event => setOrderDraft(current => ({ ...current, priority: event.target.value as ProductionPlanPriority }))}><option value="normal">一般</option><option value="urgent">紧急</option><option value="insert">插单</option></select></label>
           <label><span>下单日期 *</span><input type="date" value={orderDraft.orderDate} onChange={event => setOrderDraft(current => ({ ...current, orderDate: event.target.value }))} /></label>
-          <label><span>客户交期 *</span><input type="date" value={orderDraft.customerDueDate} onChange={event => setOrderDraft(current => ({ ...current, customerDueDate: event.target.value }))} /></label>
+          <label><span>客户交期 *</span><input type="date" disabled={orderDialog?.mode === 'edit' && !canAdjustProductionDates(user)} value={orderDraft.customerDueDate} onChange={event => setOrderDraft(current => ({ ...current, customerDueDate: event.target.value }))} /></label>
           <label className="wide"><span>备注</span><textarea rows={3} value={orderDraft.remark} onChange={event => setOrderDraft(current => ({ ...current, remark: event.target.value }))} /></label>
-          {orderDialog.mode === 'edit' && <label className="wide"><span>已下达订单变更原因</span><textarea rows={2} placeholder="修改已下达订单时必填" value={orderDraft.reason} onChange={event => setOrderDraft(current => ({ ...current, reason: event.target.value }))} /></label>}
+          {orderDialog.mode === 'edit' && <><label className="wide"><span>订单变更原因</span><textarea rows={2} placeholder="已下达订单变更、修改客户交期时必填" value={orderDraft.reason} onChange={event => setOrderDraft(current => ({ ...current, reason: event.target.value }))} /></label><label className="wide"><span>客户确认说明（改客户交期时必填）</span><textarea rows={2} value={orderDraft.confirmation} onChange={event => setOrderDraft(current => ({ ...current, confirmation: event.target.value }))} /></label></>}
         </div>
         {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
       </div>
@@ -2438,7 +2446,7 @@ export default function PlanningCenterShell({
           <label><span>本批数量 *</span><input type="number" min="1" value={batchDraft.quantity} onChange={event => setBatchDraft(current => ({ ...current, quantity: event.target.value }))} /></label>
           <label><span>单根工时（秒）</span><input type="number" min="0.001" max="86400" step="0.001" value={batchDraft.unitSeconds} onChange={event => setBatchDraft(current => ({ ...current, unitSeconds: event.target.value }))} /><small>可暂不填写；订单仍会进入生产执行，但开始工序前必须补齐并发布</small></label>
           <label><span>目标排单周 *</span><select value={batchDraft.weekStartDate} disabled={Boolean(editingBatch && editingBatch.releaseState !== 'draft')} onChange={event => changeBatchWeek(event.target.value)}>{editableWeeks.map(week => <option value={week.weekStartDate} key={week.key}>{editableWeekLabel(week.key)} · {week.weekStartDate.slice(5)} - {week.weekEndDate.slice(5)}</option>)}</select><small>{editingBatch && editingBatch.releaseState !== 'draft' ? '已下达批次不能直接跨周调配' : '每个生产周使用独立排单清单'}</small></label>
-          <label><span>内部计划完成日期 *</span><input type="date" value={batchDraft.plannedCompletionDate} onChange={event => setBatchDraft(current => ({ ...current, plannedCompletionDate: event.target.value }))} /></label>
+          <label><span>原计划完成日期 *</span><input type="date" disabled={Boolean(editingBatch && editingBatch.releaseState !== 'draft')} value={batchDraft.plannedCompletionDate} onChange={event => setBatchDraft(current => ({ ...current, plannedCompletionDate: event.target.value }))} />{editingBatch?.workOrderId && canAdjustProductionDates(user) && <ProductionControlButton workOrderId={editingBatch.workOrderId} mode="adjust_date">调整当前预计完成 / 客户交期</ProductionControlButton>}</label>
           <label className="wide planning-total-time"><span>本批总工时</span><output>{batchDraftTotalMilliseconds ? duration(batchDraftTotalMilliseconds) : '待维护'}</output><small>{batchDraftTotalMilliseconds ? '单根工时 × 本批数量，保存后用于生产工时统计' : '可先排产进入生产待配置，开始工序前补齐工时'}</small></label>
           {batchDialog.batchId && <label className="wide"><span>已下达批次调整原因</span><textarea rows={2} placeholder="如果批次已经下达，此项必填" value={batchDraft.reason} onChange={event => setBatchDraft(current => ({ ...current, reason: event.target.value }))} /></label>}
         </div>

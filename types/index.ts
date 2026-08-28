@@ -1583,6 +1583,8 @@ export type ProductionPlanProductOptionDTO = {
 };
 
 export type ProductionPlanBatchDTO = {
+  productionControl?: import('@/lib/production-control').ProductionControlView | null;
+  estimatedCompletionDate?: string | null;
   id: string;
   planOrderId: string;
   batchNo: number;
@@ -1623,6 +1625,8 @@ export type ProductionPlanBatchDTO = {
 };
 
 export type ProductionPlanOrderDTO = {
+  deliveryVersion?: number;
+  customerDueDateConfirmed?: boolean;
   id: string;
   sourceOrderNo: string;
   sourceLineNo: number;
@@ -2585,7 +2589,7 @@ export type EmployeeLaborClaimDetailDTO = {
 export type ReportCenterPeriodDTO = 'today' | 'week' | 'month' | 'custom';
 export type ReportCenterModeDTO = 'all' | 'mass' | 'sample';
 export type ReportCenterRiskDTO = 'high' | 'medium' | 'low';
-export type ReportCenterFocusStatusDTO = 'completed' | 'in_progress' | 'pending' | 'overdue' | 'review';
+export type ReportCenterFocusStatusDTO = 'completed' | 'in_progress' | 'pending' | 'overdue' | 'review' | 'paused';
 
 export type ReportCenterFocusItemDTO = {
   entityType: 'workOrder' | 'sampleTask';

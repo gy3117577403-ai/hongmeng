@@ -17,6 +17,8 @@ import {
   calculateCompletionLaborSnapshot,
   redistributeStandardLaborByExistingShares,
 } from '@/lib/process-completion-domain';
+import { ProductionControlError } from '@/lib/production-control';
+import { assertProductionMayRun, isProductionSerializationConflict, type ProductionBackfillAuthorization } from '@/lib/production-pause-guard';
 import {
   autoAssignCompletionLaborPool,
   ProcessCompletionServiceError,
@@ -764,11 +766,12 @@ async function serializable<T>(operation: (tx: Prisma.TransactionClient) => Prom
         timeout: 30_000,
       });
     } catch (error) {
+      if (error instanceof ProductionControlError) throw new ProcessRouteChangeServiceError(error.message, error.status, error.code);
       if (
         attempt < 2
-        && error instanceof Prisma.PrismaClientKnownRequestError
-        && error.code === 'P2034'
+        && isProductionSerializationConflict(error)
       ) continue;
+      if (isProductionSerializationConflict(error)) throw new ProcessRouteChangeServiceError('生产状态或工艺刚被更新，请刷新后重试', 409, 'PROCESS_ROUTE_CHANGE_CONFLICT');
       throw error;
     }
   }
@@ -3931,6 +3934,7 @@ function serializeSupplementCompletionResult(input: {
 
 export async function completeProcessSupplementObligation(
   command: CompleteProcessSupplementObligationCommand,
+  backfill?: ProductionBackfillAuthorization,
 ) {
   const identity = mutationIdentity(command);
   const obligationId = clean(command.obligationId, 80);
@@ -4064,6 +4068,7 @@ export async function completeProcessSupplementObligation(
         'PROCESS_SUPPLEMENT_NOT_FOUND',
       );
     }
+    await assertProductionMayRun(tx, obligation.route.workOrder.id, backfill);
     if (obligation.displayStep.retiredAt) {
       throw new ProcessRouteChangeServiceError(
         '该补充工序已退役，不能继续报工',

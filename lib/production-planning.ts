@@ -11,6 +11,8 @@ import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { allocateBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import { assertProductionMayRun, lockProductionWorkOrder } from '@/lib/production-pause-guard';
+import { serializeProductionControl, PRODUCTION_CONTROL_SELECT } from '@/lib/production-control';
 import {
   normalizePlanningSopDrawingStatus,
   normalizePlanningSopStage,
@@ -87,6 +89,7 @@ export const productionPlanOrderInclude = {
     include: {
       workOrder: {
         select: {
+          ...PRODUCTION_CONTROL_SELECT,
           id: true,
           startedAt: true,
           completedAt: true,
@@ -1348,6 +1351,8 @@ function batchDto(
     weekStartDate: chinaDate(batch.weekStartDate),
     weekEndDate: chinaDate(batch.weekEndDate),
     plannedCompletionDate: chinaDate(batch.plannedCompletionDate),
+    estimatedCompletionDate: chinaDate(batch.estimatedCompletionDate || batch.workOrder?.estimatedCompletionAt || batch.plannedCompletionDate),
+    productionControl: batch.workOrder ? serializeProductionControl(batch.workOrder) : null,
     releaseState: state,
     workOrderId: batch.workOrderId,
     productTimeProfileId: batch.productTimeProfileId,
@@ -1420,7 +1425,9 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     allocatedQuantity,
     remainingQuantity: Math.max(0, order.orderQuantity - allocatedQuantity),
     orderDate: chinaDate(order.orderDate),
-    customerDueDate: chinaDate(order.customerDueDate),
+    customerDueDate: order.customerDueDateConfirmed ? chinaDate(order.customerDueDate) : '',
+    customerDueDateConfirmed: order.customerDueDateConfirmed,
+    deliveryVersion: order.deliveryVersion,
     priority: order.priority as ProductionPlanPriority,
     status: order.status as ProductionPlanOrderStatus,
     remark: order.remark,
@@ -1603,6 +1610,8 @@ export async function releaseProductionPlanBatch(
     },
   });
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt) throw new Error('PLAN_BATCH_NOT_FOUND');
+  if (batch.planOrder.status === 'paused' || batch.planOrder.status === 'cancelled') throw new Error('PLAN_ORDER_PAUSED');
+  if (batch.workOrderId) await assertProductionMayRun(tx, batch.workOrderId);
   if (batch.releaseState === 'archived') throw new Error('PLAN_BATCH_ARCHIVED');
   if (productionPlanReleaseTransitionBlocker(batch.releaseState, input.target)) {
     throw new Error('PLAN_ACTIVE_BATCH_CANNOT_MOVE_TO_PREPARATION');
@@ -1645,6 +1654,8 @@ export async function releaseProductionPlanBatch(
     status: 'pending',
     progress: 0,
     plannedAt: alignedWeek.plannedCompletionDate,
+    planBaselineAt: alignedWeek.plannedCompletionDate,
+    deliveryBaselineDay: batch.planOrder.customerDueDateConfirmed ? chinaDate(batch.planOrder.customerDueDate) : null,
     remark: batch.planOrder.remark,
     sourceOrderNo: batch.planOrder.sourceOrderNo,
     orderDate: batch.planOrder.orderDate,
@@ -1653,7 +1664,7 @@ export async function releaseProductionPlanBatch(
     productionTargetQty: batch.quantity,
     unitWorkHours: workHours(effectiveUnitMilliseconds),
     totalWorkHours: workHours(totalMilliseconds ? Number(totalMilliseconds) : null),
-    deliveryDay: chinaDate(batch.planOrder.customerDueDate),
+    deliveryDay: batch.planOrder.customerDueDateConfirmed ? chinaDate(batch.planOrder.customerDueDate) : null,
     materialStatus: '待配料',
     planType: 'managed_plan',
     weekStartDate: alignedWeek.weekStartDate,
@@ -1820,10 +1831,12 @@ export async function automaticallyReleaseProductionPlanBatch(
       releaseState: true,
       workOrderId: true,
       deletedAt: true,
-      planOrder: { select: { deletedAt: true } },
+      planOrder: { select: { deletedAt: true, status: true } },
     },
   });
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt) return null;
+  if (batch.planOrder.status === 'paused' || batch.planOrder.status === 'cancelled') return null;
+  if (batch.workOrderId && (await lockProductionWorkOrder(tx, batch.workOrderId)).productionPausedAt) return null;
   const target = automaticProductionPlanReleaseTarget(batch, input.now);
   if (!target) return null;
   const preview = await previewProductionPlanRelease(tx, {

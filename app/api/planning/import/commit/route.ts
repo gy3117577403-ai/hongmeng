@@ -153,7 +153,9 @@ export async function POST(req: NextRequest) {
         const plannedCompletionDate = rawCompletionDate < targetWeek.start || rawCompletionDate > targetWeek.end
           ? targetWeek.end
           : rawCompletionDate;
-        const customerDueDate = plannedCompletionDate < orderDate ? targetWeek.end : plannedCompletionDate;
+        const explicitCustomerDueDate = parsePlanDate(item?.deliveryDay);
+        // A scheduling date is a placeholder for the required legacy column, not a customer promise.
+        const customerDueDate = explicitCustomerDueDate || (plannedCompletionDate < orderDate ? targetWeek.end : plannedCompletionDate);
 
         const outcome = await prisma.$transaction(async tx => {
           const existing = await tx.productionPlanOrder.findUnique({
@@ -172,6 +174,7 @@ export async function POST(req: NextRequest) {
           if (activeBatches.some(batch => chinaDate(batch.weekStartDate) === targetWeekStartDate)) {
             return {
               duplicate: true,
+              dateWarning: existing && explicitCustomerDueDate && explicitCustomerDueDate.getTime() !== existing.customerDueDate.getTime() ? '导入交期与现有交期不同，已保留现有日期，请由计划或管理员确认改期' : '',
               restored: false,
               planOrderId: existing!.id,
               batchId: null,
@@ -205,7 +208,7 @@ export async function POST(req: NextRequest) {
                       orderQuantity: quantity,
                       planningUnitMilliseconds: effectiveUnit,
                       orderDate,
-                      customerDueDate,
+                      customerDueDate: existing.customerDueDate,
                       priority: priority(item?.priority),
                       status: 'scheduled',
                       remark: clean(item?.remark, 500) || null,
@@ -214,7 +217,7 @@ export async function POST(req: NextRequest) {
                     }
                   : {
                       orderQuantity: existing.orderQuantity + quantity,
-                      customerDueDate: customerDueDate > existing.customerDueDate ? customerDueDate : existing.customerDueDate,
+                      customerDueDate: existing.customerDueDate,
                       salesperson: existing.salesperson || clean(item?.salesperson, 80) || null,
                       planningUnitMilliseconds: existing.planningUnitMilliseconds || effectiveUnit,
                       drawingLibraryItemId: existing.drawingLibraryItemId || references.drawingLibraryItemId,
@@ -234,6 +237,7 @@ export async function POST(req: NextRequest) {
                   planningUnitMilliseconds: effectiveUnit,
                   orderDate,
                   customerDueDate,
+                  customerDueDateConfirmed: Boolean(explicitCustomerDueDate),
                   priority: priority(item?.priority),
                   status: 'scheduled',
                   remark: clean(item?.remark, 500) || null,
@@ -291,6 +295,9 @@ export async function POST(req: NextRequest) {
             planOrderId: planOrder.id,
             batchId: batch.id,
             automaticReleaseTarget: automaticRelease?.target || null,
+            dateWarning: existing && explicitCustomerDueDate && explicitCustomerDueDate.getTime() !== existing.customerDueDate.getTime()
+              ? '导入交期与现值不同，已保留原客户交期；请使用调整交期入口确认'
+              : !existing && !explicitCustomerDueDate ? '未提供明确客户交期，已标记待确认；内部计划日期不作为客户承诺' : '',
           };
         }, {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -304,7 +311,7 @@ export async function POST(req: NextRequest) {
             row: rowNo,
             specification,
             status: 'skipped',
-            message: '该订单在目标周已经存在，未重复写入',
+            message: '该订单在目标周已经存在，未重复写入' + (outcome.dateWarning ? `；${outcome.dateWarning}` : ''),
           });
         } else {
           created += 1;
@@ -314,13 +321,13 @@ export async function POST(req: NextRequest) {
             row: rowNo,
             specification,
             status: 'created',
-            message: outcome.automaticReleaseTarget === 'active'
+            message: (outcome.automaticReleaseTarget === 'active'
               ? '已加入目标周并自动进入本周生产执行'
               : outcome.automaticReleaseTarget === 'preparation'
                 ? '已加入目标周并自动进入下周生产执行'
                 : outcome.restored
                   ? '已恢复该计划并加入目标周排单清单'
-                  : '已加入目标周排单清单',
+                  : '已加入目标周排单清单') + (outcome.dateWarning ? `；${outcome.dateWarning}` : ''),
           });
         }
       } catch (error) {

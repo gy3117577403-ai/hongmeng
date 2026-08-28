@@ -7,6 +7,7 @@ import {
   materialFollowUpStatusText,
 } from '@/lib/material-follow-up';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
+import { productionCustomerDate } from '@/lib/production-control';
 import {
   chinaDayBounds,
   compareProductionOrders,
@@ -118,13 +119,16 @@ function alertsFor(order: ProductionSummaryOrderRecord, now: Date): ProductionAl
     warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
+    deliveryDay: order.deliveryDay,
+    estimatedCompletionAt: order.estimatedCompletionAt,
   }, now);
 }
 
 function dueToday(order: ProductionSummaryOrderRecord, now: Date): boolean {
-  if (stageOf(order) === 'completed' || !order.plannedAt) return false;
+  const due = productionCustomerDate(order);
+  if (stageOf(order) === 'completed' || !due) return false;
   const { start, end } = chinaDayBounds(now);
-  return order.plannedAt >= start && order.plannedAt < end;
+  return due >= start && due < end;
 }
 
 function happenedToday(value: Date | null | undefined, now: Date): boolean {
@@ -621,7 +625,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
   const kpis: HomeKpi[] = [
     { id: 'weekly', label: '本周计划工单', value: total, description: week.weekStart ? '当前启用周计划' : '当前未启用周计划', route: '/weekly-plan-center', tone: 'orange', icon: '周' },
     { id: 'due', label: '今日交期', value: dueTodayCount, description: '今日需交付工单', route: '/production?view=today&quick=due_today', tone: 'blue', icon: '今' },
-    { id: 'overdue', label: '逾期工单', value: overdueCount, description: '未完成且已过计划日', route: '/production?view=exceptions&quick=overdue', tone: 'red', icon: '逾' },
+    { id: 'overdue', label: '客户逾期', value: overdueCount, description: '未完成且已过客户交期', route: '/production?view=exceptions&quick=overdue', tone: 'red', icon: '逾' },
     { id: 'drawing', label: '图纸待确认', value: drawingConfirmationCount, description: '样品、客户确认或变更', route: '/production?view=exceptions&quick=drawing_confirmation', tone: 'yellow', icon: '图' },
     { id: 'material', label: '仓库异常', value: materialIssueCount, description: '仅统计未解决仓库异常', route: '/production?view=exceptions&quick=material', tone: 'yellow', icon: '料' },
     { id: 'tail', label: '尾数未清', value: tailRemainingCount, description: '按现有数量告警口径', route: '/production?view=exceptions&quick=tail_remaining', tone: 'slate', icon: '尾' },

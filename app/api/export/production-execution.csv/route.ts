@@ -45,14 +45,17 @@ export async function GET(req: NextRequest) {
       pageSize: 5000,
       productionScope,
     });
-    const headers = ['规格', '客户', '品名', '状态', '优先级', '交期', '未交量', '完成数量', '图纸状态', '配料状态', '资料完整度', '最近进度', '最近更新时间'];
-    const rows = data.items.map(item => [
+    const headers = ['序号', '工单号', '规格', '客户', '品名', '状态', '优先级', '客户交期', '未交量', '完成数量', '图纸状态', '配料状态', '资料完整度', '最近进度', '最近更新时间', '当前问题备注', '暂停原因', '内部预计完成', '原客户承诺', '原计划基准'];
+    const selected = new Set(params.getAll('selectedWorkOrderId').flatMap(value => value.split(',')).filter(Boolean));
+    const rows = data.items.filter(item => !selected.size || selected.has(item.id)).map((item, index) => [
+      index + 1,
+      item.businessCode || item.code,
       item.specification || item.code,
       item.customerName || '',
       item.productName || '',
-      item.stageText,
+      item.productionControl?.pausedAt ? '已暂停' : item.stageText,
       item.priority === 'urgent' ? '紧急' : item.priority === 'high' ? '高' : '一般',
-      item.deliveryDay || item.plannedAt || '',
+      item.productionControl?.customerDueDate || '客户交期待确认',
       item.uncompletedQty || '',
       item.completedQty || '',
       item.drawingStatus || '',
@@ -60,6 +63,11 @@ export async function GET(req: NextRequest) {
       item.documentCompleteness,
       item.latestProgressRemark || '',
       item.lastProgressAt || item.updatedAt,
+      item.productionControl?.note?.text || '',
+      item.productionControl?.pause?.reason || '',
+      item.productionControl?.estimatedCompletionDate || '',
+      item.productionControl?.deliveryBaselineDate || '',
+      item.productionControl?.planBaselineDate || '',
     ]);
     const content = `\uFEFF${[headers, ...rows].map(row => row.map(csv).join(',')).join('\r\n')}`;
     await logOp({ userId: user.id, action: 'export_production_execution', targetType: 'work_order', detail: { count: rows.length } });

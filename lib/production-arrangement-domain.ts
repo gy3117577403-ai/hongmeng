@@ -1,4 +1,5 @@
 export type ProductionArrangementDisplayStatus =
+  | 'suspended'
   | 'planned'
   | 'today'
   | 'partial'

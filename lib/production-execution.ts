@@ -2,6 +2,7 @@ import { DailyProcessTaskStatus, DailyProductionPlanStatus, DailyTaskAssignmentS
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { productionPlanAttainmentForScope } from '@/lib/production-plan-attainment';
+import { PRODUCTION_CONTROL_SELECT, serializeProductionControl, productionCustomerDate } from '@/lib/production-control';
 import {
   productionTeamScopeWhere,
   type ProductionEntityScope,
@@ -30,6 +31,7 @@ import {
 export const PRODUCTION_CATEGORY_CODES = ['drawing', 'sop', 'product', 'material', 'notice'] as const;
 
 export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
+  rootWorkOrder: { select: PRODUCTION_CONTROL_SELECT },
   drawingLibraryItem: {
     select: {
       id: true,
@@ -107,6 +109,7 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
 // Keep execution/completion ledgers out of the broad scan; full route details
 // are loaded only for the page of cards that will actually be rendered.
 export const productionSummaryInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
+  rootWorkOrder: { select: PRODUCTION_CONTROL_SELECT },
   drawingLibraryItem: {
     select: {
       id: true,
@@ -147,6 +150,14 @@ export type ProductionSummaryOrderRecord = Prisma.WorkOrderGetPayload<{
 }>;
 
 type ProductionStatusOrderRecord = ProductionExecutionOrderRecord | ProductionSummaryOrderRecord;
+
+function inheritProductionControl<T extends ProductionStatusOrderRecord>(order: T): T {
+  if (!order.rootWorkOrder) return order;
+  const root = order.rootWorkOrder;
+  return { ...order, operationalNote: root.operationalNote, productionPausedAt: root.productionPausedAt,
+    productionPause: root.productionPause, productionControlVersion: root.productionControlVersion,
+    ...(order.stage === 'completed' ? {} : { deliveryDay: root.deliveryDay, estimatedCompletionAt: root.estimatedCompletionAt }) };
+}
 
 export type ProductionExceptionCode =
   | 'overdue'
@@ -234,7 +245,7 @@ const validQuickFilters = new Set([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed',
   'due_today', 'updated_today', 'completed_today', 'delivery_missing',
   'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
-  'due_soon', 'in_production', 'not_started', 'has_next_process', 'waiting_transfer',
+  'due_soon', 'paused', 'in_production', 'not_started', 'has_next_process', 'waiting_transfer',
   'arrangement_unassigned', 'arrangement_scheduled', 'arrangement_today', 'arrangement_overdue', 'arrangement_partial',
 ]);
 const validStages = new Set(['not_issued', 'frontend', 'backend', 'completed']);
@@ -346,7 +357,7 @@ export type ProductionArrangementMetrics = {
 };
 
 function activeArrangement(arrangement: ProductionArrangementView): boolean {
-  return arrangement.status !== 'completed' && arrangement.status !== 'carried_over';
+  return arrangement.status !== 'completed' && arrangement.status !== 'carried_over' && arrangement.status !== 'suspended';
 }
 
 function summarizeArrangementMetrics(
@@ -356,6 +367,7 @@ function summarizeArrangementMetrics(
   const today = chinaYmd(new Date());
   const metrics: ProductionArrangementMetrics = { unassigned: 0, scheduled: 0, today: 0, overdue: 0, partial: 0 };
   for (const order of orders.filter(isRootProductionOrder)) {
+    if (order.productionPausedAt) continue;
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const active = (arrangementsByOrder.get(order.id) || []).filter(activeArrangement);
     if (!active.length && stage !== 'completed') metrics.unassigned += 1;
@@ -445,13 +457,16 @@ async function loadProductionArrangementMap(
     const allCarried = taskProgress.every(item => item.task.status === DailyProcessTaskStatus.CARRIED_OVER);
     const allCompleted = taskProgress.every(item => item.progress.completed);
     const partial = taskProgress.some(item => item.completion.goodQty > 0) && !allCompleted;
-    const overdue = !allCarried && !allCompleted && workDate < today;
+    const suspended = Boolean(order.productionPausedAt) || taskProgress.some(item => item.task.productionSuspendedAt);
+    const overdue = !suspended && !allCarried && !allCompleted && workDate < today;
     const needsReview = first.plan.status === DailyProductionPlanStatus.NEEDS_REVIEW
       || taskProgress.some(item => item.task.status === DailyProcessTaskStatus.NEEDS_REVIEW);
     const status: ProductionArrangementDisplayStatus = allCarried
       ? 'carried_over'
       : allCompleted
         ? 'completed'
+        : suspended
+          ? 'suspended'
         : needsReview
           ? 'needs_review'
           : overdue
@@ -504,7 +519,7 @@ async function loadProductionArrangementMap(
         weekStartDate: order.weekStartDate ? chinaYmd(order.weekStartDate) : null,
         weekEndDate: order.weekEndDate ? chinaYmd(order.weekEndDate) : null,
       }),
-      continuable: planAssignable && workDate <= today && sourceTaskIds.length > 0,
+      continuable: !order.productionPausedAt && planAssignable && workDate <= today && sourceTaskIds.length > 0,
       taskIds: taskProgress.map(item => item.task.id),
       sourceTaskIds,
       processNames: [...new Set(taskProgress.map(item => item.task.processName))],
@@ -758,12 +773,14 @@ export function productionExceptionCodes(order: ProductionStatusOrderRecord, now
     warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
+    deliveryDay: order.deliveryDay,
+    estimatedCompletionAt: order.estimatedCompletionAt,
   }, now);
-  if (stage !== 'completed' && order.plannedAt && order.plannedAt < start) exceptions.push('overdue');
+  if (stage !== 'completed' && productionCustomerDate(order) && productionCustomerDate(order)! < start) exceptions.push('overdue');
   if (alerts.some(alert => alert.code === 'DRAWING_NOT_ISSUED')) exceptions.push('drawing_not_issued');
   if (alerts.some(alert => alert.code === 'MATERIAL_NOT_READY')) exceptions.push('material_not_ready');
   if (!hasRequiredProductionDocuments(order)) exceptions.push('documents_incomplete');
-  if (!order.plannedAt && !text(order.deliveryDay)) exceptions.push('delivery_missing');
+  if (!productionCustomerDate(order)) exceptions.push('delivery_missing');
   if (!text(order.specification) || isInvalidSpecification(order.specification || '')) exceptions.push('specification_invalid');
   if (!text(order.customerName)) exceptions.push('customer_missing');
   return exceptions;
@@ -803,6 +820,8 @@ export function serializeProductionOrder(
     warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
+    deliveryDay: order.deliveryDay,
+    estimatedCompletionAt: order.estimatedCompletionAt,
   }, now);
   const flowResolution = resolveEffectiveFrontendTransferredQty(order);
   const importedTargetQty = parsedImportedProductionTarget(order.uncompletedQty);
@@ -899,6 +918,7 @@ export function serializeProductionOrder(
     lastProgressAt: order.lastProgressAt?.toISOString() || null,
     latestProgressRemark: order.latestProgressRemark,
     lastProgressBy: order.progressLogs[0]?.createdBy || null,
+    productionControl: serializeProductionControl(order),
     drawingStatus: order.drawingStatus,
     materialStatus: order.materialStatus,
     warehouseMaterial: order.materialTask ? {
@@ -957,17 +977,17 @@ function inChinaDay(value: Date | null | undefined, now = new Date()) {
 
 function isDueToday(order: ProductionStatusOrderRecord, now = new Date()) {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
-  return stage !== 'completed' && inChinaDay(order.plannedAt, now);
+  return stage !== 'completed' && inChinaDay(productionCustomerDate(order), now);
 }
 
 function isOverdue(order: ProductionStatusOrderRecord, now = new Date()) {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
-  return stage !== 'completed' && !!order.plannedAt && order.plannedAt < chinaDayBounds(now).start;
+  const due = productionCustomerDate(order);
+  return stage !== 'completed' && !!due && due < chinaDayBounds(now).start;
 }
 
 function productionDeliveryDate(order: Pick<ProductionExecutionOrderRecord, 'deliveryDay' | 'plannedAt'>): Date | null {
-  const deliveryDay = text(order.deliveryDay).match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
-  return (deliveryDay ? parseWeek(deliveryDay) : null) || order.plannedAt || null;
+  return productionCustomerDate(order);
 }
 
 export function isProductionDueSoon(
@@ -1038,11 +1058,12 @@ function matchesDuePreset(order: ProductionStatusOrderRecord, preset: string | u
   if (!preset) return true;
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   const { start, end } = chinaDayBounds(now);
-  if (preset === 'overdue') return stage !== 'completed' && !!order.plannedAt && order.plannedAt < start;
-  if (!order.plannedAt) return false;
-  if (preset === 'today') return order.plannedAt >= start && order.plannedAt < end;
-  if (preset === 'tomorrow') return order.plannedAt >= end && order.plannedAt < addDays(end, 1);
-  if (preset === 'week') return !!week.weekStart && order.plannedAt >= week.weekStart && order.plannedAt < addDays(week.weekEnd || addDays(week.weekStart, 6), 1);
+  const due = productionCustomerDate(order);
+  if (!due) return false;
+  if (preset === 'overdue') return stage !== 'completed' && due < start;
+  if (preset === 'today') return due >= start && due < end;
+  if (preset === 'tomorrow') return due >= end && due < addDays(end, 1);
+  if (preset === 'week') return !!week.weekStart && due >= week.weekStart && due < addDays(week.weekEnd || addDays(week.weekStart, 6), 1);
   return true;
 }
 
@@ -1056,7 +1077,7 @@ function matchesFilters(
   if (filters.workOrderId) return order.id === filters.workOrderId;
   const keyword = lower(filters.keyword);
   if (keyword) {
-    const haystack = [order.specification, order.customerName, order.productName, order.code, order.sourceOrderNo, order.latestProgressRemark]
+    const haystack = [order.specification, order.customerName, order.productName, order.code, order.sourceOrderNo, order.latestProgressRemark, serializeProductionControl(order).note?.text, serializeProductionControl(order).pause?.reason]
       .map(lower)
       .join('\n');
     if (!haystack.includes(keyword)) return false;
@@ -1070,8 +1091,9 @@ function matchesFilters(
   if (!matchesDuePreset(order, filters.duePreset, week, now)) return false;
   const from = dateInput(filters.dueFrom);
   const to = dateInput(filters.dueTo);
-  if (from && (!order.plannedAt || order.plannedAt < from)) return false;
-  if (to && (!order.plannedAt || order.plannedAt >= addDays(to, 1))) return false;
+  const customerDate = productionCustomerDate(order);
+  if (from && (!customerDate || customerDate < from)) return false;
+  if (to && (!customerDate || customerDate >= addDays(to, 1))) return false;
   const completeness = executionCompleteness(order);
   if (filters.documentCompleteness === 'empty' && completeness.filled !== 0) return false;
   if (filters.documentCompleteness === 'partial' && (completeness.filled <= 0 || completeness.complete)) return false;
@@ -1098,6 +1120,8 @@ function matchesFilters(
       warehouseExpectedAt: order.materialTask?.expectedAt,
       latestProgressRemark: order.latestProgressRemark,
       plannedAt: order.plannedAt,
+    deliveryDay: order.deliveryDay,
+    estimatedCompletionAt: order.estimatedCompletionAt,
     }, now)
     : [];
   for (const item of quick) {
@@ -1110,12 +1134,14 @@ function matchesFilters(
     if (item === 'completed' && !flowStages.includes('completed')) return false;
     if (item === 'updated_today' && !inChinaDay(order.lastProgressAt, now)) return false;
     if (item === 'completed_today' && !inChinaDay(order.completedAt, now)) return false;
-    if (item === 'delivery_missing' && (order.plannedAt || text(order.deliveryDay))) return false;
+    if (item === 'delivery_missing' && productionCustomerDate(order)) return false;
     if (item === 'specification_invalid' && text(order.specification) && !isInvalidSpecification(order.specification || '')) return false;
     if (item === 'customer_missing' && text(order.customerName)) return false;
     if (item === 'drawing_confirmation' && !productionAlerts.some(alert => isDrawingConfirmationAlert(alert.code))) return false;
     if (item === 'tail_remaining' && !productionAlerts.some(alert => alert.code === 'TAIL_REMAINING')) return false;
     if (item === 'due_soon' && !isProductionDueSoon(order, now)) return false;
+    if (item === 'paused' && !order.productionPausedAt) return false;
+    if (['in_production', 'not_started', 'has_next_process', 'waiting_transfer'].includes(item) && order.productionPausedAt) return false;
     if (item === 'in_production' && normalizedStage !== 'frontend' && normalizedStage !== 'backend') return false;
     if (item === 'not_started' && normalizedStage !== 'not_issued') return false;
     if ((item === 'has_next_process' || item === 'waiting_transfer') && !hasNextProductionProcess(order)) return false;
@@ -1146,6 +1172,8 @@ function drawingConfirmationRequired(order: ProductionStatusOrderRecord, now: Da
     warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
+    deliveryDay: order.deliveryDay,
+    estimatedCompletionAt: order.estimatedCompletionAt,
   }, now).some(alert => isDrawingConfirmationAlert(alert.code));
 }
 
@@ -1172,7 +1200,7 @@ export function compareProductionOrders(first: ProductionStatusOrderRecord, seco
     || booleanRank(isOverdue(first, now)) - booleanRank(isOverdue(second, now))
     || booleanRank(isDueToday(first, now)) - booleanRank(isDueToday(second, now))
     || booleanRank(drawingConfirmationRequired(first, now)) - booleanRank(drawingConfirmationRequired(second, now))
-    || (first.plannedAt?.getTime() || Number.MAX_SAFE_INTEGER) - (second.plannedAt?.getTime() || Number.MAX_SAFE_INTEGER)
+    || (productionCustomerDate(first)?.getTime() || Number.MAX_SAFE_INTEGER) - (productionCustomerDate(second)?.getTime() || Number.MAX_SAFE_INTEGER)
     || (secondRemaining ?? -1) - (firstRemaining ?? -1)
     || text(first.specification).localeCompare(text(second.specification), 'zh-CN');
 }
@@ -1191,8 +1219,8 @@ export async function loadProductionOrders(
     orderBy: [{ priority: 'asc' }, { plannedAt: 'asc' }, { createdAt: 'asc' }],
   });
   return !workOrderId && week.scope === 'carryover'
-    ? orders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed')
-    : orders;
+    ? orders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed').map(inheritProductionControl)
+    : orders.map(inheritProductionControl);
 }
 
 export async function loadProductionSummaryOrders(
@@ -1209,8 +1237,8 @@ export async function loadProductionSummaryOrders(
     orderBy: [{ priority: 'asc' }, { plannedAt: 'asc' }, { createdAt: 'asc' }],
   });
   return !workOrderId && week.scope === 'carryover'
-    ? orders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed')
-    : orders;
+    ? orders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed').map(inheritProductionControl)
+    : orders.map(inheritProductionControl);
 }
 
 export async function loadProductionExecution(input: {
@@ -1269,7 +1297,7 @@ export async function loadProductionExecution(input: {
   const items = pageOrderIds.flatMap(id => {
     const order = pageOrderById.get(id);
     return order ? [{
-      ...serializeProductionOrder(order, now, carryoverByOrder.get(order.id) || null),
+      ...serializeProductionOrder(inheritProductionControl(order), now, carryoverByOrder.get(order.id) || null),
       arrangements: arrangementsByOrder.get(order.id) || [],
     }] : [];
   });
@@ -1366,6 +1394,8 @@ function summarizeProductionRecords(
       warehouseExpectedAt: order.materialTask?.expectedAt,
       latestProgressRemark: order.latestProgressRemark,
       plannedAt: order.plannedAt,
+    deliveryDay: order.deliveryDay,
+    estimatedCompletionAt: order.estimatedCompletionAt,
     }, now);
     if (alerts.some(alert => alert.code === 'DRAWING_NOT_ISSUED')) notIssuedDrawing += 1;
     if (alerts.some(alert => isDrawingConfirmationAlert(alert.code))) drawingConfirmation += 1;
@@ -1374,9 +1404,9 @@ function summarizeProductionRecords(
     if (order.priority === 'urgent') urgent += 1;
     if (segments.some(segment => segment.stage === 'completed')) completed += 1;
     if (productionExceptionCodes(order, now).length > 0) exceptions += 1;
-    if (stage === 'frontend' || stage === 'backend') dispatchInProduction += 1;
-    if (stage === 'not_issued') dispatchNotStarted += 1;
-    if (hasNextProductionProcess(order)) dispatchWithNextProcess += 1;
+    if (!order.productionPausedAt && (stage === 'frontend' || stage === 'backend')) dispatchInProduction += 1;
+    if (!order.productionPausedAt && stage === 'not_issued') dispatchNotStarted += 1;
+    if (!order.productionPausedAt && hasNextProductionProcess(order)) dispatchWithNextProcess += 1;
     if (isProductionDueSoon(order, now)) dispatchDueSoon += 1;
     if (stage === 'completed') dispatchCompleted += 1;
     planAttainmentRecords.push({
@@ -1404,6 +1434,7 @@ function summarizeProductionRecords(
     stageCounts,
     stageQuantityTotals,
     dispatchMetrics: {
+      paused: orders.filter(order => order.productionPausedAt && order.stage !== 'completed').length,
       inProduction: dispatchInProduction,
       notStarted: dispatchNotStarted,
       withNextProcess: dispatchWithNextProcess,

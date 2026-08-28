@@ -42,6 +42,8 @@ import {
 } from '@/lib/production-workforce';
 import { branchBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 import { materializeProcessActionConsumptions } from '@/lib/process-action-consumption';
+import { ProductionControlError } from '@/lib/production-control';
+import { assertProductionMayRun, isProductionSerializationConflict, type ProductionBackfillAuthorization } from '@/lib/production-pause-guard';
 import {
   processSupplementActualRequiredQty,
   processSupplementRemainingQty,
@@ -1321,6 +1323,8 @@ function assertIdempotentPayload(
 }
 
 function normalizeServiceError(error: unknown): ProcessCompletionServiceError {
+  if (error instanceof ProductionControlError) return new ProcessCompletionServiceError(error.message, error.status, error.code);
+  if (isProductionSerializationConflict(error)) return new ProcessCompletionServiceError('生产状态或报工刚被更新，请刷新后重试', 409, 'PROCESS_ROUTE_VERSION_CONFLICT');
   if (error instanceof ProcessCompletionServiceError) return error;
   if (error instanceof ProcessCompletionDomainError) {
     const conflictCodes = new Set([
@@ -2813,6 +2817,7 @@ async function syncDailyProcessTasksAfterCompletion(
     where: {
       routeId: input.routeId,
       plan: { workDate: input.workDate },
+      productionSuspendedAt: null,
       status: {
         notIn: [
           DailyProcessTaskStatus.COMPLETED,
@@ -3690,6 +3695,7 @@ async function performProcessCompletion(
   tx: Prisma.TransactionClient,
   input: ParsedCompletionCommand,
   sessionPreparation: SharedTerminalSessionPreparation = 'none',
+  backfill?: ProductionBackfillAuthorization,
 ): Promise<ProcessCompletionResult> {
   const existing = await tx.processCompletion.findUnique({
     where: { idempotencyKey: input.idempotencyKey },
@@ -3730,6 +3736,7 @@ async function performProcessCompletion(
       'PROCESS_ROUTE_NOT_FOUND',
     );
   }
+  await assertProductionMayRun(tx, route.workOrder.id, backfill);
   if (!isExecutableProductionWorkOrder(route.workOrder)) {
     throw new ProcessCompletionServiceError(
       '已归档或已清除的周计划不能登记生产完成',
@@ -4264,11 +4271,12 @@ async function performProcessCompletion(
 
 export async function completeProcessStep(
   command: CompleteProcessStepCommand,
+  backfill?: ProductionBackfillAuthorization,
 ): Promise<ProcessCompletionResult> {
   const input = parseProcessCompletionCommand(command);
   try {
     return await prisma.$transaction(
-      tx => performProcessCompletion(tx, input),
+      tx => performProcessCompletion(tx, input, 'none', backfill),
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
         maxWait: 5_000,

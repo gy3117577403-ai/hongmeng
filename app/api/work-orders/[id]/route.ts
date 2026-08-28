@@ -50,6 +50,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         where: { id: params.id, deletedAt: null },
       });
       if (!current) throw new WorkOrderPatchGuardError('工单不存在', 404);
+      if ((data.plannedAt !== undefined && (data.plannedAt instanceof Date ? data.plannedAt.getTime() : null) !== (current.plannedAt?.getTime() ?? null))
+        || (data.deliveryDay !== undefined && data.deliveryDay !== current.deliveryDay)) {
+        throw new WorkOrderPatchGuardError('交期和预计完成日请由计划或管理员使用“调整交期”入口修改，必须保留原因与历史', 409);
+      }
       const hasProcessRoute = await tx.workOrderProcessRoute.count({
         where: { workOrderId: current.id },
       }) > 0;

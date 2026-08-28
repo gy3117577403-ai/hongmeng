@@ -614,6 +614,10 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
     };
   }
 
+  if (/^\/api\/work-orders\/[^/]+\/production-control(?:\/backfill)?$/.test(path)) {
+    return { prefix: '/api/work-orders/:id/production-control', anyOf: ['PLANNING', 'PRODUCTION'] };
+  }
+
   if (/^\/api\/work-orders\/[^/]+$/.test(path)) {
     return {
       prefix: '/api/work-orders/:id',

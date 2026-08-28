@@ -1,6 +1,8 @@
 import { Prisma, type WorkOrder } from '@prisma/client';
 import { sanitizeSnapshotValue, workOrderSnapshot } from '@/lib/change-snapshots';
 import { prisma } from '@/lib/prisma';
+import { assertProductionMayRun } from '@/lib/production-pause-guard';
+import { ProductionControlError } from '@/lib/production-control';
 import {
   ProcessRouteServiceError,
   startConfirmedProcessRoute,
@@ -158,6 +160,7 @@ async function logFailedFlow(
 }
 
 function normalizedFlowError(error: unknown): ProductionStageFlowServiceError {
+  if (error instanceof ProductionControlError) return new ProductionStageFlowServiceError(error.message, error.status, error.code);
   if (error instanceof ProductionStageFlowServiceError) return error;
   if (error instanceof ProcessRouteServiceError) {
     return new ProductionStageFlowServiceError(error.message, error.status, error.code);
@@ -188,6 +191,7 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
     return await prisma.$transaction(async tx => {
       const old = await tx.workOrder.findFirst({ where: { id: input.workOrderId, deletedAt: null } });
       if (!old) throw new ProductionStageFlowServiceError('工单不存在', 404, 'WORK_ORDER_NOT_FOUND');
+      if (input.action !== 'confirm_drawing_issued') await assertProductionMayRun(tx, old.id);
       validateExecutableWeeklyOrder(old);
       const processRoute = await tx.workOrderProcessRoute.findUnique({
         where: { workOrderId: old.id },

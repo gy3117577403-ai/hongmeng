@@ -50,6 +50,10 @@ jobs:
         run: npx prisma migrate deploy
       - name: Verify Prisma migration status
         run: npx prisma migrate status
+      - name: Production control pause and date PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/production-control-integration.test.ts
       - name: Training QR and feedback PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -271,6 +275,9 @@ jobs:
           ORIENTATION_QA_BASE=http://127.0.0.1:3000 \
             ORIENTATION_QA_EVIDENCE=artifacts/document-orientation-v13467/runtime-ci.json \
             node scripts/smoke-document-orientation.mjs
+          CONTROL_QA_BASE=http://127.0.0.1:3000 \
+            CONTROL_QA_EVIDENCE=artifacts/production-control-v13469/runtime-ci.json \
+            node scripts/smoke-production-control.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
