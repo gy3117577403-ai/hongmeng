@@ -200,7 +200,7 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
         </div>
       )}
 
-      <div className="settings-wecom-setup" role="status"><div><strong>质量任务自动通知</strong><p>正式 HTTPS 回跳地址：{status?.quality?.originReady ? '已配置' : '请配置 APP_BASE_URL'}；后台通知队列：{status?.quality?.workerConfigured ? '已配置（投递状态以事件内记录为准）' : '请通过发布镜像的默认入口启动'}。</p><p>责任账号必须绑定人事员工。派单、退回和品质确认通知按员工手机号精确提醒；群机器人不提供自动登录。</p></div></div>
+      <div className="settings-wecom-setup" role="status"><MessageSquareText size={21} aria-hidden="true" /><div><strong>质量任务自动通知</strong><p>正式 HTTPS 回跳地址：{status?.quality?.originReady ? '已配置' : '请配置 APP_BASE_URL'}；后台通知队列：{status?.quality?.workerConfigured ? '已配置（投递状态以事件内记录为准）' : '请通过发布镜像的默认入口启动'}。</p><p>责任账号必须绑定人事员工。派单、退回和品质确认通知按员工手机号精确提醒；群机器人不提供自动登录。</p></div></div>
       <div className="settings-wecom-stats" aria-label="企业微信可通知员工统计">
         <div><span><UsersRound size={17} /></span><small>可试发员工</small><strong>{status?.counts.eligible ?? '—'}</strong><em>人</em></div>
         <div><small>已录手机号</small><strong>{status?.counts.activeWithMobile ?? '—'}</strong><em>人</em></div>
