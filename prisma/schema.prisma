@@ -4403,7 +4403,7 @@ model ProcessRouteChangeOutbox {
   id          String                         @id @default(uuid())
   changeId    String                         @map("change_id")
   eventType   String                         @map("event_type")
-  channel     String                         @default("WECOM_ROBOT")
+  channel     String                         @default("IN_APP")
   dedupeKey   String                         @unique @map("dedupe_key")
   payload     Json
   status      ProcessRouteChangeOutboxStatus @default(PENDING)

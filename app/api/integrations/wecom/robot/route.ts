@@ -5,6 +5,7 @@ import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { maskEmployeeMobile } from '@/lib/employee-contact';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { WECOM_NOTIFICATION_POLICY } from '@/lib/wecom-notification-policy';
 import {
   buildWeComRobotTestMessage,
   inspectWeComRobotConfig,
@@ -70,6 +71,7 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       config: inspectWeComRobotConfig(),
+      policy: WECOM_NOTIFICATION_POLICY,
       quality: { originReady: Boolean(qualityNotificationOrigin()), workerConfigured: Boolean(process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN) },
       recipients,
       counts: {
@@ -172,6 +174,7 @@ export async function POST(req: NextRequest) {
     });
     const content = buildWeComRobotTestMessage(employees);
     await sendWeComRobotText({
+      source: { sourceType: 'connection_test', eventType: 'ADMIN_CONFIRMED_TEST' },
       content,
       mentionedMobiles: employees.map(item => item.mobile || ''),
     });

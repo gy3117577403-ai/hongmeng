@@ -12,6 +12,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { WECOM_NOTIFICATION_POLICY } from '@/lib/wecom-notification-policy';
 
 type Recipient = {
   id: string;
@@ -165,9 +166,9 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
       <header className="settings-wecom-hero">
         <span className="settings-wecom-logo" aria-hidden="true"><MessageSquareText size={25} /></span>
         <div>
-          <small>消息集成 · 联调版</small>
+          <small>消息集成 · 质量管理专用</small>
           <h3 id="settings-wecom-title">企业微信群消息推送</h3>
-          <p>向机器人所在群发送一条固定测试消息，并按人事档案手机号提醒所选员工。</p>
+          <p>自动推送仅用于质量流程；下方连接测试需管理员手动确认，不会自动发送。</p>
         </div>
         <span className={`settings-wecom-state ${configReady ? 'ready' : 'pending'}`}>
           {loading ? <LoaderCircle className="spin" size={15} /> : configReady ? <CheckCircle2 size={15} /> : <CircleAlert size={15} />}
@@ -177,6 +178,12 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
           <RefreshCw className={loading ? 'spin' : ''} size={18} />
         </button>
       </header>
+
+      <div className="settings-wecom-setup" role="status" aria-label="企业微信自动通知范围">
+        <CheckCircle2 size={21} aria-hidden="true" />
+        <div><strong>{WECOM_NOTIFICATION_POLICY.label}</strong><p>{WECOM_NOTIFICATION_POLICY.description}</p>
+          <p>按业务来源判断，不按工序名称或人员部门判断。质量异常分派给工艺、生产或物料人员的任务仍可通知。</p></div>
+      </div>
 
       {!loading && !configReady && (
         <div className="settings-wecom-setup" role="status">

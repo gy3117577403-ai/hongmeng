@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
@@ -22,6 +22,7 @@ const accounts = {};
 const cookies = {};
 const samples = {};
 const evidence = { prefix, base, database: database.pathname.slice(1), startedAt: new Date().toISOString(), results, accounts, samples };
+const expectedVersion = `v${JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version}`;
 
 async function request(label, who, route, method = 'GET', body, expected = 200) {
   const multipart = body instanceof FormData;
@@ -69,7 +70,7 @@ async function awaiting(id) {
 
 async function run() {
   evidence.app = (await request('readiness', null, '/api/ready')).data.app;
-  assert.equal(evidence.app.version, 'v1.34.70');
+  assert.equal(evidence.app.version, expectedVersion);
   const hash = await bcrypt.hash(password, 10);
   const quality = await prisma.department.findUniqueOrThrow({ where: { code: 'QUALITY' } });
   const gm = await prisma.department.findUniqueOrThrow({ where: { code: 'GM_OFFICE' } });

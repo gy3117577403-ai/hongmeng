@@ -5,10 +5,11 @@ import { createSystemNotification } from '@/lib/system-notifications';
 import { inspectWeComRobotConfig, sendWeComRobotText, toWeComMentionMobile } from '@/lib/wecom-robot';
 import { qualityTaskPath } from '@/lib/quality-workflow-shared';
 import { canIssuePasswordSession, hasPureFieldReporterAccess } from '@/lib/login-security';
+import { isQualityWeComEvent, WECOM_POLICY_BLOCK_REASON, type QualityWeComEvent } from '@/lib/wecom-notification-policy';
 
 export async function enqueueQualityNotification(tx: Prisma.TransactionClient, input: {
   reportId: string; reportNo: string; recipientId: string; taskId?: string; round?: number;
-  event: 'ASSIGNED' | 'REVIEW' | 'RETURNED' | 'CONSOLIDATE' | 'APPROVED' | 'ARCHIVED';
+  event: QualityWeComEvent;
   title: string; summary: string; actorId: string; key: string;
 }) {
   const targetRoute = qualityTaskPath(input.reportId, input.taskId, ['REVIEW', 'APPROVED'].includes(input.event));
@@ -18,6 +19,7 @@ export async function enqueueQualityNotification(tx: Prisma.TransactionClient, i
     category: 'TODO', priority: 'HIGH', title, body: input.summary, targetRoute,
     actorId: input.actorId, sourceType: 'internal_quality_risk', sourceId: input.reportId,
     recipientUserIds: [input.recipientId] });
+  if (!isQualityWeComEvent(input.event)) return;
   await tx.qualityRiskNotification.upsert({ where: { dedupeKey }, update: {}, create: {
     reportId: input.reportId, recipientId: input.recipientId, taskId: input.taskId,
     reviewRound: input.round, eventType: input.event, dedupeKey, title,
@@ -52,6 +54,10 @@ export async function dispatchQualityNotifications(options: { fetchImpl?: typeof
     if (clock && now.getTime() - clock.lastAttemptAt.getTime() < 4000) return null;
     const item = await tx.qualityRiskNotification.findFirst({ where: { state: { in: ['PENDING', 'FAILED', 'WAITING_CONFIG'] }, attempts: { lt: 8 }, availableAt: { lte: now } }, orderBy: [{ availableAt: 'asc' }, { createdAt: 'asc' }] });
     if (!item) return null;
+    if (!isQualityWeComEvent(item.eventType)) {
+      await tx.qualityRiskNotification.update({ where: { id: item.id }, data: { state: 'SKIPPED', leaseToken: null, lastError: WECOM_POLICY_BLOCK_REASON } });
+      return null;
+    }
     const report = await tx.internalQualityRiskReport.findUnique({ where: { id: item.reportId }, include: { tasks: true } });
     const task = report?.tasks.find(task => task.id === item.taskId);
     const obsolete = !report || report.deletedAt ||
@@ -81,7 +87,8 @@ export async function dispatchQualityNotifications(options: { fetchImpl?: typeof
   if (!claimed) return { processed: 0, accepted: 0 };
   const { item, mobile, origin, leaseToken } = claimed;
   try {
-    await sendWeComRobotText({ content: qualityNotificationContent(item.title, item.summary, origin + item.targetRoute, item.id.slice(0, 8)),
+    await sendWeComRobotText({ source: { sourceType: 'internal_quality_risk', eventType: item.eventType },
+      content: qualityNotificationContent(item.title, item.summary, origin + item.targetRoute, item.id.slice(0, 8)),
       mentionedMobiles: [mobile], webhookUrl: options.webhookUrl, fetchImpl: options.fetchImpl, timeoutMs: 6000 });
     await prisma.qualityRiskNotification.updateMany({ where: { id: item.id, leaseToken, state: 'SENDING' }, data: { state: 'SENT', acceptedAt: new Date(), leaseToken: null } });
     return { processed: 1, accepted: 1 };

@@ -285,6 +285,10 @@ jobs:
           ISSUE_QA_BASE=http://127.0.0.1:3000 \
             ISSUE_QA_EVIDENCE=artifacts/issue-closure-v13470/runtime-ci.json \
             node scripts/smoke-issue-closure.mjs
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/hongmeng_ci \
+            WECOM_QA_BASE=http://127.0.0.1:3000 \
+            PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            node scripts/smoke-wecom-quality-only.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image

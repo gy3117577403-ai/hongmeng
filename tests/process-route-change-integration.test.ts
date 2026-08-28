@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   DailyProcessTaskStatus,
@@ -18,6 +19,7 @@ import {
 import { prisma } from '../lib/prisma';
 import { PRODUCTION_DEPARTMENT } from '../lib/production-workforce';
 import { loadFieldReportTicket } from '../lib/work-order-qr-service';
+import { dispatchProcessRouteChangeOutbox, dispatchProcessRouteChangeOutboxBestEffort } from '../lib/process-route-change-notifications';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
 
@@ -607,6 +609,45 @@ test(
         }),
         2,
       );
+
+      // All seven process event types remain durable in-app, with no network delivery.
+      const eventTypes = ['PROCESS_ROUTE_CHANGE_SUBMITTED', 'PROCESS_ROUTE_CHANGE_APPROVED', 'PROCESS_ROUTE_CHANGE_REJECTED',
+        'PROCESS_ROUTE_CHANGE_REEVALUATED', 'PROCESS_ROUTE_CHANGE_ACTIVATED', 'PROCESS_SUPPLEMENT_OBLIGATION_REPORTED', 'PROCESS_SUPPLEMENT_OBLIGATION_FULFILLED'];
+      const eventRows = await Promise.all(eventTypes.map(eventType => prisma.processRouteChangeOutbox.create({ data: {
+        changeId, eventType, dedupeKey: `${prefix}-policy-${eventType}`, payload: { workOrderId },
+      } })));
+      assert.ok(eventRows.every(row => row.channel === 'IN_APP'));
+      const legacyRows = await Promise.all((['PENDING', 'FAILED', 'PROCESSING', 'SENT'] as const).map(status => prisma.processRouteChangeOutbox.create({ data: {
+        changeId, channel: 'WECOM_ROBOT', status, attempts: 8, availableAt: new Date(Date.now() + 86400_000),
+        eventType: 'PROCESS_ROUTE_CHANGE_APPROVED', dedupeKey: `${prefix}-legacy-${status}`, payload: { workOrderId },
+      } })));
+      // Exercise the actual upgrade SQL, including exhausted retries and interrupted claims.
+      const migration = readFileSync(new URL('../prisma/migrations/202608280006_wecom_quality_only/migration.sql', import.meta.url), 'utf8');
+      await prisma.$transaction(async tx => {
+        for (const statement of migration.split(/;\s*(?:\n|$)/).filter(value => value.trim())) await tx.$executeRawUnsafe(statement);
+      });
+      const restored = await prisma.processRouteChangeOutbox.findMany({ where: { id: { in: legacyRows.slice(0, 3).map(row => row.id) } } });
+      assert.ok(restored.every(row => row.status === 'PENDING' && row.attempts === 0 && row.availableAt <= new Date()));
+      let networkCalls = 0;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () => { networkCalls++; throw new Error('工艺通知不得访问网络'); }) as typeof fetch;
+      try {
+        const results = await Promise.all([1, 2].map(() => dispatchProcessRouteChangeOutbox({ changeId, limit: 20 })));
+        assert.equal(results.reduce((sum, item) => sum + item.sent, 0), 0);
+        assert.equal(results.reduce((sum, item) => sum + item.cancelled, 0), 3);
+        const deliveries = await prisma.processRouteChangeOutbox.findMany({ where: { id: { in: eventRows.map(row => row.id) } } });
+        assert.ok(deliveries.every(row => row.channel === 'IN_APP' && row.status === 'SENT'));
+        const cancelled = await prisma.processRouteChangeOutbox.findMany({ where: { id: { in: legacyRows.slice(0, 3).map(row => row.id) } } });
+        assert.ok(cancelled.every(row => row.status === 'CANCELLED' && row.lastError?.includes('仅质量管理')));
+        const history = await prisma.processRouteChangeOutbox.findUniqueOrThrow({ where: { id: legacyRows[3].id } });
+        assert.equal(history.status, 'SENT'); assert.equal(history.attempts, 8);
+        const expectedKeys = [...eventRows, ...legacyRows.slice(0, 3)].map(row => `route-change:${row.dedupeKey}`);
+        assert.equal(await prisma.systemNotification.count({ where: { dedupeKey: { in: expectedKeys } } }), expectedKeys.length);
+        await dispatchProcessRouteChangeOutboxBestEffort({ changeId, limit: 20 });
+        assert.equal(await prisma.systemNotification.count({ where: { dedupeKey: { in: expectedKeys } } }), expectedKeys.length);
+        assert.equal(networkCalls, 0);
+      } finally { globalThis.fetch = originalFetch; }
+      assert.equal((await prisma.workOrderProcessRoute.findUniqueOrThrow({ where: { id: routeId } })).status, 'completed');
     } finally {
       if (workOrderId) {
         if (dailyPlanId) {
@@ -642,6 +683,7 @@ test(
         });
         const changeIds = changes.map(item => item.id);
         if (changeIds.length) {
+          await prisma.systemNotification.deleteMany({ where: { sourceType: 'process_route_change', sourceId: { in: changeIds } } });
           await prisma.processSupplementObligation.deleteMany({ where: { changeId: { in: changeIds } } });
           await prisma.processRouteChangeDiff.deleteMany({ where: { changeId: { in: changeIds } } });
           await prisma.processRouteChangeOutbox.deleteMany({ where: { changeId: { in: changeIds } } });

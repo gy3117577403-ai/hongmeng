@@ -1,3 +1,5 @@
+import { isWeComNotificationAllowed, WECOM_POLICY_BLOCK_REASON, type WeComNotificationSource } from '@/lib/wecom-notification-policy';
+
 const WECOM_ROBOT_HOST = 'qyapi.weixin.qq.com';
 const WECOM_ROBOT_PATH = '/cgi-bin/webhook/send';
 
@@ -137,18 +139,20 @@ export function buildWeComRobotTestMessage(
 }
 
 export async function sendWeComRobotText(options: {
+  source: WeComNotificationSource;
   content: string;
   mentionedMobiles: string[];
-  /** Business event broadcasts may target the robot group without @-mentions. */
-  allowEmptyMentions?: boolean;
   webhookUrl?: string | null;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
 }): Promise<{ errcode: 0 }> {
+  if (!isWeComNotificationAllowed(options.source)) {
+    throw new WeComRobotError(WECOM_POLICY_BLOCK_REASON, { status: 403, code: 'WECOM_SOURCE_BLOCKED' });
+  }
   assertTextSize(options.content);
   const webhook = parseWebhookUrl(options.webhookUrl ?? process.env.WECOM_ROBOT_WEBHOOK_URL);
   const mentionedMobiles = [...new Set(options.mentionedMobiles.map(toWeComMentionMobile).filter((item): item is string => Boolean(item)))];
-  if (!mentionedMobiles.length && !options.allowEmptyMentions) {
+  if (!mentionedMobiles.length) {
     throw new WeComRobotError('没有可用于企业微信提醒的手机号', {
       status: 400,
       code: 'WECOM_MENTION_MOBILE_MISSING',

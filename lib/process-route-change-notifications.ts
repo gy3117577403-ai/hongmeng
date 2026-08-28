@@ -4,11 +4,7 @@ import {
   createSystemNotification,
   eligibleUserIdsForCapability,
 } from '@/lib/system-notifications';
-import {
-  inspectWeComRobotConfig,
-  sendWeComRobotText,
-  toWeComMentionMobile,
-} from '@/lib/wecom-robot';
+import { WECOM_POLICY_BLOCK_REASON } from '@/lib/wecom-notification-policy';
 
 const MAX_ATTEMPTS = 8;
 
@@ -58,10 +54,10 @@ function retryAt(attempts: number): Date {
 }
 
 function outboxError(error: unknown): string {
-  return (error instanceof Error ? error.message : '企业微信通知发送失败').slice(0, 1_000);
+  return (error instanceof Error ? error.message : '站内通知保存失败').slice(0, 1_000);
 }
 
-async function createInAppNotification(outbox: {
+async function createInAppNotification(tx: Prisma.TransactionClient, outbox: {
   id: string;
   dedupeKey: string;
   eventType: string;
@@ -69,60 +65,45 @@ async function createInAppNotification(outbox: {
   payload: Prisma.JsonValue;
 }) {
   const payload = payloadRecord(outbox.payload);
-  return prisma.$transaction(async tx => {
-    const change = await tx.processRouteChange.findUnique({
-      where: { id: outbox.changeId },
-      select: {
-        createdById: true,
-        workOrder: { select: { code: true, productName: true, specification: true } },
-      },
-    });
-    if (!change) return { recipients: [] as string[], mentionedMobiles: [] as string[] };
-    const processRecipients = await eligibleUserIdsForCapability(tx, 'PROCESS', 'READ');
-    const recipients = [...new Set([
-      ...processRecipients,
-      ...(outbox.eventType === 'PROCESS_ROUTE_CHANGE_SUBMITTED' || !change.createdById
-        ? []
-        : [change.createdById]),
-    ])];
-    const copy = eventCopy(outbox.eventType);
-    const workOrderLabel = change.workOrder.specification
-      || change.workOrder.productName
-      || change.workOrder.code;
-    await createSystemNotification(tx, {
-      eventType: outbox.eventType,
-      dedupeKey: `route-change:${outbox.dedupeKey}`,
-      category: 'APPROVAL',
-      priority: outbox.eventType === 'PROCESS_ROUTE_CHANGE_SUBMITTED' ? 'HIGH' : 'NORMAL',
-      title: copy.title,
-      body: `${workOrderLabel}：${copy.action}`,
-      targetRoute: payload.workOrderId
-        ? `/workspace/workflows?workOrderId=${encodeURIComponent(payload.workOrderId)}`
-        : '/workspace/workflows',
-      sourceType: 'process_route_change',
-      sourceId: outbox.changeId,
-      metadata: {
-        routeId: payload.routeId || null,
-        workOrderId: payload.workOrderId || null,
-        actor: payload.actor || null,
-      },
-      recipientUserIds: recipients,
-    });
-    const users = recipients.length
-      ? await tx.user.findMany({
-          where: {
-            id: { in: recipients },
-            employee: { is: { isActive: true, notificationEnabled: true } },
-          },
-          select: { employee: { select: { mobile: true } } },
-          take: 20,
-        })
-      : [];
-    const mentionedMobiles = [...new Set(users
-      .map(user => toWeComMentionMobile(user.employee?.mobile))
-      .filter((mobile): mobile is string => Boolean(mobile)))].slice(0, 20);
-    return { recipients, mentionedMobiles };
+  const change = await tx.processRouteChange.findUnique({
+    where: { id: outbox.changeId },
+    select: {
+      createdById: true,
+      workOrder: { select: { code: true, productName: true, specification: true } },
+    },
   });
+  if (!change) throw new Error('工艺变更不存在，无法保存站内通知');
+  const processRecipients = await eligibleUserIdsForCapability(tx, 'PROCESS', 'READ');
+  const recipients = [...new Set([
+    ...processRecipients,
+    ...(outbox.eventType === 'PROCESS_ROUTE_CHANGE_SUBMITTED' || !change.createdById
+      ? []
+      : [change.createdById]),
+  ])];
+  const copy = eventCopy(outbox.eventType);
+  const workOrderLabel = change.workOrder.specification
+    || change.workOrder.productName
+    || change.workOrder.code;
+  await createSystemNotification(tx, {
+    eventType: outbox.eventType,
+    dedupeKey: `route-change:${outbox.dedupeKey}`,
+    category: 'APPROVAL',
+    priority: outbox.eventType === 'PROCESS_ROUTE_CHANGE_SUBMITTED' ? 'HIGH' : 'NORMAL',
+    title: copy.title,
+    body: `${workOrderLabel}：${copy.action}`,
+    targetRoute: payload.workOrderId
+      ? `/workspace/workflows?workOrderId=${encodeURIComponent(payload.workOrderId)}`
+      : '/workspace/workflows',
+    sourceType: 'process_route_change',
+    sourceId: outbox.changeId,
+    metadata: {
+      routeId: payload.routeId || null,
+      workOrderId: payload.workOrderId || null,
+      actor: payload.actor || null,
+    },
+    recipientUserIds: recipients,
+  });
+  return { recipients };
 }
 
 export type ProcessRouteChangeOutboxDispatchResult = {
@@ -130,12 +111,14 @@ export type ProcessRouteChangeOutboxDispatchResult = {
   sent: number;
   failed: number;
   inAppRecipientCount: number;
+  inAppDelivered: number;
+  cancelled: number;
 };
 
 /**
- * Delivers durable route-change events. Database state is committed before
- * this function is called, so a missing or unavailable robot never rolls back
- * an approved production change. Failed rows remain retryable.
+ * Process events are in-app only. Keep the durable worker and completion
+ * recovery, but never contact a robot, even for legacy WECOM_ROBOT rows.
+ * In-app creation and legacy external cancellation commit together.
  */
 export async function dispatchProcessRouteChangeOutbox(options: {
   changeId?: string;
@@ -147,6 +130,8 @@ export async function dispatchProcessRouteChangeOutbox(options: {
     sent: 0,
     failed: 0,
     inAppRecipientCount: 0,
+    inAppDelivered: 0,
+    cancelled: 0,
   };
   // A container can be terminated after claiming a row but before recording
   // the result. Recover stale leases so a restart never strands a message.
@@ -158,7 +143,7 @@ export async function dispatchProcessRouteChangeOutbox(options: {
     data: {
       status: ProcessRouteChangeOutboxStatus.FAILED,
       availableAt: new Date(),
-      lastError: '发送进程中断，已自动重新排队',
+      lastError: '站内通知进程中断，已自动重新排队；不会推送企业微信',
     },
   });
   for (let index = 0; index < limit; index += 1) {
@@ -188,59 +173,26 @@ export async function dispatchProcessRouteChangeOutbox(options: {
     if (claimed.count !== 1) continue;
     result.processed += 1;
     try {
-      const notification = await createInAppNotification(candidate);
+      const externalCancelled = candidate.channel !== 'IN_APP';
+      const notification = await prisma.$transaction(async tx => {
+        const owned = await tx.processRouteChangeOutbox.findFirst({ where: {
+          id: candidate.id, status: ProcessRouteChangeOutboxStatus.PROCESSING, attempts: candidate.attempts + 1,
+        } });
+        if (!owned) throw new Error('站内通知领取状态已变化，请重试');
+        const saved = await createInAppNotification(tx, candidate);
+        await tx.processRouteChangeOutbox.update({ where: { id: candidate.id }, data: {
+          status: externalCancelled ? ProcessRouteChangeOutboxStatus.CANCELLED : ProcessRouteChangeOutboxStatus.SENT,
+          processedAt: new Date(), lastError: externalCancelled ? WECOM_POLICY_BLOCK_REASON : null,
+        } });
+        return saved;
+      });
       result.inAppRecipientCount += notification.recipients.length;
-      const change = await prisma.processRouteChange.findUnique({
-        where: { id: candidate.changeId },
-        select: {
-          workOrder: { select: { code: true, productName: true, specification: true } },
-          diffs: { orderBy: { position: 'asc' }, select: { kind: true, afterData: true } },
-        },
-      });
-      const copy = eventCopy(candidate.eventType);
-      const insertion = change?.diffs.find(diff => diff.kind === 'INSERT_STEP');
-      const insertionData = insertion?.afterData && typeof insertion.afterData === 'object' && !Array.isArray(insertion.afterData)
-        ? insertion.afterData as Record<string, unknown>
-        : null;
-      const timeChangeCount = change?.diffs.filter(diff => diff.kind === 'UPDATE_TIME').length || 0;
-      const moveChangeCount = change?.diffs.filter(diff => diff.kind === 'MOVE_STEP').length || 0;
-      const workOrderLabel = change?.workOrder.specification
-        || change?.workOrder.productName
-        || change?.workOrder.code
-        || candidate.changeId;
-      const lines = [
-        `【${copy.title}】`,
-        `工单：${workOrderLabel}`,
-        insertionData?.processName ? `新增工序：${String(insertionData.processName)}` : null,
-        timeChangeCount ? `工时变更：${timeChangeCount} 道工序` : null,
-        moveChangeCount ? `顺序调整：${moveChangeCount} 个完整顺序组` : null,
-        `状态：${copy.action}`,
-        '系统入口：流程中心 → 现场工艺变更',
-      ].filter((line): line is string => Boolean(line));
-      const config = inspectWeComRobotConfig();
-      if (!config.configured) throw new Error(
-        config.state === 'invalid'
-          ? 'WECOM_ROBOT_WEBHOOK_URL 格式无效'
-          : 'WECOM_ROBOT_WEBHOOK_URL 尚未配置',
-      );
-      await sendWeComRobotText({
-        content: lines.join('\n'),
-        mentionedMobiles: notification.mentionedMobiles,
-        allowEmptyMentions: true,
-      });
-      await prisma.processRouteChangeOutbox.update({
-        where: { id: candidate.id },
-        data: {
-          status: ProcessRouteChangeOutboxStatus.SENT,
-          processedAt: new Date(),
-          lastError: null,
-        },
-      });
-      result.sent += 1;
+      result.inAppDelivered += 1;
+      if (externalCancelled) result.cancelled += 1;
     } catch (error) {
       const attempts = candidate.attempts + 1;
-      await prisma.processRouteChangeOutbox.update({
-        where: { id: candidate.id },
+      await prisma.processRouteChangeOutbox.updateMany({
+        where: { id: candidate.id, status: ProcessRouteChangeOutboxStatus.PROCESSING, attempts },
         data: {
           status: ProcessRouteChangeOutboxStatus.FAILED,
           availableAt: retryAt(attempts),

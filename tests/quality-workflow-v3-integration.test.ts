@@ -117,6 +117,20 @@ test('v3 PostgreSQL: multiple independent tasks, frozen rounds, targeted return,
     const input = { reportId: report.id, reportNo: report.reportNo, event: 'CONSOLIDATE' as const, key: 'idempotency', recipientId: a.id, actorId: q.id, title: '汇总提醒', summary: '测试' };
     await prisma.$transaction(async tx => { await enqueueQualityNotification(tx, input); await enqueueQualityNotification(tx, input); });
     assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: report.id, dedupeKey: { contains: 'idempotency' } } }), 1);
+
+    // Unknown future events stay in-app; even an old manually queued record is blocked at dispatch.
+    await prisma.$transaction(tx => enqueueQualityNotification(tx, { ...input, key: 'blocked-new', event: 'UNKNOWN' as typeof input.event }));
+    assert.equal(await prisma.systemNotification.count({ where: { sourceId: report.id, dedupeKey: { contains: 'blocked-new' } } }), 1);
+    assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: report.id, dedupeKey: { contains: 'blocked-new' } } }), 0);
+    await prisma.qualityRiskNotification.updateMany({ where: { reportId: report.id, state: { not: 'SENT' } }, data: { state: 'SKIPPED' } });
+    const blocked = await prisma.qualityRiskNotification.create({ data: { reportId: report.id, recipientId: a.id, eventType: 'PROCESS_ROUTE_CHANGE_APPROVED',
+      dedupeKey: `${prefix}-legacy-unknown`, title: '质量：检验工序', summary: '不能按标题放行', targetRoute: '/workspace/quality-tasks',
+      state: 'FAILED', attempts: 1 } });
+    await prisma.qualityRobotDispatchClock.deleteMany({ where: { id: 'quality' } });
+    const beforeBlocked = externalCalls;
+    await dispatchQualityNotifications({ webhookUrl: validWebhook, origin: 'https://quality.example.com', fetchImpl: fakeFetch });
+    assert.equal(externalCalls, beforeBlocked);
+    assert.equal((await prisma.qualityRiskNotification.findUniqueOrThrow({ where: { id: blocked.id } })).state, 'SKIPPED');
   } finally {
     await prisma.internalQualityRiskReport.deleteMany({ where: { id: { in: ids } } });
     await prisma.workOrder.delete({ where: { id: order.id } });
