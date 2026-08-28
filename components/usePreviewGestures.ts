@@ -61,7 +61,12 @@ type PreviewGestureOptions = {
   initialFitMode?: Exclude<PreviewFitMode, 'manual'>;
   initialRotation?: number;
   scrollWheel?: boolean;
+  controlledRotation?: number;
+  memoryKey?: string;
 };
+
+type ViewMemory = { zoom: number; fitMode: PreviewFitMode; pan: PreviewPan; left: number; top: number };
+const viewMemories = new Map<string, ViewMemory>();
 
 export type PreviewGestureController = {
   zoom: number;
@@ -96,8 +101,10 @@ export function usePreviewGestures({
   initialFitMode = 'fit-window',
   initialRotation = 0,
   scrollWheel = false,
+  controlledRotation,
+  memoryKey,
 }: PreviewGestureOptions): PreviewGestureController {
-  const normalizedInitialRotation = normalizePreviewRotation(initialRotation);
+  const normalizedInitialRotation = normalizePreviewRotation(controlledRotation ?? initialRotation);
   const [zoom, setZoom] = useState(1);
   const [committedZoom, setCommittedZoom] = useState(1);
   const [fitMode, setFitModeState] = useState<PreviewFitMode>(initialFitMode);
@@ -234,7 +241,7 @@ export function usePreviewGestures({
   }, [commitZoom, contentSize, showHint, stageRef, viewportSize]);
 
   const reset = useCallback((): void => {
-    const nextRotation = normalizePreviewRotation(initialRotation);
+    const nextRotation = normalizePreviewRotation(controlledRotation ?? initialRotation);
     rotationRef.current = nextRotation;
     setRotation(nextRotation);
     const nextZoom = previewFitZoom(initialFitMode, rotatedPreviewSize(contentSize, nextRotation), viewportSize);
@@ -247,7 +254,7 @@ export function usePreviewGestures({
     setPan({ panX: 0, panY: 0 });
     stageRef.current?.scrollTo({ left: 0, top: 0 });
     showHint(initialFitMode === 'fit-height' ? '适应高度' : '适应整页');
-  }, [commitZoom, contentSize, initialFitMode, initialRotation, showHint, stageRef, viewportSize]);
+  }, [commitZoom, contentSize, controlledRotation, initialFitMode, initialRotation, showHint, stageRef, viewportSize]);
 
   const recenter = useCallback((): void => {
     panRef.current = { panX: 0, panY: 0 };
@@ -271,6 +278,15 @@ export function usePreviewGestures({
     setRotation(nextRotation);
     recenter();
   }, [recenter]);
+
+  useEffect(() => {
+    if (controlledRotation === undefined) return;
+    const next = normalizePreviewRotation(controlledRotation);
+    if (rotationRef.current === next) return;
+    rotationRef.current = next;
+    setRotation(next);
+    recenter();
+  }, [controlledRotation, recenter]);
 
   const toggleZoomAt = useCallback((clientX: number, clientY: number): void => {
     if (fitModeRef.current === 'fit-window' || fitModeRef.current === 'fit-height' || zoomRef.current <= fitWindowZoom * 1.2) {
@@ -319,6 +335,34 @@ export function usePreviewGestures({
   useEffect(() => {
     resetRef.current();
   }, [resetKey]);
+
+  const restoredMemory = useRef('');
+  useEffect(() => {
+    if (!memoryKey || !contentSize.width || !viewportSize.width || restoredMemory.current === memoryKey) return;
+    restoredMemory.current = memoryKey;
+    const memory = viewMemories.get(memoryKey);
+    if (!memory) return;
+    fitModeRef.current = memory.fitMode;
+    setFitModeState(memory.fitMode);
+    if (memory.fitMode === 'manual') {
+      zoomRef.current = memory.zoom; setZoom(memory.zoom); commitZoom(memory.zoom);
+      panRef.current = memory.pan; setPan(memory.pan);
+      const node = stageRef.current;
+      window.requestAnimationFrame(() => node?.scrollTo({ left: memory.left, top: memory.top }));
+    } else applyFitMode(memory.fitMode);
+  }, [applyFitMode, commitZoom, contentSize.width, memoryKey, stageRef, viewportSize.width]);
+
+  useEffect(() => {
+    if (!memoryKey) return;
+    const node = stageRef.current;
+    const save = () => {
+      if (restoredMemory.current !== memoryKey) return;
+      viewMemories.set(memoryKey, { zoom: zoomRef.current, fitMode: fitModeRef.current, pan: panRef.current, left: node?.scrollLeft || 0, top: node?.scrollTop || 0 });
+      if (viewMemories.size > 300) viewMemories.delete(viewMemories.keys().next().value as string);
+    };
+    node?.addEventListener('scroll', save);
+    return () => { save(); node?.removeEventListener('scroll', save); };
+  }, [memoryKey, stageRef]);
 
   useEffect(() => () => {
     if (commitTimerRef.current !== null) window.clearTimeout(commitTimerRef.current);

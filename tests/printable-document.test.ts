@@ -36,6 +36,25 @@ test('PDF sources retain their native page size and rotation', async () => {
   assert.equal(output.getPage(1).getRotation().angle, 90);
 });
 
+test('saved display direction composes with intrinsic PDF rotation without altering source bytes', async () => {
+  const source = await PDFDocument.create();
+  for (const rotation of [0, 90, 180, 270]) source.addPage([400, 600]).setRotation(degrees(rotation));
+  const bytes = await source.save();
+  const before = Buffer.from(bytes);
+  const printed = await buildPrintableSourcePdf({ bytes, fileName: 'mixed.pdf', mimeType: 'application/pdf', pageRotations: { '2': 270, '3': 90 } });
+  const result = await PDFDocument.load(printed.bytes);
+  assert.deepEqual(result.getPages().map(page => page.getRotation().angle), [0, 0, 270, 270]);
+  assert.deepEqual(Buffer.from(bytes), before);
+});
+
+test('image print direction applies after EXIF normalization', async () => {
+  const bytes = await sharp({ create: { width: 480, height: 960, channels: 3, background: 'orange' } }).withMetadata({ orientation: 6 }).jpeg().toBuffer();
+  const result = await buildPrintableSourcePdf({ bytes, fileName: 'photo.jpg', mimeType: 'image/jpeg', pageRotations: { '1': 270 } });
+  const pdf = await PDFDocument.load(result.bytes);
+  assert.ok(pdf.getPage(0).getWidth() > pdf.getPage(0).getHeight(), 'EXIF was applied before the extra page rotation');
+  assert.equal(pdf.getPage(0).getRotation().angle, 270);
+});
+
 for (const fixture of [
   { extension: 'jpg', mimeType: 'image/jpeg', encode: (image: Sharp) => image.jpeg({ quality: 90 }) },
   { extension: 'png', mimeType: 'image/png', encode: (image: Sharp) => image.png() },

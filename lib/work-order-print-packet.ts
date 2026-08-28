@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { PDFDocument, type PDFPage } from 'pdf-lib';
 import { appendPrintableSource, type PrintableSourceInput } from '@/lib/printable-document';
+import { orientationFromPrintSnapshot } from '@/lib/document-orientation';
 
 export type WorkOrderPrintPacketTarget = 'all' | 'traveler' | 'warning' | 'traveler_warning' | 'sop';
 export type WorkOrderPrintPacketMaterial = 'TRAVELER' | 'QUALITY_WARNING' | 'SOP' | 'DRAWING';
 
 export type WorkOrderPrintPacketRecord = {
+  snapshot?: unknown;
   printId: string;
   mode: string;
   items: Array<{
@@ -110,12 +112,13 @@ async function appendSourceFile(
   output: PDFDocument,
   fileId: string,
   sourceFiles: ReadonlyMap<string, PrintableSourceInput>,
+  snapshot: unknown,
 ): Promise<number> {
   const source = sourceFiles.get(fileId);
   if (!source?.bytes.byteLength) {
     throw new WorkOrderPrintPacketError('SOP 文件快照不存在，请重新生成打印任务', 410, 'PRINT_PACKET_SOP_MISSING');
   }
-  return appendPrintableSource(output, source);
+  return appendPrintableSource(output, { ...source, pageRotations: orientationFromPrintSnapshot(snapshot, fileId).pageRotations });
 }
 
 export async function buildWorkOrderPrintPacket(input: {
@@ -156,7 +159,7 @@ export async function buildWorkOrderPrintPacket(input: {
       for (let copy = 0; copy < travelerCopies; copy += 1) {
         const packetStart = output.getPageCount();
         await appendTravelerPages(output, record.printId, travelerImages);
-        await appendSourceFile(output, sop.fileId, sourceFiles);
+        await appendSourceFile(output, sop.fileId, sourceFiles, record.snapshot);
         const packetPageCount = output.getPageCount() - packetStart;
         if (packetPageCount % 2 === 1) {
           addBlankBack(output, output.getPages().at(-1));
@@ -177,7 +180,7 @@ export async function buildWorkOrderPrintPacket(input: {
     }
     if (input.target === 'sop' && sop?.fileId) {
       for (let copy = 0; copy < positiveCopies(sop.copies); copy += 1) {
-        await appendSourceFile(output, sop.fileId, sourceFiles);
+        await appendSourceFile(output, sop.fileId, sourceFiles, record.snapshot);
       }
     }
     if (input.target === 'warning' && warning) {

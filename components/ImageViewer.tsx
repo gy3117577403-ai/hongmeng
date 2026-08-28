@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { PreviewModal } from '@/components/PdfViewer';
+import { DocumentOrientationControls, DocumentPreviewFrame, requestPreviewLeave, useDocumentOrientation, type DocumentOrientationController } from '@/components/DocumentOrientation';
 import { usePreviewGestures } from '@/components/usePreviewGestures';
 
 type ImageViewerProps = {
@@ -20,7 +20,11 @@ type ImageViewerProps = {
   gestureResetKey?: string;
 };
 
-export function ImageViewer({
+export function ImageViewer(props: ImageViewerProps) {
+  return <ImageFileViewer key={props.contentUrl?.split('?')[0] || props.fileId} {...props} />;
+}
+
+function ImageFileViewer({
   fileId,
   title,
   dashboardMode = false,
@@ -37,21 +41,18 @@ export function ImageViewer({
   const [fullscreen, setFullscreen] = useState(false);
   const source = contentUrl || `/api/resource-files/${fileId}/content`;
   const fallbackDownloadUrl = downloadUrl || `/api/resource-files/${fileId}/download`;
+  const orientation = useDocumentOrientation(source);
   const common = { source, title, dashboardMode, downloadUrl: fallbackDownloadUrl, readingMode, page, pageCount, onPageChange, onAddToToc, onCopyPageLink, gestureResetKey };
 
   return (
-    <>
-      <ImageCanvas {...common} onFullscreen={() => setFullscreen(true)} />
-      {fullscreen && (
-        <PreviewModal title={title} onClose={() => setFullscreen(false)}>
-          <ImageCanvas {...common} fullscreen onClose={() => setFullscreen(false)} />
-        </PreviewModal>
-      )}
-    </>
+    <DocumentPreviewFrame orientation={orientation} fullscreen={fullscreen} title={title} onClose={() => setFullscreen(false)}>
+      <ImageCanvas {...common} orientation={orientation} fullscreen={fullscreen} onFullscreen={() => setFullscreen(true)} onClose={() => setFullscreen(false)} />
+    </DocumentPreviewFrame>
   );
 }
 
 function ImageCanvas({
+  orientation,
   source,
   title,
   dashboardMode = false,
@@ -67,6 +68,7 @@ function ImageCanvas({
   onCopyPageLink,
   gestureResetKey,
 }: {
+  orientation: DocumentOrientationController;
   source: string;
   title: string;
   dashboardMode?: boolean;
@@ -96,7 +98,9 @@ function ImageCanvas({
     stageRef,
     contentSize: naturalSize,
     viewportSize: box,
-    resetKey: `${gestureResetKey || source}|${fullscreen ? 'fullscreen' : 'inline'}|${reloadKey}`,
+    resetKey: `${gestureResetKey || source}|${reloadKey}`,
+    controlledRotation: orientation.draft[1] || 0,
+    memoryKey: orientation.key,
     initialFitMode: dashboardMode ? 'fit-height' : 'fit-window',
     scrollWheel: dashboardMode,
   });
@@ -163,6 +167,7 @@ function ImageCanvas({
       <div className="viewer-toolbar image-toolbar">
         <div className="viewer-title" title={title}><span>IMG</span><strong>{title}</strong></div>
         <div className="viewer-controls">
+          <DocumentOrientationControls orientation={orientation} disabled={loading} />
           {dashboardMode ? <>
             {pageCount > 1 && <button type="button" aria-label="上一张" title="上一张" disabled={page <= 1} onClick={() => changePage(page - 1)}>‹</button>}
             {pageCount > 1 && <span className="image-page-count">{page} / {pageCount}</span>}
@@ -171,20 +176,20 @@ function ImageCanvas({
             <span className="viewer-zoom-value" aria-live="polite">{Math.round(gestures.zoom * 100)}%</span>
             <button type="button" aria-label="放大" title="放大" disabled={loading} onClick={() => gestures.zoomBy(1.15)}>＋</button>
             <button className={gestures.fitMode === 'fit-height' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-height')}>适高</button>
-            <button type="button" aria-label="向左旋转" title="向左旋转" disabled={loading} onClick={() => gestures.rotateBy(-90)}>↺</button>
+
             {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
-            <details className="viewer-more"><summary aria-label="更多预览操作" title="更多预览操作">更多</summary><div><button type="button" onClick={() => gestures.setFitMode('fit-width')}>适应宽度</button><button type="button" onClick={() => gestures.setFitMode('fit-window')}>适应整页</button><button type="button" onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" onClick={gestures.reset}>重置视图</button><button type="button" onClick={() => gestures.rotateBy(90)}>向右旋转</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载</a><button type="button" onClick={() => window.location.assign(source)}>系统打开</button></div></details>
+            <details className="viewer-more"><summary aria-label="更多预览操作" title="更多预览操作">更多</summary><div><button type="button" onClick={() => gestures.setFitMode('fit-width')}>适应宽度</button><button type="button" onClick={() => gestures.setFitMode('fit-window')}>适应整页</button><button type="button" onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={() => requestPreviewLeave(() => window.location.assign(source))}>系统打开</button></div></details>
           </> : <>
           {pageCount > 1 && <button type="button" disabled={page <= 1} onClick={() => changePage(page - 1)}>上一页</button>}
           {pageCount > 1 && <span className="image-page-count">{page} / {pageCount}</span>}
           {pageCount > 1 && <button type="button" disabled={page >= pageCount} onClick={() => changePage(page + 1)}>下一页</button>}
           <button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>适应窗口</button>
-          <button type="button" disabled={loading} onClick={() => gestures.rotateBy(-90)}>左旋</button>
-          <button type="button" disabled={loading} onClick={() => gestures.rotateBy(90)}>右旋</button>
+
+
           {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
           {onAddToToc && <button className="viewer-toc-action" type="button" disabled={loading} aria-expanded={tocOpen} onClick={openQuickToc}>添加至目录</button>}
           {readingMode ? (
-            <details className="viewer-more"><summary>更多</summary><div><button type="button" onClick={() => gestures.zoomBy(1 / 1.15)}>缩小</button><button type="button" onClick={() => gestures.zoomBy(1.15)}>放大</button><button type="button" onClick={() => gestures.setFitMode('fit-width')}>适宽</button><button type="button" onClick={() => gestures.setFitMode('fit-window')}>整页</button><button type="button" onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={gestures.rotation === 0} onClick={() => gestures.rotateBy(-gestures.rotation)}>重置旋转</button><button type="button" onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载</a><button type="button" onClick={() => window.location.assign(source)}>系统打开</button>{onCopyPageLink && <button type="button" onClick={() => void onCopyPageLink(page)}>复制当前页链接</button>}</div></details>
+            <details className="viewer-more"><summary>更多</summary><div><button type="button" onClick={() => gestures.zoomBy(1 / 1.15)}>缩小</button><button type="button" onClick={() => gestures.zoomBy(1.15)}>放大</button><button type="button" onClick={() => gestures.setFitMode('fit-width')}>适宽</button><button type="button" onClick={() => gestures.setFitMode('fit-window')}>整页</button><button type="button" onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={gestures.rotation === 0} onClick={() => orientation.restoreOriginal()}>重置旋转</button><button type="button" onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={() => requestPreviewLeave(() => window.location.assign(source))}>系统打开</button>{onCopyPageLink && <button type="button" onClick={() => void onCopyPageLink(page)}>复制当前页链接</button>}</div></details>
           ) : <><button type="button" onClick={() => gestures.zoomBy(1 / 1.15)} title="缩小">−</button><button type="button" onClick={() => gestures.zoomBy(1.15)} title="放大">＋</button><button type="button" onClick={gestures.reset}>重置</button><button type="button" onClick={() => gestures.setFitMode('actual-size')}>原始大小</button></>}
           </>}
         </div>

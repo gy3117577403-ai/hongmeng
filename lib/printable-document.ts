@@ -1,4 +1,6 @@
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, degrees } from 'pdf-lib';
+import { normalizePreviewRotation } from '@/lib/preview-gestures';
+import type { PageRotations } from '@/lib/document-orientation';
 import sharp from 'sharp';
 import { fileType, validateFileSignature } from '@/lib/validation';
 
@@ -10,6 +12,7 @@ export type PrintableSourceInput = {
   fileName: string;
   mimeType: string | null;
   imagePaperSize?: ImagePrintPaperSize;
+  pageRotations?: PageRotations;
 };
 
 export class PrintableDocumentError extends Error {
@@ -98,7 +101,10 @@ async function appendPdf(output: PDFDocument, input: PrintableSourceInput): Prom
     throw new PrintableDocumentError(`${input.fileName} 没有可打印页面`, 409, 'PRINTABLE_SOURCE_PDF_EMPTY');
   }
   const pages = await output.copyPages(source, source.getPageIndices());
-  pages.forEach(page => output.addPage(page));
+  pages.forEach((page, index) => {
+    page.setRotation(degrees(normalizePreviewRotation(page.getRotation().angle + (input.pageRotations?.[index + 1] || 0))));
+    output.addPage(page);
+  });
   return pages.length;
 }
 
@@ -204,6 +210,7 @@ async function appendImage(
     const drawWidth = embedded.width * scale;
     const drawHeight = embedded.height * scale;
     const page = output.addPage([dimensions.pageWidth, dimensions.pageHeight]);
+    page.setRotation(degrees(normalizePreviewRotation(input.pageRotations?.[1] || 0)));
     page.drawImage(embedded, {
       x: (dimensions.pageWidth - drawWidth) / 2,
       y: (dimensions.pageHeight - drawHeight) / 2,

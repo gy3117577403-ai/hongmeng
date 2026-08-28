@@ -1,5 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { documentDisplaySettingsUrl, parsePageRotations, rotateDocumentPages, samePageRotations, orientationFromPrintSnapshot } from '../lib/document-orientation';
+
+test('document rotations preserve mixed-page direction and use sparse relative quarter turns', () => {
+  assert.deepEqual(rotateDocumentPages({ '2': 90 }, 1, -90, 3), { '1': 270, '2': 90 });
+  assert.deepEqual(rotateDocumentPages({ '2': 90 }, 1, -90, 3, true), { '1': 270, '3': 270 });
+  assert.ok(samePageRotations({ '1': 0 }, {}));
+  assert.deepEqual(parsePageRotations({ '1': 0, '2': 90 }, 2), { '2': 90 });
+  for (const value of [null, [], { '0': 90 }, { '01': 90 }, { '3': 90 }, { '1': 45 }, { '1': '90' }, { '1': -90 }]) {
+    assert.throws(() => parsePageRotations(value, 2));
+  }
+});
+
+test('document settings identify stable file endpoints without confusing other resource namespaces', () => {
+  assert.equal(documentDisplaySettingsUrl('/api/drawing-library/files/a/content?reload=1'), '/api/drawing-library/files/a/display-settings');
+  assert.equal(documentDisplaySettingsUrl('/api/resource-files/b/content'), '/api/resource-files/b/display-settings');
+  assert.equal(documentDisplaySettingsUrl('/api/connector-assembly-manual-assets/a/content'), null);
+  assert.deepEqual(orientationFromPrintSnapshot({}, 'a'), { revision: 0, pageRotations: {} });
+  assert.deepEqual(orientationFromPrintSnapshot({ documentOrientations: { a: { revision: 2, pageRotations: { '2': 270 } } } }, 'a'), { revision: 2, pageRotations: { '2': 270 } });
+});
 import {
   MAX_PREVIEW_ZOOM,
   MIN_PREVIEW_ZOOM,

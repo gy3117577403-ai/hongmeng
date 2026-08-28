@@ -3235,6 +3235,19 @@ model ProductConnectorParameterBinding {
   @@map("product_connector_parameter_bindings")
 }
 
+model DocumentDisplaySetting {
+  id            String   @id @default(uuid())
+  objectKey     String   @unique @map("object_key")
+  pageCount     Int      @map("page_count")
+  pageRotations Json     @default("{}") @map("page_rotations")
+  revision      Int      @default(1)
+  updatedById   String   @map("updated_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("document_display_settings")
+}
+
 model DrawingLibraryFile {
   id                          String              @id @default(uuid())
   libraryItemId               String              @map("library_item_id")

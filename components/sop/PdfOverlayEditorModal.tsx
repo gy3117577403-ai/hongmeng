@@ -52,6 +52,7 @@ import type {
   RenderTask,
 } from 'pdfjs-dist';
 import { createPdfJsAssetOptions } from '@/lib/pdfjs-assets';
+import { documentDisplaySettingsUrl, type PageRotations } from '@/lib/document-orientation';
 import styles from './PdfOverlayEditorModal.module.css';
 import { exportPdfOverlayPngs } from './pdf-overlay-export';
 import {
@@ -259,6 +260,11 @@ function normalizedPagePoint(
   event: ReactPointerEvent<SVGElement>,
   node: SVGSVGElement,
 ): PdfOverlayPoint {
+  const matrix = node.getScreenCTM();
+  if (matrix) {
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse());
+    return { x: clamp(point.x / Math.max(1, node.viewBox.baseVal.width)), y: clamp(point.y / Math.max(1, node.viewBox.baseVal.height)) };
+  }
   const box = node.getBoundingClientRect();
   return {
     x: clamp((event.clientX - box.left) / Math.max(1, box.width)),
@@ -370,12 +376,14 @@ function visibleThumbnailPages(pageCount: number, pageNumber: number): number[] 
 function PdfPageThumbnail({
   document,
   page,
+  rotation = 0,
   active,
   changeCount,
   onSelect,
 }: {
   document: PDFDocumentProxy;
   page: number;
+  rotation?: number;
   active: boolean;
   changeCount: number;
   onSelect: () => void;
@@ -387,9 +395,9 @@ function PdfPageThumbnail({
     let renderTask: RenderTask | null = null;
     void document.getPage(page).then(pdfPage => {
       if (!alive || !canvasRef.current) return;
-      const base = pdfPage.getViewport({ scale: 1 });
+      const base = pdfPage.getViewport({ scale: 1, rotation: (pdfPage.rotate + rotation) % 360 });
       const scale = Math.min(0.24, 112 / Math.max(1, base.width));
-      const viewport = pdfPage.getViewport({ scale });
+      const viewport = pdfPage.getViewport({ scale, rotation: (pdfPage.rotate + rotation) % 360 });
       const canvas = canvasRef.current;
       canvas.width = Math.max(1, Math.round(viewport.width));
       canvas.height = Math.max(1, Math.round(viewport.height));
@@ -402,7 +410,7 @@ function PdfPageThumbnail({
       alive = false;
       renderTask?.cancel();
     };
-  }, [document, page]);
+  }, [document, page, rotation]);
 
   return (
     <button
@@ -459,6 +467,24 @@ export function PdfOverlayEditorModal({
   const [revision, setRevision] = useState(initial.revision);
   const [pageNumber, setPageNumber] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>({ width: 595, height: 842 });
+  const [displayRotations, setDisplayRotations] = useState<PageRotations>({});
+  const [directionError, setDirectionError] = useState('');
+  const [directionLoading, setDirectionLoading] = useState(false);
+  useEffect(() => {
+    const url = documentDisplaySettingsUrl(sourceUrl || '');
+    setDisplayRotations({}); setDirectionError('');
+    if (!open || !url) return;
+    const controller = new AbortController();
+    setDirectionLoading(true);
+    void fetch(url, { cache: 'no-store', signal: controller.signal }).then(async response => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '阅读方向读取失败，请关闭后重试');
+      setDisplayRotations(data.pageRotations);
+    }).catch(error => {
+      if (!controller.signal.aborted) setDirectionError(error instanceof Error ? error.message : '阅读方向读取失败');
+    }).finally(() => { if (!controller.signal.aborted) setDirectionLoading(false); });
+    return () => controller.abort();
+  }, [open, sourceUrl]);
   const [stageSize, setStageSize] = useState<StageSize>({ width: 720, height: 780 });
   const [zoom, setZoom] = useState(100);
   const [fitMode, setFitMode] = useState<'page' | 'width' | 'custom'>('page');
@@ -618,14 +644,16 @@ export function PdfOverlayEditorModal({
     };
   }, [minimized, open]);
 
+  const displayRotation = displayRotations[pageNumber] || 0;
+  const rotatedPageSize = displayRotation % 180 === 90 ? { width: pageSize.height, height: pageSize.width } : pageSize;
   const pageFitScale = useMemo(() => Math.max(0.1, Math.min(
-    Math.max(100, stageSize.width - 76) / Math.max(1, pageSize.width),
-    Math.max(100, stageSize.height - 76) / Math.max(1, pageSize.height),
-  )), [pageSize.height, pageSize.width, stageSize.height, stageSize.width]);
+    Math.max(100, stageSize.width - 76) / Math.max(1, rotatedPageSize.width),
+    Math.max(100, stageSize.height - 76) / Math.max(1, rotatedPageSize.height),
+  )), [rotatedPageSize.height, rotatedPageSize.width, stageSize.height, stageSize.width]);
   const widthFitScale = useMemo(() => Math.max(
     0.1,
-    Math.max(100, stageSize.width - 76) / Math.max(1, pageSize.width),
-  ), [pageSize.width, stageSize.width]);
+    Math.max(100, stageSize.width - 76) / Math.max(1, rotatedPageSize.width),
+  ), [rotatedPageSize.width, stageSize.width]);
   const displayScale = fitMode === 'page'
     ? pageFitScale
     : fitMode === 'width'
@@ -675,7 +703,7 @@ export function PdfOverlayEditorModal({
       alive = false;
       renderTaskRef.current?.cancel();
     };
-  }, [displayHeight, displayScale, displayWidth, minimized, pdfPage]);
+  }, [directionLoading, directionError, displayHeight, displayScale, displayWidth, minimized, pdfPage]);
 
   const pushHistory = useCallback((before: PdfOverlayAnnotation[]) => {
     if (annotationsSignature(before) === annotationsSignature(annotationsRef.current)) return;
@@ -1411,6 +1439,7 @@ export function PdfOverlayEditorModal({
                   <PdfPageThumbnail
                     document={pdfDocument}
                     page={page}
+                    rotation={displayRotations[page] || 0}
                     active={page === pageNumber}
                     changeCount={annotations.filter(item => item.page === page && !item.hidden).length}
                     onSelect={() => goToPage(page)}
@@ -1431,10 +1460,12 @@ export function PdfOverlayEditorModal({
             </div>
             <div ref={stageRef} className={styles.stage} data-tool={tool}>
               {identityError ? <div className={styles.stageError}><FileText size={28} /><strong>草稿身份校验失败</strong><span>{identityError}</span></div> : null}
-              {loading ? <div className={styles.stageState}><span className={styles.spinner} />正在加载原始 PDF…</div> : null}
+              {loading || directionLoading ? <div className={styles.stageState}><span className={styles.spinner} />正在加载原始 PDF 与阅读方向…</div> : null}
+              {directionError ? <div className={styles.stageError} role="alert">{directionError}</div> : null}
               {loadError ? <div className={styles.stageError}><FileText size={28} /><strong>PDF 无法加载</strong><span>{loadError}</span></div> : null}
-              {!identityError && !loading && !loadError && pdfPage ? (
-                <div className={styles.pageSurface} style={{ width: displayWidth, height: displayHeight }}>
+              {!identityError && !loading && !directionLoading && !directionError && !loadError && pdfPage ? (
+                <div style={{ position: 'relative', flexShrink: 0, width: rotatedPageSize.width * displayScale, height: rotatedPageSize.height * displayScale }}>
+                <div className={styles.pageSurface} style={{ position: 'absolute', left: '50%', top: '50%', width: displayWidth, height: displayHeight, transform: `translate(-50%, -50%) rotate(${displayRotation}deg)` }}>
                   <canvas ref={canvasRef} className={styles.pdfCanvas} />
                   {rendering ? <span className={styles.renderBadge}>渲染中</span> : null}
                   <svg
@@ -1473,6 +1504,7 @@ export function PdfOverlayEditorModal({
                     ) : null}
                   </svg>
                   {showOriginal ? <span className={styles.originalBadge}><Eye size={14} />原稿</span> : null}
+                </div>
                 </div>
               ) : null}
             </div>

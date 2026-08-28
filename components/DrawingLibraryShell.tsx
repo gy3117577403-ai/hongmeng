@@ -7,6 +7,7 @@ import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawing
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { requestPreviewLeave } from '@/components/DocumentOrientation';
 import {
   PdfOverlayEditorModal,
   type PdfOverlayDocument,
@@ -217,6 +218,7 @@ export function DrawingLibraryShell({
   const requestedActiveItem = initialItems.find(item => item.id === requestedItemId) || null;
   const [selectedId, setSelectedId] = useState(requestedItemId ? (requestedActiveItem?.id || '') : (initialItems[0]?.id || ''));
   const [selectedFileId, setSelectedFileId] = useState('');
+  const lastFilesByCategory = useRef<Record<string, string>>({});
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
   const [qualityWarningMode, setQualityWarningMode] = useState(false);
   const [qualityWarnings, setQualityWarnings] = useState<DrawingQualityWarning[]>([]);
@@ -430,7 +432,8 @@ export function DrawingLibraryShell({
   useEffect(() => {
     if (selectedFile && selectedFile.id !== selectedFileId) setSelectedFileId(selectedFile.id);
     if (!selectedFile) setSelectedFileId('');
-  }, [selectedFile, selectedFileId]);
+    if (selectedFile && selectedItem && activeCategory) lastFilesByCategory.current[`${selectedItem.id}:${activeCategory.id}`] = selectedFile.id;
+  }, [selectedFile, selectedFileId, selectedItem, activeCategory]);
 
   useEffect(() => {
     function closeTransientLayer(event: KeyboardEvent) {
@@ -638,10 +641,12 @@ export function DrawingLibraryShell({
   }
 
   function clearFilters() {
-    setKeyword('');
-    setFilter('all');
-    setCustomer('全部客户');
-    setSopFilter('all');
+    requestPreviewLeave(() => {
+      setKeyword('');
+      setFilter('all');
+      setCustomer('全部客户');
+      setSopFilter('all');
+    });
   }
 
   function openSopMetadataEditor() {
@@ -864,13 +869,18 @@ export function DrawingLibraryShell({
     }
   }
 
-  async function chooseItem(item: DrawingLibraryItemDTO) {
+  function chooseItem(item: DrawingLibraryItemDTO) {
+    if (item.id === selectedItem?.id) return;
+    requestPreviewLeave(() => { void chooseItemNow(item); });
+  }
+
+  async function chooseItemNow(item: DrawingLibraryItemDTO) {
     if (item.id === selectedItem?.id) return;
     setFilePanelOpen(false);
     setMissingReference(null);
     setReferenceResolving(false);
     setSelectedId(item.id);
-    setSelectedFileId('');
+    setSelectedFileId(lastFilesByCategory.current[`${item.id}:${activeCategoryId}`] || '');
     urlMissingWarnedRef.current = false;
     const url = new URL(window.location.href);
     url.searchParams.set('itemId', item.id);
@@ -878,15 +888,22 @@ export function DrawingLibraryShell({
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }
 
-  async function chooseCategory(category: ResourceCategoryDTO) {
+  function chooseCategory(category: ResourceCategoryDTO) {
+    if (category.id === activeCategoryId && !qualityWarningMode) return;
+    requestPreviewLeave(() => { void chooseCategoryNow(category); });
+  }
+
+  async function chooseCategoryNow(category: ResourceCategoryDTO) {
     if (category.id === activeCategoryId && !qualityWarningMode) return;
     setFilePanelOpen(false);
     setQualityWarningMode(false);
     setActiveCategoryId(category.id);
-    setSelectedFileId('');
+    setSelectedFileId(lastFilesByCategory.current[`${selectedItem?.id}:${category.id}`] || '');
   }
 
-  async function openProductTime(itemId: string) {
+  function openProductTime(itemId: string) { requestPreviewLeave(() => { void openProductTimeNow(itemId); }); }
+
+  async function openProductTimeNow(itemId: string) {
     const returnUrl = new URL(window.location.href);
     returnUrl.searchParams.set('itemId', itemId);
     if (selectedFile?.id) returnUrl.searchParams.set('fileId', selectedFile.id);
@@ -898,7 +915,9 @@ export function DrawingLibraryShell({
     });
   }
 
-  async function returnToPlanning() {
+  function returnToPlanning() { requestPreviewLeave(() => { void returnToPlanningNow(); }); }
+
+  async function returnToPlanningNow() {
     if (!planningReturnContext) return;
     window.location.replace(planningReturnContext.returnTo);
   }
@@ -948,14 +967,14 @@ export function DrawingLibraryShell({
             <span>搜索资料</span>
             <span className="hm-drawing-search-control">
               <Search size={16} aria-hidden="true" />
-              <input id="drawing-library-search" className="hm-workbench-input" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="客户、规格、品名或备注" />
-              {keyword && <button type="button" aria-label="清空搜索关键词" onClick={() => setKeyword('')}>清空</button>}
+              <input id="drawing-library-search" className="hm-workbench-input" value={keyword} onChange={event => { const value = event.target.value; requestPreviewLeave(() => setKeyword(value)); }} placeholder="客户、规格、品名或备注" />
+              {keyword && <button type="button" aria-label="清空搜索关键词" onClick={() => requestPreviewLeave(() => setKeyword(''))}>清空</button>}
             </span>
           </label>
 
           <label className="hm-drawing-customer-filter">
             <span>客户</span>
-            <select className="hm-workbench-input" value={customer} onChange={event => setCustomer(event.target.value)}>
+            <select className="hm-workbench-input" value={customer} onChange={event => { const value = event.target.value; requestPreviewLeave(() => setCustomer(value)); }}>
               {customers.map(item => <option key={`${item.customerName}-${item.customerCode || ''}`} value={item.customerName}>{item.customerName}（{item.itemCount}）</option>)}
               {!customers.length && <option value="全部客户">全部客户（0）</option>}
             </select>
@@ -963,14 +982,14 @@ export function DrawingLibraryShell({
 
           <label className="hm-drawing-status-filter">
             <span>状态</span>
-            <select className="hm-workbench-input" value={filter} onChange={event => setFilter(event.target.value as DrawingFilter)}>
+            <select className="hm-workbench-input" value={filter} onChange={event => { const value = event.target.value as DrawingFilter; requestPreviewLeave(() => setFilter(value)); }}>
               {filterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
           </label>
 
           <label className="hm-drawing-status-filter hm-drawing-sop-filter">
             <span>SOP</span>
-            <select className="hm-workbench-input" value={sopFilter} onChange={event => setSopFilter(event.target.value as SopFilter)}>
+            <select className="hm-workbench-input" value={sopFilter} onChange={event => { const value = event.target.value as SopFilter; requestPreviewLeave(() => setSopFilter(value)); }}>
               {sopFilterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
           </label>
@@ -983,7 +1002,7 @@ export function DrawingLibraryShell({
             <summary className="hm-workbench-button">更多筛选</summary>
             <div role="group" aria-label="快捷资料状态筛选">
               <span>资料状态</span>
-              {filterOptions.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}
+              {filterOptions.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" aria-pressed={filter === key} onClick={() => requestPreviewLeave(() => setFilter(key))}>{label}</button>)}
             </div>
           </details>
           <button className="hm-drawing-clear-filters" type="button" disabled={!hasActiveFilters} onClick={clearFilters}>清除筛选</button>
@@ -1089,14 +1108,14 @@ export function DrawingLibraryShell({
                     {selectedItem.fileCount > 0 && <small>{selectedItem.fileCount} 个文件</small>}
                     <small>更新于 {dt(selectedItem.updatedAt)}</small>
                     {selectedItem.isAnomaly && <small className="anomaly">{selectedItem.anomalyReason}</small>}
-                    {qualityWarnings.length > 0 && <button className="drawing-quality-warning-chip" type="button" onClick={() => { setQualityWarningMode(true); setFilePanelOpen(false); }}><ShieldAlert size={12} />{qualityWarnings.length} 条异常警示</button>}
+                    {qualityWarnings.length > 0 && <button className="drawing-quality-warning-chip" type="button" onClick={() => requestPreviewLeave(() => { setQualityWarningMode(true); setFilePanelOpen(false); })}><ShieldAlert size={12} />{qualityWarnings.length} 条异常警示</button>}
                   </p>
                 </div>
                 <div className="drawing-head-actions">
                   {canManageDrawing && isSopCategory && (
                     <div className="drawing-sop-mode-switch" role="group" aria-label="SOP 查看模式">
                       <button className="active" type="button" aria-pressed="true">文件预览</button>
-                      <button type="button" disabled={pdfOverlayOpening || selectedFile?.fileType !== 'pdf'} onClick={() => { void openPdfOverlayEditor(); }}>
+                      <button type="button" disabled={pdfOverlayOpening || selectedFile?.fileType !== 'pdf'} onClick={() => requestPreviewLeave(() => { void openPdfOverlayEditor(); })}>
                         {pdfOverlayOpening ? '正在打开...' : '在线编辑'}
                       </button>
                     </div>
@@ -1116,7 +1135,7 @@ export function DrawingLibraryShell({
 
               <div className="drawing-library-main">
                 <nav className="drawing-category-rail">
-                  <button className={`drawing-quality-warning-entry ${qualityWarningMode ? 'active' : ''} ${qualityWarnings.length ? 'has-warning' : ''}`} type="button" onClick={() => { setQualityWarningMode(true); setFilePanelOpen(false); }}>
+                  <button className={`drawing-quality-warning-entry ${qualityWarningMode ? 'active' : ''} ${qualityWarnings.length ? 'has-warning' : ''}`} type="button" onClick={() => requestPreviewLeave(() => { setQualityWarningMode(true); setFilePanelOpen(false); })}>
                     <ShieldAlert size={14} aria-hidden="true" />
                     <strong>异常警示</strong>
                     <em>{qualityWarningsLoading ? '…' : qualityWarnings.length}</em>
@@ -1243,7 +1262,7 @@ export function DrawingLibraryShell({
             <>
               <div className="drawing-files hm-scroll-region" tabIndex={0} aria-label={`当前分类文件，共 ${activeFiles.length} 个`}>
                 {activeFiles.map(file => (
-                  <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => setSelectedFileId(file.id)}>
+                  <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => requestPreviewLeave(() => setSelectedFileId(file.id))}>
                     <b>{file.fileType === 'pdf' ? 'PDF' : file.fileType === 'image' ? 'IMG' : 'FILE'}</b>
                     <span title={safeDisplayFilename(file)}>{safeDisplayFilename(file)}</span>
                     <em>{file.version || 'V1.0'} · {bytes(file.fileSize)}{file.controlMode ? ` · ${file.controlMode === 'controlled' ? '受控' : '未受控'}` : ''}</em>

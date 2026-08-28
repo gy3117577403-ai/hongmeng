@@ -39,6 +39,7 @@ export class WorkOrderQrServiceError extends Error {
 }
 
 export type WorkOrderTravelerSnapshot = {
+  documentOrientations?: Record<string, { revision: number; pageRotations: Record<string, number> }>;
   workOrderId: string;
   workOrderCode: string;
   businessWorkOrderCode?: string;
@@ -808,7 +809,19 @@ export async function createWorkOrderTravelerPrints(input: {
       drawingImagePaperSize,
       imageFit: 'contain' as const,
     },
+    documentOrientations: {} as Record<string, { revision: number; pageRotations: Record<string, number> }>,
   }));
+  const sourceFilesForOrientation = orderedOrders.flatMap(order => order.drawingLibraryItem?.files || []);
+  const displaySettings = await prisma.documentDisplaySetting.findMany({ where: { objectKey: { in: [...new Set(sourceFilesForOrientation.map(file => file.objectKey))] } } });
+  const displayByObject = new Map(displaySettings.map(setting => [setting.objectKey, setting]));
+  for (const snapshot of snapshots) {
+    for (const fileId of [snapshot.sopFileId, snapshot.drawingFileId]) {
+      if (!fileId) continue;
+      const file = sourceFilesForOrientation.find(candidate => candidate.id === fileId);
+      const setting = file ? displayByObject.get(file.objectKey) : null;
+      snapshot.documentOrientations[fileId] = { revision: setting?.revision || 0, pageRotations: (setting?.pageRotations || {}) as Record<string, number> };
+    }
+  }
   if (requiresSop) {
     const invalidSop = orderedOrders
       .map(order => materialReadiness(order, 'sop'))
@@ -897,6 +910,7 @@ export async function createWorkOrderTravelerPrints(input: {
               attachments: warning.attachments.map(photo => ({ id: photo.id, width: photo.imageWidth, height: photo.imageHeight, orientation: photo.imageOrientation, group: photo.printGroup, printIncluded: photo.printIncluded })),
             })),
             printRendering: snapshot.printRendering,
+            documentOrientations: snapshot.documentOrientations,
           })).digest('hex'),
           reprintReason,
           printedById: input.userId,

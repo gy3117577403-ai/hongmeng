@@ -30,6 +30,14 @@ function duplexRecord(): WorkOrderPrintPacketRecord {
   };
 }
 
+test('separate historical print records of one SOP retain their own frozen directions', async () => {
+  const first = duplexRecord();
+  const second = { ...duplexRecord(), printId: 'print-2', snapshot: { documentOrientations: { 'sop-1': { revision: 4, pageRotations: { '1': 90, '2': 270 } } } } };
+  const result = await buildWorkOrderPrintPacket({ records: [first, second], target: 'sop', sourceFiles: new Map([['sop-1', { bytes: await sourceSop(), fileName: 'SOP.pdf', mimeType: 'application/pdf' }]]) });
+  const pdf = await PDFDocument.load(result.bytes);
+  assert.deepEqual(pdf.getPages().map(page => page.getRotation().angle), [0, 90, 90, 0]);
+});
+
 test('duplex packet keeps native SOP page sizes and rotation and adds only a pairing blank', async () => {
   const result = await buildWorkOrderPrintPacket({
     records: [duplexRecord()],

@@ -6843,6 +6843,37 @@ input:focus-visible {
   display: none;
 }
 
+.document-preview-session { position: relative; min-width: 0; min-height: 0; height: 100%; flex: 1; display: flex; flex-direction: column; }
+.document-preview-panel { position: relative; min-width: 0; min-height: 0; height: 100%; flex: 1; }
+.document-preview-session.preview-fullscreen-backdrop { position: fixed; }
+.drawing-preview > .document-preview-session { flex: 1; min-height: 0; }
+.document-orientation-controls { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.document-orientation-controls .orientation-save.dirty { color: #b54708; background: #fff3e8; border-color: #fb923c; }
+.orientation-dirty { color: #b54708; font-size: 11px; white-space: nowrap; }
+.orientation-page-scope { display: flex; align-items: center; gap: 8px; padding: 10px; white-space: nowrap; }
+.document-orientation-controls .viewer-more > div > span { display: block; font-size: 11px; color: #64748b; padding: 8px; }
+.orientation-message { position: absolute; z-index: 5; bottom: 8px; left: 10px; right: 10px; padding: 8px 12px; background: #fff8ed; border: 1px solid #fed7aa; border-radius: 8px; color: #9a3412; font-size: 12px; pointer-events: none; }
+.orientation-confirm-backdrop { position: fixed; inset: 0; z-index: calc(var(--z-modal, 1000) + 100); display: grid; place-items: center; background: #0f172a80; padding: 20px; }
+.orientation-confirm { width: min(520px, 100%); padding: 24px; background: white; border-radius: 16px; box-shadow: 0 20px 70px #0004; color: #172b4d; }
+.orientation-confirm h3 { margin: 0 0 12px; }.orientation-confirm p { line-height: 1.7; overflow-wrap: anywhere; }
+.orientation-confirm footer { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; margin-top: 20px; }
+.orientation-confirm button { min-height: 40px; padding: 8px 14px; border: 1px solid #d9e2ef; border-radius: 8px; }
+.document-preview-session .viewer-controls { flex-wrap: wrap; }
+.document-preview-session .document-preview-panel :is(.pdf-viewer, .image-viewer).dashboard-preview-viewer .viewer-toolbar {
+  flex: 0 0 auto; height: auto; min-height: 46px; padding: 6px; align-items: stretch;
+}
+.document-preview-session .document-preview-panel :is(.pdf-viewer, .image-viewer).dashboard-preview-viewer .viewer-controls {
+  width: 100%; max-width: 100%; flex-wrap: wrap; justify-content: center; overflow: visible; gap: 5px;
+}
+.document-preview-session .document-preview-panel .document-orientation-controls {
+  flex: 0 0 100%; min-width: 0; flex-wrap: nowrap; justify-content: flex-start; gap: 5px;
+}
+.document-preview-session .document-preview-panel .document-orientation-controls > button,
+.document-preview-session .document-preview-panel .document-orientation-controls .viewer-more > summary {
+  min-height: 36px; min-width: 36px; padding: 0 9px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; white-space: nowrap;
+}
+.document-preview-session .document-preview-panel .document-orientation-controls .orientation-save { min-width: 80px; }
+
 .pdf-viewer,
 .image-viewer {
   min-width: 0;

@@ -8,6 +8,7 @@ import { CameraCaptureModal } from '@/components/CameraCaptureModal';
 import { ImageViewer } from '@/components/ImageViewer';
 import { LocalImportDialog, type LocalImportConnectionState, type LocalImportTaskView } from '@/components/LocalImportDialog';
 import { PdfViewer } from '@/components/PdfViewer';
+import { requestPreviewLeave } from '@/components/DocumentOrientation';
 import { PortalMenu } from '@/components/PortalMenu';
 import { useToastBridge } from '@/components/ToastProvider';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
@@ -777,6 +778,7 @@ export default function DashboardShell({
   const [managerOpen, setManagerOpen] = useState(false);
   const [managerCategory, setManagerCategory] = useState('all');
   const [sel, setSel] = useState('');
+  const lastFilesByCategory = useRef<Record<string, string>>({});
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>(initialWorkOrders[0]?.categoryFileCounts || {});
   const [loading, setLoading] = useState(false);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -961,6 +963,9 @@ export default function DashboardShell({
   const order = orders.find(o => o.id === wo) || orders[0];
   const category = categories.find(c => c.id === cat) || categories[0];
   const file = files.find(f => f.id === sel) || files[0];
+  useEffect(() => {
+    if (file) lastFilesByCategory.current[`${file.workOrderId}:${file.categoryId}`] = file.id;
+  }, [file]);
   const accountName = user.displayName || user.username;
   const currentCounts = order?.id === wo ? categoryCounts : order?.categoryFileCounts || {};
   const completedCategories = categories.filter(c => (currentCounts[c.id] || 0) > 0).length;
@@ -1221,7 +1226,8 @@ export default function DashboardShell({
       const nextFiles: ResourceFileDTO[] = Array.isArray(d.files) ? d.files : [];
       setFiles(nextFiles);
       setRelatedHistory(d.relatedHistory || null);
-      setSel(preferredFileId && nextFiles.some(f => f.id === preferredFileId) ? preferredFileId : nextFiles[0]?.id || '');
+      const remembered = preferredFileId || lastFilesByCategory.current[`${w}:${c}`];
+      setSel(remembered && nextFiles.some(f => f.id === remembered) ? remembered : nextFiles[0]?.id || '');
       setCategoryCounts(v => ({ ...v, [c]: nextFiles.length }));
       return nextFiles;
     } catch {
@@ -1495,7 +1501,11 @@ export default function DashboardShell({
     }
   }
 
-  async function openWorkOrder(targetId: string, targetCategoryId?: string, targetFileId?: string) {
+  function openWorkOrder(targetId: string, targetCategoryId?: string, targetFileId?: string) {
+    requestPreviewLeave(() => { void openWorkOrderNow(targetId, targetCategoryId, targetFileId); });
+  }
+
+  async function openWorkOrderNow(targetId: string, targetCategoryId?: string, targetFileId?: string) {
     setManagerOpen(false);
     setWo(targetId);
     if (targetCategoryId) setCat(targetCategoryId);
@@ -3131,7 +3141,7 @@ export default function DashboardShell({
             const count = currentCounts[c.id] || 0;
             const required = requiredCategoryCodes.has(c.code);
             return (
-              <button key={c.id} className={!managerOpen && c.id === category?.id ? 'active' : ''} type="button" aria-pressed={!managerOpen && c.id === category?.id} title={`${c.name}，${count} 个文件`} onClick={() => { setManagerOpen(false); setCat(c.id); }}>
+              <button key={c.id} className={!managerOpen && c.id === category?.id ? 'active' : ''} type="button" aria-pressed={!managerOpen && c.id === category?.id} title={`${c.name}，${count} 个文件`} onClick={() => requestPreviewLeave(() => { setManagerOpen(false); setCat(c.id); })}>
                 <span className="category-mark">{categoryIcons[c.code] || c.name.slice(0, 1)}</span>
                 <b className="category-name">{categoryNameLines(c).map(line => <span key={line}>{line}</span>)}</b>
                 <i className={count ? 'state-dot ok' : required ? 'state-dot warn' : 'state-dot'} />
@@ -3209,7 +3219,7 @@ export default function DashboardShell({
                   {files.length > 1 ? (
                     <label className="preview-file-switcher">
                       <span>{files.length} 个文件</span>
-                      <select aria-label="切换当前分类文件" value={file?.id || ''} onChange={event => setSel(event.target.value)}>
+                      <select aria-label="切换当前分类文件" value={file?.id || ''} onChange={event => { const next = event.target.value; requestPreviewLeave(() => setSel(next)); }}>
                         {files.map(item => <option value={item.id} key={item.id}>{displayFileName(item)} · {item.version || 'V1.0'}</option>)}
                       </select>
                     </label>

@@ -10,6 +10,7 @@ import {
   readPrintableSourceStream,
 } from '@/lib/printable-document';
 import { prisma } from '@/lib/prisma';
+import { orientationFromPrintSnapshot } from '@/lib/document-orientation';
 import { getObjectStream } from '@/lib/s3';
 import { drawingImagePaperSizeFromSnapshot } from '@/lib/work-order-qr-service';
 
@@ -52,7 +53,8 @@ export async function GET(_req: NextRequest, { params }: { params: { printId: st
       }, { status: 409 });
     }
     const stream = await getObjectStream(file.objectKey);
-    if (format !== 'pdf') {
+    const orientation = orientationFromPrintSnapshot(item.print.snapshot, item.fileId);
+    if (format !== 'pdf' || Object.keys(orientation.pageRotations).length) {
       if (file.size > MAX_SOURCE_BYTES) {
         return NextResponse.json({ ok: false, error: `${filename} 超过 50MB，无法转换打印` }, { status: 413 });
       }
@@ -61,6 +63,7 @@ export async function GET(_req: NextRequest, { params }: { params: { printId: st
         bytes: await readPrintableSourceStream(stream, { fileName: filename, maxBytes: MAX_SOURCE_BYTES }),
         fileName: filename,
         mimeType: file.mimeType,
+        pageRotations: orientation.pageRotations,
         imagePaperSize: paperSize,
         title: `${filename} 原图打印版`,
       });

@@ -2,10 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { apiRouteAccessRule, canAccessApiRoute } from '../lib/api-route-access';
 import { resolveAccessContext, type AccessGrant } from '../lib/department-access';
+import { canSaveDocumentOrientation } from '../lib/document-orientation-access';
 
 function context(grant: AccessGrant) {
   return resolveAccessContext([grant], { now: '2026-08-10T08:00:00.000Z' });
 }
+
+test('document direction writes use the source owner instead of broader work-order access', () => {
+  const reader = context({ profile: 'DRAWING_LIBRARY_READER', grantType: 'PRIMARY', scopeKey: 'GLOBAL' });
+  const editor = context({ profile: 'DRAWING_LIBRARY_EDITOR', grantType: 'PRIMARY', scopeKey: 'GLOBAL' });
+  const business = context({ profile: 'DEPARTMENT_FULL', departmentCode: 'BUSINESS', grantType: 'PRIMARY', scopeKey: 'GLOBAL' });
+  const path = '/api/drawing-library/files/file-1/display-settings';
+  assert.equal(canAccessApiRoute(reader, path, 'GET'), true);
+  assert.equal(canAccessApiRoute(reader, path, 'PATCH'), false);
+  assert.equal(canSaveDocumentOrientation(reader, true), false);
+  assert.equal(canSaveDocumentOrientation(editor, true), true);
+  assert.equal(canAccessApiRoute(business, '/api/resource-files/file-1/display-settings', 'PATCH'), true);
+  assert.equal(canSaveDocumentOrientation(business, false), true);
+  assert.equal(canSaveDocumentOrientation(business, true), false);
+});
 
 test('HR account routes allow basic employee management and reset but never grants or destructive administration', () => {
   const hr = context({ profile: 'DEPARTMENT_FULL', departmentCode: 'HR', grantType: 'PRIMARY', scopeKey: 'DEPARTMENT:HR' });
