@@ -444,12 +444,12 @@ function buildDiffs(
   for (const entry of next.entries) {
     const before = beforeByKey.get(entry.occurrenceKey);
     if (!before || before.processDefinitionId !== entry.processDefinitionId) {
-      const requestedPolicy = policies[entry.occurrenceKey] || null;
-      const policy = entry.isCritical
-        ? requestedPolicy === 'FUTURE_ONLY' || requestedPolicy === 'RECALL_REWORK'
-          ? requestedPolicy
-          : null
-        : requestedPolicy || 'AUTO_BY_PROGRESS';
+      // The product master owns a single, mandatory rule for all inserted
+      // operations: unstarted routes receive the normal full route, while
+      // started and still-open routes receive a full-target supplemental
+      // obligation.  Per-process overrides previously allowed the exact same
+      // product version to mean different work on different orders.
+      const policy: ProductTimeInsertPolicy = 'FULL_WORK_ORDER_REQUIRED';
       diffs.push({
         kind: 'insert',
         occurrenceKey: entry.occurrenceKey,
@@ -462,7 +462,7 @@ function buildDiffs(
         newUnitMilliseconds: entryStandard(entry).standardMillisecondsPerUnit,
         isCritical: entry.isCritical,
         policy,
-        policyRequired: entry.isCritical && !policy,
+        policyRequired: false,
       });
       if (before) {
         diffs.push({
@@ -718,27 +718,7 @@ function previewFromContext(
   const { profile, previous, routes } = context;
   const policies = normalizeProductTimeInsertPolicies(policiesInput);
   const diffs = buildDiffs(previous, profile, policies);
-  const inProgressMissingCriticalKeys = new Set<string>();
-  for (const route of routes) {
-    if (routeState(route) !== 'in_progress') continue;
-    for (const entry of routeDeploymentDrift(route, profile).createdEntries) {
-      if (entry.isCritical) inProgressMissingCriticalKeys.add(entry.occurrenceKey);
-    }
-  }
   const conflicts: ProductTimeDeploymentConflictDTO[] = [];
-  for (const diff of diffs) {
-    if (diff.kind !== 'insert' || !diff.isCritical) continue;
-    const policyRequired = inProgressMissingCriticalKeys.has(diff.occurrenceKey) && !diff.policy;
-    diff.policyRequired = policyRequired;
-    if (!inProgressMissingCriticalKeys.has(diff.occurrenceKey) && !diff.policy) {
-      diff.policy = 'AUTO_BY_PROGRESS';
-    }
-    if (!policyRequired) continue;
-    conflicts.push({
-      code: 'CRITICAL_PROCESS_POLICY_REQUIRED',
-      message: `${diff.processName} 已标记为安全/质量关键工序，发布前必须明确选择“仅未来/未开工产品生效”或“召回返工”`,
-    });
-  }
   let supplementObligations = 0;
   let keptCompleted = 0;
   let systemCoveredQty = 0;
@@ -849,8 +829,7 @@ function previewFromContext(
     } else {
       for (const entry of drift.createdEntries) {
         const diff = diffs.find(item => item.kind === 'insert' && item.occurrenceKey === entry.occurrenceKey);
-        const policy = diff?.policy
-          || (state === 'unstarted' || !entry.isCritical ? 'AUTO_BY_PROGRESS' : policies[entry.occurrenceKey]);
+        const policy = diff?.policy || 'FULL_WORK_ORDER_REQUIRED';
         if (!policy) {
           conflicts.push({
             code: 'CRITICAL_PROCESS_POLICY_REQUIRED',
@@ -2127,12 +2106,7 @@ async function applyRouteDeployment(
         'PRODUCT_TIME_SUPPLEMENT_QUANTITY_REQUIRED',
       );
     }
-    const insertDiff = input.diffs.find(diff => (
-      diff.kind === 'insert' && diff.occurrenceKey === entry.occurrenceKey
-    ));
-    const insertPolicy = insertDiff?.policy
-      || input.policies[entry.occurrenceKey]
-      || (!facts || !entry.isCritical ? 'AUTO_BY_PROGRESS' : null);
+    const insertPolicy: ProductTimeInsertPolicy = 'FULL_WORK_ORDER_REQUIRED';
     if (!insertPolicy) {
       throw new ProductTimeDeploymentError(
         `${entry.processDefinition.name} 缺少新增工序生效策略，请重新预览`,

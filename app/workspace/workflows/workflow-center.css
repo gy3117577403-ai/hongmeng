@@ -2193,6 +2193,23 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   font-size: 11px;
 }
 
+.hm-workflow-center .workflow-flow-node-ledgers {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 5px;
+  color: #8b5a32;
+  font-size: 7px;
+  line-height: 1.3;
+}
+
+.hm-workflow-center .workflow-flow-node-ledgers span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .hm-workflow-center .workflow-flow-progress {
   height: 4px;
   margin-top: 5px;

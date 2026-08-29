@@ -372,6 +372,11 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
       : step.inputQty;
     const displayedProcessedQuantity = supplement?.reportedQty ?? step.processedQty;
     const reportedGoodQuantity = supplement?.reportedQty ?? step.goodOutputQty;
+    const reportedQuantity = supplement?.reportedQty
+      ?? step.completions.reduce((total, completion) => total + completion.processedQty, 0);
+    const reportTargetQuantity = supplement
+      ? processSupplementActualRequiredQty(supplement)
+      : targetQuantity ?? step.inputQty;
     const latestExecution = step.executions[0] || null;
     const latestCompletion = step.completions[0] || null;
     const laborClaims = step.processLaborPools
@@ -426,6 +431,10 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
       supplementRemainingQuantity: supplement ? processSupplementRemainingQty(supplement) : null,
       supplementFulfillmentMode: supplement?.fulfillmentMode || null,
       supplementReleasePolicy: supplement?.releasePolicy || null,
+      reportTargetQuantity,
+      reportedQuantity,
+      materialInputQuantity: step.inputQty,
+      materialProcessedQuantity: step.processedQty,
       laborEligibleQuantity,
       laborClaimedQuantity,
       laborRemainingQuantity,

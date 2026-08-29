@@ -378,6 +378,8 @@ test(
       assert.equal(previewV3.conflicts.some(conflict => conflict.code === 'MOVE_CROSSES_QUANTITY_FACTS'), false);
       assert.equal(previewV3.routes.find(route => route.workOrderId === order.id)?.movedProcesses, 2);
       assert.equal(previewV3.routes.find(route => route.workOrderId === order.id)?.insertedProcesses, 1);
+      assert.equal(previewV3.routes.find(route => route.workOrderId === order.id)?.systemCoveredQty, 0);
+      assert.equal(previewV3.routes.find(route => route.workOrderId === order.id)?.actualRequiredQty, 10);
       await publishProductTimeDeployment({
         itemId: item.id,
         actorId: actor.id,
@@ -386,7 +388,13 @@ test(
       });
       const moved = await prisma.workOrderProcessRoute.findUniqueOrThrow({
         where: { id: order.processRoute.id },
-        include: { steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
+        include: {
+          steps: {
+            where: { retiredAt: null },
+            orderBy: { position: 'asc' },
+            include: { supplementObligation: { include: { coverage: true } } },
+          },
+        },
       });
       assert.deepEqual(moved.steps.map(step => step.processName), ['穿号码管', '套热缩管', '裁线']);
       const insertedStep = moved.steps.find(step => step.processName === '套热缩管');
@@ -395,6 +403,13 @@ test(
       assert.equal(insertedStep.productTimeEntryId, v3.entries[1].id);
       assert.equal(insertedStep.productTimeProfileVersion, 3);
       assert.equal(insertedStep.executionMode, ProcessStepExecutionMode.SUPPLEMENTAL_OBLIGATION);
+      assert.ok(insertedStep.supplementObligation);
+      assert.equal(insertedStep.supplementObligation.requiredQty, 10);
+      assert.equal(insertedStep.supplementObligation.systemCoveredQty, 0);
+      assert.equal(insertedStep.supplementObligation.fulfillmentMode, 'ACTUAL');
+      assert.equal(insertedStep.supplementObligation.status, 'ACTIVE');
+      assert.equal(insertedStep.supplementObligation.coverage?.policy, 'FULL_WORK_ORDER_REQUIRED');
+      assert.equal(insertedStep.supplementObligation.coverage?.actualRequiredQty, 10);
       const movedCompletion = await prisma.processCompletion.findUniqueOrThrow({ where: { id: completionA.id } });
       assert.equal(movedCompletion.productTimeProfileId, v3.id);
       assert.equal(movedCompletion.productTimeProfileVersion, 3);

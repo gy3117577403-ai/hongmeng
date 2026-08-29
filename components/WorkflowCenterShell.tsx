@@ -897,6 +897,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                         <span>{processed.toLocaleString()} / {input.toLocaleString()} {unitLabel}</span>
                                         <b>{progress}%</b>
                                       </div>
+                                      {(step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+                                        || (step.reportTargetQuantity || 0) > (step.materialInputQuantity || 0)) && <div className="workflow-flow-node-ledgers" role="status">
+                                        <span>{step.executionMode === 'SUPPLEMENTAL_OBLIGATION' ? '报工义务' : '自由可报'} {(step.reportedQuantity || 0).toLocaleString()} / {(step.reportTargetQuantity || 0).toLocaleString()} {unitLabel}</span>
+                                        <span>物料核销 {(step.materialProcessedQuantity || 0).toLocaleString()} / {(step.materialInputQuantity || 0).toLocaleString()} {unitLabel}</span>
+                                      </div>}
                                       <div className="workflow-flow-progress" aria-label={`${step.label}完成${progress}%`}><span style={{ transform: `scaleX(${progress / 100})` }} /></div>
                                       <footer><span><Clock3 size={12} />{formatDuration(step.standardMillisecondsPerUnit, laborUnitLabel)}</span><span><UserRound size={12} />{laborStatusText}</span></footer>
                                     </button>;

@@ -1772,7 +1772,11 @@ export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived' | 'dis
 export type ProductTimeDeploymentStatus = 'preview' | 'pending' | 'applying' | 'active' | 'failed';
 
 export type ProductTimeDeploymentDiffKind = 'insert' | 'move' | 'update_time' | 'delete';
-export type ProductTimeInsertPolicy = 'AUTO_BY_PROGRESS' | 'FUTURE_ONLY' | 'RECALL_REWORK';
+export type ProductTimeInsertPolicy =
+  | 'FULL_WORK_ORDER_REQUIRED'
+  | 'AUTO_BY_PROGRESS'
+  | 'FUTURE_ONLY'
+  | 'RECALL_REWORK';
 
 export type ProductTimeDeploymentWorkOrderState = 'unstarted' | 'in_progress' | 'completed';
 
@@ -3264,6 +3268,10 @@ export type WorkflowStepDTO = {
   supplementRemainingQuantity?: number | null;
   supplementFulfillmentMode?: 'ACTUAL' | 'MIXED' | 'SYSTEM_COVERED' | 'FUTURE_ONLY' | 'RECALL_REQUIRED' | null;
   supplementReleasePolicy?: string | null;
+  reportTargetQuantity?: number;
+  reportedQuantity?: number;
+  materialInputQuantity?: number;
+  materialProcessedQuantity?: number;
   remainingGoodQuantity?: number | null;
   laborEligibleQuantity?: number;
   laborClaimedQuantity?: number;

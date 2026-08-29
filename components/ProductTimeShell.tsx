@@ -68,7 +68,6 @@ import type {
   ProductTimePlanningScope,
   ProductTimePlanningSummaryDTO,
   ProductTimeProfileDTO,
-  ProductTimeInsertPolicy,
   ProcessReportQuantityBasis,
   ProcessReportingPolicy,
   ProcessStageGroup,
@@ -466,7 +465,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [deploymentPreview, setDeploymentPreview] = useState<ProductTimeDeploymentPreviewDTO | null>(null);
   const [deployment, setDeployment] = useState<ProductTimeDeploymentDTO | null>(null);
   const [deploymentError, setDeploymentError] = useState('');
-  const [insertPolicies, setInsertPolicies] = useState<Record<string, ProductTimeInsertPolicy>>({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [libraryKeyword, setLibraryKeyword] = useState('');
@@ -1447,9 +1445,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
   }
 
-  async function openPublishPreview(
-    policyOverride?: Record<string, ProductTimeInsertPolicy>,
-  ): Promise<void> {
+  async function openPublishPreview(): Promise<void> {
     if (!selectedItem || !activeDraft) {
       setError('请先保存产品工时草稿');
       return;
@@ -1458,8 +1454,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setError('当前内容尚未保存，请先保存草稿再发布');
       return;
     }
-    const nextPolicies = policyOverride || (deploymentOpen ? insertPolicies : {});
-    if (!deploymentOpen && !policyOverride) setInsertPolicies({});
     setDeploymentOpen(true);
     setDeploymentPreviewLoading(true);
     setDeploymentPreview(null);
@@ -1472,7 +1466,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           expectedRevision: activeDraft.revision,
-          policies: nextPolicies,
+          policies: {},
         }),
       });
       const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
@@ -1491,12 +1485,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     } finally {
       setDeploymentPreviewLoading(false);
     }
-  }
-
-  function chooseInsertPolicy(occurrenceKey: string, policy: ProductTimeInsertPolicy): void {
-    const next = { ...insertPolicies, [occurrenceKey]: policy };
-    setInsertPolicies(next);
-    void openPublishPreview(next);
   }
 
   function closeDeployment(): void {
@@ -1522,7 +1510,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         body: JSON.stringify({
           expectedRevision: activeDraft.revision,
           previewToken: deploymentPreview.previewToken,
-          policies: insertPolicies,
+          policies: {},
         }),
       });
       const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
@@ -1723,8 +1711,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const deploymentRoutes = deployment?.routes || deploymentPreview?.routes || [];
   const deploymentConflicts = deployment?.conflicts || deploymentPreview?.conflicts || [];
   const deploymentProgress = deployment ? productTimeDeploymentProgress(deployment) : null;
-  const criticalPolicyPending = !deployment
-    && deploymentDiffs.some(diff => diff.kind === 'insert' && diff.policyRequired);
   const failedDeploymentRoutes = deployment ? failedProductTimeDeploymentRoutes(deployment) : [];
   const deploymentStatus = deployment?.status || deploymentPreview?.status || 'preview';
   const planningPeriodText = planningSummary?.weekStartDate && planningSummary?.weekEndDate
@@ -2314,12 +2300,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
           <div id="product-time-deployment-description" className="product-time-deployment-scope">
             <Route size={17} aria-hidden="true" />
-            <span><strong>已完成冻结历史，在制强制迁移，未开工执行完整新路线</strong><small>在制工单同步新工序、顺序和工时，并校正扫码员工效率；系统历史承接只写独立审计记录，不伪造人员报工。关键工序仍需明确选择仅未来生效或召回返工。</small></span>
+            <span><strong>未开工执行完整新路线，在制新增工序按整单全套补报，已完成冻结历史</strong><small>在制且尚未闭环的工单，每一道新增工序都按该工单有效目标数量建立独立报工义务；不伪造入站数量、不重复转序或增加成品。</small></span>
           </div>
 
           {deploymentError && <div className="product-time-deployment-error" role="alert"><AlertTriangle size={17} aria-hidden="true" /><span>{deploymentError}</span></div>}
 
-          {deploymentPreviewLoading && <div className="product-time-deployment-loading"><LoaderCircle className="spin" size={26} aria-hidden="true" /><strong>正在核对全部关联工单</strong><span>计算每个新增工序的历史边界、系统承接量、剩余实报量和并发冲突…</span></div>}
+          {deploymentPreviewLoading && <div className="product-time-deployment-loading"><LoaderCircle className="spin" size={26} aria-hidden="true" /><strong>正在核对全部关联工单</strong><span>计算每道新增工序的整单目标、实际待报量、完成状态和并发冲突…</span></div>}
 
           {!deploymentPreviewLoading && (deploymentPreview || deployment) && <div className="product-time-deployment-body hm-scroll-region" tabIndex={0}>
             <section className="product-time-deployment-section" aria-labelledby="product-time-deployment-change-title">
@@ -2339,17 +2325,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                     : diff.kind === 'move'
                       ? `第 ${diff.oldSequence ?? '—'} 道 → 第 ${diff.newSequence ?? '—'} 道`
                       : diff.kind === 'insert'
-                        ? `插入第 ${diff.newSequence ?? '—'} 道 · ${diff.policy === 'FUTURE_ONLY' ? '已开工路线仅审计，未开工路线执行' : diff.policy === 'RECALL_REWORK' ? '历史路线要求召回返工' : '按实际工序进度自动拆分'}`
+                        ? `插入第 ${diff.newSequence ?? '—'} 道 · 未完成工单整单全套补报`
                         : `原第 ${diff.oldSequence ?? '—'} 道；已报工历史不物理删除`}</em>
-                  {diff.kind === 'insert' && diff.isCritical && <div className="product-time-insert-policy" role="group" aria-label={`${diff.processName} 生效策略`}>
-                    <span>关键工序生效策略</span>
-                    {deployment
-                      ? <strong>{diff.policy === 'RECALL_REWORK' ? '召回返工' : '仅未开工路线生效'}</strong>
-                      : <>
-                        <button type="button" className={diff.policy === 'FUTURE_ONLY' ? 'selected' : ''} aria-pressed={diff.policy === 'FUTURE_ONLY'} disabled={deploymentPreviewLoading || publishing} onClick={() => chooseInsertPolicy(diff.occurrenceKey, 'FUTURE_ONLY')}>仅未开工路线</button>
-                        <button type="button" className={diff.policy === 'RECALL_REWORK' ? 'selected danger' : 'danger'} aria-pressed={diff.policy === 'RECALL_REWORK'} disabled={deploymentPreviewLoading || publishing} onClick={() => chooseInsertPolicy(diff.occurrenceKey, 'RECALL_REWORK')}>召回返工</button>
-                      </>}
-                    {diff.policyRequired && <small>必须选择后才能发布</small>}
+                  {diff.kind === 'insert' && <div className="product-time-insert-policy" role="status" aria-label={`${diff.processName} 生效策略`}>
+                    <span>在制工单生效策略</span>
+                    <strong>整单全套补报</strong>
+                    <small>未开工进入正常路线；在制生成独立补报义务；已完成保持冻结</small>
                   </div>}
                 </article>)}
                 {!deploymentDiffs.length && <p>草稿与当前正式版本没有工序或工时差异。</p>}
@@ -2363,9 +2344,9 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 <span><small>原二维码</small><strong>{deploymentImpact.qrTickets}</strong><em>无需重印，扫码读取最新路线</em></span>
                 <span><small>受影响扫码报工</small><strong>{deploymentImpact.historicalReports}</strong><em>调序、删除或工时变化均同步有效口径，原始扫码事实保留</em></span>
                 <span><small>影响员工</small><strong>{deploymentImpact.affectedEmployees}</strong><em>{deploymentImpact.attainmentRecords} 条个人效率记录重算</em></span>
-                <span><small>系统历史承接</small><strong>{deploymentImpact.systemCoveredQty ?? 0}</strong><em>独立审计，不生成员工报工/工时</em></span>
-                <span><small>剩余实际执行</small><strong>{deploymentImpact.actualRequiredQty ?? 0}</strong><em>仅未越过新增工序的产品需实报</em></span>
-                <span><small>保持已完成</small><strong>{criticalPolicyPending ? '待策略' : deploymentImpact.keptCompleted ?? 0}</strong><em>{criticalPolicyPending ? '关键工序选择策略后重新计算' : '默认不反向打开历史完成工单'}</em></span>
+                <span><small>系统历史承接</small><strong>{deploymentImpact.systemCoveredQty ?? 0}</strong><em>未完成工单新增工序固定为 0，不替员工完成</em></span>
+                <span><small>新增工序实际待报</small><strong>{deploymentImpact.actualRequiredQty ?? 0}</strong><em>按每张未完成工单、每道新增工序的全套目标累计</em></span>
+                <span><small>保持已完成</small><strong>{deploymentImpact.keptCompleted ?? 0}</strong><em>已完成历史工单不由产品版本发布自动重开</em></span>
                 <span><small>历史承接生成报工</small><strong>{deploymentImpact.generatedLaborRecords ?? 0}</strong><em>固定为 0，不归属管理员或员工</em></span>
                 <span><small>承接审计记录</small><strong>{deploymentImpact.supplementObligations}</strong><em>系统承接、混合执行、仅未来或召回均留痕</em></span>
                 <span className={deploymentImpact.conflicts ? 'conflict' : 'safe'}><small>发布冲突</small><strong>{deploymentImpact.conflicts}</strong><em>{deploymentImpact.conflicts ? '必须处理后才能正式生效' : '当前未发现阻断项'}</em></span>
@@ -2401,11 +2382,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 ? '发布未完整成功，旧正式版本继续有效；请处理冲突或重试失败项。'
                 : deploymentBusy
                   ? '正在原子同步；请勿重复发布。'
-                  : '确认后才会修改正式版本与关联路线；历史承接不会伪造任何人员报工。'}</span>
+                  : '确认后才会修改正式版本与关联路线；在制新增工序按整单全套建立真实补报义务，不改变既有物料数量。'}</span>
             <div>
               <button className="hm-workbench-button" type="button" onClick={closeDeployment}>{deploymentBusy ? '后台同步，关闭详情' : deployment?.status === 'active' ? '完成' : '关闭'}</button>
               {!deployment && <button className="hm-workbench-button" type="button" disabled={deploymentPreviewLoading || publishing} onClick={() => void openPublishPreview()}><RefreshCw size={15} aria-hidden="true" />重新计算影响</button>}
-              {!deployment && deploymentPreview && <button className="hm-workbench-button primary" type="button" disabled={publishing || !deploymentPreview.canPublish} onClick={() => void publish()}><QrCode size={15} aria-hidden="true" />{publishing ? '正在启动发布' : `确认发布并强制迁移 ${deploymentImpact?.workOrders.inProgress || 0} 张在制工单`}</button>}
+              {!deployment && deploymentPreview && <button className="hm-workbench-button primary" type="button" disabled={publishing || !deploymentPreview.canPublish} onClick={() => void publish()}><QrCode size={15} aria-hidden="true" />{publishing ? '正在启动发布' : `确认发布并同步 ${((deploymentImpact?.workOrders.unstarted || 0) + (deploymentImpact?.workOrders.inProgress || 0))} 张未完成工单`}</button>}
               {deployment?.status === 'failed' && failedDeploymentRoutes.length > 0 && <button className="hm-workbench-button primary" type="button" disabled={deploymentRetrying} onClick={() => void retryDeployment()}><RefreshCw className={deploymentRetrying ? 'spin' : ''} size={15} aria-hidden="true" />{deploymentRetrying ? '正在重试' : `一键重试 ${failedDeploymentRoutes.length} 个失败项`}</button>}
             </div>
           </footer>

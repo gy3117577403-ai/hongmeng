@@ -32,7 +32,7 @@ test('completed historical routes are system-covered without reopening or labor 
   });
 });
 
-test('in-progress routes split at the real boundary and report only unfinished quantity', () => {
+test('legacy auto-by-progress keeps its historical boundary split for old deployment records', () => {
   const projection = projectProductTimeCoverage({
     routeTargetQty: 24,
     routeHasFacts: true,
@@ -61,6 +61,31 @@ test('in-progress routes split at the real boundary and report only unfinished q
   }), 5);
 });
 
+test('in-progress routes require the full work-order target for every newly inserted process', () => {
+  const projection = projectProductTimeCoverage({
+    routeTargetQty: 24,
+    routeHasFacts: true,
+    routeCompleted: false,
+    hasNextExistingStep: true,
+    downstreamHasFacts: true,
+    boundaryProgressQty: 15,
+    policy: 'FULL_WORK_ORDER_REQUIRED',
+  });
+
+  assert.deepEqual(projection, {
+    execution: 'supplement',
+    policy: 'FULL_WORK_ORDER_REQUIRED',
+    fulfillmentMode: 'ACTUAL',
+    routeTargetQty: 24,
+    obligationRequiredQty: 24,
+    systemCoveredQty: 0,
+    actualRequiredQty: 24,
+    obligationStatus: 'ACTIVE',
+    shouldReopenCompletedRoute: false,
+    excludedFromExistingRoute: false,
+  });
+});
+
 test('unstarted routes receive the full new process as a normal route step', () => {
   const projection = projectProductTimeCoverage({
     routeTargetQty: 24,
@@ -69,7 +94,7 @@ test('unstarted routes receive the full new process as a normal route step', () 
     hasNextExistingStep: true,
     downstreamHasFacts: false,
     boundaryProgressQty: 0,
-    policy: 'AUTO_BY_PROGRESS',
+    policy: 'FULL_WORK_ORDER_REQUIRED',
   });
 
   assert.equal(projection.execution, 'normal');
@@ -114,9 +139,11 @@ test('policy input accepts only supported values and stable occurrence keys', ()
   assert.deepEqual(normalizeProductTimeInsertPolicies({
     criticalA: 'future_only',
     criticalB: 'RECALL_REWORK',
+    inserted: 'full_work_order_required',
     ignored: 'ADMIN_COMPLETE',
   }), {
     criticalA: 'FUTURE_ONLY',
     criticalB: 'RECALL_REWORK',
+    inserted: 'FULL_WORK_ORDER_REQUIRED',
   });
 });

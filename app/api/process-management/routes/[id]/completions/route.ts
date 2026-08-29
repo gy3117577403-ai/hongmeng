@@ -12,6 +12,9 @@ import {
   loadProcessCompletionContext,
   ProcessCompletionServiceError,
 } from '@/lib/process-completion-service';
+import { completeProcessSupplementObligation } from '@/lib/process-route-change-service';
+import { processRouteChangeErrorResponse } from '@/lib/process-route-change-api';
+import { dispatchProcessRouteChangeOutboxBestEffort } from '@/lib/process-route-change-notifications';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,36 +77,60 @@ export async function POST(
       remark?: unknown;
       idempotencyKey?: unknown;
       expectedRouteVersion?: unknown;
+      obligationId?: unknown;
+      expectedObligationVersion?: unknown;
     };
-    const data = await completeProcessStep({
-      routeId: params.id,
-      stepId: body.stepId,
-      processedQty: body.processedQty,
-      defectQty: body.defectQty,
-      reportedUnitQty: body.reportedUnitQty,
-      reportedDefectUnitQty: body.reportedDefectUnitQty,
-      defectDisposition: body.defectDisposition,
-      workDate: body.workDate,
-      employeeIds: body.employeeIds,
-      team: body.team,
-      workstation: body.workstation,
-      remark: body.remark,
-      requireParticipants: true,
-      autoAssignLabor: true,
-      idempotencyKey: body.idempotencyKey,
-      expectedRouteVersion: body.expectedRouteVersion,
-      userId: user.id,
-      actor: user.displayName || user.username,
-    });
+    const actor = user.displayName || user.username;
+    const data = body.obligationId
+      ? await completeProcessSupplementObligation({
+          obligationId: String(body.obligationId),
+          routeId: params.id,
+          expectedVersion: body.expectedObligationVersion,
+          expectedRouteVersion: body.expectedRouteVersion,
+          processedQty: body.processedQty,
+          defectQty: body.defectQty,
+          reportedUnitQty: body.reportedUnitQty,
+          reportedDefectUnitQty: body.reportedDefectUnitQty,
+          defectDisposition: body.defectDisposition,
+          workDate: body.workDate,
+          employeeIds: Array.isArray(body.employeeIds)
+            ? body.employeeIds.map(employeeId => String(employeeId))
+            : [],
+          team: body.team,
+          workstation: body.workstation,
+          remark: body.remark,
+          idempotencyKey: body.idempotencyKey,
+          userId: user.id,
+          actor,
+        })
+      : await completeProcessStep({
+          routeId: params.id,
+          stepId: body.stepId,
+          processedQty: body.processedQty,
+          defectQty: body.defectQty,
+          reportedUnitQty: body.reportedUnitQty,
+          reportedDefectUnitQty: body.reportedDefectUnitQty,
+          defectDisposition: body.defectDisposition,
+          workDate: body.workDate,
+          employeeIds: body.employeeIds,
+          team: body.team,
+          workstation: body.workstation,
+          remark: body.remark,
+          requireParticipants: true,
+          autoAssignLabor: true,
+          idempotencyKey: body.idempotencyKey,
+          expectedRouteVersion: body.expectedRouteVersion,
+          userId: user.id,
+          actor,
+        });
+    if ('changeId' in data && data.changeId) {
+      await dispatchProcessRouteChangeOutboxBestEffort({ changeId: data.changeId, limit: 2 });
+    }
     return NextResponse.json({ ok: true, data });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof ForbiddenError) return forbidden(error.message);
     if (error instanceof ProcessCompletionServiceError) return serviceError(error);
-    console.error('process completion failed', error);
-    return NextResponse.json(
-      { ok: false, error: '生产完成记录保存失败' },
-      { status: 500 },
-    );
+    return processRouteChangeErrorResponse(error, '生产完成记录保存失败');
   }
 }

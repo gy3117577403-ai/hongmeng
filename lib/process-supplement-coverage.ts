@@ -1,4 +1,5 @@
 export const PRODUCT_TIME_INSERT_POLICIES = [
+  'FULL_WORK_ORDER_REQUIRED',
   'AUTO_BY_PROGRESS',
   'FUTURE_ONLY',
   'RECALL_REWORK',
@@ -89,6 +90,26 @@ export function projectProductTimeCoverage(input: {
       systemCoveredQty: 0,
       actualRequiredQty: routeTargetQty,
       obligationStatus: 'ACTIVE',
+      shouldReopenCompletedRoute: false,
+      excludedFromExistingRoute: false,
+    };
+  }
+
+  // Product-time publication applies every newly inserted operation to the
+  // complete target of an already-started, still-open work order.  The work is
+  // recorded as an isolated supplemental obligation so it can be reported
+  // immediately without inventing material input or releasing quantity to
+  // downstream operations a second time.
+  if (input.policy === 'FULL_WORK_ORDER_REQUIRED' && !input.routeCompleted) {
+    return {
+      execution: 'supplement',
+      policy: input.policy,
+      fulfillmentMode: 'ACTUAL',
+      routeTargetQty,
+      obligationRequiredQty: routeTargetQty,
+      systemCoveredQty: 0,
+      actualRequiredQty: routeTargetQty,
+      obligationStatus: routeTargetQty > 0 ? 'ACTIVE' : 'FULFILLED',
       shouldReopenCompletedRoute: false,
       excludedFromExistingRoute: false,
     };

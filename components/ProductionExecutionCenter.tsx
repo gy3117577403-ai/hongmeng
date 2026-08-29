@@ -498,6 +498,17 @@ type ProcessCompletionContext = {
     reportQuantityBasis: ProcessReportQuantityBasis;
     reportUnitLabel: string;
     unitsPerProduct: number;
+    executionMode: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+    supplementObligation: {
+      id: string;
+      requiredQty: number;
+      systemCoveredQty: number;
+      actualRequiredQty: number;
+      reportedQty: number;
+      remainingQty: number;
+      status: string;
+      version: number;
+    } | null;
   };
   routeSteps: Array<{
     id: string;
@@ -521,6 +532,17 @@ type ProcessCompletionContext = {
     reportedDefectUnitQty: number;
     reportableUnitQty: number;
     availableCoverageQty: number;
+    executionMode: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+    supplementObligation: {
+      id: string;
+      requiredQty: number;
+      systemCoveredQty: number;
+      actualRequiredQty: number;
+      reportedQty: number;
+      remainingQty: number;
+      status: string;
+      version: number;
+    } | null;
   }>;
   targetQty: number;
   nextSteps: Array<{
@@ -2315,12 +2337,17 @@ export default function ProductionExecutionCenter({
     const reportedUnitQty = actionReporting ? Number(reportedUnitText) : processedQty;
     const reportedDefectUnitQty = actionReporting ? Number(reportedDefectUnitText) : defectQty;
     const reportedGoodUnitQty = reportedUnitQty - reportedDefectUnitQty;
+    const supplement = completionContext.step.supplementObligation;
     if (!Number.isSafeInteger(processedQty) || processedQty < 0 || processedQty > completionContext.reportableQty) {
       setCompletionError(`本次报工不能超过该工序剩余可报数量 ${formatProductionQuantity(completionContext.reportableQty)}`);
       return;
     }
     if (!Number.isSafeInteger(defectQty) || defectQty < 0 || defectQty > processedQty) {
       setCompletionError('不良品数量不能超过本次实际处理数量');
+      return;
+    }
+    if (supplement && defectQty > 0) {
+      setCompletionError('补充工序不重复改变整套质量分支，整套不良必须为 0');
       return;
     }
     if (actionReporting && (
@@ -2370,6 +2397,8 @@ export default function ProductionExecutionCenter({
           remark: completionForm.remark,
           idempotencyKey: completionIdempotencyKey,
           expectedRouteVersion: completionContext.routeVersion,
+          obligationId: supplement?.id,
+          expectedObligationVersion: supplement?.version,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -2390,7 +2419,11 @@ export default function ProductionExecutionCenter({
       ) || completionOrder.processRoute?.currentStep;
       const autoAssignedEmployeeCount = Math.max(0, Number(body.data.autoAssignedEmployeeCount) || 0);
       const pendingCoverageQty = Math.max(0, Number(body.data.pendingCoverageQty) || 0);
-      const laborMessage = body.data.laborPoolPendingStandard
+      const laborMessage = supplement
+        ? Number(body.data.standardLaborMilliseconds || 0) > 0
+          ? '，真实标准工时已自动建账'
+          : '，本次未生成标准工时'
+        : body.data.laborPoolPendingStandard
         ? '，工时已记入待补标准清单'
         : autoAssignedEmployeeCount > 0
         ? `，标准工时已自动记入 ${autoAssignedEmployeeCount} 名作业员工`
@@ -2409,7 +2442,12 @@ export default function ProductionExecutionCenter({
         : goodQty > 0
           ? `${formatProductionQuantity(goodQty)} ${unitLabel}良品已登记，等待同组工序齐套后转序`
           : '本批没有良品可流转';
-      const transferMessage = actionReporting
+      const supplementMessage = supplement
+        ? `${formatProductionQuantity(processedQty)} ${unitLabel}补充报工已登记，剩余 ${formatProductionQuantity(Number(body.data.remainingQty) || 0)} ${unitLabel}；不重复向后序转数量`
+        : '';
+      const transferMessage = supplement
+        ? supplementMessage
+        : actionReporting
         ? `${formatProductionQuantity(reportedGoodUnitQty)} ${completionContext.step.reportUnitLabel}合格动作已登记，${productTransferMessage}`
         : productTransferMessage;
       setToast(`${transferMessage}${laborMessage}${branchMessage}`);
@@ -3644,6 +3682,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   const stepSnapshot = order.processRoute?.steps.find(step => step.id === context?.step.id) || order.processRoute?.currentStep;
   const unitLabel = stepSnapshot?.unitLabel || '件';
   const actionReporting = context?.step.reportQuantityBasis === 'action';
+  const supplement = context?.step.supplementObligation || null;
   const reportUnitLabel = context?.step.reportUnitLabel || '个';
   const reportedUnitQty = value && /^\d+$/.test(value.reportedUnitQty.trim()) ? Number(value.reportedUnitQty) : 0;
   const reportedDefectUnitQty = value && /^\d+$/.test(value.reportedDefectUnitQty.trim()) ? Number(value.reportedDefectUnitQty) : 0;
@@ -3680,7 +3719,9 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       : standardLaborMilliseconds > 0
         ? `自动记入 ${durationText(standardLaborMilliseconds)}`
         : '本次不生成';
-  const nextProcessText = context?.nextSteps.length
+  const nextProcessText = supplement
+    ? '独立补报，不重复转序'
+    : context?.nextSteps.length
     ? context.nextSteps.map(step => step.processName).join(' / ')
     : '成品入库';
   const selectedStep = activeSteps.find(step => step.id === selectedStepId)
@@ -3694,7 +3735,9 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   const submitText = '确认报工并自动记工';
   const waitsForParallelGroup = !!context
     && (order.processRoute?.steps.filter(step => step.sequenceGroup === context.step.sequenceGroup).length || 0) > 1;
-  const goodDestinationHint = advanceReporting
+  const goodDestinationHint = supplement
+    ? '登记真实工时，不重复转序或增加成品'
+    : advanceReporting
     ? `先记录报工，前序补齐后自动进入 ${nextProcessText}`
     : waitsForParallelGroup
       ? `同组齐套后进入 ${nextProcessText}`
@@ -3735,6 +3778,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
     || !Number.isSafeInteger(defectQty)
     || defectQty < 0
     || defectQty > processedQty
+    || (!!supplement && defectQty > 0)
     || (actionReporting && (
       !Number.isSafeInteger(reportedUnitQty)
       || !Number.isSafeInteger(reportedDefectUnitQty)
@@ -3755,7 +3799,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
           <strong id="process-completion-title">{completionTitle}</strong>
           <small id="process-completion-order">{order.customerName || '客户待补充'} · {specText(order)}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>
         </div>
-        {!loading && context && <div className="process-completion-next-badge"><span>下一步</span><strong>{nextProcessText}</strong></div>}
+        {!loading && context && <div className="process-completion-next-badge"><span>{supplement ? '补报规则' : '下一步'}</span><strong>{nextProcessText}</strong></div>}
         <button type="button" disabled={saving} aria-label="关闭转序弹窗" onClick={close}><X size={20} aria-hidden="true" /></button>
       </header>
 
@@ -3799,19 +3843,24 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
             <div><strong>自由报工 · 待前序自动核销</strong><small>本次可先登记中间或后道工序；物料数量始终保持非负，前序报工补齐后系统会按工艺顺序自动核销并流转。</small></div>
             <span>预计待核销 {formatProductionQuantity(estimatedPendingCoverageQty)} {unitLabel}</span>
           </section>}
+          {supplement && <section className="process-completion-advance-note" role="status">
+            <AlertTriangle size={20} aria-hidden="true" />
+            <div><strong>整单补充报工 · 独立数量账</strong><small>本工序按整张工单目标独立报工，不受普通物料投入量限制；完成后不重复向后序转数量，也不重复增加成品。</small></div>
+            <span>剩余可报 {formatProductionQuantity(context.reportableQty)} {unitLabel}</span>
+          </section>}
           <section className="process-completion-route" aria-label="本次工序流转">
             <div><span>报工工序</span><strong>{context.step.processName}</strong><small>第 {context.step.position} 道 · 第 {context.step.sequenceGroup} 顺序组</small></div>
             <ArrowRight size={20} aria-hidden="true" />
-            <div><span>良品进入</span><strong>{nextProcessText}</strong><small>{context.nextSteps.length > 1 ? `${context.nextSteps.length} 道并行工序` : context.nextSteps.length ? '下一道工序' : '成品入库'}</small></div>
+            <div><span>{supplement ? '完成后' : '良品进入'}</span><strong>{nextProcessText}</strong><small>{supplement ? '仅形成真实报工与工时' : context.nextSteps.length > 1 ? `${context.nextSteps.length} 道并行工序` : context.nextSteps.length ? '下一道工序' : '成品入库'}</small></div>
             <dl>
               {actionReporting && <div><dt>累计合格动作</dt><dd>{formatProductionQuantity(context.reportedGoodUnitQty)} / {formatProductionQuantity(context.reportTargetQty)} {reportUnitLabel}</dd></div>}
               <div><dt>累计已报</dt><dd>{formatProductionQuantity(context.reportedQty)} {unitLabel}</dd></div>
-              <div><dt>累计已核销</dt><dd>{formatProductionQuantity(context.coveredReportedQty)} {unitLabel}</dd></div>
+              <div><dt>{supplement ? '整单目标' : '累计已核销'}</dt><dd>{formatProductionQuantity(supplement?.actualRequiredQty ?? context.coveredReportedQty)} {unitLabel}</dd></div>
             </dl>
           </section>
 
           <section className="process-completion-quantity-panel" aria-label="本次完成数量">
-            <header><div><strong>{actionReporting ? '实际动作与整套流转' : '本次报工数量'}</strong><small>{actionReporting ? `剩余合格动作 ${formatProductionQuantity(context.reportableUnitQty)} ${reportUnitLabel}；整套剩余 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : `剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}；当前已到料可核销 ${formatProductionQuantity(context.remainingInputQty)} ${unitLabel}`}</small></div><label className="process-completion-work-date"><span><CalendarDays size={16} aria-hidden="true" />生产日期</span><input type="date" max={todayShanghaiDateKey()} value={value.workDate} disabled={saving} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label></header>
+            <header><div><strong>{actionReporting ? '实际动作与整套流转' : '本次报工数量'}</strong><small>{actionReporting ? `剩余合格动作 ${formatProductionQuantity(context.reportableUnitQty)} ${reportUnitLabel}；整套剩余 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : supplement ? `整单目标 ${formatProductionQuantity(supplement.actualRequiredQty)} ${unitLabel}；剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : `剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}；当前已到料可核销 ${formatProductionQuantity(context.remainingInputQty)} ${unitLabel}`}</small></div><label className="process-completion-work-date"><span><CalendarDays size={16} aria-hidden="true" />生产日期</span><input type="date" max={todayShanghaiDateKey()} value={value.workDate} disabled={saving} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label></header>
             {actionReporting && <p className="process-completion-action-note">实际动作量用于计算工时；只有形成完整产品的数量才推进下一工序。每套标准为 {formatProductionQuantity(context.step.unitsPerProduct)} {reportUnitLabel}。</p>}
             <div className={`process-completion-quantity-grid${actionReporting ? ' action' : ''}`}>
               {actionReporting && <>
@@ -3829,8 +3878,8 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
                 <div><input autoFocus={!actionReporting} inputMode="numeric" pattern="[0-9]*" min={actionReporting ? 0 : 1} max={context.reportableQty} step="1" value={value.processedQty} disabled={saving} onChange={event => setValue({ ...value, processedQty: event.target.value })} /><em>{unitLabel}</em></div>
               </label>
               <label>
-                <span>{actionReporting ? '整套不良' : '不良品'}</span>
-                <div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty || context.reportableQty} step="1" value={value.defectQty} disabled={saving} onChange={event => setValue({ ...value, defectQty: event.target.value })} /><em>{unitLabel}</em></div>
+                <span>{supplement ? '整套不良（不重复分支）' : actionReporting ? '整套不良' : '不良品'}</span>
+                <div><input inputMode="numeric" pattern="[0-9]*" min="0" max={supplement ? 0 : processedQty || context.reportableQty} step="1" value={value.defectQty} disabled={saving || !!supplement} onChange={event => setValue({ ...value, defectQty: event.target.value })} /><em>{unitLabel}</em></div>
               </label>
               <div className="process-completion-good" aria-live="polite"><span>{actionReporting ? '本次合格动作 / 整套良品' : '本次良品'}</span><strong>{actionReporting ? <>{formatProductionQuantity(reportedGoodUnitQty)} <small>{reportUnitLabel}</small> · {formatProductionQuantity(goodQty)} <small>{unitLabel}</small></> : <>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></>}</strong><em>{goodDestinationHint}</em></div>
             </div>
@@ -3914,7 +3963,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
 
         <aside className="process-completion-summary" aria-label="确认结果">
           <header><CheckCircle2 size={20} aria-hidden="true" /><div><strong>确认结果</strong><small>提交前请核对</small></div></header>
-          <div className={`process-completion-summary-hero${advanceReporting ? ' pending' : ''}`}><span>{actionReporting ? '合格动作 / 整套良品' : advanceReporting ? '本次先报工' : '本次良品'}</span><strong>{actionReporting ? <>{formatProductionQuantity(reportedGoodUnitQty)} <small>{reportUnitLabel}</small> · {formatProductionQuantity(goodQty)} <small>{unitLabel}</small></> : <>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></>}</strong><em>{advanceReporting ? `前序补齐后自动核销至 ${nextProcessText}` : waitsForParallelGroup ? `齐套后进入 ${nextProcessText}` : `进入 ${nextProcessText}`}</em></div>
+          <div className={`process-completion-summary-hero${advanceReporting ? ' pending' : ''}`}><span>{actionReporting ? '合格动作 / 整套良品' : advanceReporting ? '本次先报工' : '本次良品'}</span><strong>{actionReporting ? <>{formatProductionQuantity(reportedGoodUnitQty)} <small>{reportUnitLabel}</small> · {formatProductionQuantity(goodQty)} <small>{unitLabel}</small></> : <>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></>}</strong><em>{supplement ? '计入补报义务，不重复转序' : advanceReporting ? `前序补齐后自动核销至 ${nextProcessText}` : waitsForParallelGroup ? `齐套后进入 ${nextProcessText}` : `进入 ${nextProcessText}`}</em></div>
           <dl>
             <div><dt>{actionReporting ? '动作 / 整套不良' : '不良品'}</dt><dd className={defectQty > 0 || reportedDefectUnitQty > 0 ? 'danger' : ''}>{actionReporting ? `${formatProductionQuantity(reportedDefectUnitQty)} ${reportUnitLabel} / ${formatProductionQuantity(defectQty)} ${unitLabel}` : `${formatProductionQuantity(defectQty)} ${unitLabel}`}</dd></div>
             <div><dt>自动记工</dt><dd>{laborSummary}</dd></div>
@@ -3938,7 +3987,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       {error && context && <div className="form-error" role="alert">{error}</div>}
       </div>
       <footer className="dialog-actions">
-        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : needsWorkerExceptionConfirmation && !workerExceptionConfirmed ? '请确认本次非预选作业人员' : actionReporting ? `将登记 ${formatProductionQuantity(reportedGoodUnitQty)} ${reportUnitLabel}合格动作、${formatProductionQuantity(goodQty)} ${unitLabel}整套良品` : advanceReporting ? `将先登记 ${formatProductionQuantity(processedQty)} ${unitLabel}，待前序自动核销` : `将报工并自动记入 ${selectedEmployees.length} 人工时`}</span>
+        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : needsWorkerExceptionConfirmation && !workerExceptionConfirmed ? '请确认本次非预选作业人员' : supplement ? `将补报 ${formatProductionQuantity(processedQty)} ${unitLabel}并记入 ${selectedEmployees.length} 人真实工时，不重复转序` : actionReporting ? `将登记 ${formatProductionQuantity(reportedGoodUnitQty)} ${reportUnitLabel}合格动作、${formatProductionQuantity(goodQty)} ${unitLabel}整套良品` : advanceReporting ? `将先登记 ${formatProductionQuantity(processedQty)} ${unitLabel}，待前序自动核销` : `将报工并自动记入 ${selectedEmployees.length} 人工时`}</span>
         <button type="button" disabled={saving} onClick={close}>取消</button>
         <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在报工...' : submitText}</button>
       </footer>
