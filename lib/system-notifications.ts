@@ -16,9 +16,20 @@ import { prisma } from '@/lib/prisma';
 
 export const SYSTEM_NOTIFICATION_CATEGORIES = ['SYSTEM', 'ACCOUNT', 'TODO', 'APPROVAL'] as const;
 export const SYSTEM_NOTIFICATION_PRIORITIES = ['NORMAL', 'HIGH', 'URGENT'] as const;
+export const NOTIFICATION_BUSINESS_CATEGORIES = ['PRODUCTION', 'QUALITY', 'PROCESS', 'MATERIAL', 'SYSTEM'] as const;
 
 export type SystemNotificationCategory = typeof SYSTEM_NOTIFICATION_CATEGORIES[number];
 export type SystemNotificationPriority = typeof SYSTEM_NOTIFICATION_PRIORITIES[number];
+export type NotificationBusinessCategory = typeof NOTIFICATION_BUSINESS_CATEGORIES[number];
+
+export type NotificationClassificationInput = {
+  eventType?: string | null;
+  category?: SystemNotificationCategory | null;
+  priority?: SystemNotificationPriority | null;
+  title?: string | null;
+  targetRoute?: string | null;
+  sourceType?: string | null;
+};
 
 type NotificationTx = Prisma.TransactionClient;
 
@@ -47,6 +58,60 @@ export type NotificationInboxQuery = {
 
 function text(value: unknown, maxLength: number): string {
   return String(value || '').trim().slice(0, maxLength);
+}
+
+function notificationSearchText(input: NotificationClassificationInput): string {
+  return [input.eventType, input.title, input.targetRoute, input.sourceType]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+}
+
+function includesNotificationToken(value: string, tokens: readonly string[]): boolean {
+  return tokens.some(token => value.includes(token));
+}
+
+/**
+ * Project system categories describe delivery semantics (todo, approval,
+ * account, system). The home command center needs an orthogonal business
+ * classification so a supervisor can triage by the affected operating area.
+ */
+export function notificationBusinessCategory(
+  input: NotificationClassificationInput,
+): NotificationBusinessCategory {
+  const source = String(input.sourceType || '').toLowerCase();
+  if (includesNotificationToken(source, ['internal_quality_risk', 'issue_major_approval', 'quality'])) return 'QUALITY';
+  if (includesNotificationToken(source, ['process_route', 'process_time', 'product_time', 'process_reporting'])) return 'PROCESS';
+  if (includesNotificationToken(source, ['warehouse', 'material', 'procurement', 'stock'])) return 'MATERIAL';
+  if (includesNotificationToken(source, ['production', 'work_order', 'weekly_plan', 'planning'])) return 'PRODUCTION';
+
+  const value = notificationSearchText(input);
+  if (includesNotificationToken(value, [
+    'internal_quality_risk', 'issue_major_approval', 'quality', '质量', '检验', '8d',
+  ])) return 'QUALITY';
+  if (includesNotificationToken(value, [
+    'process_route', 'process_time', 'product_time', 'process_reporting', '/workspace/changes',
+    '工艺', '工序', '报工', '变更',
+  ])) return 'PROCESS';
+  if (includesNotificationToken(value, [
+    'warehouse', 'material', 'procurement', 'stock', '物料', '缺料', '仓库', '到货', '采购',
+  ])) return 'MATERIAL';
+  if (includesNotificationToken(value, [
+    'production', 'work_order', 'weekly_plan', 'planning', '/production', '工单', '生产', '周计划', '设备',
+  ])) return 'PRODUCTION';
+  return 'SYSTEM';
+}
+
+export function notificationRequiresAction(input: NotificationClassificationInput): boolean {
+  if (input.category === 'TODO' || input.category === 'APPROVAL') return true;
+  return Boolean(input.targetRoute && (input.priority === 'HIGH' || input.priority === 'URGENT'));
+}
+
+export function notificationSnoozedUntil(minutes: number, now = new Date()): Date {
+  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 7 * 24 * 60) {
+    throw new Error('稍后提醒时间必须在 5 分钟到 7 天之间');
+  }
+  return new Date(now.getTime() + minutes * 60_000);
 }
 
 function departmentCode(value?: string | null): DepartmentCode | null {
@@ -271,9 +336,17 @@ export async function loadNotificationInbox(
   const where: Prisma.SystemNotificationRecipientWhereInput = {
     userId,
     ...(query.unreadOnly ? { readAt: null } : {}),
+    OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
     notification: { is: notificationWhere },
   };
-  const [recipients, unreadCount] = await Promise.all([
+  const activeSummaryWhere: Prisma.SystemNotificationRecipientWhereInput = {
+    userId,
+    OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
+    notification: {
+      is: { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+    },
+  };
+  const [recipients, summaryRecipients] = await Promise.all([
     prisma.systemNotificationRecipient.findMany({
       where,
       include: {
@@ -287,14 +360,40 @@ export async function loadNotificationInbox(
       ],
       take: limit + 1,
     }),
-    prisma.systemNotificationRecipient.count({
-      where: {
-        userId,
-        readAt: null,
-        notification: { is: { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] } },
+    prisma.systemNotificationRecipient.findMany({
+      where: activeSummaryWhere,
+      select: {
+        readAt: true,
+        notification: {
+          select: {
+            eventType: true,
+            category: true,
+            priority: true,
+            title: true,
+            targetRoute: true,
+            sourceType: true,
+          },
+        },
       },
     }),
   ]);
+  const businessCategoryCounts: Record<NotificationBusinessCategory, number> = {
+    PRODUCTION: 0,
+    QUALITY: 0,
+    PROCESS: 0,
+    MATERIAL: 0,
+    SYSTEM: 0,
+  };
+  let actionableCount = 0;
+  let urgentCount = 0;
+  let unreadCount = 0;
+  for (const recipient of summaryRecipients) {
+    const notification = recipient.notification as NotificationClassificationInput;
+    businessCategoryCounts[notificationBusinessCategory(notification)] += 1;
+    if (notificationRequiresAction(notification)) actionableCount += 1;
+    if (notification.priority === 'URGENT') urgentCount += 1;
+    if (!recipient.readAt) unreadCount += 1;
+  }
   const hasMore = recipients.length > limit;
   const page = hasMore ? recipients.slice(0, limit) : recipients;
   const notifications = page.map(recipient => {
@@ -302,6 +401,14 @@ export async function loadNotificationInbox(
     const targetRoute = notification.targetRoute && canAccessAppRoute(access, notification.targetRoute)
       ? notification.targetRoute
       : null;
+    const classificationInput: NotificationClassificationInput = {
+      eventType: notification.eventType,
+      category: notification.category as SystemNotificationCategory,
+      priority: notification.priority as SystemNotificationPriority,
+      title: notification.title,
+      targetRoute,
+      sourceType: notification.sourceType,
+    };
     return {
       id: notification.id,
       eventType: notification.eventType,
@@ -313,7 +420,10 @@ export async function loadNotificationInbox(
       sourceType: notification.sourceType,
       sourceId: notification.sourceId,
       actorName: notification.actor?.displayName || notification.actor?.username || null,
+      businessCategory: notificationBusinessCategory(classificationInput),
+      requiresAction: notificationRequiresAction(classificationInput),
       readAt: recipient.readAt?.toISOString() || null,
+      snoozedUntil: recipient.snoozedUntil?.toISOString() || null,
       createdAt: notification.createdAt.toISOString(),
     };
   });
@@ -321,6 +431,9 @@ export async function loadNotificationInbox(
   return {
     notifications,
     unreadCount,
+    actionableCount,
+    urgentCount,
+    businessCategoryCounts,
     nextCursor: hasMore && last
       ? encodeCursor({ createdAt: last.createdAt.toISOString(), id: last.id })
       : null,
@@ -339,9 +452,27 @@ export async function setNotificationReadState(
   return result.count === 1;
 }
 
-export async function markAllNotificationsRead(userId: string): Promise<number> {
+export async function snoozeNotification(
+  userId: string,
+  notificationId: string,
+  minutes: number,
+): Promise<Date | null> {
+  const snoozedUntil = notificationSnoozedUntil(minutes);
   const result = await prisma.systemNotificationRecipient.updateMany({
-    where: { userId, readAt: null },
+    where: { userId, notificationId },
+    data: { readAt: null, snoozedUntil },
+  });
+  return result.count === 1 ? snoozedUntil : null;
+}
+
+export async function markAllNotificationsRead(userId: string): Promise<number> {
+  const now = new Date();
+  const result = await prisma.systemNotificationRecipient.updateMany({
+    where: {
+      userId,
+      readAt: null,
+      OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
+    },
     data: { readAt: new Date() },
   });
   return result.count;

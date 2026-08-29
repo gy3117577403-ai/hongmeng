@@ -477,6 +477,7 @@ export type CurrentUserDTO = {
 export type SystemNotificationCategoryDTO = 'SYSTEM' | 'ACCOUNT' | 'TODO' | 'APPROVAL';
 
 export type SystemNotificationPriorityDTO = 'NORMAL' | 'HIGH' | 'URGENT';
+export type NotificationBusinessCategoryDTO = 'PRODUCTION' | 'QUALITY' | 'PROCESS' | 'MATERIAL' | 'SYSTEM';
 
 export type SystemNotificationDTO = {
   id: string;
@@ -489,7 +490,10 @@ export type SystemNotificationDTO = {
   sourceType: string | null;
   sourceId: string | null;
   actorName: string | null;
+  businessCategory: NotificationBusinessCategoryDTO;
+  requiresAction: boolean;
   readAt: string | null;
+  snoozedUntil: string | null;
   createdAt: string;
 };
 

@@ -27,6 +27,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import HomeNotificationCommandCenter from '@/components/home/HomeNotificationCommandCenter';
 import { PortalMenu } from '@/components/PortalMenu';
 import type { CurrentUserDTO, SystemNotificationDTO } from '@/types';
 import type {
@@ -398,7 +399,6 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const productionStream = data.workstreams.find(stream => stream.id === 'production');
   const materialStream = data.workstreams.find(stream => stream.id === 'material');
   const laborStream = data.workstreams.find(stream => stream.id === 'labor');
-  const warehouseStream = data.workstreams.find(stream => stream.id === 'warehouse');
   const drawingKpi = data.kpis.find(kpi => kpi.id === 'drawing');
   const drawingCount = drawingKpi?.value
     ?? data.technicalDistribution.reduce((sum, item) => sum + item.value, 0);
@@ -451,19 +451,6 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       Icon: FileCheck2,
     },
     {
-      id: 'issue',
-      position: 'issue',
-      label: '问题管理',
-      eyebrow: '质量闭环',
-      value: data.issues.length,
-      unit: '项',
-      badge: data.issues.length > 0 ? `待处理 ${data.issues.length}` : '运行正常',
-      detail: data.issues[0]?.title || '当前没有未关闭问题',
-      route: '/workspace/issues',
-      tone: data.issues.length > 0 ? 'red' : 'green',
-      Icon: ShieldCheck,
-    },
-    {
       id: 'production',
       position: 'production',
       label: '生产执行',
@@ -492,6 +479,19 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       stream: materialStream,
     },
     {
+      id: 'quality',
+      position: 'quality',
+      label: '质量管理',
+      eyebrow: '质量管控',
+      value: data.issues.length,
+      unit: '项',
+      badge: data.issues.length > 0 ? `待处理 ${data.issues.length}` : '运行正常',
+      detail: data.issues[0]?.title || '当前没有未关闭问题',
+      route: '/workspace/quality-tasks',
+      tone: data.issues.length > 0 ? 'red' : 'green',
+      Icon: ShieldCheck,
+    },
+    {
       id: 'labor',
       position: 'labor',
       label: '今日工时',
@@ -506,9 +506,17 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       stream: laborStream,
     },
   ];
-  const insightDrawings = data.todayNodes.slice(0, 3);
-  const priorityRisks = data.actionItems.slice(0, 3);
-  const qualityIssues = data.issues.slice(0, 3);
+  const planCompletionRate = data.planChart.total > 0
+    ? Math.round((data.planChart.completed / data.planChart.total) * 100)
+    : null;
+  const onTimeRate = data.planChart.total > 0
+    ? Math.max(0, Math.round(((data.planChart.total - data.planChart.overdue) / data.planChart.total) * 100))
+    : null;
+  const technicalTotal = data.technicalDistribution.reduce((sum, item) => sum + item.value, 0);
+  const technicalComplete = data.technicalDistribution.find(item => item.id === 'complete')?.value || 0;
+  const technicalCompleteRate = technicalTotal > 0
+    ? Math.round((technicalComplete / technicalTotal) * 100)
+    : null;
 
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST', cache: 'no-store' });
@@ -547,7 +555,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   }
 
   return (
-    <main className={`hm-home-shell hm-workbench-root hm-collab-root ${hasOperationalData ? 'has-live-data' : 'is-plan-empty'}`}>
+    <main className={`hm-home-shell hm-workbench-root hm-hcc-root ${hasOperationalData ? 'has-live-data' : 'is-plan-empty'}`}>
       <AppWorkbenchHeader
         user={user}
         activeHref="/home"
@@ -592,124 +600,91 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><Link href="/workspace/help" prefetch={false}><b>使用帮助</b><span>查看平台模块和规划入口</span></Link>{canOpenSettings && <Link href="/dashboard?openSettings=1" prefetch={false}><b>系统设置</b><span>安装、诊断和账号设置</span></Link>}</div>}
       </PortalMenu>
 
-      <div className="hm-home-frame hm-collab-frame">
-        {data.error && <div className="hm-home-error hm-collab-error" role="alert"><span>首页数据加载失败</span><p>{data.error}</p><button type="button" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
+      <div className="hm-home-frame hm-hcc-frame">
+        {data.error && <div className="hm-home-error hm-hcc-error" role="alert"><span>首页数据加载失败</span><p>{data.error}</p><button type="button" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
 
-        <section
-          className="hm-collab-workbench"
-          aria-labelledby="hm-collab-title"
-          onPointerMove={handleScenePointerMove}
-          onPointerLeave={resetScenePointer}
-        >
-          <div className="hm-collab-scene-background" aria-hidden="true" />
-          <header className="hm-collab-scene-heading">
-            <div>
-              <span>协同运行总览</span>
-              <p>{data.greeting}，{displayName} · {data.dateLabel} · {data.periodLabel}</p>
-            </div>
-            <div className="hm-collab-live-state" aria-live="polite">
-              <i className={refreshing ? 'refreshing' : ''} aria-hidden="true" />
-              <span><strong>{refreshing ? '正在同步' : '数据已连接'}</strong><small>{updatedTime(data.generatedAt)} 更新</small></span>
-            </div>
-          </header>
-
-          <svg className="hm-collab-paths" viewBox="0 0 1000 560" preserveAspectRatio="none" aria-hidden="true">
-            <path className="path-blue path-one" d="M500 282 C430 210 350 130 245 105" />
-            <path className="path-blue path-two" d="M500 282 C570 205 660 128 765 108" />
-            <path className="path-red path-three" d="M500 282 C390 270 290 270 155 290" />
-            <path className="path-green path-four" d="M500 282 C620 272 720 270 845 292" />
-            <path className="path-orange path-five" d="M500 282 C430 360 345 432 245 455" />
-            <path className="path-green path-six" d="M500 282 C570 360 655 432 760 455" />
-          </svg>
-
-          <div className="hm-collab-core" aria-label={`本周协同执行率${progressRate === null ? '暂未生成' : `${progressRate}%`}`}>
-            <div className="hm-collab-core-platform" aria-hidden="true" />
-            <div className="hm-collab-core-disc">
-              <span className="hm-collab-core-icon" aria-hidden="true"><UsersRound size={24} /></span>
-              <small id="hm-collab-title">本周协同执行率</small>
-              <strong>{progressRate === null ? '--' : progressRate}<em>{progressRate === null ? '' : '%'}</em></strong>
-              <p>{data.planChart.completed} 项完成 · {data.planChart.inProgress} 项进行中</p>
-              <Link href={hasOperationalData ? '/production' : planWorkbenchRoute} prefetch={false}>
-                进入工作台<ArrowUpRight size={15} aria-hidden="true" />
-              </Link>
-            </div>
+        <header className="hm-hcc-welcome-bar">
+          <div className="hm-hcc-greeting">
+            <strong>{data.greeting}，{displayName}</strong>
+            <span>高效协同每一单，让交付更可靠</span>
           </div>
+          <Link className={`hm-hcc-alert ${topAction ? 'has-alert' : 'is-clear'}`} href={topAction?.targetRoute || '/production?view=exceptions'} prefetch={false}>
+            {topAction ? <AlertTriangle aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
+            <span>{topAction ? topAction.title : '当前没有需要立即处理的生产风险'}</span>
+            {riskCount > 0 && <b>{riskCount} 项关注</b>}
+            <ChevronRight aria-hidden="true" />
+          </Link>
+          <div className="hm-hcc-date"><time dateTime={data.generatedAt}>{data.dateLabel}</time><small>{updatedTime(data.generatedAt)} 更新</small></div>
+        </header>
 
-          <div className="hm-collab-card-grid">
-            {collaborationCards.map((card, index) => (
-              <article
-                className={`hm-collab-card position-${card.position} tone-${card.tone}`}
-                key={card.id}
-                style={{ '--card-index': index } as CSSProperties}
-                onPointerMove={handleTiltMove}
-                onPointerLeave={resetTilt}
-              >
-                <Link className="hm-collab-card-link" href={card.route} prefetch={false} aria-label={`进入${card.label}`}>
-                  <span className="hm-collab-card-icon" aria-hidden="true"><card.Icon size={21} /></span>
-                  <div className="hm-collab-card-copy">
-                    <small>{card.eyebrow}</small>
-                    <h2>{card.label}</h2>
-                  </div>
-                  <span className="hm-collab-card-badge">{card.badge}</span>
-                  <dl>
-                    <div><dt>当前</dt><dd>{card.value}<small>{card.unit}</small></dd></div>
-                    <div><dt>协同状态</dt><dd>{card.detail}</dd></div>
-                  </dl>
-                  <footer><span>查看业务详情</span><ChevronRight size={14} aria-hidden="true" /></footer>
-                </Link>
-                {card.stream && (
-                  <button
-                    className="hm-collab-card-tasks"
-                    type="button"
-                    aria-label={`展开${card.label}待办任务`}
-                    onClick={event => openStream(card.stream!, event.currentTarget)}
+        <div className="hm-hcc-main-grid">
+          <section
+            className="hm-hcc-operations"
+            aria-labelledby="hm-hcc-operations-title"
+            onPointerMove={handleScenePointerMove}
+            onPointerLeave={resetScenePointer}
+          >
+            <header className="hm-hcc-section-heading">
+              <div><small>生产协同总览</small><h1 id="hm-hcc-operations-title">协同运行中枢</h1></div>
+              <div className="hm-hcc-legend" aria-label="运行状态图例"><span><i className="normal" />正常</span><span><i className="warning" />预警</span><span><i className="danger" />异常</span></div>
+            </header>
+
+            <div className="hm-hcc-map">
+              <div className="hm-hcc-scene-photo" aria-hidden="true" />
+              <svg className="hm-hcc-flow-map" viewBox="0 0 1000 680" preserveAspectRatio="none" aria-hidden="true">
+                <path className="flow flow-plan" d="M500 338 C418 262 332 170 227 133" />
+                <path className="flow flow-drawing" d="M500 338 C580 258 676 166 784 132" />
+                <path className="flow flow-production" d="M500 338 C385 329 275 326 142 346" />
+                <path className="flow flow-material warning" d="M500 338 C620 332 737 327 866 349" />
+                <path className="flow flow-quality" d="M500 338 C418 420 335 506 230 548" />
+                <path className="flow flow-labor" d="M500 338 C582 423 676 510 786 549" />
+              </svg>
+
+              <div className="hm-hcc-core" aria-label={`本周协同执行率${progressRate === null ? '暂未生成' : `${progressRate}%`}`}>
+                <span aria-hidden="true"><UsersRound /></span>
+                <small>今日执行</small>
+                <div
+                  className="hm-hcc-core-rate"
+                  style={{ '--rate': `${progressRate || 0}%` } as CSSProperties}
+                >
+                  <strong>{progressRate === null ? '--' : progressRate}<em>{progressRate === null ? '' : '%'}</em></strong>
+                </div>
+                <p>{data.planChart.completed} 项完成 · {data.planChart.inProgress} 项进行中</p>
+              </div>
+
+              <div className="hm-hcc-node-grid">
+                {collaborationCards.map((card, index) => (
+                  <article
+                    className={`hm-hcc-node node-${card.position} tone-${card.tone}`}
+                    key={card.id}
+                    style={{ '--card-index': index } as CSSProperties}
+                    onPointerMove={handleTiltMove}
+                    onPointerLeave={resetTilt}
                   >
-                    待办
-                  </button>
-                )}
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="hm-collab-insights" aria-label="业务洞察">
-          <article className="hm-collab-insight">
-            <header><div><FileCheck2 size={16} aria-hidden="true" /><h2>当前处理图纸</h2></div><Link href="/drawing-library" prefetch={false}>全部 {drawingCount}<ChevronRight size={13} /></Link></header>
-            <div className="hm-collab-insight-list">
-              {insightDrawings.length ? insightDrawings.map(item => (
-                <Link href={item.targetRoute} prefetch={false} key={item.id}><span>{item.title}</span><small>{item.status}</small></Link>
-              )) : <p className="hm-collab-empty">当前没有待处理图纸</p>}
-            </div>
-          </article>
-
-          <article className="hm-collab-insight">
-            <header><div><AlertTriangle size={16} aria-hidden="true" /><h2>优先风险</h2></div><Link href="/production?view=exceptions" prefetch={false}>全部 {riskCount}<ChevronRight size={13} /></Link></header>
-            <div className="hm-collab-insight-list">
-              {priorityRisks.length ? priorityRisks.map(item => (
-                <Link href={item.targetRoute} prefetch={false} key={item.id}><i className={`priority-${item.priority}`}>{item.priority === 'urgent' ? '紧急' : item.priority === 'high' ? '关注' : '提示'}</i><span>{item.title}</span><small>{item.dateLabel}</small></Link>
-              )) : <p className="hm-collab-empty">当前没有优先风险</p>}
-            </div>
-          </article>
-
-          <article className="hm-collab-insight hm-collab-quality">
-            <header><div><ShieldCheck size={16} aria-hidden="true" /><h2>质量与问题</h2></div><Link href="/workspace/issues" prefetch={false}>全部 {data.issues.length}<ChevronRight size={13} /></Link></header>
-            <div className="hm-collab-quality-body">
-              <div className="hm-collab-quality-rate" style={{ '--issue-rate': `${Math.min(100, data.issues.length * 12)}%` } as CSSProperties}><strong>{data.issues.length}</strong><small>未关闭</small></div>
-              <div className="hm-collab-quality-list">
-                {qualityIssues.length ? qualityIssues.map(item => <Link href={item.targetRoute} prefetch={false} key={item.id}><span>{item.title}</span><small>{item.status}</small></Link>) : <p className="hm-collab-empty">质量状态正常</p>}
+                    <Link href={card.route} prefetch={false} aria-label={`进入${card.label}`}>
+                      <span className="hm-hcc-node-icon" aria-hidden="true"><card.Icon /></span>
+                      <div><small>{String(index + 1).padStart(2, '0')}</small><h2>{card.label}</h2></div>
+                      <dl><div><dt>{card.eyebrow}</dt><dd>{card.value} {card.unit}</dd></div><div><dt>协同状态</dt><dd>{card.badge}</dd></div></dl>
+                      <i className={card.tone === 'red' || card.tone === 'yellow' ? 'has-risk' : ''} aria-hidden="true" />
+                    </Link>
+                    {card.stream && <button type="button" aria-label={`展开${card.label}待办任务`} onClick={event => openStream(card.stream!, event.currentTarget)}>待办<ChevronRight /></button>}
+                  </article>
+                ))}
               </div>
             </div>
-          </article>
+          </section>
 
-          <article className="hm-collab-insight hm-collab-operations">
-            <header><div><BarChart3 size={16} aria-hidden="true" /><h2>运营分析</h2></div><button ref={analyticsButtonRef} type="button" aria-expanded={analyticsOpen} aria-controls="hm-command-analytics" onClick={toggleAnalytics}>展开分析<ChevronRight size={13} /></button></header>
-            <div className="hm-collab-operation-grid">
-              <div><span>订单协同达成</span><strong>{progressRate === null ? '--' : `${progressRate}%`}</strong><b><i style={{ width: `${progressRate || 0}%` }} /></b></div>
-              <div><span>当前协同任务</span><strong>{taskCount}</strong><small>跨部门待处理</small></div>
-              <div><span>仓库配料</span><strong>{warehouseStream?.count || 0}</strong><small>{warehouseStream?.riskCount ? `${warehouseStream.riskCount} 项需优先` : '运行正常'}</small></div>
-              <div><span>风险关注</span><strong className={riskCount > 0 ? 'has-risk' : ''}>{riskCount}</strong><small>{topAction?.title || '当前运行平稳'}</small></div>
-            </div>
-          </article>
+          <HomeNotificationCommandCenter enabled={canReadNotifications} onUnreadCountChange={setNotificationUnreadCount} />
+        </div>
+
+        <section className="hm-hcc-insight-bar" aria-label="今日洞察">
+          <div className="hm-hcc-insight-title"><small>今日洞察</small><strong>{data.periodLabel}</strong><span>截至 {updatedTime(data.generatedAt)}</span></div>
+          <div><span>计划达成率</span><strong>{planCompletionRate === null ? '--' : `${planCompletionRate}%`}</strong><small>{data.planChart.completed} / {data.planChart.total} 已完成</small></div>
+          <div><span>准时交付率</span><strong>{onTimeRate === null ? '--' : `${onTimeRate}%`}</strong><small>{data.planChart.overdue} 项逾期</small></div>
+          <div><span>图纸完整率</span><strong>{technicalCompleteRate === null ? '--' : `${technicalCompleteRate}%`}</strong><small>{technicalComplete} / {technicalTotal} 资料完整</small></div>
+          <div><span>当前协同待办</span><strong>{taskCount}</strong><small>{riskCount} 项需优先</small></div>
+          <button ref={analyticsButtonRef} type="button" aria-expanded={analyticsOpen} aria-controls="hm-command-analytics" onClick={toggleAnalytics}>查看洞察<BarChart3 /></button>
+          <Link className="hm-hcc-primary-action" href={hasOperationalData ? '/production' : planWorkbenchRoute} prefetch={false}>进入工作台<ArrowUpRight /></Link>
         </section>
 
         <button className={`hm-command-overlay ${activeStream || analyticsOpen ? 'open' : ''}`} type="button" aria-label="关闭展开面板" aria-hidden={!activeStream && !analyticsOpen} tabIndex={activeStream || analyticsOpen ? 0 : -1} onClick={closeOverlays} />

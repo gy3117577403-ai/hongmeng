@@ -6,7 +6,7 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
-import { setNotificationReadState } from '@/lib/system-notifications';
+import { setNotificationReadState, snoozeNotification } from '@/lib/system-notifications';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,13 +15,33 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
   try {
     assertSameOriginMutationRequest(request);
     const user = await requireCapability('NOTIFICATIONS', 'UPDATE');
-    const body = await request.json().catch(() => null) as { read?: unknown } | null;
-    if (!body || typeof body.read !== 'boolean') {
-      return NextResponse.json({ ok: false, error: '已读状态不正确' }, { status: 400 });
+    const body = await request.json().catch(() => null) as {
+      read?: unknown;
+      snoozeMinutes?: unknown;
+    } | null;
+    if (!body) {
+      return NextResponse.json({ ok: false, error: '通知操作不正确' }, { status: 400 });
     }
-    const found = await setNotificationReadState(user.id, params.id, body.read);
+    const hasRead = typeof body.read === 'boolean';
+    const hasSnooze = typeof body.snoozeMinutes === 'number';
+    if (hasRead === hasSnooze) {
+      return NextResponse.json({ ok: false, error: '请选择一项通知操作' }, { status: 400 });
+    }
+    if (hasSnooze) {
+      try {
+        const snoozedUntil = await snoozeNotification(user.id, params.id, body.snoozeMinutes as number);
+        if (!snoozedUntil) return NextResponse.json({ ok: false, error: '通知不存在' }, { status: 404 });
+        return NextResponse.json({ ok: true, snoozedUntil: snoozedUntil.toISOString() });
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('稍后提醒时间')) {
+          return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+        }
+        throw error;
+      }
+    }
+    const found = await setNotificationReadState(user.id, params.id, body.read as boolean);
     if (!found) return NextResponse.json({ ok: false, error: '通知不存在' }, { status: 404 });
-    return NextResponse.json({ ok: true, read: body.read });
+    return NextResponse.json({ ok: true, read: body.read as boolean });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     console.error('notification read state failed', error);
