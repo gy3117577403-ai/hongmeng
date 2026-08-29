@@ -292,6 +292,7 @@ jobs:
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
+        id: push_release
         env:
           RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
@@ -409,7 +410,7 @@ jobs:
             echo "Downloaded and SHA-256 verified ${#blob_digests[@]} config/layer blobs from the Sealos mirror."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Record unavailable Sealos mirror without blocking GHCR release
-        if: always() && steps.sealos_mirror.outcome != 'success'
+        if: always() && steps.push_release.outcome == 'success' && steps.sealos_mirror.outcome != 'success'
         env:
           SEALOS_IMAGE: ghcr.nju.edu.cn/${{ github.repository }}:${{ github.ref_name }}
         run: |

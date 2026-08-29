@@ -621,13 +621,27 @@ test(
         changeId, channel: 'WECOM_ROBOT', status, attempts: 8, availableAt: new Date(Date.now() + 86400_000),
         eventType: 'PROCESS_ROUTE_CHANGE_APPROVED', dedupeKey: `${prefix}-legacy-${status}`, payload: { workOrderId },
       } })));
-      // Exercise the actual upgrade SQL, including exhausted retries and interrupted claims.
-      const migration = readFileSync(new URL('../prisma/migrations/202608280006_wecom_quality_only/migration.sql', import.meta.url), 'utf8');
+      // Exercise the actual upgrade SQL, including exhausted retries,
+      // interrupted claims and the UTC-safe requeue correction.
+      const migrations = [
+        '../prisma/migrations/202608280006_wecom_quality_only/migration.sql',
+        '../prisma/migrations/202608290003_process_outbox_utc_requeue/migration.sql',
+      ].map(relativePath => readFileSync(new URL(relativePath, import.meta.url), 'utf8'));
       await prisma.$transaction(async tx => {
-        for (const statement of migration.split(/;\s*(?:\n|$)/).filter(value => value.trim())) await tx.$executeRawUnsafe(statement);
+        for (const migration of migrations) {
+          for (const statement of migration.split(/;\s*(?:\n|$)/).filter(value => value.trim())) {
+            await tx.$executeRawUnsafe(statement);
+          }
+        }
       });
       const restored = await prisma.processRouteChangeOutbox.findMany({ where: { id: { in: legacyRows.slice(0, 3).map(row => row.id) } } });
-      assert.ok(restored.every(row => row.status === 'PENDING' && row.attempts === 0 && row.availableAt <= new Date()));
+      assert.ok(restored.every(row => row.status === 'PENDING'));
+      assert.ok(restored.every(row => row.attempts === 0));
+      // PostgreSQL stores microseconds while Prisma exposes JavaScript
+      // milliseconds. Allow one second for timestamp rounding/clock sampling;
+      // the migration must still make every legacy row immediately due.
+      const immediatelyDueCutoff = new Date(Date.now() + 1_000);
+      assert.ok(restored.every(row => row.availableAt <= immediatelyDueCutoff));
       let networkCalls = 0;
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (async () => { networkCalls++; throw new Error('工艺通知不得访问网络'); }) as typeof fetch;
