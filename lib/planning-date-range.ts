@@ -14,9 +14,11 @@ export type PlanningDateRange = {
 export function strictPlanningDate(value: unknown, label = '日期'): { key: string; value: Date } {
   const key = String(value || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) throw new Error(`${label}格式必须为 YYYY-MM-DD`);
-  const utc = new Date(`${key}T00:00:00.000Z`);
-  if (Number.isNaN(utc.getTime()) || utc.toISOString().slice(0, 10) !== key) throw new Error(`${label}不是有效日历日期`);
-  return { key, value: utc };
+  const logicalDate = new Date(`${key}T00:00:00.000Z`);
+  if (Number.isNaN(logicalDate.getTime()) || logicalDate.toISOString().slice(0, 10) !== key) throw new Error(`${label}不是有效日历日期`);
+  // PostgreSQL planning dates are stored at Shanghai local midnight, which is
+  // 16:00 UTC on the previous civil day. Keep API date keys in Shanghai time.
+  return { key, value: new Date(`${key}T00:00:00.000+08:00`) };
 }
 
 export function parsePlanningDateRange(
@@ -39,15 +41,17 @@ export function planningMonthRange(value: unknown): PlanningDateRange & { month:
   const month = String(value || '').trim();
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('月份格式必须为 YYYY-MM');
   const start = strictPlanningDate(`${month}-01`, '月份');
-  const nextMonth = new Date(start.value);
-  nextMonth.setUTCMonth(nextMonth.getUTCMonth() + 1);
-  if (chinaDate(nextMonth).slice(0, 7) === month) throw new Error('月份不是有效日历月份');
-  const end = new Date(nextMonth);
-  end.setUTCDate(end.getUTCDate() - 1);
+  const [year, monthNumber] = month.split('-').map(Number);
+  if (monthNumber < 1 || monthNumber > 12) throw new Error('月份不是有效日历月份');
+  const nextYear = monthNumber === 12 ? year + 1 : year;
+  const nextMonthNumber = monthNumber === 12 ? 1 : monthNumber + 1;
+  const nextMonthKey = `${nextYear}-${String(nextMonthNumber).padStart(2, '0')}-01`;
+  const nextMonth = strictPlanningDate(nextMonthKey, '月份').value;
+  const end = new Date(nextMonth.getTime() - 1);
   return {
     month,
     startDate: start.key,
-    endDate: end.toISOString().slice(0, 10),
+    endDate: chinaDate(end),
     start: start.value,
     endExclusive: nextMonth,
     days: Math.round((nextMonth.getTime() - start.value.getTime()) / DAY_MILLISECONDS),
@@ -58,6 +62,6 @@ export function planningDateKeys(range: Pick<PlanningDateRange, 'start' | 'days'
   return Array.from({ length: range.days }, (_, index) => {
     const date = new Date(range.start);
     date.setUTCDate(date.getUTCDate() + index);
-    return date.toISOString().slice(0, 10);
+    return chinaDate(date);
   });
 }

@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parsePlanningDateRange, planningMonthRange } from '@/lib/planning-date-range';
+import { parsePlanningDateRange, planningDateKeys, planningMonthRange } from '@/lib/planning-date-range';
 import { materialHoldReason, materialHoldReasonCode } from '@/lib/production-plan-holds';
 
 test('planning date ranges are inclusive, strict and capped at 93 days', () => {
   const range = parsePlanningDateRange('2026-08-31', '2026-09-30');
   assert.equal(range.days, 31);
   assert.equal(range.startDate, '2026-08-31');
-  assert.equal(range.endExclusive.toISOString().slice(0, 10), '2026-10-01');
+  assert.equal(range.start.toISOString(), '2026-08-30T16:00:00.000Z');
+  assert.equal(range.endExclusive.toISOString(), '2026-09-30T16:00:00.000Z');
+  assert.deepEqual(planningDateKeys(range).slice(0, 2), ['2026-08-31', '2026-09-01']);
   assert.throws(() => parsePlanningDateRange('2026-02-31', '2026-03-02'), /有效日历日期/);
   assert.throws(() => parsePlanningDateRange('2026-09-02', '2026-09-01'), /不能早于/);
   assert.throws(() => parsePlanningDateRange('2026-01-01', '2026-04-04'), /93/);
