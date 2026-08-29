@@ -4,7 +4,15 @@ import {
   createSystemNotification,
   eligibleUserIdsForCapability,
 } from '@/lib/system-notifications';
+import {
+  isProcessRouteStageEvent,
+  PROCESS_ROUTE_STAGE_EVENTS,
+  processStageNotificationIsCurrent,
+  type ProcessRouteStatusValue,
+} from '@/lib/process-route-notification-lifecycle';
 import { WECOM_POLICY_BLOCK_REASON } from '@/lib/wecom-notification-policy';
+
+export { processStageNotificationIsCurrent } from '@/lib/process-route-notification-lifecycle';
 
 const MAX_ATTEMPTS = 8;
 
@@ -12,10 +20,129 @@ type OutboxPayload = {
   changeId?: string;
   workOrderId?: string;
   routeId?: string;
+  obligationId?: string;
+  processName?: string;
   actor?: string;
   fromStatus?: string;
   toStatus?: string;
 };
+
+const TERMINAL_PROCESS_NOTIFICATION_EVENTS = new Set([
+  'PROCESS_ROUTE_CHANGE_REJECTED',
+  'PROCESS_ROUTE_CHANGE_ACTIVATED',
+  'PROCESS_SUPPLEMENT_OBLIGATION_FULFILLED',
+]);
+
+export type ProcessNotificationLifecyclePolicy = {
+  initiallyCompleted: boolean;
+  supersedeScope: 'change' | 'obligation' | 'none';
+};
+
+/**
+ * ACTIVATING is a lease-like intermediate state and FAILED is recoverable, so
+ * neither may hide the last actionable notification. Supplement notifications
+ * can supersede one another only when obligationId is present; changeId alone
+ * is not precise when a route change created multiple supplement obligations.
+ */
+export function processNotificationLifecyclePolicy(
+  eventType: string,
+  obligationId?: string | null,
+): ProcessNotificationLifecyclePolicy {
+  if (isProcessRouteStageEvent(eventType)) {
+    return {
+      initiallyCompleted: TERMINAL_PROCESS_NOTIFICATION_EVENTS.has(eventType),
+      supersedeScope: 'change',
+    };
+  }
+  if (
+    eventType === 'PROCESS_SUPPLEMENT_OBLIGATION_REPORTED'
+    || eventType === 'PROCESS_SUPPLEMENT_OBLIGATION_FULFILLED'
+  ) {
+    return {
+      // REPORTED is a progress receipt, not a new task. Keep it in history
+      // immediately even when a legacy payload lacks obligationId.
+      initiallyCompleted: true,
+      supersedeScope: obligationId ? 'obligation' : 'none',
+    };
+  }
+  return { initiallyCompleted: false, supersedeScope: 'none' };
+}
+
+export async function reconcileProcessNotificationLifecycle(
+  tx: Prisma.TransactionClient,
+  input: {
+    notificationId: string;
+    changeId: string;
+    eventType: string;
+    obligationId?: string | null;
+    stageIsCurrent?: boolean;
+    now?: Date;
+  },
+): Promise<number> {
+  const declaredLifecycle = processNotificationLifecyclePolicy(input.eventType, input.obligationId);
+  const lifecycle = input.stageIsCurrent === false
+    ? { initiallyCompleted: true, supersedeScope: 'none' as const }
+    : declaredLifecycle;
+  const now = input.now || new Date();
+  let completedRecipientCount = 0;
+  if (lifecycle.supersedeScope !== 'none') {
+    const superseded = await tx.systemNotificationRecipient.updateMany({
+      where: {
+        OR: [{ completedAt: null }, { completionKind: 'MANUAL' }],
+        notificationId: { not: input.notificationId },
+        notification: {
+          is: lifecycle.supersedeScope === 'change'
+            ? {
+              sourceType: 'process_route_change',
+              sourceId: input.changeId,
+              eventType: { in: [...PROCESS_ROUTE_STAGE_EVENTS] },
+            }
+            : {
+              sourceType: 'process_route_change',
+              sourceId: input.changeId,
+              eventType: {
+                in: [
+                  'PROCESS_SUPPLEMENT_OBLIGATION_REPORTED',
+                  'PROCESS_SUPPLEMENT_OBLIGATION_FULFILLED',
+                ],
+              },
+              metadata: { path: ['obligationId'], equals: input.obligationId! },
+            },
+        },
+      },
+      data: {
+        completedAt: now,
+        completionKind: 'SOURCE_RESOLVED',
+        completionReason: `工艺变更已有后续阶段：${input.eventType}`,
+        readAt: now,
+        snoozedUntil: null,
+      },
+    });
+    completedRecipientCount += superseded.count;
+  }
+  if (lifecycle.initiallyCompleted) {
+    const completionReason = input.stageIsCurrent === false
+      ? `工艺通知已被更新阶段取代：${input.eventType}`
+      : input.eventType === 'PROCESS_SUPPLEMENT_OBLIGATION_REPORTED'
+        ? '补充工序报工进度已记录，通知自动归档'
+        : `工艺通知已进入明确终态：${input.eventType}`;
+    const terminal = await tx.systemNotificationRecipient.updateMany({
+      where: {
+        notificationId: input.notificationId,
+        OR: [{ completedAt: null }, { completionKind: 'MANUAL' }],
+      },
+      data: {
+        completedAt: now,
+        completionKind: 'SOURCE_RESOLVED',
+        completionReason,
+        readAt: now,
+        snoozedUntil: null,
+      },
+    });
+    completedRecipientCount += terminal.count;
+  }
+  return completedRecipientCount;
+}
 
 function payloadRecord(value: Prisma.JsonValue): OutboxPayload {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -63,13 +190,21 @@ async function createInAppNotification(tx: Prisma.TransactionClient, outbox: {
   eventType: string;
   changeId: string;
   payload: Prisma.JsonValue;
+  createdAt: Date;
 }) {
   const payload = payloadRecord(outbox.payload);
   const change = await tx.processRouteChange.findUnique({
     where: { id: outbox.changeId },
     select: {
       createdById: true,
+      status: true,
       workOrder: { select: { code: true, productName: true, specification: true } },
+      outbox: {
+        where: { eventType: { in: [...PROCESS_ROUTE_STAGE_EVENTS] } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 1,
+        select: { id: true },
+      },
     },
   });
   if (!change) throw new Error('工艺变更不存在，无法保存站内通知');
@@ -84,7 +219,7 @@ async function createInAppNotification(tx: Prisma.TransactionClient, outbox: {
   const workOrderLabel = change.workOrder.specification
     || change.workOrder.productName
     || change.workOrder.code;
-  await createSystemNotification(tx, {
+  const created = await createSystemNotification(tx, {
     eventType: outbox.eventType,
     dedupeKey: `route-change:${outbox.dedupeKey}`,
     category: 'APPROVAL',
@@ -99,11 +234,32 @@ async function createInAppNotification(tx: Prisma.TransactionClient, outbox: {
     metadata: {
       routeId: payload.routeId || null,
       workOrderId: payload.workOrderId || null,
+      obligationId: payload.obligationId || null,
+      processName: payload.processName || null,
+      sourceOutboxId: outbox.id,
+      sourceEventAt: outbox.createdAt.toISOString(),
+      fromStatus: payload.fromStatus || null,
+      toStatus: payload.toStatus || null,
       actor: payload.actor || null,
     },
     recipientUserIds: recipients,
   });
-  return { recipients };
+  if (!created) return { recipients, completedRecipientCount: 0 };
+
+  const completedRecipientCount = await reconcileProcessNotificationLifecycle(tx, {
+    notificationId: created.notificationId,
+    changeId: outbox.changeId,
+    eventType: outbox.eventType,
+    obligationId: payload.obligationId,
+    stageIsCurrent: isProcessRouteStageEvent(outbox.eventType)
+      ? processStageNotificationIsCurrent(
+        outbox.eventType,
+        change.status as ProcessRouteStatusValue,
+        change.outbox[0]?.id === outbox.id,
+      )
+      : undefined,
+  });
+  return { recipients, completedRecipientCount };
 }
 
 export type ProcessRouteChangeOutboxDispatchResult = {

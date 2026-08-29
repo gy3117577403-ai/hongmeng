@@ -3406,6 +3406,9 @@ model SystemNotificationRecipient {
   userId         String             @map("user_id")
   readAt         DateTime?          @map("read_at")
   snoozedUntil   DateTime?          @map("snoozed_until")
+  completedAt    DateTime?          @map("completed_at")
+  completionKind String?            @map("completion_kind")
+  completionReason String?          @map("completion_reason")
   createdAt      DateTime           @default(now()) @map("created_at")
   notification   SystemNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
   user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -3413,6 +3416,7 @@ model SystemNotificationRecipient {
   @@id([notificationId, userId])
   @@index([userId, readAt, createdAt])
   @@index([userId, snoozedUntil, createdAt])
+  @@index([userId, completedAt, createdAt])
   @@index([userId, createdAt])
   @@map("system_notification_recipients")
 }

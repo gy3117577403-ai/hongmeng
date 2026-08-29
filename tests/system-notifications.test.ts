@@ -7,6 +7,7 @@ import {
 } from '../lib/major-quality-approval';
 import {
   notificationBusinessCategory,
+  parseNotificationInboxState,
   notificationRequiresAction,
   notificationSnoozedUntil,
   safeNotificationTargetRoute,
@@ -40,6 +41,15 @@ test('home notification command center keeps actionable and snooze rules explici
   assert.throws(() => notificationSnoozedUntil(4, base));
   assert.throws(() => notificationSnoozedUntil(10_081, base));
   assert.throws(() => notificationSnoozedUntil(5.5, base));
+});
+
+test('notification inbox state accepts only explicit pending or completed values', () => {
+  assert.equal(parseNotificationInboxState('pending'), 'pending');
+  assert.equal(parseNotificationInboxState('COMPLETED'), 'completed');
+  assert.equal(parseNotificationInboxState(' completed '), 'completed');
+  assert.equal(parseNotificationInboxState('all'), null);
+  assert.equal(parseNotificationInboxState(''), null);
+  assert.equal(parseNotificationInboxState(undefined), null);
 });
 
 test('major approval viewer and decisions keep review and final roles separate', () => {

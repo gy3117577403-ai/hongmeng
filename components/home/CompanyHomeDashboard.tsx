@@ -1,7 +1,7 @@
 'use client';
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -21,6 +21,7 @@ import {
   Search,
   ShieldCheck,
   TimerReset,
+  UserRound,
   UsersRound,
   Warehouse,
   X,
@@ -75,7 +76,7 @@ type SearchPayload = {
 };
 type SearchResponse = SearchPayload & { ok?: boolean; error?: string; data?: SearchPayload };
 
-type UtilityPanel = 'notifications' | 'messages' | 'help' | null;
+type UtilityPanel = 'notifications' | 'messages' | 'help' | 'account' | null;
 
 const workstreamIcons: Record<HomeWorkstreamId, LucideIcon> = {
   production: Factory,
@@ -264,6 +265,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const router = useRouter();
   const [utilityPanel, setUtilityPanel] = useState<UtilityPanel>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -285,29 +287,45 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const canOpenSettings = user.access.modules.includes('SYSTEM_CONFIGURATION');
   const canReadNotifications = user.access.modules.includes('NOTIFICATIONS');
 
-  useEffect(() => {
+  const loadNotificationPreview = useCallback(async (signal?: AbortSignal): Promise<void> => {
     if (!canReadNotifications) {
+      setNotificationPreview([]);
+      setNotificationUnreadCount(0);
       setNotificationLoading(false);
       return;
     }
-    const controller = new AbortController();
     setNotificationLoading(true);
-    fetch('/api/notifications?limit=3&category=ALL&unreadOnly=false', { cache: 'no-store', signal: controller.signal })
-      .then(response => response.json().then(body => ({ response, body })))
-      .then(({ response, body }) => {
-        if (!response.ok || body.ok !== true) return;
-        setNotificationPreview(Array.isArray(body.notifications) ? body.notifications : []);
-        setNotificationUnreadCount(Math.max(0, Number(body.unreadCount) || 0));
-      })
-      .catch(() => undefined)
-      .finally(() => setNotificationLoading(false));
-    return () => controller.abort();
+    try {
+      const response = await fetch('/api/notifications?limit=3&category=ALL&unreadOnly=false&state=pending', {
+        cache: 'no-store',
+        signal,
+      });
+      const body = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        notifications?: SystemNotificationDTO[];
+        unreadCount?: number;
+      };
+      if (!response.ok || body.ok !== true) return;
+      setNotificationPreview(Array.isArray(body.notifications) ? body.notifications : []);
+      setNotificationUnreadCount(Math.max(0, Number(body.unreadCount) || 0));
+    } catch (reason) {
+      if ((reason as { name?: string }).name !== 'AbortError') return;
+    } finally {
+      if (!signal?.aborted) setNotificationLoading(false);
+    }
   }, [canReadNotifications]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadNotificationPreview(controller.signal);
+    return () => controller.abort();
+  }, [loadNotificationPreview]);
 
   useEffect(() => {
     if (!canGlobalSearch) return;
     const params = new URLSearchParams(window.location.search);
     if (params.get('focusSearch') !== '1') return;
+    setSearchPanelOpen(true);
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
   }, [canGlobalSearch]);
 
@@ -344,17 +362,22 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
 
   useEffect(() => {
     function onPointerDown(event: PointerEvent): void {
-      if (searchWrapRef.current && !searchWrapRef.current.contains(event.target as Node)) setSearchOpen(false);
+      if (searchWrapRef.current && !searchWrapRef.current.contains(event.target as Node)) {
+        setSearchOpen(false);
+        setSearchPanelOpen(false);
+      }
     }
     function onKeyDown(event: KeyboardEvent): void {
       if (canGlobalSearch && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
+        setSearchPanelOpen(true);
         searchInputRef.current?.focus();
         return;
       }
       if (event.key !== 'Escape') return;
-      if (searchOpen) {
+      if (searchOpen || searchPanelOpen) {
         setSearchOpen(false);
+        setSearchPanelOpen(false);
         window.requestAnimationFrame(() => searchInputRef.current?.focus());
       }
       if (activeStreamId) {
@@ -372,7 +395,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       document.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [activeStreamId, analyticsOpen, canGlobalSearch, searchOpen]);
+  }, [activeStreamId, analyticsOpen, canGlobalSearch, searchOpen, searchPanelOpen]);
 
   useEffect(() => {
     if (!activeStreamId) return;
@@ -532,6 +555,12 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
     setUtilityPanel(current => current === panel ? null : panel);
   }
 
+  function openSearch(): void {
+    setUtilityPanel(null);
+    setSearchPanelOpen(true);
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  }
+
   function openStream(stream: HomeWorkstream, trigger: HTMLButtonElement): void {
     drawerTriggerRef.current = trigger;
     setAnalyticsOpen(false);
@@ -560,44 +589,18 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         user={user}
         activeHref="/home"
         subtitle="跨部门协同工作台"
+        hideHeader
         menuItems={[
           { label: '系统设置', href: '/dashboard?openSettings=1' },
           { label: '退出登录', onSelect: () => { void logout(); } },
         ]}
-        searchSlot={canGlobalSearch ? (
-          <div className="hm-home-search" ref={searchWrapRef}>
-            <label className="sr-only" htmlFor="hm-home-global-search">全局搜索</label>
-            <Search size={18} aria-hidden="true" />
-            <input ref={searchInputRef} id="hm-home-global-search" value={keyword} onChange={event => setKeyword(event.target.value)} onFocus={() => keyword.trim() && setSearchOpen(true)} placeholder="搜索工单、计划、图纸、问题、文档..." autoComplete="off" />
-            {keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => { setKeyword(''); searchInputRef.current?.focus(); }}><X size={16} /></button> : <kbd>Ctrl K</kbd>}
-            {searchOpen && keyword.trim() && (
-              <div className="hm-home-search-results" role="region" aria-label="全局搜索结果" aria-live="polite">
-                {searchLoading && <div className="hm-home-search-state"><span className="hm-home-spinner" />正在搜索</div>}
-                {!searchLoading && searchError && <div className="hm-home-search-state error">{searchError}</div>}
-                {!searchLoading && !searchError && !results.length && <div className="hm-home-search-state">未找到匹配结果</div>}
-                {!searchLoading && !searchError && searchGroups.map(([group, items]) => (
-                  <section key={group}><h3>{group}</h3>{items.map(item => <Link href={item.route} prefetch={false} key={item.id} onClick={() => setSearchOpen(false)}><strong>{item.title}</strong><span>{item.detail}</span></Link>)}</section>
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="hm-home-search" aria-label="部门权限提示"><ShieldCheck size={18} /><span>当前显示公司基础摘要与本部门业务</span></div>
-        )}
-        utilityActions={(
-          <div className="hm-home-toolbar-actions">
-            <button type="button" aria-label="业务待办" title="业务待办" onClick={event => openUtility(event, 'notifications')}><Bell size={19} />{data.actionItems.length > 0 && <span>{Math.min(data.actionItems.length, 9)}</span>}</button>
-            {canReadNotifications && <button type="button" aria-label="系统内通知" title="系统内通知" onClick={event => openUtility(event, 'messages')}><MessageSquareText size={19} />{notificationUnreadCount > 0 && <span>{Math.min(notificationUnreadCount, 9)}</span>}</button>}
-            <button type="button" aria-label="帮助" title="帮助" onClick={event => openUtility(event, 'help')}><CircleHelp size={19} /></button>
-            <button className="hm-home-refresh" type="button" aria-label="刷新首页数据" title="刷新首页数据" disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing ? 'is-spinning' : ''} size={18} /></button>
-          </div>
-        )}
       />
 
       <PortalMenu open={utilityPanel !== null} anchorRef={utilityButtonRef} className="hm-home-utility-menu" width={300} closeOnSelect={false} onClose={() => setUtilityPanel(null)}>
         {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>业务待办</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <Link href={item.targetRoute} prefetch={false} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></Link>) : <p>当前没有新的业务待办</p>}</div>}
         {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>系统内通知{notificationUnreadCount > 0 ? ` · ${notificationUnreadCount} 未读` : ''}</strong></header>{notificationLoading ? <p>正在读取个人通知…</p> : notificationPreview.length ? notificationPreview.map(item => <Link href={item.targetRoute || '/workspace/messages'} prefetch={false} key={item.id}><b>{item.readAt ? item.title : `● ${item.title}`}</b><span>{item.body || '打开消息中心查看详情'}</span></Link>) : <p>当前没有系统内通知</p>}<Link className="hm-home-utility-all" href="/workspace/messages" prefetch={false}>查看全部通知</Link></div>}
         {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><Link href="/workspace/help" prefetch={false}><b>使用帮助</b><span>查看平台模块和规划入口</span></Link>{canOpenSettings && <Link href="/dashboard?openSettings=1" prefetch={false}><b>系统设置</b><span>安装、诊断和账号设置</span></Link>}</div>}
+        {utilityPanel === 'account' && <div><header><UserRound size={17} /><strong>{displayName}</strong></header>{canOpenSettings && <Link href="/dashboard?openSettings=1" prefetch={false}><b>系统设置</b><span>安装、诊断和账号设置</span></Link>}<button type="button" onClick={() => void logout()}><b>退出登录</b><span>安全退出当前账号</span></button></div>}
       </PortalMenu>
 
       <div className="hm-home-frame hm-hcc-frame">
@@ -610,11 +613,41 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
           </div>
           <Link className={`hm-hcc-alert ${topAction ? 'has-alert' : 'is-clear'}`} href={topAction?.targetRoute || '/production?view=exceptions'} prefetch={false}>
             {topAction ? <AlertTriangle aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
-            <span>{topAction ? topAction.title : '当前没有需要立即处理的生产风险'}</span>
+            <span className="hm-hcc-alert-items">{topAction ? data.actionItems.slice(0, 3).map((item, index) => <b key={item.id}>{item.title}{index < Math.min(data.actionItems.length, 3) - 1 && <i aria-hidden="true" />}</b>) : '当前没有需要立即处理的生产风险'}</span>
             {riskCount > 0 && <b>{riskCount} 项关注</b>}
             <ChevronRight aria-hidden="true" />
           </Link>
-          <div className="hm-hcc-date"><time dateTime={data.generatedAt}>{data.dateLabel}</time><small>{updatedTime(data.generatedAt)} 更新</small></div>
+          <div className="hm-hcc-top-meta">
+            <div className="hm-hcc-date"><time dateTime={data.generatedAt}>{data.dateLabel}</time><small>{updatedTime(data.generatedAt)} 更新</small></div>
+            <div className="hm-hcc-top-tools" aria-label="首页快捷操作">
+              {canGlobalSearch && <button type="button" aria-label="打开全局搜索" title="搜索" onClick={openSearch}><Search aria-hidden="true" /></button>}
+              <button type="button" aria-label="业务待办" title="业务待办" onClick={event => openUtility(event, 'notifications')}><Bell aria-hidden="true" />{data.actionItems.length > 0 && <span>{Math.min(data.actionItems.length, 9)}</span>}</button>
+              {canReadNotifications && <button type="button" aria-label="系统内通知" title="系统内通知" onClick={event => openUtility(event, 'messages')}><MessageSquareText aria-hidden="true" />{notificationUnreadCount > 0 && <span>{Math.min(notificationUnreadCount, 9)}</span>}</button>}
+              <button type="button" aria-label="帮助" title="帮助" onClick={event => openUtility(event, 'help')}><CircleHelp aria-hidden="true" /></button>
+              <button className="hm-home-refresh" type="button" aria-label="刷新首页数据" title="刷新首页数据" disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing ? 'is-spinning' : ''} aria-hidden="true" /></button>
+              <button className="hm-hcc-account-button" type="button" aria-label={`${displayName}，打开账号菜单`} onClick={event => openUtility(event, 'account')}><i aria-hidden="true">{displayName.slice(0, 1)}</i><b>{displayName}</b></button>
+            </div>
+          </div>
+          {canGlobalSearch && searchPanelOpen && (
+            <div className="hm-hcc-search-popover" ref={searchWrapRef}>
+              <div className="hm-home-search">
+                <label className="sr-only" htmlFor="hm-home-global-search">全局搜索</label>
+                <Search size={18} aria-hidden="true" />
+                <input ref={searchInputRef} id="hm-home-global-search" value={keyword} onChange={event => setKeyword(event.target.value)} onFocus={() => keyword.trim() && setSearchOpen(true)} placeholder="搜索工单、计划、图纸、问题、文档..." autoComplete="off" />
+                {keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => { setKeyword(''); searchInputRef.current?.focus(); }}><X size={16} /></button> : <kbd>Ctrl K</kbd>}
+              </div>
+              {searchOpen && keyword.trim() && (
+                <div className="hm-home-search-results" role="region" aria-label="全局搜索结果" aria-live="polite">
+                  {searchLoading && <div className="hm-home-search-state"><span className="hm-home-spinner" />正在搜索</div>}
+                  {!searchLoading && searchError && <div className="hm-home-search-state error">{searchError}</div>}
+                  {!searchLoading && !searchError && !results.length && <div className="hm-home-search-state">未找到匹配结果</div>}
+                  {!searchLoading && !searchError && searchGroups.map(([group, items]) => (
+                    <section key={group}><h3>{group}</h3>{items.map(item => <Link href={item.route} prefetch={false} key={item.id} onClick={() => { setSearchOpen(false); setSearchPanelOpen(false); }}><strong>{item.title}</strong><span>{item.detail}</span></Link>)}</section>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </header>
 
         <div className="hm-hcc-main-grid">
@@ -625,7 +658,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
             onPointerLeave={resetScenePointer}
           >
             <header className="hm-hcc-section-heading">
-              <div><small>生产协同总览</small><h1 id="hm-hcc-operations-title">协同运行中枢</h1></div>
+              <div><h1 id="hm-hcc-operations-title">生产协同总览</h1><small>实时运行中枢</small></div>
               <div className="hm-hcc-legend" aria-label="运行状态图例"><span><i className="normal" />正常</span><span><i className="warning" />预警</span><span><i className="danger" />异常</span></div>
             </header>
 
@@ -674,7 +707,11 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
             </div>
           </section>
 
-          <HomeNotificationCommandCenter enabled={canReadNotifications} onUnreadCountChange={setNotificationUnreadCount} />
+          <HomeNotificationCommandCenter
+            enabled={canReadNotifications}
+            onUnreadCountChange={setNotificationUnreadCount}
+            onNotificationsChange={loadNotificationPreview}
+          />
         </div>
 
         <section className="hm-hcc-insight-bar" aria-label="今日洞察">

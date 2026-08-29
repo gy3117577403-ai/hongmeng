@@ -140,6 +140,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/process-route-change-integration.test.ts tests/process-route-change-review-lifecycle-integration.test.ts tests/process-route-change-move-integration.test.ts tests/process-route-change-duplicate-occurrence-integration.test.ts tests/process-completion-supplement-flow-integration.test.ts tests/product-time-full-deployment-integration.test.ts tests/product-time-in-progress-migration-integration.test.ts tests/full-workorder-supplement-rebaseline-integration.test.ts tests/product-time-deployment-version-conflict-integration.test.ts
+      - name: System notification lifecycle PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/system-notification-lifecycle-integration.test.ts tests/process-route-notification-lifecycle-integration.test.ts
       - name: Advance reporting and automatic labor PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

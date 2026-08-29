@@ -13,14 +13,24 @@ import {
 } from '@/lib/department-access';
 import { legacyFallbackGrants } from '@/lib/legacy-access-policy';
 import { prisma } from '@/lib/prisma';
+import {
+  isProcessRouteStageEvent,
+  PROCESS_ROUTE_STAGE_EVENTS,
+  processStageNotificationIsCurrent,
+  type ProcessRouteStatusValue,
+} from '@/lib/process-route-notification-lifecycle';
 
 export const SYSTEM_NOTIFICATION_CATEGORIES = ['SYSTEM', 'ACCOUNT', 'TODO', 'APPROVAL'] as const;
 export const SYSTEM_NOTIFICATION_PRIORITIES = ['NORMAL', 'HIGH', 'URGENT'] as const;
 export const NOTIFICATION_BUSINESS_CATEGORIES = ['PRODUCTION', 'QUALITY', 'PROCESS', 'MATERIAL', 'SYSTEM'] as const;
+export const NOTIFICATION_INBOX_STATES = ['pending', 'completed'] as const;
+export const NOTIFICATION_COMPLETION_KINDS = ['MANUAL', 'SOURCE_RESOLVED', 'SYSTEM_RECONCILED'] as const;
 
 export type SystemNotificationCategory = typeof SYSTEM_NOTIFICATION_CATEGORIES[number];
 export type SystemNotificationPriority = typeof SYSTEM_NOTIFICATION_PRIORITIES[number];
 export type NotificationBusinessCategory = typeof NOTIFICATION_BUSINESS_CATEGORIES[number];
+export type NotificationInboxState = typeof NOTIFICATION_INBOX_STATES[number];
+export type NotificationCompletionKind = typeof NOTIFICATION_COMPLETION_KINDS[number];
 
 export type NotificationClassificationInput = {
   eventType?: string | null;
@@ -54,7 +64,15 @@ export type NotificationInboxQuery = {
   cursor?: string | null;
   unreadOnly?: boolean;
   category?: SystemNotificationCategory | null;
+  state?: NotificationInboxState;
 };
+
+export function parseNotificationInboxState(value: unknown): NotificationInboxState | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  return NOTIFICATION_INBOX_STATES.includes(normalized as NotificationInboxState)
+    ? normalized as NotificationInboxState
+    : null;
+}
 
 function text(value: unknown, maxLength: number): string {
   return String(value || '').trim().slice(0, maxLength);
@@ -295,19 +313,30 @@ export async function createSystemNotification(
   return { notificationId: notification.id, recipientCount: recipientUserIds.length };
 }
 
-type NotificationCursor = { createdAt: string; id: string };
+type NotificationCursor = {
+  at: string;
+  id: string;
+  state: NotificationInboxState;
+  /** v1.34.76 pending cursor compatibility. */
+  createdAt?: string;
+};
 
 function encodeCursor(cursor: NotificationCursor): string {
   return Buffer.from(JSON.stringify(cursor)).toString('base64url');
 }
 
-function decodeCursor(value?: string | null): { createdAt: Date; id: string } | null {
+function decodeCursor(
+  value: string | null | undefined,
+  state: NotificationInboxState,
+): { at: Date; id: string } | null {
   if (!value) return null;
   try {
     const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as NotificationCursor;
-    const createdAt = new Date(parsed.createdAt);
-    if (!parsed.id || !Number.isFinite(createdAt.getTime())) return null;
-    return { createdAt, id: parsed.id };
+    if (parsed.state && parsed.state !== state) return null;
+    if (!parsed.state && state === 'completed') return null;
+    const at = new Date(parsed.at || parsed.createdAt || '');
+    if (!parsed.id || !Number.isFinite(at.getTime())) return null;
+    return { at, id: parsed.id };
   } catch {
     return null;
   }
@@ -319,34 +348,50 @@ export async function loadNotificationInbox(
   query: NotificationInboxQuery = {},
 ) {
   const limit = Math.min(Math.max(Math.trunc(query.limit || 30), 1), 100);
-  const cursor = decodeCursor(query.cursor);
+  const state = query.state || 'pending';
+  const cursor = decodeCursor(query.cursor, state);
   const now = new Date();
   const notificationWhere: Prisma.SystemNotificationWhereInput = {
     AND: [
       { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
       ...(query.category ? [{ category: query.category }] : []),
-      ...(cursor ? [{
+      ...(cursor && state === 'pending' ? [{
         OR: [
-          { createdAt: { lt: cursor.createdAt } },
-          { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+          { createdAt: { lt: cursor.at } },
+          { createdAt: cursor.at, id: { lt: cursor.id } },
         ],
       }] : []),
     ],
   };
+  const lifecycleWhere: Prisma.SystemNotificationRecipientWhereInput = state === 'completed'
+    ? { completedAt: { not: null } }
+    : {
+      completedAt: null,
+      OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
+    };
   const where: Prisma.SystemNotificationRecipientWhereInput = {
     userId,
     ...(query.unreadOnly ? { readAt: null } : {}),
-    OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
+    AND: [
+      lifecycleWhere,
+      ...(cursor && state === 'completed' ? [{
+        OR: [
+          { completedAt: { lt: cursor.at } },
+          { completedAt: cursor.at, notificationId: { lt: cursor.id } },
+        ],
+      }] : []),
+    ],
     notification: { is: notificationWhere },
   };
   const activeSummaryWhere: Prisma.SystemNotificationRecipientWhereInput = {
     userId,
+    completedAt: null,
     OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
     notification: {
       is: { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
     },
   };
-  const [recipients, summaryRecipients] = await Promise.all([
+  const [recipients, summaryRecipients, completedSummaryRecipients] = await Promise.all([
     prisma.systemNotificationRecipient.findMany({
       where,
       include: {
@@ -354,16 +399,36 @@ export async function loadNotificationInbox(
           include: { actor: { select: { displayName: true, username: true } } },
         },
       },
-      orderBy: [
-        { notification: { createdAt: 'desc' } },
-        { notificationId: 'desc' },
-      ],
+      orderBy: state === 'completed'
+        ? [{ completedAt: 'desc' }, { notificationId: 'desc' }]
+        : [{ notification: { createdAt: 'desc' } }, { notificationId: 'desc' }],
       take: limit + 1,
     }),
     prisma.systemNotificationRecipient.findMany({
       where: activeSummaryWhere,
       select: {
         readAt: true,
+        notification: {
+          select: {
+            eventType: true,
+            category: true,
+            priority: true,
+            title: true,
+            targetRoute: true,
+            sourceType: true,
+          },
+        },
+      },
+    }),
+    prisma.systemNotificationRecipient.findMany({
+      where: {
+        userId,
+        completedAt: { not: null },
+        notification: {
+          is: { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+        },
+      },
+      select: {
         notification: {
           select: {
             eventType: true,
@@ -384,6 +449,13 @@ export async function loadNotificationInbox(
     MATERIAL: 0,
     SYSTEM: 0,
   };
+  const completedBusinessCategoryCounts: Record<NotificationBusinessCategory, number> = {
+    PRODUCTION: 0,
+    QUALITY: 0,
+    PROCESS: 0,
+    MATERIAL: 0,
+    SYSTEM: 0,
+  };
   let actionableCount = 0;
   let urgentCount = 0;
   let unreadCount = 0;
@@ -393,6 +465,11 @@ export async function loadNotificationInbox(
     if (notificationRequiresAction(notification)) actionableCount += 1;
     if (notification.priority === 'URGENT') urgentCount += 1;
     if (!recipient.readAt) unreadCount += 1;
+  }
+  for (const recipient of completedSummaryRecipients) {
+    completedBusinessCategoryCounts[
+      notificationBusinessCategory(recipient.notification as NotificationClassificationInput)
+    ] += 1;
   }
   const hasMore = recipients.length > limit;
   const page = hasMore ? recipients.slice(0, limit) : recipients;
@@ -424,18 +501,28 @@ export async function loadNotificationInbox(
       requiresAction: notificationRequiresAction(classificationInput),
       readAt: recipient.readAt?.toISOString() || null,
       snoozedUntil: recipient.snoozedUntil?.toISOString() || null,
+      completedAt: recipient.completedAt?.toISOString() || null,
+      completionKind: recipient.completionKind as NotificationCompletionKind | null,
+      completionReason: recipient.completionReason,
+      canRestore: recipient.completionKind === 'MANUAL',
       createdAt: notification.createdAt.toISOString(),
     };
   });
-  const last = page[page.length - 1]?.notification;
+  const lastRecipient = page[page.length - 1];
+  const lastAt = state === 'completed'
+    ? lastRecipient?.completedAt
+    : lastRecipient?.notification.createdAt;
   return {
     notifications,
     unreadCount,
     actionableCount,
     urgentCount,
+    pendingCount: summaryRecipients.length,
+    completedCount: completedSummaryRecipients.length,
     businessCategoryCounts,
-    nextCursor: hasMore && last
-      ? encodeCursor({ createdAt: last.createdAt.toISOString(), id: last.id })
+    completedBusinessCategoryCounts,
+    nextCursor: hasMore && lastRecipient && lastAt
+      ? encodeCursor({ at: lastAt.toISOString(), id: lastRecipient.notificationId, state })
       : null,
   };
 }
@@ -459,10 +546,146 @@ export async function snoozeNotification(
 ): Promise<Date | null> {
   const snoozedUntil = notificationSnoozedUntil(minutes);
   const result = await prisma.systemNotificationRecipient.updateMany({
-    where: { userId, notificationId },
+    where: { userId, notificationId, completedAt: null },
     data: { readAt: null, snoozedUntil },
   });
   return result.count === 1 ? snoozedUntil : null;
+}
+
+export async function setNotificationCompletedState(
+  userId: string,
+  notificationId: string,
+  completed: boolean,
+  reason?: string | null,
+): Promise<
+  | { status: 'updated'; completedAt: Date | null; completionKind: NotificationCompletionKind | null; canRestore: boolean }
+  | { status: 'not_found' }
+  | { status: 'not_restorable' }
+> {
+  const run = async (tx: Prisma.TransactionClient) => {
+    const recipient = await tx.systemNotificationRecipient.findUnique({
+      where: { notificationId_userId: { notificationId, userId } },
+      select: {
+        completedAt: true,
+        completionKind: true,
+        notification: {
+          select: {
+            eventType: true,
+            sourceType: true,
+            sourceId: true,
+            dedupeKey: true,
+          },
+        },
+      },
+    });
+    if (!recipient) return { status: 'not_found' as const };
+
+    let sourceResolutionReason: string | null = null;
+    if (
+      recipient.notification.sourceType === 'process_route_change'
+      && recipient.notification.sourceId
+      && isProcessRouteStageEvent(recipient.notification.eventType)
+    ) {
+      const source = await tx.processRouteChange.findUnique({
+        where: { id: recipient.notification.sourceId },
+        select: {
+          status: true,
+          outbox: {
+            where: { eventType: { in: [...PROCESS_ROUTE_STAGE_EVENTS] } },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: 1,
+            select: { id: true, dedupeKey: true, eventType: true },
+          },
+        },
+      });
+      const latestStageOutbox = source?.outbox[0];
+      const belongsToLatestStage = Boolean(
+        latestStageOutbox
+        && recipient.notification.dedupeKey === `route-change:${latestStageOutbox.dedupeKey}`,
+      );
+      const isCurrentStage = Boolean(
+        source
+        && processStageNotificationIsCurrent(
+          recipient.notification.eventType,
+          source.status as ProcessRouteStatusValue,
+          belongsToLatestStage,
+        ),
+      );
+      if (!isCurrentStage) {
+        sourceResolutionReason = source
+          ? `工艺通知已不是当前阶段：当前状态 ${source.status}，最新事件 ${latestStageOutbox?.eventType || '无'}`
+          : '工艺通知对应的业务源已不存在';
+      } else if (
+        recipient.notification.eventType === 'PROCESS_ROUTE_CHANGE_REJECTED'
+        || recipient.notification.eventType === 'PROCESS_ROUTE_CHANGE_ACTIVATED'
+      ) {
+        sourceResolutionReason = `工艺通知事件已处于明确终态：${recipient.notification.eventType}`;
+      }
+    }
+    if (sourceResolutionReason) {
+      const completedAt = recipient.completedAt || new Date();
+      await tx.systemNotificationRecipient.update({
+        where: { notificationId_userId: { notificationId, userId } },
+        data: {
+          completedAt,
+          completionKind: 'SOURCE_RESOLVED',
+          completionReason: sourceResolutionReason,
+          readAt: completedAt,
+          snoozedUntil: null,
+        },
+      });
+      return completed
+        ? {
+          status: 'updated' as const,
+          completedAt,
+          completionKind: 'SOURCE_RESOLVED' as const,
+          canRestore: false,
+        }
+        : { status: 'not_restorable' as const };
+    }
+
+    if (completed) {
+      if (recipient.completedAt) {
+        return {
+          status: 'updated' as const,
+          completedAt: recipient.completedAt,
+          completionKind: recipient.completionKind as NotificationCompletionKind | null,
+          canRestore: recipient.completionKind === 'MANUAL',
+        };
+      }
+      const completedAt = new Date();
+      await tx.systemNotificationRecipient.update({
+        where: { notificationId_userId: { notificationId, userId } },
+        data: {
+          completedAt,
+          completionKind: 'MANUAL',
+          completionReason: text(reason, 240) || '用户手动标记为已完成',
+          readAt: completedAt,
+          snoozedUntil: null,
+        },
+      });
+      return { status: 'updated' as const, completedAt, completionKind: 'MANUAL' as const, canRestore: true };
+    }
+
+    if (!recipient.completedAt) {
+      return { status: 'updated' as const, completedAt: null, completionKind: null, canRestore: false };
+    }
+    if (recipient.completionKind !== 'MANUAL') return { status: 'not_restorable' as const };
+    await tx.systemNotificationRecipient.update({
+      where: { notificationId_userId: { notificationId, userId } },
+      data: { completedAt: null, completionKind: null, completionReason: null },
+    });
+    return { status: 'updated' as const, completedAt: null, completionKind: null, canRestore: false };
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await prisma.$transaction(run, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2034' || attempt === 1) throw error;
+    }
+  }
+  throw new Error('通知完成状态并发更新失败');
 }
 
 export async function markAllNotificationsRead(userId: string): Promise<number> {
@@ -470,6 +693,7 @@ export async function markAllNotificationsRead(userId: string): Promise<number> 
   const result = await prisma.systemNotificationRecipient.updateMany({
     where: {
       userId,
+      completedAt: null,
       readAt: null,
       OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
     },

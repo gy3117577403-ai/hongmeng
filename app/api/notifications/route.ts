@@ -7,6 +7,7 @@ import {
 } from '@/lib/auth';
 import {
   loadNotificationInbox,
+  parseNotificationInboxState,
   SYSTEM_NOTIFICATION_CATEGORIES,
   type SystemNotificationCategory,
 } from '@/lib/system-notifications';
@@ -29,11 +30,19 @@ export async function GET(request: NextRequest) {
     if (category && !SYSTEM_NOTIFICATION_CATEGORIES.includes(category)) {
       return NextResponse.json({ ok: false, error: '通知分类不正确' }, { status: 400 });
     }
+    const stateValue = request.nextUrl.searchParams.get('state')
+      ?? request.nextUrl.searchParams.get('status')
+      ?? 'pending';
+    const state = parseNotificationInboxState(stateValue);
+    if (!state) {
+      return NextResponse.json({ ok: false, error: '通知状态必须是 pending 或 completed' }, { status: 400 });
+    }
     const inbox = await loadNotificationInbox(user.id, user.access, {
       limit: integer(request.nextUrl.searchParams.get('limit'), 30, 100),
       cursor: request.nextUrl.searchParams.get('cursor'),
       unreadOnly: request.nextUrl.searchParams.get('unreadOnly') === 'true',
       category,
+      state,
     });
     return NextResponse.json({ ok: true, ...inbox });
   } catch (error) {

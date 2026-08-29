@@ -478,6 +478,8 @@ export type SystemNotificationCategoryDTO = 'SYSTEM' | 'ACCOUNT' | 'TODO' | 'APP
 
 export type SystemNotificationPriorityDTO = 'NORMAL' | 'HIGH' | 'URGENT';
 export type NotificationBusinessCategoryDTO = 'PRODUCTION' | 'QUALITY' | 'PROCESS' | 'MATERIAL' | 'SYSTEM';
+export type NotificationInboxStateDTO = 'pending' | 'completed';
+export type NotificationCompletionKindDTO = 'MANUAL' | 'SOURCE_RESOLVED' | 'SYSTEM_RECONCILED';
 
 export type SystemNotificationDTO = {
   id: string;
@@ -494,6 +496,10 @@ export type SystemNotificationDTO = {
   requiresAction: boolean;
   readAt: string | null;
   snoozedUntil: string | null;
+  completedAt: string | null;
+  completionKind: NotificationCompletionKindDTO | null;
+  completionReason: string | null;
+  canRestore: boolean;
   createdAt: string;
 };
 
