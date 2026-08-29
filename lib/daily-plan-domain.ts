@@ -170,9 +170,10 @@ export function resolveEffectiveCapacity(input?: {
     return { source: 'override', regularMilliseconds, overtimeMilliseconds, totalMilliseconds: regularMilliseconds + overtimeMilliseconds };
   }
   if (input?.attendanceActualMilliseconds != null && input.attendanceActualMilliseconds > 0) {
-    const regularMilliseconds = integer(input.attendanceActualMilliseconds, '实际出勤工时', 0);
+    const actualMilliseconds = integer(input.attendanceActualMilliseconds, '实际出勤工时', 0);
     const overtimeMilliseconds = integer(input.attendanceOvertimeMilliseconds ?? 0, '考勤加班工时', 0);
-    return { source: 'attendance', regularMilliseconds, overtimeMilliseconds, totalMilliseconds: regularMilliseconds + overtimeMilliseconds };
+    const regularMilliseconds = Math.max(0, actualMilliseconds - overtimeMilliseconds);
+    return { source: 'attendance', regularMilliseconds, overtimeMilliseconds, totalMilliseconds: actualMilliseconds };
   }
   return {
     source: 'fallback',

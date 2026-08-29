@@ -708,6 +708,7 @@ model WorkOrder {
   processRoute             WorkOrderProcessRoute?
   abnormalTimeEvents       AbnormalTimeEvent[]
   productionPlanBatch      ProductionPlanBatch?
+  productionPlanBatchHolds ProductionPlanBatchHold[]
   productionCarryovers     ProductionCarryover[]
   parentWorkOrder          WorkOrder?                     @relation("WorkOrderBranchParent", fields: [parentWorkOrderId], references: [id], onDelete: SetNull)
   branchWorkOrders         WorkOrder[]                    @relation("WorkOrderBranchParent")
@@ -2993,6 +2994,7 @@ model ProductionPlanBatch {
   dailyProcessTasks         DailyProcessTask[]
   dailyShipmentItems        DailyShipmentPlanItem[]
   carryovers                ProductionCarryover[]
+  holds                     ProductionPlanBatchHold[]
 
   @@unique([planOrderId, batchNo])
   @@index([weekStartDate, releaseState])
@@ -3000,6 +3002,36 @@ model ProductionPlanBatch {
   @@index([productTimeProfileId])
   @@index([deletedAt])
   @@map("production_plan_batches")
+}
+
+model ProductionPlanBatchHold {
+  id                String              @id @default(uuid())
+  batchId           String              @map("batch_id")
+  workOrderId       String?             @map("work_order_id")
+  dedupeKey         String              @unique @map("dedupe_key")
+  holdType          String              @default("MATERIAL") @map("hold_type")
+  reasonCode        String              @map("reason_code")
+  sourceType        String              @map("source_type")
+  sourceId          String?             @map("source_id")
+  status            String              @default("ACTIVE")
+  reason            String
+  expectedResolveAt DateTime?           @map("expected_resolve_at")
+  frozenAt          DateTime            @default(now()) @map("frozen_at")
+  frozenById        String?             @map("frozen_by_id")
+  resolvedAt        DateTime?           @map("resolved_at")
+  resolvedById      String?             @map("resolved_by_id")
+  overrideReason    String?             @map("override_reason")
+  version           Int                 @default(0)
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  batch             ProductionPlanBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  workOrder         WorkOrder?          @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+
+  @@index([batchId, status])
+  @@index([workOrderId, status])
+  @@index([holdType, status])
+  @@index([sourceType, sourceId])
+  @@map("production_plan_batch_holds")
 }
 
 model ProductionCarryover {

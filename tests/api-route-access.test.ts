@@ -570,6 +570,7 @@ test('planning owns week lifecycle and daily shipments while GM stays read-only'
   assert.equal(canAccessApiRoute(planning, '/api/work-orders/week/activate-next/commit', 'POST'), true);
   assert.equal(canAccessApiRoute(planning, '/api/planning/weekly-plan-export/preview', 'POST'), true);
   assert.equal(canAccessApiRoute(planning, '/api/planning/weekly-plan-export.xlsx', 'GET'), true);
+  assert.equal(canAccessApiRoute(planning, '/api/planning/month', 'GET'), true);
   assert.equal(canAccessApiRoute(planning, '/api/daily-shipments', 'POST'), true);
   assert.equal(canAccessApiRoute(gm, '/api/work-orders/week/history', 'GET'), true);
   assert.equal(canAccessApiRoute(gm, '/api/work-orders/week/diff/export.csv', 'GET'), true);
@@ -579,6 +580,7 @@ test('planning owns week lifecycle and daily shipments while GM stays read-only'
   assert.equal(canAccessApiRoute(gm, '/api/daily-shipments', 'POST'), false);
   assert.equal(canAccessApiRoute(gm, '/api/planning/weekly-plan-export/preview', 'POST'), true);
   assert.equal(canAccessApiRoute(gm, '/api/planning/weekly-plan-export.xlsx', 'GET'), true);
+  assert.equal(canAccessApiRoute(gm, '/api/planning/month', 'GET'), true);
 });
 
 test('abnormal-event review is available to quality, workshop supervisors and team leaders', () => {

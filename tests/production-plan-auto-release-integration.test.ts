@@ -3,6 +3,7 @@ import test from 'node:test';
 import { prisma } from '../lib/prisma';
 import { productionWeekWhere } from '../lib/production-execution';
 import { reconcileAutomaticallyReleasedProductionPlanBatches } from '../lib/production-planning';
+import { synchronizeMaterialProductionHold } from '../lib/production-plan-holds';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
 
@@ -166,7 +167,7 @@ test(
             });
           assert.deepEqual(
             { active: first.active, preparation: first.preparation, started: first.started },
-            { active: 1, preparation: 1, started: 1 },
+            { active: 1, preparation: 1, started: 0 },
           );
           assert.equal(first.warningCount, 1);
 
@@ -174,6 +175,7 @@ test(
             tx.productionPlanBatch.findFirstOrThrow({
               where: { planOrderId: currentOrder.id },
               include: {
+                holds: true,
                 workOrder: {
                   include: { materialTask: true, processRoute: { include: { steps: true } } },
                 },
@@ -182,6 +184,7 @@ test(
             tx.productionPlanBatch.findFirstOrThrow({
               where: { planOrderId: nextOrder.id },
               include: {
+                holds: true,
                 workOrder: {
                   include: { materialTask: true, processRoute: { include: { steps: true } } },
                 },
@@ -190,17 +193,18 @@ test(
           ]);
           assert.equal(currentBatch.releaseState, 'active');
           assert.equal(currentBatch.workOrder?.planActive, true);
-          assert.equal(currentBatch.workOrder?.stage, 'frontend');
-          assert.ok(currentBatch.workOrder?.startedAt);
-          assert.equal(currentBatch.workOrder?.processRoute?.status, 'in_progress');
-          assert.ok(currentBatch.workOrder?.processRoute?.startedAt);
-          assert.equal(currentBatch.workOrder?.processRoute?.steps[0]?.status, 'current');
+          assert.equal(currentBatch.workOrder?.stage, 'not_issued');
+          assert.equal(currentBatch.workOrder?.startedAt, null);
+          assert.equal(currentBatch.workOrder?.processRoute?.status, 'confirmed');
+          assert.equal(currentBatch.holds[0]?.status, 'ACTIVE');
+          assert.equal(currentBatch.holds[0]?.reasonCode, 'pending');
           assert.equal(nextBatch.releaseState, 'preparation');
           assert.equal(nextBatch.workOrder?.planActive, false);
           assert.equal(currentBatch.workOrder?.materialTask?.status, 'pending');
           assert.ok(nextBatch.workOrder);
           assert.equal(nextBatch.workOrder.startedAt, null);
           assert.equal(nextBatch.workOrder.materialTask?.status, 'pending');
+          assert.equal(nextBatch.holds[0]?.status, 'ACTIVE');
           assert.equal(nextBatch.workOrder.processRoute?.status, 'draft');
           assert.equal(nextBatch.workOrder.processRoute?.routeSource, 'product_time_pending');
 
@@ -245,13 +249,29 @@ test(
               },
             },
           });
+          const materialTasks = await tx.warehouseMaterialTask.findMany({
+            where: { workOrderId: { in: [currentBatch.workOrderId!, nextBatch.workOrderId!] } },
+          });
+          for (const task of materialTasks) {
+            await tx.warehouseMaterialTask.update({
+              where: { id: task.id },
+              data: { status: 'completed', completedAt: currentStart, completedById: actor.id, updatedById: actor.id },
+            });
+            await synchronizeMaterialProductionHold(tx, {
+              workOrderId: task.workOrderId,
+              warehouseTaskId: task.id,
+              status: 'completed',
+              actorId: actor.id,
+              now: currentStart,
+            });
+          }
           const backfill = await reconcileAutomaticallyReleasedProductionPlanBatches(tx, {
             actorId: actor.id,
             now: currentStart,
           });
           assert.deepEqual(
             { active: backfill.active, preparation: backfill.preparation, started: backfill.started },
-            { active: 0, preparation: 0, started: 1 },
+            { active: 0, preparation: 0, started: 2 },
           );
           const startedNext = await tx.productionPlanBatch.findFirstOrThrow({
             where: { planOrderId: nextOrder.id },

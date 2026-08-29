@@ -137,10 +137,15 @@ test('capacity uses override first, then attendance, then the eight-hour fallbac
     overtimeMilliseconds: 0,
     totalMilliseconds: DEFAULT_DAILY_CAPACITY_MILLISECONDS,
   });
-  assert.equal(resolveEffectiveCapacity({
+  assert.deepEqual(resolveEffectiveCapacity({
     attendanceActualMilliseconds: 7 * 60 * 60 * 1_000,
     attendanceOvertimeMilliseconds: 60 * 60 * 1_000,
-  }).totalMilliseconds, 8 * 60 * 60 * 1_000);
+  }), {
+    source: 'attendance',
+    regularMilliseconds: 6 * 60 * 60 * 1_000,
+    overtimeMilliseconds: 60 * 60 * 1_000,
+    totalMilliseconds: 7 * 60 * 60 * 1_000,
+  });
   assert.deepEqual(resolveEffectiveCapacity({
     attendanceActualMilliseconds: 7 * 60 * 60 * 1_000,
     overrideRegularMilliseconds: 8 * 60 * 60 * 1_000,

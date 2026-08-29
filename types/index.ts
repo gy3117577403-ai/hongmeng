@@ -1594,6 +1594,18 @@ export type ProductionPlanProductOptionDTO = {
   qualityWarningPrintRequired?: boolean;
 };
 
+export type ProductionPlanBatchHoldDTO = {
+  id: string;
+  holdType: string;
+  reasonCode: string;
+  sourceType: string;
+  status: 'ACTIVE' | 'RESOLVED' | 'OVERRIDDEN';
+  reason: string;
+  expectedResolveAt?: string | null;
+  frozenAt: string;
+  resolvedAt?: string | null;
+};
+
 export type ProductionPlanBatchDTO = {
   productionControl?: import('@/lib/production-control').ProductionControlView | null;
   estimatedCompletionDate?: string | null;
@@ -1610,6 +1622,7 @@ export type ProductionPlanBatchDTO = {
   productTimeProfileVersion?: number | null;
   unitMillisecondsSnapshot?: number | null;
   totalMillisecondsSnapshot?: string | null;
+  holds?: ProductionPlanBatchHoldDTO[];
   warehouseStatus?: WarehouseMaterialStatus | 'not_created';
   processStatus?: ProcessRouteStatus | 'not_created';
   warehouseCompletedAt?: string | null;
@@ -1699,7 +1712,38 @@ export type ProductionPlanningPeriodsDTO = {
   current: ProductionPlanningWeekDTO;
   next: ProductionPlanningWeekDTO;
   afterNext: ProductionPlanningWeekDTO;
+  upcoming?: ProductionPlanningWeekDTO[];
   history: ProductionPlanningWeekDTO[];
+};
+
+export type ProductionPlanningCapacityDTO = {
+  scheduledMilliseconds: string;
+  attendanceScopeScheduledMilliseconds: string;
+  frozenMilliseconds: string;
+  executableMilliseconds: string;
+  plannedCapacityMilliseconds: string;
+  confirmedAttendanceMilliseconds: string;
+  missingTimeBatchCount: number;
+  batchCount: number;
+  frozenBatchCount: number;
+  employeeCount: number;
+  workdayCount: number;
+  confirmedAttendanceRecordCount: number;
+  capacitySource: 'planned' | 'confirmed_attendance' | 'mixed';
+};
+
+export type ProductionPlanningMonthWeekDTO = ProductionPlanningCapacityDTO & {
+  weekStartDate: string;
+  weekEndDate: string;
+  totalQuantity: number;
+};
+
+export type ProductionPlanningMonthDTO = {
+  month: string;
+  startDate: string;
+  endDate: string;
+  capacity: ProductionPlanningCapacityDTO;
+  weeks: ProductionPlanningMonthWeekDTO[];
 };
 
 export type ProductionPlanningSummaryDTO = {

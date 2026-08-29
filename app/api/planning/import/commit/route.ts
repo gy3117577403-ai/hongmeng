@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
     }
     const targetWeek = editableProductionPlanningWeek(body.targetWeekStartDate);
     if (!targetWeek) {
-      return NextResponse.json({ ok: false, error: '导入目标只能是本周、下周或下下周' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: '导入目标只能是当前起未来 12 周内的生产周' }, { status: 400 });
     }
     const targetWeekStartDate = chinaDate(targetWeek.start);
     const targetWeekEndDate = chinaDate(targetWeek.end);

@@ -4,9 +4,11 @@ import ExcelJS from 'exceljs';
 import {
   buildWeeklyPlanSimpleRows,
   createWeeklyPlanExportWorkbook,
+  parseWeeklyPlanExportMode,
   parseWeeklyPlanExportRange,
   parseWeeklyPlanExportVersion,
   summarizeWeeklyPlanRows,
+  weeklyPlanExportFileName,
   type WeeklyPlanExportDataset,
   type WeeklyPlanExportRow,
 } from '@/lib/weekly-plan-export';
@@ -118,9 +120,9 @@ test('full weekly-plan workbook keeps the 22-column template and uses carryover 
     range: 'execution',
     generatedAt: '2026-08-24 12:00',
   });
-  const sheet = workbook.getWorksheet('本周计划打印版')!;
+  const sheet = workbook.getWorksheet('生产计划打印版')!;
   assert.equal(sheet.columnCount, 22);
-  assert.equal(sheet.getCell('A1').value, '本周生产计划清单');
+  assert.equal(sheet.getCell('A1').value, '生产执行计划清单');
   assert.equal(sheet.getCell('A6').value, '序号');
   assert.equal(sheet.getCell('V6').value, '备注');
   assert.equal(sheet.getCell('G9').value, 4);
@@ -149,7 +151,7 @@ test('full weekly-plan workbook keeps the 22-column template and uses carryover 
   const bytes = await workbook.xlsx.writeBuffer({ useStyles: true, useSharedStrings: true });
   const reopened = new ExcelJS.Workbook();
   await reopened.xlsx.load(bytes);
-  const reopenedSheet = reopened.getWorksheet('本周计划打印版')!;
+  const reopenedSheet = reopened.getWorksheet('生产计划打印版')!;
   assert.equal(reopenedSheet.getCell('G9').value, 4);
   assert.ok(reopenedSheet.getCell('K9').value instanceof Date);
   assert.equal(reopenedSheet.getCell('L9').value, '30分');
@@ -169,7 +171,7 @@ test('order-only workbook has exactly five fields and aggregates batches by plan
     range: 'execution',
     generatedAt: '2026-08-24 12:00',
   });
-  const sheet = workbook.getWorksheet('本周计划订单简版')!;
+  const sheet = workbook.getWorksheet('生产计划订单简版')!;
   assert.deepEqual(
     ['A6', 'B6', 'C6', 'D6', 'E6'].map(address => sheet.getCell(address).value),
     ['订单编号', '客户', '规格', '数量', '交期'],
@@ -189,7 +191,7 @@ test('current-only export excludes carryover rows and records the exclusion in t
     range: 'current',
     generatedAt: '2026-08-24 12:00',
   });
-  const sheet = workbook.getWorksheet('本周计划订单简版')!;
+  const sheet = workbook.getWorksheet('生产计划订单简版')!;
   assert.equal(sheet.getCell('D7').value, 15);
   assert.match(String(sheet.getCell('A4').value), /未包含有效遗留 2 批、6 件/);
   assert.equal((sheet.getCell('D8').value as ExcelJS.CellFormulaValue).result, 15);
@@ -209,7 +211,7 @@ test('current-only export says when excluded carryover labor is unknown instead 
     range: 'current',
     generatedAt: '2026-08-24 12:00',
   });
-  assert.match(String(workbook.getWorksheet('本周计划订单简版')!.getCell('A4').value), /另有2 批工时待补/);
+  assert.match(String(workbook.getWorksheet('生产计划订单简版')!.getCell('A4').value), /另有2 批工时待补/);
 });
 
 test('weekly-plan export request values fail closed', () => {
@@ -217,6 +219,29 @@ test('weekly-plan export request values fail closed', () => {
   assert.equal(parseWeeklyPlanExportVersion('orders'), 'orders');
   assert.equal(parseWeeklyPlanExportRange('execution'), 'execution');
   assert.equal(parseWeeklyPlanExportRange('current'), 'current');
+  assert.equal(parseWeeklyPlanExportMode('week_execution'), 'week_execution');
+  assert.equal(parseWeeklyPlanExportMode('schedule_range'), 'schedule_range');
   assert.throws(() => parseWeeklyPlanExportVersion('csv'), /导出版本不正确/);
   assert.throws(() => parseWeeklyPlanExportRange('history'), /导出范围不正确/);
+  assert.throws(() => parseWeeklyPlanExportMode('history'), /导出模式不正确/);
+});
+
+test('date-range workbook uses neutral titles and includes every batch only once', () => {
+  const source = dataset();
+  source.mode = 'schedule_range';
+  source.weekStartDate = '2026-08-31';
+  source.weekEndDate = '2026-09-30';
+  source.previousCarryoverRows = [];
+  source.olderCarryoverRows = [];
+  source.rows = source.currentRows;
+  source.summary.previousCarryover = summarizeWeeklyPlanRows([]);
+  source.summary.olderCarryover = summarizeWeeklyPlanRows([]);
+  source.summary.carryover = summarizeWeeklyPlanRows([]);
+  source.summary.execution = source.summary.current;
+  const workbook = createWeeklyPlanExportWorkbook({ dataset: source, version: 'full', range: 'current' });
+  const sheet = workbook.getWorksheet('生产计划打印版')!;
+  assert.equal(sheet.getCell('A1').value, '生产计划清单');
+  assert.match(String(sheet.getCell('A4').value), /按内部计划完成日/);
+  assert.equal((sheet.getCell('G9').value as ExcelJS.CellFormulaValue).result, 2);
+  assert.equal(weeklyPlanExportFileName(source, 'full', 'current'), '生产计划_2026-08-31至2026-09-30_完整版_按内部完成日.xlsx');
 });

@@ -823,6 +823,288 @@ main.planning-center-shell.hm-workbench-root {
   overflow: hidden;
 }
 
+.planning-center-shell .planning-week-switcher {
+  overflow-x: auto;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(210px, 1fr);
+  grid-template-columns: none;
+  scrollbar-width: thin;
+}
+
+.planning-center-shell .planning-month-view {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.planning-center-shell .planning-month-heading {
+  min-height: 74px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid #dce4ec;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.planning-center-shell .planning-month-heading span,
+.planning-center-shell .planning-month-heading h2,
+.planning-center-shell .planning-month-heading p {
+  display: block;
+  margin: 0;
+}
+
+.planning-center-shell .planning-month-heading span {
+  color: #e85d04;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.planning-center-shell .planning-month-heading h2 {
+  margin-top: 2px;
+  color: #172b4d;
+  font-size: 21px;
+}
+
+.planning-center-shell .planning-month-heading p {
+  margin-top: 3px;
+  color: #718096;
+  font-size: 11px;
+}
+
+.planning-center-shell .planning-month-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.planning-center-shell .planning-month-actions button,
+.planning-center-shell .planning-month-actions input {
+  min-height: 36px;
+  border: 1px solid #d6dee7;
+  border-radius: 7px;
+  background: #fff;
+  color: #26384d;
+  font-weight: 750;
+}
+
+.planning-center-shell .planning-month-actions button {
+  padding: 0 11px;
+  cursor: pointer;
+}
+
+.planning-center-shell .planning-month-actions input {
+  padding: 0 10px;
+}
+
+.planning-center-shell .planning-month-actions button.export {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: #b9dcc5;
+  color: #177247;
+}
+
+.planning-center-shell .planning-month-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.planning-center-shell .planning-month-kpis article {
+  min-width: 0;
+  padding: 12px 13px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid #dfe6ed;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.planning-center-shell .planning-month-kpis span,
+.planning-center-shell .planning-month-kpis small {
+  color: #748196;
+  font-size: 10px;
+}
+
+.planning-center-shell .planning-month-kpis strong {
+  color: #172b4d;
+  font-size: 20px;
+}
+
+.planning-center-shell .planning-month-kpis article.frozen {
+  border-color: #f4c7ac;
+  background: #fff7f1;
+}
+
+.planning-center-shell .planning-month-kpis article.frozen strong,
+.planning-center-shell .planning-month-kpis article.rate strong {
+  color: #d95600;
+}
+
+.planning-center-shell .planning-month-weeks {
+  overflow: hidden;
+  border: 1px solid #dce4ec;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.planning-center-shell .planning-month-week {
+  min-height: 61px;
+  padding: 0 14px;
+  display: grid;
+  grid-template-columns: 1.2fr 1fr repeat(5, .9fr) 1fr;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid #edf1f5;
+}
+
+.planning-center-shell .planning-month-week.header {
+  min-height: 38px;
+  border-top: 0;
+  background: #f4f7fa;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.planning-center-shell .planning-month-week span,
+.planning-center-shell .planning-month-week strong,
+.planning-center-shell .planning-month-week small {
+  min-width: 0;
+  display: block;
+}
+
+.planning-center-shell .planning-month-week strong {
+  color: #22324a;
+  font-size: 12px;
+}
+
+.planning-center-shell .planning-month-week small {
+  margin-top: 2px;
+  color: #8491a2;
+  font-size: 10px;
+}
+
+.planning-center-shell .planning-month-week .frozen strong,
+.planning-center-shell .planning-month-week .rate strong,
+.planning-center-shell .planning-month-week small.warning {
+  color: #d95600;
+}
+
+.planning-center-shell .planning-month-week button {
+  min-height: 31px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #e9b38d;
+  border-radius: 6px;
+  background: #fff8f3;
+  color: #b94f0b;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.planning-center-shell .planning-table tr.state-frozen > td:first-child {
+  box-shadow: inset 4px 0 #e85d04;
+}
+
+.planning-center-shell .planning-status.status-frozen strong {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #bf4d08;
+}
+
+.planning-center-shell .planning-status.status-frozen small {
+  max-width: 110px;
+  color: #a75a2a;
+  white-space: normal;
+}
+
+.weekly-export-range-picker {
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  align-items: end;
+  gap: 8px;
+  border: 1px solid #dce4ec;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.weekly-export-range-picker label {
+  display: grid;
+  gap: 4px;
+  color: #5b687b;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.weekly-export-range-picker input,
+.weekly-export-range-picker button {
+  height: 36px;
+  border: 1px solid #d5dee7;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.weekly-export-range-picker input {
+  padding: 0 9px;
+}
+
+.weekly-export-range-picker button {
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #b94f0b;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.weekly-export-range-picker > small {
+  grid-column: 1 / -1;
+  color: #7b8798;
+  font-size: 10px;
+}
+
+@media (max-width: 900px) {
+  .planning-center-shell .planning-month-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .planning-center-shell .planning-month-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .planning-center-shell .planning-month-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .planning-center-shell .planning-month-weeks {
+    overflow-x: auto;
+  }
+
+  .planning-center-shell .planning-month-week {
+    min-width: 980px;
+  }
+
+  .weekly-export-range-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-export-range-picker > small {
+    grid-column: 1;
+  }
+}
+
 .planning-center-shell .planning-order-pool-drawer {
   position: absolute;
   z-index: 60;

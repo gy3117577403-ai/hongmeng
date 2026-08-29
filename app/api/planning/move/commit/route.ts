@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     }
     const targetWeek = editableProductionPlanningWeek(body.targetWeekStartDate);
     if (!targetWeek) {
-      return NextResponse.json({ ok: false, error: '只能调配到本周、下周或下下周' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: '只能调配到当前起未来 12 周内的生产周' }, { status: 400 });
     }
     const reason = String(body.reason || '周排单工作区调配').trim().slice(0, 300);
     const result = await prisma.$transaction(async tx => {

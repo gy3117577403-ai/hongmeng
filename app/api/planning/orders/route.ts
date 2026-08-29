@@ -129,6 +129,10 @@ export async function GET(req: NextRequest) {
     }
     const history = [...historyMap.values()]
       .sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate));
+    const upcoming = Array.from({ length: 12 }, (_, index) => {
+      const week = chinaWeekRange(addDays(naturalCurrentWeek.start, index * 7));
+      return weekSummary(chinaDate(week.start), chinaDate(week.end));
+    });
     const summary: ProductionPlanningSummaryDTO = {
       orderCount: all.length,
       pendingOrderCount: all.filter(order => order.status === 'pending').length,
@@ -247,6 +251,7 @@ export async function GET(req: NextRequest) {
         current: weekSummary(currentStart, currentEnd),
         next: weekSummary(nextStart, nextEnd),
         afterNext: weekSummary(afterNextStart, afterNextEnd),
+        upcoming,
         history,
       },
     });

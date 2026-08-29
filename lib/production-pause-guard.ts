@@ -27,6 +27,24 @@ export async function assertProductionMayRun(
   backfill?: ProductionBackfillAuthorization,
 ): Promise<void> {
   const root = await lockProductionWorkOrder(tx, workOrderId);
+  const activeHold = await tx.productionPlanBatchHold.findFirst({
+    where: {
+      status: 'ACTIVE',
+      OR: [
+        { workOrderId: root.id },
+        { batch: { workOrderId: root.id } },
+      ],
+    },
+    select: { holdType: true, reason: true },
+    orderBy: { frozenAt: 'asc' },
+  });
+  if (activeHold) {
+    throw new ProductionControlError(
+      `工单已冻结：${activeHold.reason || '请联系计划或仓库确认恢复'}。本次生产操作未提交。`,
+      'PRODUCTION_HELD',
+      409,
+    );
+  }
   if (!root.productionPausedAt) {
     if (backfill) throw new ProductionControlError('暂停状态已变化，请刷新后重新确认补录方式', 'PRODUCTION_BACKFILL_INVALID', 409);
     return;
@@ -52,7 +70,29 @@ export async function assertProductionMayRun(
 }
 
 /** Read filters do not replace the transactional guard. */
+const withoutActivePlanHold: Prisma.WorkOrderWhereInput = {
+  OR: [
+    { productionPlanBatch: { is: null } },
+    { productionPlanBatch: { is: { holds: { none: { status: 'ACTIVE' } } } } },
+  ],
+};
+
 export const runningProductionWorkOrderWhere: Prisma.WorkOrderWhereInput = {
   productionPausedAt: null,
-  OR: [{ rootWorkOrderId: null }, { rootWorkOrder: { productionPausedAt: null } }],
+  AND: [
+    withoutActivePlanHold,
+    {
+      OR: [
+        { rootWorkOrderId: null },
+        {
+          rootWorkOrder: {
+            is: {
+              productionPausedAt: null,
+              AND: [withoutActivePlanHold],
+            },
+          },
+        },
+      ],
+    },
+  ],
 };

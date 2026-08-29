@@ -6,13 +6,14 @@ import {
   moveProductionPlanBatchToWeek,
 } from '../lib/production-planning';
 
-test('editable planning weeks are limited to current, next and after-next week', () => {
+test('editable planning weeks cover the rolling twelve-week planning horizon', () => {
   const now = new Date('2026-07-29T10:00:00+08:00');
   assert.equal(chinaDate(editableProductionPlanningWeek('2026-07-27', now)?.start), '2026-07-27');
   assert.equal(chinaDate(editableProductionPlanningWeek('2026-08-05', now)?.start), '2026-08-03');
   assert.equal(chinaDate(editableProductionPlanningWeek('2026-08-10', now)?.start), '2026-08-10');
   assert.equal(editableProductionPlanningWeek('2026-07-20', now), null);
-  assert.equal(editableProductionPlanningWeek('2026-08-17', now), null);
+  assert.equal(chinaDate(editableProductionPlanningWeek('2026-10-12', now)?.start), '2026-10-12');
+  assert.equal(editableProductionPlanningWeek('2026-10-19', now), null);
 });
 
 test('moving a draft batch preserves its planned completion weekday', () => {

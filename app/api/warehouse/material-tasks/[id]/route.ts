@@ -4,6 +4,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { isTrackedWarehouseException } from '@/lib/material-follow-up';
+import { synchronizeMaterialProductionHold } from '@/lib/production-plan-holds';
 import {
   prepareWarehouseTaskTransition,
   procurementOwnedExpectedArrival,
@@ -258,6 +259,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       await tx.workOrder.update({
         where: { id: current.workOrderId },
         data: { materialStatus: warehouseLegacyMaterialStatus(synchronizedNext) },
+      });
+      await synchronizeMaterialProductionHold(tx, {
+        workOrderId: current.workOrderId,
+        warehouseTaskId: current.id,
+        status: synchronizedNext.status,
+        exceptionType: synchronizedNext.exceptionType,
+        exceptionNote: synchronizedNext.exceptionNote,
+        expectedAt: synchronizedNext.expectedAt,
+        actorId: user.id,
+        now,
       });
       return tx.warehouseMaterialTask.findUniqueOrThrow({
         where: { id: current.id },

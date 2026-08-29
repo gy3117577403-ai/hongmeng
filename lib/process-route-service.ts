@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { sanitizeSnapshotValue, workOrderSnapshot } from '@/lib/change-snapshots';
 import { prisma } from '@/lib/prisma';
 import { ProductionControlError } from '@/lib/production-control';
-import { assertProductionMayRun, lockProductionWorkOrder } from '@/lib/production-pause-guard';
+import { assertProductionMayRun } from '@/lib/production-pause-guard';
 import {
   normalizeProcessStageGroup,
   processRouteInclude,
@@ -981,10 +981,14 @@ export async function startConfirmedProcessRoute(
     include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
   });
   if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return false;
-  const control = await lockProductionWorkOrder(tx, route.workOrder.id);
-  if (control.productionPausedAt) {
-    if (input.trigger && input.trigger !== 'manual_start') return false;
-    throw new ProcessRouteServiceError('工单已暂停，请先确认恢复生产', 409, 'PRODUCTION_PAUSED');
+  try {
+    await assertProductionMayRun(tx, route.workOrder.id);
+  } catch (error) {
+    if (input.trigger && input.trigger !== 'manual_start' && error instanceof ProductionControlError) return false;
+    if (error instanceof ProductionControlError) {
+      throw new ProcessRouteServiceError(error.message, error.status, error.code);
+    }
+    throw error;
   }
   ensureExecutableWeeklyOrder(route.workOrder);
   const timeReadiness = processRouteExecutionReadiness(route.steps);

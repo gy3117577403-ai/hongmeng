@@ -20,6 +20,7 @@ import {
 } from '@/lib/planning-sop';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
+import { synchronizeMaterialProductionHold } from '@/lib/production-plan-holds';
 import type {
   ProductionPlanBatchDTO,
   ProductionPlanChangeDTO,
@@ -87,6 +88,21 @@ export const productionPlanOrderInclude = {
     where: { deletedAt: null },
     orderBy: [{ weekStartDate: 'asc' as const }, { batchNo: 'asc' as const }],
     include: {
+      holds: {
+        where: { status: 'ACTIVE' },
+        orderBy: { frozenAt: 'asc' as const },
+        select: {
+          id: true,
+          holdType: true,
+          reasonCode: true,
+          sourceType: true,
+          status: true,
+          reason: true,
+          expectedResolveAt: true,
+          frozenAt: true,
+          resolvedAt: true,
+        },
+      },
       workOrder: {
         select: {
           ...PRODUCTION_CONTROL_SELECT,
@@ -425,7 +441,7 @@ export function editableProductionPlanningWeek(
   if (!requested) return null;
   const requestedWeek = chinaWeekRange(requested);
   const currentWeek = chinaWeekRange(now);
-  const lastEditableStart = addPlanningDays(currentWeek.start, 14);
+  const lastEditableStart = addPlanningDays(currentWeek.start, 77);
   if (requestedWeek.start < currentWeek.start || requestedWeek.start > lastEditableStart) return null;
   return requestedWeek;
 }
@@ -1359,6 +1375,17 @@ function batchDto(
     productTimeProfileVersion: batch.productTimeProfileVersion,
     unitMillisecondsSnapshot: batch.unitMillisecondsSnapshot,
     totalMillisecondsSnapshot: batch.totalMillisecondsSnapshot?.toString() || null,
+    holds: batch.holds.map(hold => ({
+      id: hold.id,
+      holdType: hold.holdType,
+      reasonCode: hold.reasonCode,
+      sourceType: hold.sourceType,
+      status: hold.status as 'ACTIVE' | 'RESOLVED' | 'OVERRIDDEN',
+      reason: hold.reason,
+      expectedResolveAt: hold.expectedResolveAt?.toISOString() || null,
+      frozenAt: hold.frozenAt.toISOString(),
+      resolvedAt: hold.resolvedAt?.toISOString() || null,
+    })),
     warehouseStatus: (batch.workOrder?.materialTask?.status as ProductionPlanBatchDTO['warehouseStatus']) || 'not_created',
     processStatus: (route?.status as ProductionPlanBatchDTO['processStatus']) || 'not_created',
     warehouseCompletedAt: batch.workOrder?.materialTask?.completedAt?.toISOString() || null,
@@ -1720,21 +1747,14 @@ export async function releaseProductionPlanBatch(
       })
     : await tx.workOrder.create({ data: { ...data, businessCode }, select: { id: true } });
 
-  await tx.warehouseMaterialTask.upsert({
+  const materialTask = await tx.warehouseMaterialTask.upsert({
     where: { workOrderId: workOrder.id },
     create: { workOrderId: workOrder.id, status: 'pending', updatedById: input.actorId },
     update: {},
+    select: { id: true, status: true, exceptionType: true, exceptionNote: true, expectedAt: true },
   });
 
   await createWorkOrderProcessRoute(tx, { workOrderId: workOrder.id, actorId: input.actorId });
-  const started = await startReadyScheduledWorkOrder(tx, {
-    workOrderId: workOrder.id,
-    actorId: input.actorId,
-    now,
-    trigger: input.trigger === 'automatic_reconciliation'
-      ? 'automatic_plan_reconciliation'
-      : 'automatic_plan_release',
-  });
 
   await tx.productionPlanBatch.update({
     where: { id: batch.id },
@@ -1753,6 +1773,24 @@ export async function releaseProductionPlanBatch(
       activatedAt: planActive ? now : batch.activatedAt,
       activatedById: planActive ? input.actorId : batch.activatedById,
     },
+  });
+  await synchronizeMaterialProductionHold(tx, {
+    workOrderId: workOrder.id,
+    warehouseTaskId: materialTask.id,
+    status: materialTask.status,
+    exceptionType: materialTask.exceptionType,
+    exceptionNote: materialTask.exceptionNote,
+    expectedAt: materialTask.expectedAt,
+    actorId: input.actorId,
+    now,
+  });
+  const started = materialTask.status === 'completed' && await startReadyScheduledWorkOrder(tx, {
+    workOrderId: workOrder.id,
+    actorId: input.actorId,
+    now,
+    trigger: input.trigger === 'automatic_reconciliation'
+      ? 'automatic_plan_reconciliation'
+      : 'automatic_plan_release',
   });
   await refreshProductionPlanOrderStatus(tx, batch.planOrderId);
   await tx.productionPlanChange.create({

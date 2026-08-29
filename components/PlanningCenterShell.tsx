@@ -9,6 +9,7 @@ import {
   Boxes,
   CalendarCheck2,
   CalendarClock,
+  CalendarRange,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -81,12 +82,13 @@ import type {
   ProductionPlanPriority,
   ProductionPlanProductOptionDTO,
   ProductionPlanningPeriodsDTO,
+  ProductionPlanningMonthDTO,
   ProductionPlanningSummaryDTO,
 } from '@/types';
 
-type PlanningView = 'schedule' | 'orders' | 'preparation' | 'changes' | 'history';
+type PlanningView = 'schedule' | 'month' | 'orders' | 'preparation' | 'changes' | 'history';
 type ProductEntryMode = 'select' | 'create';
-type EditableWeekKey = 'current' | 'next' | 'afterNext';
+type EditableWeekKey = string;
 
 const PLANNING_RETURN_STATE_KEY = 'hm-planning-return-state';
 const planningWarningSeverityLabel = { LOW: '低', MEDIUM: '中', HIGH: '高', CRITICAL: '重大' } as const;
@@ -312,6 +314,8 @@ type WeeklyPlanExportMetric = {
 };
 
 type WeeklyPlanExportPreview = {
+  mode: 'week_execution' | 'schedule_range';
+  digest?: string;
   weekStartDate: string;
   weekEndDate: string;
   summary: {
@@ -324,6 +328,9 @@ type WeeklyPlanExportPreview = {
 };
 
 type WeeklyPlanExportDialog = {
+  mode: 'week_execution' | 'schedule_range';
+  startDate: string;
+  endDate: string;
   version: WeeklyPlanExportVersion;
   range: WeeklyPlanExportRange;
   preview: WeeklyPlanExportPreview | null;
@@ -446,7 +453,20 @@ function dayOffset(weekStartDate: string, date: string): number {
 function editableWeekLabel(key: EditableWeekKey): string {
   if (key === 'current') return '本周';
   if (key === 'next') return '下周';
-  return '下下周';
+  if (key === 'afterNext') return '下下周';
+  const index = Number(key.replace('future-', ''));
+  return Number.isInteger(index) ? `第${index + 1}周` : '未来周';
+}
+
+function currentPlanningMonth(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit' })
+    .format(new Date()).slice(0, 7);
+}
+
+function shiftPlanningMonth(month: string, offset: number): string {
+  const value = new Date(`${month}-01T00:00:00.000Z`);
+  value.setUTCMonth(value.getUTCMonth() + offset);
+  return value.toISOString().slice(0, 7);
 }
 
 function weekLabel(batch: ProductionPlanBatchDTO, periods?: PlanningPayload['periods']): string {
@@ -544,6 +564,13 @@ function weeklyPlanExportHours(metric: WeeklyPlanExportMetric): string {
   return metric.hoursMissingCount ? `${known} + ${metric.hoursMissingCount}批待补` : known;
 }
 
+function planningCapacityRate(numerator: string, denominator: string): string {
+  const top = Number(numerator);
+  const bottom = Number(denominator);
+  if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= 0) return '—';
+  return `${(top / bottom * 100).toFixed(1)}%`;
+}
+
 function responseDownloadFileName(response: Response, fallback: string): string {
   const disposition = response.headers.get('Content-Disposition') || '';
   const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
@@ -589,6 +616,9 @@ export default function PlanningCenterShell({
   const [productOptions, setProductOptions] = useState<ProductionPlanProductOptionDTO[]>([]);
   const [salespeople, setSalespeople] = useState<string[]>([]);
   const [periods, setPeriods] = useState<PlanningPayload['periods']>();
+  const [selectedMonth, setSelectedMonth] = useState(currentPlanningMonth);
+  const [monthData, setMonthData] = useState<ProductionPlanningMonthDTO | null>(null);
+  const [monthLoading, setMonthLoading] = useState(false);
   const [selectedWeekStartDate, setSelectedWeekStartDate] = useState('');
   const [historyWeekStartDate, setHistoryWeekStartDate] = useState('');
   const [carryoverOpen, setCarryoverOpen] = useState(false);
@@ -700,11 +730,10 @@ export default function PlanningCenterShell({
         setSalespeople(body.salespeople || []);
         setPeriods(body.periods);
         if (body.periods) {
-          const editableStarts = [
-            body.periods.current.weekStartDate,
-            body.periods.next.weekStartDate,
-            body.periods.afterNext.weekStartDate,
-          ];
+          const editableStarts = (body.periods.upcoming?.length
+            ? body.periods.upcoming
+            : [body.periods.current, body.periods.next, body.periods.afterNext])
+            .map(item => item.weekStartDate);
           const requestedWeekStartDate = requestedWeekStartRef.current;
           setSelectedWeekStartDate(current => (
             editableStarts.includes(current)
@@ -731,6 +760,26 @@ export default function PlanningCenterShell({
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [refreshToken]);
+
+  useEffect(() => {
+    if (view !== 'month') return undefined;
+    const controller = new AbortController();
+    setMonthLoading(true);
+    setError('');
+    fetch(`/api/planning/month?month=${encodeURIComponent(selectedMonth)}`, { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        const body = await responseBody<{ month?: ProductionPlanningMonthDTO }>(response);
+        if (response.status === 401) { location.href = '/login'; return null; }
+        if (!response.ok || !body.month) throw new Error(body.error || '月度排产加载失败');
+        return body.month;
+      })
+      .then(month => { if (month) setMonthData(month); })
+      .catch(reason => {
+        if (reason instanceof Error && reason.name !== 'AbortError') setError(reason.message);
+      })
+      .finally(() => { if (!controller.signal.aborted) setMonthLoading(false); });
+    return () => controller.abort();
+  }, [refreshToken, selectedMonth, view]);
 
   useEffect(() => {
     if (!productPickerOpen) return;
@@ -836,11 +885,12 @@ export default function PlanningCenterShell({
   }, [view, refreshToken]);
 
   const allBatches = useMemo(() => orders.flatMap(order => order.batches.map(batch => ({ order, batch }))), [orders]);
-  const editableWeeks = useMemo(() => periods ? ([
-    { key: 'current' as const, ...periods.current },
-    { key: 'next' as const, ...periods.next },
-    { key: 'afterNext' as const, ...periods.afterNext },
-  ]) : [], [periods]);
+  const editableWeeks = useMemo(() => periods
+    ? (periods.upcoming?.length ? periods.upcoming : [periods.current, periods.next, periods.afterNext]).map((week, index) => ({
+        key: index === 0 ? 'current' : index === 1 ? 'next' : index === 2 ? 'afterNext' : `future-${index}`,
+        ...week,
+      }))
+    : [], [periods]);
   const selectedWeek = editableWeeks.find(item => item.weekStartDate === selectedWeekStartDate)
     || editableWeeks[0]
     || null;
@@ -1033,7 +1083,7 @@ export default function PlanningCenterShell({
     : readinessFilters.length === 1
       ? readinessOptions.find(option => option.id === readinessFilters[0])?.label || '准备状态'
       : `准备状态 ${readinessFilters.length}`;
-  const readinessDisabled = view === 'changes' || view === 'history';
+  const readinessDisabled = view === 'changes' || view === 'history' || view === 'month';
   const selectedWeekQuantity = baseScheduleRows.reduce((sum, item) => sum + item.batch.quantity, 0);
   const selectedWeekTotalMilliseconds = baseScheduleRows.reduce((sum, item) => {
     const total = batchTotalMilliseconds(item.order, item.batch);
@@ -1774,46 +1824,54 @@ export default function PlanningCenterShell({
     }
   }
 
-  async function openWeeklyPlanExport(trigger: HTMLElement): Promise<void> {
-    if (selectedWeekKey !== 'current' || !periods?.current) {
-      setToast('本周计划加载完成后才能导出');
-      return;
-    }
-    dialogTriggerRef.current = trigger;
-    setError('');
-    setWeeklyPlanExportDialog({
-      version: 'full',
-      range: 'execution',
-      preview: null,
-      loading: true,
-      exporting: false,
+  async function loadWeeklyPlanExportPreview(config: Pick<WeeklyPlanExportDialog, 'mode' | 'startDate' | 'endDate' | 'range' | 'version'>): Promise<void> {
+    setWeeklyPlanExportDialog(current => current ? { ...current, ...config, preview: null, loading: true } : {
+      ...config, preview: null, loading: true, exporting: false,
     });
+    setError('');
     try {
       const response = await fetch('/api/planning/weekly-plan-export/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weekStartDate: periods.current.weekStartDate }),
+        body: JSON.stringify({ mode: config.mode, startDate: config.startDate, endDate: config.endDate }),
       });
       const body = await responseBody<{ preview?: WeeklyPlanExportPreview }>(response);
-      if (response.status === 401) {
-        location.href = '/login';
-        return;
-      }
-      if (!response.ok || !body.preview) throw new Error(body.error || '本周计划导出预览生成失败');
+      if (response.status === 401) { location.href = '/login'; return; }
+      if (!response.ok || !body.preview) throw new Error(body.error || '计划导出预览生成失败');
       setWeeklyPlanExportDialog(current => current ? { ...current, preview: body.preview!, loading: false } : current);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '本周计划导出预览生成失败');
+      setError(reason instanceof Error ? reason.message : '计划导出预览生成失败');
       setWeeklyPlanExportDialog(current => current ? { ...current, loading: false } : current);
     }
   }
 
+  async function openWeeklyPlanExport(trigger: HTMLElement): Promise<void> {
+    const monthRange = view === 'month' ? monthData : null;
+    const startDate = monthRange?.startDate || selectedWeek?.weekStartDate;
+    const endDate = monthRange?.endDate || selectedWeek?.weekEndDate;
+    if (!startDate || !endDate) {
+      setToast('计划周期加载完成后才能导出');
+      return;
+    }
+    dialogTriggerRef.current = trigger;
+    const mode = view === 'schedule' && selectedWeekKey === 'current' ? 'week_execution' : 'schedule_range';
+    await loadWeeklyPlanExportPreview({
+      mode,
+      startDate,
+      endDate,
+      version: 'full',
+      range: mode === 'week_execution' ? 'execution' : 'current',
+    });
+  }
+
   async function downloadWeeklyPlanExport(): Promise<void> {
     if (!weeklyPlanExportDialog?.preview || weeklyPlanExportDialog.exporting) return;
-    const { version, range, preview } = weeklyPlanExportDialog;
+    const { version, range, preview, mode, startDate, endDate } = weeklyPlanExportDialog;
     setError('');
     setWeeklyPlanExportDialog(current => current ? { ...current, exporting: true } : current);
     try {
-      const query = new URLSearchParams({ version, range });
+      const query = new URLSearchParams({ version, range, mode, startDate, endDate });
+      if (preview.digest) query.set('previewDigest', preview.digest);
       const response = await fetch(`/api/planning/weekly-plan-export.xlsx?${query.toString()}`, { cache: 'no-store' });
       if (response.status === 401) {
         location.href = '/login';
@@ -1821,9 +1879,9 @@ export default function PlanningCenterShell({
       }
       if (!response.ok) {
         const body = await responseBody<Record<string, never>>(response);
-        throw new Error(body.error || '本周生产计划导出失败');
+        throw new Error(body.error || '生产计划导出失败');
       }
-      const fallback = `本周生产计划_${preview.weekStartDate}至${preview.weekEndDate}_${version === 'full' ? '完整版' : '订单简版'}_${range === 'execution' ? '含遗留' : '仅本周'}.xlsx`;
+      const fallback = `生产计划_${preview.weekStartDate}至${preview.weekEndDate}_${version === 'full' ? '完整版' : '订单简版'}.xlsx`;
       const filename = responseDownloadFileName(response, fallback);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -1835,10 +1893,10 @@ export default function PlanningCenterShell({
       anchor.click();
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      setToast(`${version === 'full' ? '完整计划版' : '订单简版'}已导出${range === 'execution' ? '，包含有效遗留' : '，未包含遗留'}`);
+      setToast(`${version === 'full' ? '完整计划版' : '订单简版'}已导出${mode === 'week_execution' && range === 'execution' ? '，包含有效遗留' : '，按内部完成日筛选'}`);
       setWeeklyPlanExportDialog(null);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '本周生产计划导出失败');
+      setError(reason instanceof Error ? reason.message : '生产计划导出失败');
       setWeeklyPlanExportDialog(current => current ? { ...current, exporting: false } : current);
     }
   }
@@ -1937,6 +1995,7 @@ export default function PlanningCenterShell({
     .map(item => item.batch.workOrderId as string))];
   const views: Array<{ id: PlanningView; label: string; icon: typeof ClipboardList; count?: number }> = [
     { id: 'schedule', label: '计划排程', icon: CalendarCheck2, count: summary.scheduledOrderCount },
+    { id: 'month', label: '月度排产', icon: CalendarRange },
     { id: 'orders', label: '订单管理', icon: ClipboardList, count: summary.pendingOrderCount },
     { id: 'preparation', label: '下周生产', icon: PackageCheck, count: summary.preparationBatchCount },
     { id: 'changes', label: '插单与变更', icon: FilePenLine },
@@ -2077,6 +2136,43 @@ export default function PlanningCenterShell({
 
         {error && <div className="planning-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误"><X size={15} /></button></div>}
 
+        {view === 'month' && <section className="planning-month-view">
+          <header className="planning-month-heading">
+            <div><span>月度产能总览</span><h2>{selectedMonth.replace('-', '年')}月</h2><p>按批次内部计划完成日归属月份，冻结工时保留在承诺负荷中。</p></div>
+            <div className="planning-month-actions">
+              <button type="button" aria-label="上个月" onClick={() => setSelectedMonth(current => shiftPlanningMonth(current, -1))}>‹</button>
+              <input type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value || currentPlanningMonth())} aria-label="选择月份" />
+              <button type="button" aria-label="下个月" onClick={() => setSelectedMonth(current => shiftPlanningMonth(current, 1))}>›</button>
+              <button className="export" type="button" disabled={!monthData} onClick={event => { void openWeeklyPlanExport(event.currentTarget); }}><FileSpreadsheet size={15} />导出计划</button>
+            </div>
+          </header>
+          {monthLoading && <div className="planning-loading">正在汇总月度排产与产能...</div>}
+          {monthData && <>
+            <div className="planning-month-kpis">
+              <article><span>承诺排单工时</span><strong>{totalDuration(monthData.capacity.scheduledMilliseconds)}</strong><small>{monthData.capacity.batchCount} 批 · {monthData.capacity.missingTimeBatchCount ? `${monthData.capacity.missingTimeBatchCount} 批工时待补` : '工时完整'}</small></article>
+              <article className="frozen"><span>物料冻结工时</span><strong>{totalDuration(monthData.capacity.frozenMilliseconds)}</strong><small>{monthData.capacity.frozenBatchCount} 批当前不可执行</small></article>
+              <article><span>可执行工时</span><strong>{totalDuration(monthData.capacity.executableMilliseconds)}</strong><small>承诺排单扣除有效冻结</small></article>
+              <article><span>计划可用工时</span><strong>{totalDuration(monthData.capacity.plannedCapacityMilliseconds)}</strong><small>{monthData.capacity.employeeCount} 人 · {monthData.capacity.workdayCount} 个工作日</small></article>
+              <article className="rate"><span>计划负荷率</span><strong>{planningCapacityRate(monthData.capacity.scheduledMilliseconds, monthData.capacity.plannedCapacityMilliseconds)}</strong><small>排单工时 / 计划可用工时</small></article>
+              <article className="rate"><span>排单率（考勤）</span><strong>{planningCapacityRate(monthData.capacity.attendanceScopeScheduledMilliseconds, monthData.capacity.confirmedAttendanceMilliseconds)}</strong><small>截至今日排单 / 已确认考勤 · {monthData.capacity.confirmedAttendanceRecordCount} 条</small></article>
+            </div>
+            <div className="planning-month-weeks" role="table" aria-label="月度生产周负荷">
+              <div className="planning-month-week header" role="row"><span>生产周</span><span>批次 / 数量</span><span>承诺工时</span><span>冻结工时</span><span>可执行工时</span><span>可用工时</span><span>负荷率</span><span>操作</span></div>
+              {monthData.weeks.map(week => <div className="planning-month-week" role="row" key={week.weekStartDate}>
+                <span><strong>{week.weekStartDate.slice(5)} - {week.weekEndDate.slice(5)}</strong><small>{week.weekStartDate.slice(0, 4)}</small></span>
+                <span><strong>{week.batchCount} 批</strong><small>{week.totalQuantity.toLocaleString()} 件</small></span>
+                <span><strong>{totalDuration(week.scheduledMilliseconds)}</strong>{week.missingTimeBatchCount > 0 && <small className="warning">{week.missingTimeBatchCount} 批待补</small>}</span>
+                <span className={week.frozenBatchCount ? 'frozen' : ''}><strong>{totalDuration(week.frozenMilliseconds)}</strong><small>{week.frozenBatchCount} 批</small></span>
+                <span><strong>{totalDuration(week.executableMilliseconds)}</strong></span>
+                <span><strong>{totalDuration(week.plannedCapacityMilliseconds)}</strong></span>
+                <span className="rate"><strong>{planningCapacityRate(week.scheduledMilliseconds, week.plannedCapacityMilliseconds)}</strong></span>
+                <span><button type="button" onClick={() => selectScheduleWeek(week.weekStartDate)}>进入周排程<ChevronRight size={13} /></button></span>
+              </div>)}
+              {!monthData.weeks.length && <div className="planning-empty"><CalendarRange /><strong>该月暂无排产批次</strong><span>可从周排程进入滚动 12 周范围安排草稿。</span></div>}
+            </div>
+          </>}
+        </section>}
+
         {view === 'schedule' && <section className="planning-schedule-workspace">
           {orderPoolOpen && <div className="planning-order-pool-drawer open">
             <button className="planning-order-pool-scrim" type="button" aria-label="关闭订单池" onClick={() => { setOrderPoolOpen(false); orderPoolTriggerRef.current?.focus(); }} />
@@ -2107,7 +2203,7 @@ export default function PlanningCenterShell({
               </div>
               <div>
                 <button ref={orderPoolTriggerRef} className="pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池<b>{orderPool.length}</b></button>
-                {selectedWeekKey === 'current' && <button className="export" type="button" aria-haspopup="dialog" onClick={event => { void openWeeklyPlanExport(event.currentTarget); }}><FileSpreadsheet size={15} />导出本周计划</button>}
+                <button className="export" type="button" aria-haspopup="dialog" onClick={event => { void openWeeklyPlanExport(event.currentTarget); }}><FileSpreadsheet size={15} />导出计划</button>
                 <button className="import" type="button" onClick={event => openPlanningImport(event.currentTarget)}><Upload size={15} />导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button>
                 <em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}</em>
@@ -2159,8 +2255,9 @@ export default function PlanningCenterShell({
                     weekEndDate: batch.weekEndDate,
                   });
                   const sopInfo = sopStageInfo(order);
+                  const activeHold = batch.holds?.find(hold => hold.status === 'ACTIVE') || null;
                   return <Fragment key={batch.id}>
-                  <tr data-batch-id={batch.id} className={`state-${batch.releaseState} ${expandedOrderId === batch.id ? 'expanded' : ''}`}>
+                  <tr data-batch-id={batch.id} className={`state-${batch.releaseState} ${activeHold ? 'state-frozen' : ''} ${expandedOrderId === batch.id ? 'expanded' : ''}`}>
                     <td className="production-list-sequence">{rowIndex + 1}</td>
                     <td className="select-cell"><input type="checkbox" aria-label={`选择 ${order.specification} 第 ${batch.batchNo} 批`} checked={selectedBatchIds.includes(batch.id)} disabled={batch.releaseState === 'archived'} onChange={() => toggleBatch(batch.id)} /></td>
                     <td><button className="planning-product-link" type="button" title={`${order.specification} · ${order.productName}${order.qualityWarningCount ? ` · ${order.qualityWarningCount}条质量警示` : ''}`} onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><strong>{order.specification}{Boolean(order.qualityWarningCount) && <em className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']} · {order.qualityWarningCount}</em>}</strong><span>{order.customerName} · {order.productName}</span><small>{order.salesperson ? `业务员 ${order.salesperson} · ` : ''}第 {batch.batchNo} 批{order.qualityWarningPrintRequired ? ' · 警示附页必打' : ''}</small></button></td>
@@ -2170,7 +2267,9 @@ export default function PlanningCenterShell({
                     <td><strong className={Boolean(order.customerDueDate) && (batch.estimatedCompletionDate || batch.plannedCompletionDate) > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate ? order.customerDueDate.slice(5) : '待确认'}</strong></td>
                     <td><strong>{duration(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
                     <td><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><a className={`planning-sop-stage ${sopInfo.stage}`} href={drawingLibraryHref} onClick={rememberPlanningState} title={sopInfo.title} aria-label={`SOP 状态 ${sopInfo.label}，进入图纸档案`}><FlaskConical size={12} />{sopInfo.label}</a>{Boolean(order.qualityWarningCount) && <a className={`planning-warning-link severity-${order.highestQualityWarningSeverity?.toLowerCase()}`} href={`${drawingLibraryHref}#quality-warning`} onClick={rememberPlanningState} title={`${order.qualityWarningCount} 条已归档产品异常警示`}><ShieldAlert size={12} />警示 {order.qualityWarningCount}</a>}</div></td>
-                    <td><span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span></td>
+                    <td>{activeHold
+                      ? <span className="planning-status status-frozen" title={activeHold.reason}><strong><LockKeyhole size={12} />{activeHold.reasonCode === 'pending' ? '待配料冻结' : '物料冻结'}</strong><small>{activeHold.reason}</small></span>
+                      : <span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span>}</td>
                     <td><span className={`planning-status status-${batch.processStatus}`}><strong>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</strong>{processFinishedAt && <small>{flowTime(processFinishedAt)}</small>}</span></td>
                     <td><a className={`planning-flow-link tone-${flow.tone}`} href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState} title="查看该批次完整流程"><strong>{flow.label}</strong>{flowFinishedAt && <small>{flowTime(flowFinishedAt)}</small>}</a></td>
                     <td><div className={`planning-print-status ${printState.tone}`}><span><strong>{printState.label}</strong>{printState.time && <small>{flowTime(printState.time)}</small>}{batch.travelerPrintMaterials && <span className="planning-print-materials">{(['TRAVELER', 'QUALITY_WARNING', 'SOP', 'DRAWING'] as const).map(material => {
@@ -2284,14 +2383,20 @@ export default function PlanningCenterShell({
 
     {weeklyPlanExportDialog && <div ref={dialogRef} className="planning-dialog weekly-export-dialog" role="dialog" aria-modal="true" aria-labelledby="weekly-plan-export-title">
       <header>
-        <div><span>本周生产计划</span><h2 id="weekly-plan-export-title">选择 Excel 导出版本</h2></div>
+        <div><span>{weeklyPlanExportDialog.mode === 'week_execution' ? '当前周生产执行' : '计划日期范围'}</span><h2 id="weekly-plan-export-title">选择日期与 Excel 版本</h2></div>
         <button type="button" onClick={closeDialog} disabled={weeklyPlanExportDialog.exporting} aria-label="关闭导出弹窗"><X /></button>
       </header>
       <div className="planning-dialog-body weekly-export-body">
-        {weeklyPlanExportDialog.loading && <div className="planning-loading compact">正在同步有效遗留并计算本周工作量...</div>}
+        <div className="weekly-export-range-picker">
+          <label><span>开始日期</span><input type="date" value={weeklyPlanExportDialog.startDate} onChange={event => setWeeklyPlanExportDialog(current => current ? { ...current, startDate: event.target.value, mode: 'schedule_range', range: 'current', preview: null } : current)} /></label>
+          <label><span>结束日期</span><input type="date" value={weeklyPlanExportDialog.endDate} onChange={event => setWeeklyPlanExportDialog(current => current ? { ...current, endDate: event.target.value, mode: 'schedule_range', range: 'current', preview: null } : current)} /></label>
+          <button type="button" disabled={weeklyPlanExportDialog.loading || !weeklyPlanExportDialog.startDate || !weeklyPlanExportDialog.endDate} onClick={() => { void loadWeeklyPlanExportPreview(weeklyPlanExportDialog); }}><RefreshCw size={14} />刷新预览</button>
+          <small>按内部计划完成日筛选，起止日期均包含；自定义范围最多 93 天。</small>
+        </div>
+        {weeklyPlanExportDialog.loading && <div className="planning-loading compact">正在计算计划范围与工时...</div>}
         {weeklyPlanExportDialog.preview && <>
-          <section className="weekly-export-summary" aria-label="本周计划导出统计">
-            <article><span>本周新计划</span><strong>{weeklyPlanExportDialog.preview.summary.current.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.current.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.current)}</small></article>
+          <section className="weekly-export-summary" aria-label="计划导出统计">
+            <article><span>{weeklyPlanExportDialog.mode === 'week_execution' ? '本周新计划' : '范围内计划'}</span><strong>{weeklyPlanExportDialog.preview.summary.current.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.current.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.current)}</small></article>
             <article className="carryover"><span>上周遗留</span><strong>{weeklyPlanExportDialog.preview.summary.previousCarryover.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.previousCarryover.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.previousCarryover)}</small></article>
             <article className="carryover"><span>更早遗留</span><strong>{weeklyPlanExportDialog.preview.summary.olderCarryover.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.olderCarryover.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.olderCarryover)}</small></article>
             <article className="total"><span>本周执行合计</span><strong>{weeklyPlanExportDialog.preview.summary.execution.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.execution.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.execution)}</small></article>
@@ -2315,7 +2420,7 @@ export default function PlanningCenterShell({
             </div>
           </fieldset>
 
-          <fieldset className="weekly-export-options range-options">
+          {weeklyPlanExportDialog.mode === 'week_execution' && <fieldset className="weekly-export-options range-options">
             <legend>数据范围</legend>
             <div className="weekly-export-option-grid">
               <label className={weeklyPlanExportDialog.range === 'execution' ? 'selected' : ''}>
@@ -2331,13 +2436,15 @@ export default function PlanningCenterShell({
                 <em>不含遗留</em>
               </label>
             </div>
-          </fieldset>
+          </fieldset>}
 
           <div className={`planning-dialog-note ${weeklyPlanExportDialog.range === 'current' && weeklyPlanExportDialog.preview.summary.carryover.batchCount ? 'warning' : ''}`}>
-            {weeklyPlanExportDialog.range === 'execution' ? <CheckCircle2 /> : <AlertTriangle />}
+            {weeklyPlanExportDialog.mode === 'schedule_range' || weeklyPlanExportDialog.range === 'execution' ? <CheckCircle2 /> : <AlertTriangle />}
             <span>
-              <strong>{weeklyPlanExportDialog.range === 'execution' ? '导出完整的本周执行范围' : '本次文件不会包含遗留批次'}</strong>
-              <small>{weeklyPlanExportDialog.range === 'execution'
+              <strong>{weeklyPlanExportDialog.mode === 'schedule_range' ? '按内部完成日导出，每个批次只出现一次' : weeklyPlanExportDialog.range === 'execution' ? '导出完整的本周执行范围' : '本次文件不会包含遗留批次'}</strong>
+              <small>{weeklyPlanExportDialog.mode === 'schedule_range'
+                ? `${weeklyPlanExportDialog.startDate} 至 ${weeklyPlanExportDialog.endDate}，不自动追加遗留，避免跨周重复。`
+                : weeklyPlanExportDialog.range === 'execution'
                 ? `有效遗留 ${weeklyPlanExportDialog.preview.summary.carryover.batchCount} 批将进入文件，且不会重复计算已经完成的数量。`
                 : `将排除 ${weeklyPlanExportDialog.preview.summary.carryover.batchCount} 批、${weeklyPlanExportDialog.preview.summary.carryover.quantity.toLocaleString()} 件遗留工作量。`}</small>
             </span>

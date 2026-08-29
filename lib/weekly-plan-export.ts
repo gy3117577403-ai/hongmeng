@@ -1,4 +1,5 @@
 import ExcelJS, { type Cell, type Worksheet } from 'exceljs';
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
@@ -23,12 +24,14 @@ import {
 import { planningSopStage, planningSopStageLabels } from '@/lib/planning-sop';
 import { resolvePlanningFlow } from '@/lib/planning-flow';
 import { addDays } from '@/lib/weekly-work-orders';
+import { parsePlanningDateRange, type PlanningDateRange } from '@/lib/planning-date-range';
 import type { ProductionPlanBatchDTO, ProductionPlanOrderDTO } from '@/types';
 
 export const WEEKLY_PLAN_EXPORT_MAX_BATCHES = 5000;
 
 export type WeeklyPlanExportVersion = 'full' | 'orders';
 export type WeeklyPlanExportRange = 'execution' | 'current';
+export type WeeklyPlanExportMode = 'week_execution' | 'schedule_range';
 export type WeeklyPlanCarryoverKind = 'previous' | 'older' | null;
 
 export class WeeklyPlanExportError extends Error {
@@ -81,6 +84,8 @@ export type WeeklyPlanExportSummary = {
 };
 
 export type WeeklyPlanExportDataset = {
+  mode?: WeeklyPlanExportMode;
+  digest?: string;
   weekStartDate: string;
   weekEndDate: string;
   currentRows: WeeklyPlanExportRow[];
@@ -219,6 +224,8 @@ function printStatus(batch: ProductionPlanBatchDTO): string {
 }
 
 function warehouseStatus(batch: ProductionPlanBatchDTO): string {
+  const activeHold = batch.holds?.find(hold => hold.status === 'ACTIVE');
+  if (activeHold) return `物料冻结：${activeHold.reason}`;
   if (batch.warehouseStatus === 'completed') return '已配料';
   if (batch.warehouseStatus === 'exception') return '仓库异常';
   if (batch.warehouseStatus === 'not_created') return '未下达';
@@ -297,6 +304,7 @@ function buildExceptionType(input: {
   if (input.order.drawingFileCount === 0) values.push('图纸缺失');
   if (input.order.sopFileCount === 0) values.push('SOP缺失');
   if (input.batch.warehouseStatus === 'exception') values.push('仓库异常');
+  if (input.batch.holds?.some(hold => hold.status === 'ACTIVE')) values.push('物料冻结');
   if (input.batch.processStatus === 'not_created' || input.batch.processStatus === 'draft') values.push('工艺待确认');
   if (input.batch.travelerPrintStatus === 'needs_reprint') values.push('流转单待重打');
   return [...new Set(values)].join('；');
@@ -354,6 +362,7 @@ function buildExportRow(input: {
     totalHours: hours.totalHours,
     quantityMissing: scheduledQuantity === null,
   });
+  const activeHold = batch.holds?.find(hold => hold.status === 'ACTIVE');
   return {
     planOrderId: order.id,
     batchId: batch.id,
@@ -368,7 +377,7 @@ function buildExportRow(input: {
     originalBatchQuantity: batch.quantity,
     completedQuantity: completedQty,
     orderQuantity: order.orderQuantity,
-    weekLabel: carryover?.label || '本周',
+    weekLabel: carryover?.label || `${batch.weekStartDate.slice(5)}~${batch.weekEndDate.slice(5)}`,
     plannedCompletionDate: batch.plannedCompletionDate,
     customerDueDate: batch.productionControl ? (batch.productionControl.customerDueDate || '') : order.customerDueDate,
     unitHours: hours.unitHours,
@@ -382,6 +391,7 @@ function buildExportRow(input: {
     printStatus: printStatus(batch),
     exceptionType,
     remark: joinRemarks([carryoverRemark, order.sopRemark, order.remark,
+      activeHold ? `物料冻结：${activeHold.reason}` : null,
       batch.productionControl?.note?.text ? `当前问题：${batch.productionControl.note.text}` : null,
       batch.productionControl?.pausedAt ? `已暂停：${batch.productionControl.pause?.reason || ''}` : null,
       batch.productionControl?.estimatedCompletionDate ? `内部预计完成：${batch.productionControl.estimatedCompletionDate}` : null,
@@ -418,18 +428,34 @@ function mergeSummaries(first: WeeklyPlanExportSummary, second: WeeklyPlanExport
 
 export async function loadWeeklyPlanExportData(input: {
   now?: Date;
+  mode?: WeeklyPlanExportMode;
+  startDate?: string;
+  endDate?: string;
   productionScope?: ProductionEntityScope;
   db?: WeeklyPlanExportDatabase;
 } = {}): Promise<WeeklyPlanExportDataset> {
   const db = input.db || prisma;
+  const mode = input.mode || 'week_execution';
   const week = naturalProductionWeek(input.now || new Date());
   const targetWindow = productionCarryoverDayWindow(week.start);
+  let scheduleRange: PlanningDateRange | null = null;
+  if (mode === 'schedule_range') {
+    try {
+      scheduleRange = parsePlanningDateRange(input.startDate, input.endDate);
+    } catch (error) {
+      throw new WeeklyPlanExportError(
+        error instanceof Error ? error.message : '导出日期范围不正确',
+        'WEEKLY_PLAN_EXPORT_DATE_RANGE_INVALID',
+      );
+    }
+  }
   const [nativeBatches, carryoverLinks] = await Promise.all([
     db.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
-        releaseState: { not: 'archived' },
-        weekStartDate: targetWindow,
+        ...(scheduleRange
+          ? { plannedCompletionDate: { gte: scheduleRange.start, lt: scheduleRange.endExclusive } }
+          : { releaseState: { not: 'archived' }, weekStartDate: targetWindow }),
         planOrder: { deletedAt: null },
         ...productionBatchScopeWhere(input.productionScope),
       },
@@ -437,7 +463,7 @@ export async function loadWeeklyPlanExportData(input: {
       orderBy: [{ plannedCompletionDate: 'asc' }, { batchNo: 'asc' }],
       take: WEEKLY_PLAN_EXPORT_MAX_BATCHES + 1,
     }),
-    db.productionCarryover.findMany({
+    mode === 'week_execution' ? db.productionCarryover.findMany({
       where: activeProductionCarryoverLinkWhere(week.start, input.productionScope),
       select: {
         productionPlanBatchId: true,
@@ -451,7 +477,7 @@ export async function loadWeeklyPlanExportData(input: {
       },
       orderBy: [{ sourceWeekStartDate: 'desc' }, { createdAt: 'asc' }],
       take: WEEKLY_PLAN_EXPORT_MAX_BATCHES + 1,
-    }),
+    }) : Promise.resolve([]),
   ]);
   const references = new Map<string, BatchReference>();
   for (const batch of nativeBatches) {
@@ -479,7 +505,7 @@ export async function loadWeeklyPlanExportData(input: {
   }
   if (references.size > WEEKLY_PLAN_EXPORT_MAX_BATCHES) {
     throw new WeeklyPlanExportError(
-      `本周执行批次超过 ${WEEKLY_PLAN_EXPORT_MAX_BATCHES} 条，请缩小数据范围后再导出`,
+      `计划批次超过 ${WEEKLY_PLAN_EXPORT_MAX_BATCHES} 条，请缩小日期范围后再导出`,
       'WEEKLY_PLAN_EXPORT_LIMIT',
       413,
     );
@@ -532,9 +558,12 @@ export async function loadWeeklyPlanExportData(input: {
   const olderCarryover = summarizeWeeklyPlanRows(olderCarryoverRows);
   const carryover = summarizeWeeklyPlanRows([...previousCarryoverRows, ...olderCarryoverRows]);
   const execution = summarizeWeeklyPlanRows(rows);
+  const digest = createHash('sha256').update(JSON.stringify(rows)).digest('hex');
   return {
-    weekStartDate: dateKey(week.start),
-    weekEndDate: dateKey(week.end),
+    mode,
+    digest,
+    weekStartDate: scheduleRange?.startDate || dateKey(week.start),
+    weekEndDate: scheduleRange?.endDate || dateKey(week.end),
     currentRows,
     previousCarryoverRows,
     olderCarryoverRows,
@@ -559,16 +588,26 @@ export function parseWeeklyPlanExportRange(value: string | null): WeeklyPlanExpo
   throw new WeeklyPlanExportError('导出范围不正确', 'WEEKLY_PLAN_EXPORT_RANGE_INVALID');
 }
 
+export function parseWeeklyPlanExportMode(value: string | null): WeeklyPlanExportMode {
+  if (!value || value === 'week_execution') return 'week_execution';
+  if (value === 'schedule_range') return value;
+  throw new WeeklyPlanExportError('导出模式不正确', 'WEEKLY_PLAN_EXPORT_MODE_INVALID');
+}
+
 export function weeklyPlanRowsForRange(dataset: WeeklyPlanExportDataset, range: WeeklyPlanExportRange) {
+  if (dataset.mode === 'schedule_range') return dataset.currentRows;
   return range === 'current' ? dataset.currentRows : dataset.rows;
 }
 
 export function weeklyPlanExportFileName(
-  dataset: Pick<WeeklyPlanExportDataset, 'weekStartDate' | 'weekEndDate'>,
+  dataset: Pick<WeeklyPlanExportDataset, 'mode' | 'weekStartDate' | 'weekEndDate'>,
   version: WeeklyPlanExportVersion,
   range: WeeklyPlanExportRange,
 ) {
-  return `本周生产计划_${dataset.weekStartDate}至${dataset.weekEndDate}_${version === 'full' ? '完整版' : '订单简版'}_${range === 'execution' ? '含遗留' : '仅本周'}.xlsx`;
+  const scope = dataset.mode === 'schedule_range'
+    ? '按内部完成日'
+    : range === 'execution' ? '含有效遗留' : '仅当周新计划';
+  return `${dataset.mode === 'schedule_range' ? '生产计划' : '生产执行计划'}_${dataset.weekStartDate}至${dataset.weekEndDate}_${version === 'full' ? '完整版' : '订单简版'}_${scope}.xlsx`;
 }
 
 function configureWorkbook(workbook: ExcelJS.Workbook) {
@@ -620,6 +659,9 @@ function styleHeaderRow(sheet: Worksheet, headers: readonly string[], rowNumber 
 }
 
 function scopeNote(dataset: WeeklyPlanExportDataset, range: WeeklyPlanExportRange): string {
+  if (dataset.mode === 'schedule_range') {
+    return `导出范围：按内部计划完成日 ${dataset.weekStartDate} 至 ${dataset.weekEndDate}；每个批次只出现一次，不自动追加遗留。`;
+  }
   const carryover = dataset.summary.carryover;
   if (range === 'current') {
     const unknown = [
@@ -637,7 +679,10 @@ function summaryLine(dataset: WeeklyPlanExportDataset, rows: readonly WeeklyPlan
     summary.quantityMissingCount ? `${summary.quantityMissingCount} 批数量待核对` : '',
     summary.hoursMissingCount ? `${summary.hoursMissingCount} 批工时待补` : '',
   ].filter(Boolean).join('；');
-  return `计划期间：${dataset.weekStartDate} 至 ${dataset.weekEndDate}    批次：${summary.batchCount}    排产数量：${summary.quantity.toLocaleString('zh-CN')}    已知总工时：${summary.totalHours.toFixed(2)} h    范围：${range === 'execution' ? '含有效遗留' : '仅本周'}${missing ? `    ${missing}` : ''}`;
+  const rangeLabel = dataset.mode === 'schedule_range'
+    ? '按内部完成日'
+    : range === 'execution' ? '含有效遗留' : '仅当周新计划';
+  return `计划期间：${dataset.weekStartDate} 至 ${dataset.weekEndDate}    批次：${summary.batchCount}    排产数量：${summary.quantity.toLocaleString('zh-CN')}    已知总工时：${summary.totalHours.toFixed(2)} h    范围：${rangeLabel}${missing ? `    ${missing}` : ''}`;
 }
 
 function styleBodyCell(cell: Cell, options: { numeric?: boolean; date?: boolean; carryover?: boolean; rowIndex: number }) {
@@ -670,7 +715,7 @@ function populateFullWorkbook(
 ) {
   const rows = weeklyPlanRowsForRange(dataset, range);
   const summary = summarizeWeeklyPlanRows(rows);
-  const sheet = workbook.addWorksheet('本周计划打印版', {
+  const sheet = workbook.addWorksheet('生产计划打印版', {
     properties: { defaultRowHeight: 20 },
     views: [{ state: 'frozen', ySplit: 6, topLeftCell: 'A7', activeCell: 'A7', showGridLines: false, zoomScale: 75 }],
   });
@@ -686,7 +731,7 @@ function populateFullWorkbook(
     margins: { left: 0.2, right: 0.2, top: 0.3, bottom: 0.3, header: 0.15, footer: 0.15 },
   };
   FULL_COLUMN_WIDTHS.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
-  styleTitle(sheet, FULL_HEADERS.length, '本周生产计划清单');
+  styleTitle(sheet, FULL_HEADERS.length, dataset.mode === 'schedule_range' ? '生产计划清单' : '生产执行计划清单');
   styleMergedInfo(sheet, 3, FULL_HEADERS.length, summaryLine(dataset, rows, range), 'blue');
   styleMergedInfo(sheet, 4, FULL_HEADERS.length, `${scopeNote(dataset, range)}    生成时间：${generatedAt}`, 'orange');
   sheet.getRow(5).height = 7;
@@ -784,7 +829,7 @@ function populateFullWorkbook(
   sheet.autoFilter = { from: { row: 6, column: 1 }, to: { row: dataEndRow, column: FULL_HEADERS.length } };
   sheet.pageSetup.printArea = `A1:V${totalRow}`;
   sheet.pageSetup.printTitlesRow = '6:6';
-  sheet.headerFooter.oddFooter = '&L杭连电子协同平台&C第 &P / &N 页&R本周生产计划';
+  sheet.headerFooter.oddFooter = '&L杭连电子协同平台&C第 &P / &N 页&R生产计划';
   return sheet;
 }
 
@@ -839,7 +884,7 @@ function populateSimpleWorkbook(
   const batchRows = weeklyPlanRowsForRange(dataset, range);
   const rows = buildWeeklyPlanSimpleRows(batchRows);
   const summary = summarizeWeeklyPlanRows(batchRows);
-  const sheet = workbook.addWorksheet('本周计划订单简版', {
+  const sheet = workbook.addWorksheet('生产计划订单简版', {
     properties: { defaultRowHeight: 22 },
     views: [{ state: 'frozen', ySplit: 6, topLeftCell: 'A7', activeCell: 'A7', showGridLines: false, zoomScale: 90 }],
   });
@@ -853,12 +898,12 @@ function populateSimpleWorkbook(
     margins: { left: 0.3, right: 0.3, top: 0.35, bottom: 0.35, header: 0.15, footer: 0.15 },
   };
   SIMPLE_COLUMN_WIDTHS.forEach((width, index) => { sheet.getColumn(index + 1).width = width; });
-  styleTitle(sheet, SIMPLE_HEADERS.length, '本周生产计划订单清单');
+  styleTitle(sheet, SIMPLE_HEADERS.length, dataset.mode === 'schedule_range' ? '生产计划订单清单' : '生产执行计划订单清单');
   styleMergedInfo(
     sheet,
     3,
     SIMPLE_HEADERS.length,
-    `计划期间：${dataset.weekStartDate} 至 ${dataset.weekEndDate}    订单：${rows.length}    数量：${summary.quantity.toLocaleString('zh-CN')}    范围：${range === 'execution' ? '含有效遗留' : '仅本周'}`,
+    `计划期间：${dataset.weekStartDate} 至 ${dataset.weekEndDate}    订单：${rows.length}    数量：${summary.quantity.toLocaleString('zh-CN')}    范围：${dataset.mode === 'schedule_range' ? '按内部完成日' : range === 'execution' ? '含有效遗留' : '仅当周新计划'}`,
     'blue',
   );
   styleMergedInfo(sheet, 4, SIMPLE_HEADERS.length, `${scopeNote(dataset, range)}    生成时间：${generatedAt}`, 'orange');
@@ -917,7 +962,7 @@ function populateSimpleWorkbook(
   sheet.autoFilter = { from: { row: 6, column: 1 }, to: { row: dataEndRow, column: SIMPLE_HEADERS.length } };
   sheet.pageSetup.printArea = `A1:E${totalRow}`;
   sheet.pageSetup.printTitlesRow = '6:6';
-  sheet.headerFooter.oddFooter = '&L杭连电子协同平台&C第 &P / &N 页&R本周计划订单简版';
+  sheet.headerFooter.oddFooter = '&L杭连电子协同平台&C第 &P / &N 页&R生产计划订单简版';
   return sheet;
 }
 

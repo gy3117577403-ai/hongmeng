@@ -182,6 +182,18 @@ test('weekly plan export reads current batches and only active unfinished carryo
         baseline.summary.previousCarryover.hoursMissingCount + 1,
       );
 
+      const ranged = await loadWeeklyPlanExportData({
+        mode: 'schedule_range',
+        startDate: '2026-08-28',
+        endDate: '2026-08-28',
+        db: tx,
+      });
+      assert.equal(ranged.mode, 'schedule_range');
+      assert.equal(ranged.weekStartDate, '2026-08-28');
+      assert.equal(ranged.weekEndDate, '2026-08-28');
+      assert.equal(ranged.currentRows.some(row => row.orderNo === `${prefix}-CURRENT`), true);
+      assert.equal(ranged.rows.some(row => row.orderNo === `${prefix}-LEGACY`), false, 'range export must not inject carryovers');
+
       throw new RollbackWeeklyPlanExportFixture();
     }),
     RollbackWeeklyPlanExportFixture,

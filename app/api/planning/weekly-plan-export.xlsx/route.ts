@@ -9,6 +9,7 @@ import { logOp } from '@/lib/logs';
 import {
   createWeeklyPlanExportWorkbook,
   loadWeeklyPlanExportData,
+  parseWeeklyPlanExportMode,
   parseWeeklyPlanExportRange,
   parseWeeklyPlanExportVersion,
   summarizeWeeklyPlanRows,
@@ -27,7 +28,14 @@ export async function GET(request: NextRequest) {
     assertProductionScopeRead(productionScope);
     const version = parseWeeklyPlanExportVersion(request.nextUrl.searchParams.get('version') || 'full');
     const range = parseWeeklyPlanExportRange(request.nextUrl.searchParams.get('range') || 'execution');
-    const dataset = await loadWeeklyPlanExportData({ productionScope });
+    const mode = parseWeeklyPlanExportMode(request.nextUrl.searchParams.get('mode'));
+    const startDate = request.nextUrl.searchParams.get('startDate') || undefined;
+    const endDate = request.nextUrl.searchParams.get('endDate') || undefined;
+    const dataset = await loadWeeklyPlanExportData({ productionScope, mode, startDate, endDate });
+    const previewDigest = request.nextUrl.searchParams.get('previewDigest');
+    if (previewDigest && previewDigest !== dataset.digest) {
+      throw new WeeklyPlanExportError('计划数据在预览后发生变化，请刷新预览后重新导出', 'WEEKLY_PLAN_EXPORT_STALE', 409);
+    }
     const selectedRows = weeklyPlanRowsForRange(dataset, range);
     const selectedSummary = summarizeWeeklyPlanRows(selectedRows);
     const workbook = createWeeklyPlanExportWorkbook({ dataset, version, range });
@@ -41,6 +49,7 @@ export async function GET(request: NextRequest) {
       detail: {
         version,
         range,
+        mode,
         filename,
         weekStartDate: dataset.weekStartDate,
         weekEndDate: dataset.weekEndDate,
@@ -74,6 +83,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }
     console.error('weekly plan export failed', error);
-    return NextResponse.json({ ok: false, error: '本周生产计划导出失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '生产计划导出失败' }, { status: 500 });
   }
 }
