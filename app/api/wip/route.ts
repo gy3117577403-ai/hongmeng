@@ -6,6 +6,7 @@ import {
 } from '@/lib/production-access-scope';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { canManageWipWarehouse } from '@/lib/wip-access';
+import { serializeWipApiValue } from '@/lib/wip-api-serialization';
 import {
   enterWipWarehouse,
   listWipWarehouse,
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest) {
         quantity: body.quantity,
         productionScope,
       });
-      return NextResponse.json({ ok: true, data });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
     }
     if (action === 'enter') {
       const data = await enterWipWarehouse({
@@ -89,7 +90,7 @@ export async function POST(req: NextRequest) {
         containerCode: body.containerCode,
         idempotencyKey: body.idempotencyKey,
       });
-      return NextResponse.json({ ok: true, data });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
     }
     if (action === 'schedule') {
       const data = await scheduleWipLot({
@@ -101,7 +102,7 @@ export async function POST(req: NextRequest) {
         reason: body.reason,
         idempotencyKey: body.idempotencyKey,
       });
-      return NextResponse.json({ ok: true, data });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
     }
     if (action === 'reschedule') {
       const data = await rescheduleWipAllocation({
@@ -112,7 +113,7 @@ export async function POST(req: NextRequest) {
         reason: body.reason,
         idempotencyKey: body.idempotencyKey,
       });
-      return NextResponse.json({ ok: true, data });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
     }
     throw new WipWarehouseError('不支持的半成品仓操作', 'WIP_ACTION_INVALID');
   } catch (error) {

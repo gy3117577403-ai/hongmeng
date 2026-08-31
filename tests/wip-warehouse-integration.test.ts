@@ -267,6 +267,9 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
   } finally {
     await prisma.processWipCredit.deleteMany({ where: { completionId: { in: completionIds } } });
     await prisma.processCompletion.deleteMany({ where: { id: { in: completionIds } } });
+    await prisma.wipWeekAllocation.deleteMany({
+      where: { lot: { productionPlanBatchId: batch.id } },
+    });
     await prisma.semiFinishedLot.deleteMany({ where: { productionPlanBatchId: batch.id } });
     await prisma.operationLog.deleteMany({ where: { userId: actor.id } });
     await prisma.productionPlanOrder.delete({ where: { id: order.id } });
