@@ -1820,6 +1820,103 @@ export async function materializeProductQualityWarningsForWorkOrders(workOrderId
   return created;
 }
 
+export type ProductQualityWarningProjectionStatus =
+  | 'created'
+  | 'existing'
+  | 'ineligible'
+  | 'skipped_locked';
+
+export type ProductQualityWarningProjectionInput = {
+  reportId: string;
+  workOrderId: string;
+  now?: Date;
+  transactionTimeoutMs?: number;
+};
+
+/**
+ * Materialize one report/work-order projection for the background worker.
+ *
+ * Unlike the interactive quality workflow, maintenance must never wait behind
+ * an editor holding the report lock. Each pair therefore uses a try-lock and a
+ * short independent transaction. The function is idempotent and safe to retry:
+ * both links are protected by unique keys and are written with upsert.
+ */
+export async function materializeProductQualityWarningForWorkOrderInTransaction(
+  tx: Prisma.TransactionClient,
+  input: ProductQualityWarningProjectionInput,
+): Promise<ProductQualityWarningProjectionStatus> {
+  const now = input.now || new Date();
+  const transactionTimeoutMs = Math.max(500, Math.min(3_500, input.transactionTimeoutMs ?? 2_000));
+  const locks = await tx.$queryRaw<Array<{ acquired: boolean }>>`
+    SELECT pg_try_advisory_xact_lock(hashtext(${`internal-quality-risk:${input.reportId}`})) AS acquired
+  `;
+  if (!locks[0]?.acquired) return 'skipped_locked';
+  await tx.$queryRaw`
+    SELECT
+      set_config('lock_timeout', ${`${Math.min(500, transactionTimeoutMs)}ms`}, true),
+      set_config('statement_timeout', ${`${transactionTimeoutMs}ms`}, true)
+  `;
+
+  const [report, workOrder] = await Promise.all([
+    tx.internalQualityRiskReport.findUnique({
+      where: { id: input.reportId },
+      include: internalQualityRiskInclude,
+    }),
+    tx.workOrder.findFirst({
+      where: { id: input.workOrderId, deletedAt: null, drawingLibraryItemId: { not: null } },
+      select: { id: true, drawingLibraryItemId: true },
+    }),
+  ]);
+  if (
+    !report?.currentRevision?.published
+    || report.deletedAt
+    || report.warningState !== 'ACTIVE'
+    || !report.currentRevisionId
+    || !workOrder?.drawingLibraryItemId
+  ) return 'ineligible';
+
+  const warning = resolveArchivedQualityWarning(report, report.currentRevision.snapshot);
+  if (
+    (report.warningRevokedAt && report.warningRevokedAt <= now)
+    || (warning.effectiveFrom && warning.effectiveFrom > now)
+    || (warning.effectiveUntil && warning.effectiveUntil < now)
+    || !report.currentRevision.products.some(link => link.drawingLibraryItemId === workOrder.drawingLibraryItemId)
+  ) return 'ineligible';
+
+  await tx.internalQualityRiskWorkOrder.upsert({
+    where: { reportId_workOrderId: { reportId: report.id, workOrderId: workOrder.id } },
+    create: { reportId: report.id, workOrderId: workOrder.id, source: 'PRODUCT_AUTO' },
+    update: {},
+  });
+  const existing = await tx.workOrderQualityAlert.findUnique({
+    where: { revisionId_workOrderId: { revisionId: report.currentRevisionId, workOrderId: workOrder.id } },
+    select: { id: true },
+  });
+  await tx.workOrderQualityAlert.upsert({
+    where: { revisionId_workOrderId: { revisionId: report.currentRevisionId, workOrderId: workOrder.id } },
+    create: alertCreateData(
+      report,
+      report.currentRevisionId,
+      workOrder.id,
+      'PRODUCT_AUTO_ARCHIVE',
+      report.currentRevision.snapshot,
+      report.currentRevision.archivedAt,
+    ),
+    update: {},
+  });
+  return existing ? 'existing' : 'created';
+}
+
+export async function materializeProductQualityWarningForWorkOrder(
+  input: ProductQualityWarningProjectionInput,
+): Promise<ProductQualityWarningProjectionStatus> {
+  const transactionTimeoutMs = Math.max(500, Math.min(3_500, input.transactionTimeoutMs ?? 2_000));
+  return prisma.$transaction(
+    tx => materializeProductQualityWarningForWorkOrderInTransaction(tx, input),
+    { maxWait: 150, timeout: transactionTimeoutMs + 350 },
+  );
+}
+
 export async function loadWorkOrderQualityAlerts(workOrderId: string) {
   const workOrder = await prisma.workOrder.findFirst({ where: { id: workOrderId, deletedAt: null }, select: workOrderSelect });
   if (!workOrder) throw new InternalQualityRiskError('工单不存在或已删除', 404, 'QUALITY_RISK_WORK_ORDER_NOT_FOUND');

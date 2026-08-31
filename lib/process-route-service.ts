@@ -970,7 +970,7 @@ export async function startConfirmedProcessRoute(
   tx: Prisma.TransactionClient,
   input: {
     workOrderId: string;
-    userId: string;
+    userId: string | null;
     actor: string;
     now: Date;
     trigger?: 'manual_start' | 'drawing_issued' | 'automatic_plan_release' | 'automatic_plan_reconciliation';

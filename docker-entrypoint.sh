@@ -62,6 +62,19 @@ server_pid=$!
     if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/process-route-change-outbox', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(10000)}).then(async response=>{if(!response.ok){throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,200))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
       echo "process route change outbox poll failed; it will retry after ${outbox_poll_seconds}s" >&2
     fi
+    # Keep week transitions and historical repair work away from user-facing
+    # GET requests. The endpoint uses non-blocking advisory locks, processes a
+    # bounded batch, and rotates one auxiliary phase per poll. A failed cycle
+    # is observable but never stops the HTTP server or the other workers.
+    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/production-planning-maintenance', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(12000)}).then(async response=>{const body=await response.json().catch(()=>null);if(!response.ok||!body?.ok){throw new Error('HTTP '+response.status+' '+JSON.stringify(body).slice(0,300))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
+      echo "production planning maintenance cycle failed; reads remain available and the worker will retry after ${outbox_poll_seconds}s" >&2
+    fi
+    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/production-planning-maintenance?phase=automatic_start_finalize&release=0&limit=2', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(8000)}).then(async response=>{const body=await response.json().catch(()=>null);if(!response.ok||!body?.ok){throw new Error('HTTP '+response.status+' '+JSON.stringify(body).slice(0,300))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
+      echo "production automatic finalize poll failed; reads remain available and it will retry after ${outbox_poll_seconds}s" >&2
+    fi
+    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/production-planning-maintenance?phase=quality_warning_projection&release=0&limit=2', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(8000)}).then(async response=>{const body=await response.json().catch(()=>null);if(!response.ok||!body?.ok){throw new Error('HTTP '+response.status+' '+JSON.stringify(body).slice(0,300))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
+      echo "quality warning projection poll failed; reads remain available and it will retry after ${outbox_poll_seconds}s" >&2
+    fi
     if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/quality-risk-outbox', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(10000)}).then(response=>{if(!response.ok)throw new Error('HTTP '+response.status)}).catch(()=>{console.error('quality notification poll failed');process.exit(1)})"; then
       echo "quality notification outbox will retry on next poll" >&2
     fi

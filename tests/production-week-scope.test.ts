@@ -121,7 +121,39 @@ test('production week scopes keep canonical current, future, and carryover queri
   assert.match(afterNext, /"productionPlanBatch"/);
   assert.match(carryover, /"lt":"2026-07-19T16:00:00.000Z"/);
   assert.doesNotMatch(carryover, /"planActive"/);
-  assert.doesNotMatch(carryover, /"productionPlanBatch"/);
+  assert.match(carryover, /"productionPlanBatch"/);
+  assert.match(carryover, /"releaseState":\{"in":\["active","preparation","archived"\]\}/);
+  assert.match(carryover, /"completedAt":null/);
+  assert.match(carryover, /"planOrder":\{"deletedAt":null\}/);
+});
+
+test('production execution uses linked batch facts only for legacy scheduling metadata gaps', () => {
+  const currentStart = new Date('2026-08-30T16:00:00.000Z');
+  const currentEnd = new Date('2026-09-05T16:00:00.000Z');
+  const nextStart = new Date('2026-09-06T16:00:00.000Z');
+  const nextEnd = new Date('2026-09-12T16:00:00.000Z');
+  const historyStart = new Date('2026-08-23T16:00:00.000Z');
+  const historyEnd = new Date('2026-08-29T16:00:00.000Z');
+
+  const current = JSON.stringify(productionWeekWhere({ scope: 'current', weekStart: currentStart, weekEnd: currentEnd }));
+  const next = JSON.stringify(productionWeekWhere({ scope: 'next', weekStart: nextStart, weekEnd: nextEnd }));
+  const history = JSON.stringify(productionWeekWhere({ scope: 'history', weekStart: historyStart, weekEnd: historyEnd }));
+  const carryover = JSON.stringify(productionWeekWhere({ scope: 'carryover', weekStart: currentStart, weekEnd: currentEnd }));
+
+  assert.match(current, /"releaseState":"active"/);
+  assert.match(next, /"releaseState":"preparation"/);
+  assert.match(history, /"weekStartDate":\{"gte":"2026-08-23T16:00:00.000Z"/);
+  assert.match(carryover, /"releaseState":\{"in":\["active","preparation","archived"\]\}/);
+  assert.match(carryover, /"weekStartDate":\{"lt":"2026-08-30T16:00:00.000Z"\}/);
+  assert.match(carryover, /"parentWorkOrder"/);
+  assert.match(carryover, /"rootWorkOrder"/);
+  assert.match(carryover, /"completedAt":null/);
+  for (const where of [current, next, history, carryover]) {
+    assert.match(where, /"productionPlanBatch"/);
+    assert.match(where, /"planOrder":\{"deletedAt":null\}/);
+    assert.match(where, /"deletedAt":null/);
+    assert.doesNotMatch(where, /"plannedAt"/, 'dates alone never turn an unlinked legacy order into a scheduled order');
+  }
 });
 
 test('production list scope keeps branch rows while root summary scope excludes them', () => {

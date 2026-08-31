@@ -16,6 +16,14 @@ import { OlderCarryoverDrawer } from '@/components/production/OlderCarryoverDraw
 import { TravelerPrintDialog } from '@/components/TravelerPrintDialog';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
+import {
+  AUTO_REFRESH_BASE_DELAY_MS,
+  autoRefreshDelayMs,
+  cacheBoundSnapshotValue,
+  retainCacheBoundSnapshot,
+  shouldStartAutoRefresh,
+  type CacheBoundSnapshot,
+} from '@/lib/client-load-resilience';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
 import { productionDrawingStageLabel } from '@/lib/production-drawing-readiness';
 import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
@@ -415,14 +423,14 @@ type ProductionSummary = {
     knownOrders: number;
     missingOrders: number;
   };
-  navigation: {
+  navigation?: {
     current: { weekStartDate: string; weekEndDate: string; count: number };
     next: { weekStartDate: string; weekEndDate: string; count: number };
     afterNext: { weekStartDate: string; weekEndDate: string; count: number };
     carryoverCount: number;
     olderCarryoverCount: number;
     history: Array<{ weekStartDate: string; weekEndDate: string; count: number }>;
-  };
+  } | null;
 };
 
 type BoardPayload = {
@@ -1046,7 +1054,6 @@ function executionParams(
 async function fetchCompleteProductionBoard(
   params: URLSearchParams,
   signal: AbortSignal,
-  onFirstPage?: (data: BoardPayload) => void,
 ): Promise<BoardPayload> {
   const fetchPage = async (serverPage: number, offset?: number, pageSize?: number): Promise<BoardPayload> => {
     const pageParams = new URLSearchParams(params);
@@ -1069,7 +1076,6 @@ async function fetchCompleteProductionBoard(
   };
 
   const firstPage = await fetchPage(1);
-  onFirstPage?.(firstPage);
   if (firstPage.items.length >= firstPage.pagination.total) return firstPage;
 
   const items = [...firstPage.items];
@@ -1180,8 +1186,8 @@ export default function ProductionExecutionCenter({
     || user.access.capabilities.includes('PRODUCTION:UPDATE')
     || user.access.capabilities.includes('BUSINESS:UPDATE')
     || user.access.capabilities.includes('PLANNING:UPDATE');
-  const [summary, setSummary] = useState<ProductionSummary | null>(null);
-  const [board, setBoard] = useState<BoardPayload | null>(null);
+  const [summarySnapshot, setSummarySnapshot] = useState<CacheBoundSnapshot<ProductionSummary> | null>(null);
+  const [boardSnapshot, setBoardSnapshot] = useState<CacheBoundSnapshot<BoardPayload> | null>(null);
   const [view, setView] = useState<ViewKey>('board');
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
@@ -1195,11 +1201,37 @@ export default function ProductionExecutionCenter({
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [dispatchPageSize, setDispatchPageSize] = useState(12);
+  const activeBoardCacheKey = useMemo(() => executionParams(
+    view,
+    debouncedKeyword,
+    quick,
+    advanced,
+    scope,
+    weekStart,
+    1,
+    targetWorkOrderId,
+  ).toString(), [advanced, debouncedKeyword, quick, scope, targetWorkOrderId, view, weekStart]);
+  const activeBoardCacheKeyRef = useRef(activeBoardCacheKey);
+  activeBoardCacheKeyRef.current = activeBoardCacheKey;
+  const board = cacheBoundSnapshotValue(boardSnapshot, activeBoardCacheKey);
+  const summary = board
+    ? cacheBoundSnapshotValue(summarySnapshot, activeBoardCacheKey)
+    : null;
   const [refreshToken, setRefreshToken] = useState(0);
-  useEffect(() => { const refreshControl = () => setRefreshToken(value => value + 1); window.addEventListener('production-control-updated', refreshControl); return () => window.removeEventListener('production-control-updated', refreshControl); }, []);
+  const productionRequestInFlightRef = useRef(false);
+  const autoRefreshFailureCountRef = useRef(0);
+  const nextAutoRefreshAtRef = useRef(0);
+  useEffect(() => {
+    const refreshControl = () => {
+      if (productionRequestInFlightRef.current) return;
+      setRefreshToken(value => value + 1);
+    };
+    window.addEventListener('production-control-updated', refreshControl);
+    return () => window.removeEventListener('production-control-updated', refreshControl);
+  }, []);
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const [toast, setToast] = useState('');
   useToastBridge(toast, setToast);
   const [batchMode, setBatchMode] = useState(false);
@@ -1283,6 +1315,7 @@ export default function ProductionExecutionCenter({
   useEffect(() => { boardRef.current = board; }, [board]);
 
   useEffect(() => subscribeProductionDataInvalidations(() => {
+    if (productionRequestInFlightRef.current) return;
     productionBoardCache.clear();
     reconciledScopeKeysRef.current.clear();
     setRefreshToken(value => value + 1);
@@ -1394,6 +1427,7 @@ export default function ProductionExecutionCenter({
     params.set('scope', scope);
     params.set('skipReconcile', '1');
     if (scope === 'history' && weekStart) params.set('weekStart', weekStart);
+    const cacheKey = activeBoardCacheKey;
     fetch(`/api/dashboard/production-summary?${params.toString()}`, { cache: 'no-store', signal: controller.signal })
       .then(async response => {
         const body = await response.json().catch(() => ({}));
@@ -1402,23 +1436,25 @@ export default function ProductionExecutionCenter({
         return body.data as ProductionSummary;
       })
       .then(data => {
-        setSummary(data);
+        if (activeBoardCacheKeyRef.current !== cacheKey) return;
+        setSummarySnapshot({ cacheKey, value: data });
         if (scope === 'history' && !weekStart && data.weekStartDate) setWeekStart(data.weekStartDate);
       })
       .catch(reason => {
         if (reason instanceof DOMException && reason.name === 'AbortError') return;
-        setError(reason instanceof Error ? reason.message : '生产摘要加载失败');
+        setLoadError(reason instanceof Error ? reason.message : '生产摘要加载失败');
       });
     return () => controller.abort();
-  }, [scope, stateReady, summaryRefreshToken, weekStart]);
+  }, [activeBoardCacheKey, scope, stateReady, summaryRefreshToken, weekStart]);
 
   useEffect(() => {
     if (!stateReady) return undefined;
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
+    productionRequestInFlightRef.current = true;
     const controller = new AbortController();
     const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId);
-    const cacheKey = params.toString();
+    const cacheKey = activeBoardCacheKey;
     if (reconciliationRefreshTokenRef.current !== refreshToken) {
       reconciliationRefreshTokenRef.current = refreshToken;
       reconciledScopeKeysRef.current.clear();
@@ -1428,37 +1464,44 @@ export default function ProductionExecutionCenter({
     else reconciledScopeKeysRef.current.add(reconciliationScopeKey);
     const cached = productionBoardCache.get(cacheKey);
     if (cached) {
-      setBoard(cached);
-      if (cached.summary) setSummary(cached.summary);
+      setBoardSnapshot({ cacheKey, value: cached });
+      setSummarySnapshot(cached.summary ? { cacheKey, value: cached.summary } : null);
       setLoading(false);
     } else {
+      setBoardSnapshot(current => retainCacheBoundSnapshot(current, cacheKey));
+      setSummarySnapshot(current => retainCacheBoundSnapshot(current, cacheKey));
       setLoading(true);
     }
-    setError('');
-    fetchCompleteProductionBoard(params, controller.signal, firstPage => {
-      if (requestId !== requestRef.current) return;
-      setBoard(firstPage);
-      if (firstPage.summary) {
-        setSummary(firstPage.summary);
-        if (scope === 'history' && !weekStart && firstPage.summary.weekStartDate) setWeekStart(firstPage.summary.weekStartDate);
-      }
-    })
+    setLoadError('');
+    fetchCompleteProductionBoard(params, controller.signal)
       .then(data => {
         if (requestId !== requestRef.current) return;
         productionBoardCache.set(cacheKey, data);
         if (productionBoardCache.size > 8) productionBoardCache.delete(productionBoardCache.keys().next().value || '');
-        setBoard(data);
-        if (data.summary) setSummary(data.summary);
+        setBoardSnapshot({ cacheKey, value: data });
+        setSummarySnapshot(data.summary ? { cacheKey, value: data.summary } : null);
         setLastRefreshedAt(new Date());
+        setLoadError('');
+        autoRefreshFailureCountRef.current = 0;
+        nextAutoRefreshAtRef.current = Date.now() + AUTO_REFRESH_BASE_DELAY_MS;
         setSelected(current => current.filter(id => data.items.some(item => item.id === id)));
       })
       .catch(reason => {
         if (reason instanceof DOMException && reason.name === 'AbortError') return;
-        if (requestId === requestRef.current) setError(reason instanceof Error ? reason.message : '生产看板加载失败');
+        if (requestId === requestRef.current) {
+          const failures = autoRefreshFailureCountRef.current + 1;
+          autoRefreshFailureCountRef.current = failures;
+          nextAutoRefreshAtRef.current = Date.now() + autoRefreshDelayMs(failures);
+          setLoadError(reason instanceof Error ? reason.message : '生产看板加载失败');
+        }
       })
-      .finally(() => { if (requestId === requestRef.current) setLoading(false); });
+      .finally(() => {
+        if (requestId !== requestRef.current) return;
+        productionRequestInFlightRef.current = false;
+        setLoading(false);
+      });
     return () => controller.abort();
-  }, [advanced, debouncedKeyword, quick, refreshToken, scope, stateReady, targetWorkOrderId, view, weekStart]);
+  }, [activeBoardCacheKey, advanced, debouncedKeyword, quick, refreshToken, scope, stateReady, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     if (loading || !board || !pendingRestoreRef.current) return;
@@ -1526,11 +1569,18 @@ export default function ProductionExecutionCenter({
   useEffect(() => {
     if (!autoRefresh) return undefined;
     const refresh = (): void => {
-      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (!shouldStartAutoRefresh({
+        visible: document.visibilityState === 'visible',
+        requestInFlight: productionRequestInFlightRef.current,
+        now,
+        nextAllowedAt: nextAutoRefreshAtRef.current,
+      })) return;
+      nextAutoRefreshAtRef.current = now + AUTO_REFRESH_BASE_DELAY_MS;
       productionBoardCache.clear();
       setRefreshToken(value => value + 1);
     };
-    const timer = window.setInterval(refresh, 30_000);
+    const timer = window.setInterval(refresh, AUTO_REFRESH_BASE_DELAY_MS);
     return () => window.clearInterval(timer);
   }, [autoRefresh]);
 
@@ -1833,7 +1883,7 @@ export default function ProductionExecutionCenter({
   function changeWeekScope(next: WeekScope, historyWeekStart?: string): void {
     setTargetWorkOrderId('');
     setScope(next);
-    setWeekStart(next === 'history' ? (historyWeekStart || summary?.navigation.history[0]?.weekStartDate || '') : '');
+    setWeekStart(next === 'history' ? (historyWeekStart || summary?.navigation?.history?.[0]?.weekStartDate || '') : '');
     setView('board');
     setQuick([]);
     setAdvanced(emptyAdvanced);
@@ -2170,7 +2220,11 @@ export default function ProductionExecutionCenter({
   }
 
   function applyLocalOrder(order: ProductionOrder): void {
-    setBoard(current => replaceOrder(current, order));
+    const cacheKey = activeBoardCacheKey;
+    setBoardSnapshot(current => {
+      if (!current || current.cacheKey !== cacheKey) return current;
+      return { cacheKey, value: replaceOrder(current.value, order) || current.value };
+    });
     setDetailOrder(current => current?.id === order.id ? order : current);
   }
 
@@ -2196,7 +2250,12 @@ export default function ProductionExecutionCenter({
       setToast(successMessage);
       return updated;
     } catch (reason) {
-      setBoard(previousBoard);
+      const cacheKey = activeBoardCacheKey;
+      setBoardSnapshot(current => (
+        previousBoard && current?.cacheKey === cacheKey
+          ? { cacheKey, value: previousBoard }
+          : current
+      ));
       setDetailOrder(previousDetail);
       setToast(reason instanceof Error ? reason.message : `${successMessage}失败`);
       return null;
@@ -2751,6 +2810,13 @@ export default function ProductionExecutionCenter({
     location.href = '/login';
   }
 
+  function retryProductionLoad(): void {
+    if (productionRequestInFlightRef.current) return;
+    productionBoardCache.clear();
+    nextAutoRefreshAtRef.current = Date.now() + AUTO_REFRESH_BASE_DELAY_MS;
+    setRefreshToken(value => value + 1);
+  }
+
   const weeklyPlanWeekStart = weekStart || summary?.weekStartDate || '';
   const weeklyPlanHref = weeklyPlanWeekStart ? `/weekly-plan-center?week=${encodeURIComponent(weeklyPlanWeekStart)}` : '/weekly-plan-center';
   const weekScopeTitle = scope === 'carryover'
@@ -2762,8 +2828,13 @@ export default function ProductionExecutionCenter({
         : scope === 'history'
           ? '历史周'
           : '当前执行周';
+  const lastProductionLoadedTime = lastRefreshedAt?.toLocaleTimeString('zh-CN', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
   const weekScopeRangeText = initialBoardLoading
     ? '生产周数据加载中…'
+    : loadError && !board
+    ? '生产周数据未加载'
     : !summary?.weekStartDate
     ? '前往周计划中心启用'
     : scope === 'carryover'
@@ -2812,12 +2883,12 @@ export default function ProductionExecutionCenter({
                 onChange={event => changeWeekScope('history', event.target.value)}
               >
                 <option value="" disabled>选择历史周</option>
-                {summary?.navigation.history.map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)} · {item.count} 批</option>)}
+                {(summary?.navigation?.history ?? []).map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)} · {item.count} 批</option>)}
               </select>
             </label>
-            <button className={scope === 'current' ? 'active' : ''} type="button" aria-pressed={scope === 'current'} onClick={() => changeWeekScope('current')}>本周 <b>{summary?.navigation.current.count ?? 0}</b>{Boolean(summary?.navigation.carryoverCount) && <em>+ 遗留 {summary?.navigation.carryoverCount}</em>}</button>
-            <button className={scope === 'next' ? 'active' : ''} type="button" aria-pressed={scope === 'next'} onClick={() => changeWeekScope('next')}>下周 <b>{summary?.navigation.next.count ?? 0}</b></button>
-            <button className={scope === 'afterNext' ? 'active' : ''} type="button" aria-pressed={scope === 'afterNext'} onClick={() => changeWeekScope('afterNext')}>下下周 <b>{summary?.navigation.afterNext.count ?? 0}</b></button>
+            <button className={scope === 'current' ? 'active' : ''} type="button" aria-pressed={scope === 'current'} onClick={() => changeWeekScope('current')}>本周 <b>{summary?.navigation?.current?.count ?? '—'}</b>{Boolean(summary?.navigation?.carryoverCount) && <em>+ 遗留 {summary?.navigation?.carryoverCount}</em>}</button>
+            <button className={scope === 'next' ? 'active' : ''} type="button" aria-pressed={scope === 'next'} onClick={() => changeWeekScope('next')}>下周 <b>{summary?.navigation?.next?.count ?? '—'}</b></button>
+            <button className={scope === 'afterNext' ? 'active' : ''} type="button" aria-pressed={scope === 'afterNext'} onClick={() => changeWeekScope('afterNext')}>下下周 <b>{summary?.navigation?.afterNext?.count ?? '—'}</b></button>
           </nav>
           <div className="production-dispatch-command-actions">
             {canSelectProduction && <button
@@ -2828,7 +2899,7 @@ export default function ProductionExecutionCenter({
               title="从两周前及更早的未完成订单中选择加入本周"
               onClick={() => setOlderCarryoverOpen(true)}
             >
-              <AlertTriangle size={15} aria-hidden="true" />更早遗留 <b>{summary?.navigation.olderCarryoverCount ?? 0}</b>
+              <AlertTriangle size={15} aria-hidden="true" />更早遗留 <b>{summary?.navigation?.olderCarryoverCount ?? '—'}</b>
             </button>}
             <span className="production-command-secondary" aria-label="生产调度辅助操作">
               {(canAdministerProduction || canScheduleProduction) && <Link className="hm-workbench-button" href={weeklyPlanHref} prefetch={false}><CalendarDays size={15} aria-hidden="true" />周计划</Link>}
@@ -2866,12 +2937,12 @@ export default function ProductionExecutionCenter({
         />}
 
         <section className="production-dispatch-metrics" aria-label="生产调度指标" aria-busy={initialBoardLoading}>
-          <button type="button" className={dispatchPreset === 'in_production' ? 'active' : ''} onClick={() => applyDispatchPreset('in_production')}><span><CheckCircle2 size={18} aria-hidden="true" />生产中</span><strong>{dispatchMetric.inProduction}</strong><small>已启动首工序 · {weekScopeTitle} {summary?.total || 0} 单</small></button>
-          <button type="button" className={dispatchPreset === 'not_started' ? 'active pending' : 'pending'} onClick={() => applyDispatchPreset('not_started')}><span><ListChecks size={18} aria-hidden="true" />待开始</span><strong>{dispatchMetric.notStarted}</strong><small>点击查看阻塞或待启动工单</small></button>
-          <button type="button" className={dispatchPreset === 'next_process' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('next_process')}><span><ArrowRight size={18} aria-hidden="true" />有后续工序</span><strong>{dispatchMetric.withNextProcess}</strong><small>工艺路线存在下一道工序</small></button>
-          <button type="button" className={dispatchPreset === 'due_soon' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('due_soon')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{dispatchMetric.dueSoon}</strong><small>客户交期在未来 0-2 天</small></button>
-          <button type="button" className={dispatchPreset === 'completed' ? 'active completed' : 'completed'} onClick={() => applyDispatchPreset('completed')}><span><CheckCircle2 size={18} aria-hidden="true" />已完成</span><strong>{dispatchMetric.completed}</strong><small>当前周完成归档</small></button>
-          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />{scope === 'current' ? '本周计划达成率' : '计划达成率'}</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>{scope === 'current' ? '本周完成' : '完成订单'} {summary?.planTotals.completedOrders || 0} / {scope === 'current' ? '本周计划' : '总订单'} {summary?.planTotals.totalOrders || 0}{scope === 'current' && Boolean(summary?.navigation.carryoverCount) ? ` · 遗留 ${summary?.navigation.carryoverCount} 单另计` : ''}</small></div>
+          <button type="button" className={dispatchPreset === 'in_production' ? 'active' : ''} onClick={() => applyDispatchPreset('in_production')}><span><CheckCircle2 size={18} aria-hidden="true" />生产中</span><strong>{summary ? dispatchMetric.inProduction : '—'}</strong><small>已启动首工序 · {weekScopeTitle} {summary?.total ?? '—'} 单</small></button>
+          <button type="button" className={dispatchPreset === 'not_started' ? 'active pending' : 'pending'} onClick={() => applyDispatchPreset('not_started')}><span><ListChecks size={18} aria-hidden="true" />待开始</span><strong>{summary ? dispatchMetric.notStarted : '—'}</strong><small>点击查看阻塞或待启动工单</small></button>
+          <button type="button" className={dispatchPreset === 'next_process' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('next_process')}><span><ArrowRight size={18} aria-hidden="true" />有后续工序</span><strong>{summary ? dispatchMetric.withNextProcess : '—'}</strong><small>工艺路线存在下一道工序</small></button>
+          <button type="button" className={dispatchPreset === 'due_soon' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('due_soon')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{summary ? dispatchMetric.dueSoon : '—'}</strong><small>客户交期在未来 0-2 天</small></button>
+          <button type="button" className={dispatchPreset === 'completed' ? 'active completed' : 'completed'} onClick={() => applyDispatchPreset('completed')}><span><CheckCircle2 size={18} aria-hidden="true" />已完成</span><strong>{summary ? dispatchMetric.completed : '—'}</strong><small>当前周完成归档</small></button>
+          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />{scope === 'current' ? '本周计划达成率' : '计划达成率'}</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>{scope === 'current' ? '本周完成' : '完成订单'} {summary?.planTotals.completedOrders ?? '—'} / {scope === 'current' ? '本周计划' : '总订单'} {summary?.planTotals.totalOrders ?? '—'}{scope === 'current' && Boolean(summary?.navigation?.carryoverCount) ? ` · 遗留 ${summary?.navigation?.carryoverCount} 单另计` : ''}</small></div>
         </section>
 
         <section className="production-dispatch-toolbar" aria-label="生产调度筛选">
@@ -2883,14 +2954,14 @@ export default function ProductionExecutionCenter({
             <button className={dispatchPreset === 'next_process' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'next_process'} onClick={() => applyDispatchPreset('next_process')}>有后续工序</button>
             <button className={dispatchPreset === 'due_soon' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'due_soon'} onClick={() => applyDispatchPreset('due_soon')}>即将超时</button>
             <button className={dispatchPreset === 'exceptions' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'exceptions'} onClick={() => applyDispatchPreset('exceptions')}>异常</button>
-            <button className={dispatchPreset === 'paused' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'paused'} onClick={() => applyDispatchPreset('paused')}>已暂停 {summary?.dispatchMetrics.paused || 0}</button>
+            <button className={dispatchPreset === 'paused' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'paused'} onClick={() => applyDispatchPreset('paused')}>已暂停 {summary?.dispatchMetrics.paused ?? '—'}</button>
             <button className={dispatchPreset === 'completed' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'completed'} onClick={() => applyDispatchPreset('completed')}>已完成</button>
           </div>
           <button ref={filterButtonRef} className={`production-dispatch-filter ${filtersOpen || activeFilterCount ? 'active' : ''}`.trim()} type="button" aria-expanded={filtersOpen} onClick={() => { setDraftAdvanced(cloneAdvanced(advanced)); setFiltersOpen(value => !value); }}>更多筛选{activeFilterCount ? ` ${activeFilterCount}` : ''}</button>
           <PortalMenu open={filtersOpen} anchorRef={filterButtonRef} align="right" className="production-filter-menu hm-production-menu hm-production-filter-menu" width={420} onClose={() => setFiltersOpen(false)} closeOnSelect={false}>
             <AdvancedFilterPanel customers={board?.filterOptions.customers || []} value={draftAdvanced} setValue={setDraftAdvanced} clear={() => setDraftAdvanced(emptyAdvanced)} apply={() => { setAdvanced(cloneAdvanced(draftAdvanced)); setFiltersOpen(false); setPage(1); }} />
           </PortalMenu>
-          <button className={`production-auto-refresh ${autoRefresh ? 'active' : ''}`} type="button" aria-pressed={autoRefresh} title="每 30 秒自动刷新" onClick={() => setAutoRefresh(value => !value)}><RefreshCw size={15} aria-hidden="true" />自动刷新 <span>30 秒</span></button>
+          <button className={`production-auto-refresh ${autoRefresh ? 'active' : ''}`} type="button" aria-pressed={autoRefresh} title="正常每 30 秒刷新；失败后自动退避，最长 5 分钟" onClick={() => setAutoRefresh(value => !value)}><RefreshCw size={15} aria-hidden="true" />自动刷新 <span>30 秒起</span></button>
           {loading
             ? <span className="production-refresh-status loading" aria-live="polite"><Loader2 size={13} aria-hidden="true" />同步中</span>
             : lastRefreshedAt && <span className="production-refresh-status" aria-live="polite">更新 {new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(lastRefreshedAt)}</span>}
@@ -2899,21 +2970,21 @@ export default function ProductionExecutionCenter({
             <button className={density === 'comfortable' ? 'active' : ''} type="button" aria-label="舒适列表" title="舒适列表" onClick={() => { setDensity('comfortable'); setPage(1); }}><Rows3 size={16} aria-hidden="true" /></button>
             <button className={density === 'compact' ? 'active' : ''} type="button" aria-label="紧凑列表" title="紧凑列表" onClick={() => { setDensity('compact'); setPage(1); }}><ListChecks size={16} aria-hidden="true" /></button>
           </div>
-          <span className="production-dispatch-result" aria-label={initialBoardLoading ? '工单数量加载中' : undefined}>{board?.pagination.total || 0} 项</span>
+          <span className="production-dispatch-result" aria-label={initialBoardLoading ? '工单数量加载中' : !board ? '工单数量尚未获取' : undefined}>{board ? board.pagination.total : '—'} 项</span>
         </section>
         {!!filterChips.length && <div className="production-filter-chips production-dispatch-filter-chips" aria-label="已应用筛选">{filterChips.map(chip => <button key={chip.key} type="button" onClick={() => { chip.remove(); setPage(1); }} title={`移除${chip.label}`}>{chip.label}<span>×</span></button>)}<button className="clear" type="button" onClick={() => { setTargetWorkOrderId(''); setAdvanced(emptyAdvanced); setQuick([]); setKeyword(''); setPage(1); }}>清空全部</button></div>}
         <section className="production-arrangement-filters" aria-label="生产安排筛选" aria-busy={initialBoardLoading}>
           <span><CalendarDays size={15} aria-hidden="true" />主管安排</span>
           {([
-            ['arrangement_unassigned', '未安排', summary?.arrangementMetrics?.unassigned || 0],
-            ['arrangement_scheduled', '已安排', summary?.arrangementMetrics?.scheduled || 0],
-            ['arrangement_today', '今日安排', summary?.arrangementMetrics?.today || 0],
-            ['arrangement_overdue', '逾期未完', summary?.arrangementMetrics?.overdue || 0],
-            ['arrangement_partial', '部分完成', summary?.arrangementMetrics?.partial || 0],
-          ] as Array<[QuickFilter, string, number]>).map(([key, label, count]) => <button className={`${quick.includes(key) ? 'active' : ''} ${key.includes('overdue') ? 'danger' : key.includes('partial') ? 'warning' : ''}`.trim()} type="button" aria-pressed={quick.includes(key)} key={key} onClick={() => toggleArrangementQuickFilter(key)}>{label}<b>{count}</b></button>)}
+            ['arrangement_unassigned', '未安排', summary?.arrangementMetrics?.unassigned ?? '—'],
+            ['arrangement_scheduled', '已安排', summary?.arrangementMetrics?.scheduled ?? '—'],
+            ['arrangement_today', '今日安排', summary?.arrangementMetrics?.today ?? '—'],
+            ['arrangement_overdue', '逾期未完', summary?.arrangementMetrics?.overdue ?? '—'],
+            ['arrangement_partial', '部分完成', summary?.arrangementMetrics?.partial ?? '—'],
+          ] as Array<[QuickFilter, string, number | string]>).map(([key, label, count]) => <button className={`${quick.includes(key) ? 'active' : ''} ${key.includes('overdue') ? 'danger' : key.includes('partial') ? 'warning' : ''}`.trim()} type="button" aria-pressed={quick.includes(key)} key={key} onClick={() => toggleArrangementQuickFilter(key)}>{label}<b>{count}</b></button>)}
         </section>
 
-        {error && <div className="production-error"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
+        {loadError && <div className="production-error" role="alert"><span><strong>{board ? '未获取到最新数据' : '数据加载失败'}</strong>{board ? `当前保留 ${lastProductionLoadedTime || '上次'} 成功加载的内容：${loadError}` : `尚未获取到生产执行数据：${loadError}`}</span><button type="button" disabled={loading} onClick={retryProductionLoad}>{loading ? '加载中' : '重新加载'}</button></div>}
         {scope === 'current' && summary?.total === 0 && !loading && <div className="production-empty-week"><strong>本周暂无已启用生产工单</strong><span>历史遗留工单可从“跨周遗留”继续处理；新计划请在计划中心下达。</span><Link href={weeklyPlanHref} prefetch={false}>进入计划中心</Link></div>}
 
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
@@ -2921,7 +2992,7 @@ export default function ProductionExecutionCenter({
             <header className="production-dispatch-list-head">
               <span>序号</span><span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>工时完成进度</span><span>交期 / 风险</span><span>备注</span><span>现场操作</span>
             </header>
-            <div ref={boardShellRef} className="production-dispatch-list hm-scroll-region" tabIndex={0} aria-label={initialBoardLoading ? '生产工单列表，正在加载' : `生产工单列表，共 ${board?.pagination.total || 0} 项`}>
+            <div ref={boardShellRef} className="production-dispatch-list hm-scroll-region" tabIndex={0} aria-label={initialBoardLoading ? '生产工单列表，正在加载' : board ? `生产工单列表，共 ${board.pagination.total} 项` : '生产工单列表，数据加载失败'}>
               {dispatchItems.map((item, rowIndex) => <ProductionDispatchRow
                 key={item.order.id}
                 item={item}
@@ -2946,7 +3017,7 @@ export default function ProductionExecutionCenter({
                 openReassignment={openProductionReassignment}
               />)}
               {loading && !board && <DispatchRowSkeleton count={dispatchPageSize} />}
-              {!loading && !board?.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
+              {!loading && board && !board.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
               {!loading && dispatchAllItems.length > 0 && <div ref={dispatchLoadMoreRef} className={`production-dispatch-load-more ${dispatchHasMore ? 'loading' : 'complete'}`} aria-live="polite">
                 {dispatchHasMore
                   ? <><Loader2 size={14} aria-hidden="true" /><span>正在加载更多</span></>
@@ -3012,7 +3083,7 @@ export default function ProductionExecutionCenter({
       {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} canPrintTraveler={canPrintTravelers} travelerPrinting={false} printTraveler={() => printTravelers([detailOrder.id])} canViewQualityRisks={canViewQualityRisks} canManageQualityRisks={canManageQualityRisks} canAcknowledgeQualityRisks={canAcknowledgeQualityRisks} userId={user.id} />}
       <OlderCarryoverDrawer
         open={olderCarryoverOpen}
-        targetWeekStart={summary?.navigation.current.weekStartDate || ''}
+        targetWeekStart={summary?.navigation?.current?.weekStartDate || ''}
         onClose={() => setOlderCarryoverOpen(false)}
         onIncluded={count => {
           setToast(`已将 ${count} 个更早遗留订单加入本周，原订单和资料保持不变`);

@@ -1,20 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { prisma } from '@/lib/prisma';
-import { reconcileDraftProductTimeRoutes } from '@/lib/process-routing';
-import {
-  reconcileAutomaticallyReleasedProductionPlanBatches,
-  reconcileFutureActiveProductionPlanWeeks,
-} from '@/lib/production-planning';
 import {
   loadProductionExecution,
   loadProductionWeekNavigation,
   parseProductionExecutionView,
-  productionWeekWhere,
   productionFiltersFromSearchParams,
   resolveProductionWeek,
 } from '@/lib/production-execution';
-import { reconcileProductionCarryovers } from '@/lib/production-carryovers';
 import {
   assertProductionScopeRead,
   ProductionAccessScopeError,
@@ -36,8 +29,9 @@ function nonNegativeInt(value: string | null) {
 }
 
 export async function GET(req: NextRequest) {
+  const requestId = randomUUID();
+  const requestStartedAt = performance.now();
   try {
-    const requestStartedAt = performance.now();
     const user = await requireUser();
     const productionScope = resolveProductionEntityScope(user);
     assertProductionScopeRead(productionScope);
@@ -45,34 +39,13 @@ export async function GET(req: NextRequest) {
     const params = req.nextUrl.searchParams;
     const page = positiveInt(params.get('page'), 1);
     const includeSummary = page === 1 && params.get('includeSummary') === '1';
-    const skipReconcile = params.get('skipReconcile') === '1';
-    if (!skipReconcile && productionScope.canReconcile) {
-      await prisma.$transaction(async tx => {
-        await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
-        await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
-      }, { maxWait: 10_000, timeout: 180_000 });
-    }
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
-    if (!skipReconcile && productionScope.canReconcile && week.scope === 'current' && week.weekStart) {
-      await prisma.$transaction(
-        tx => reconcileProductionCarryovers(tx, { targetWeekStart: week.weekStart!, actorId: user.id }),
-        { maxWait: 10_000, timeout: 180_000 },
-      );
-    }
     const filters = productionFiltersFromSearchParams(params);
-    if (!skipReconcile && productionScope.canReconcile) {
-      await prisma.$transaction(tx => reconcileDraftProductTimeRoutes(tx, {
-        workOrderWhere: filters.workOrderId
-          ? { id: filters.workOrderId, deletedAt: null }
-          : productionWeekWhere(week),
-        actorId: user.id,
-      }));
-    }
-    const reconciledAt = performance.now();
+    const preparedAt = performance.now();
     const navigationPromise = includeSummary
       ? loadProductionWeekNavigation(new Date(), productionScope)
       : Promise.resolve(null);
-    const [data, navigation] = await Promise.all([
+    const [dataResult, navigationResult] = await Promise.allSettled([
       loadProductionExecution({
         week,
         filters,
@@ -85,16 +58,28 @@ export async function GET(req: NextRequest) {
       }),
       navigationPromise,
     ]);
+    if (dataResult.status === 'rejected') throw dataResult.reason;
+    const data = dataResult.value;
+    const navigation = navigationResult.status === 'fulfilled' ? navigationResult.value : null;
+    const warnings: Array<{ code: string; message: string }> = [];
+    if (navigationResult.status === 'rejected') {
+      warnings.push({ code: 'PRODUCTION_WEEK_NAVIGATION_UNAVAILABLE', message: '生产周导航暂时不可用' });
+      console.error('production execution auxiliary read failed', {
+        requestId,
+        part: 'week_navigation',
+        error: navigationResult.reason,
+      });
+    }
     const responseData = navigation && data.summary
       ? { ...data, summary: { ...data.summary, navigation } }
       : data;
     const loadedAt = performance.now();
-    const response = NextResponse.json({ ok: true, data: responseData });
+    const response = NextResponse.json({ ok: true, requestId, data: responseData, warnings });
     response.headers.set('Cache-Control', 'private, no-store');
     response.headers.set('Server-Timing', [
       `auth;dur=${(authenticatedAt - requestStartedAt).toFixed(1)}`,
-      `reconcile;dur=${(reconciledAt - authenticatedAt).toFixed(1)}`,
-      `load;dur=${(loadedAt - reconciledAt).toFixed(1)}`,
+      `prepare;dur=${(preparedAt - authenticatedAt).toFixed(1)}`,
+      `load;dur=${(loadedAt - preparedAt).toFixed(1)}`,
       `total;dur=${(loadedAt - requestStartedAt).toFixed(1)}`,
     ].join(', '));
     return response;
@@ -104,6 +89,25 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }
     const message = error instanceof Error ? error.message : '生产看板加载失败';
-    return NextResponse.json({ ok: false, error: message }, { status: message.includes('日期') ? 400 : 500 });
+    if (message.includes('日期')) {
+      return NextResponse.json({
+        ok: false,
+        error: message,
+        code: 'PRODUCTION_EXECUTION_INVALID_DATE',
+        requestId,
+      }, { status: 400 });
+    }
+    console.error('production execution read failed', {
+      requestId,
+      code: 'PRODUCTION_EXECUTION_READ_FAILED',
+      durationMs: Number((performance.now() - requestStartedAt).toFixed(1)),
+      error,
+    });
+    return NextResponse.json({
+      ok: false,
+      error: '生产执行加载失败，请稍后重试',
+      code: 'PRODUCTION_EXECUTION_READ_FAILED',
+      requestId,
+    }, { status: 500 });
   }
 }

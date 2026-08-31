@@ -1,9 +1,9 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
-import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { normalizePlanningSopDrawingStatus, normalizePlanningSopStage } from '@/lib/planning-sop';
 import {
   chinaDate,
@@ -11,9 +11,6 @@ import {
   parseProductionPlanOrderInput,
   planOrderSnapshot,
   productionPlanOrderInclude,
-  reconcileAutomaticallyReleasedProductionPlanBatches,
-  reconcileLegacyDeletedPlanQuantities,
-  reconcileFutureActiveProductionPlanWeeks,
   resolveOrCreatePlanningProduct,
   serializeProductionPlanOrder,
 } from '@/lib/production-planning';
@@ -23,7 +20,6 @@ import type {
   ProductionPlanningSummaryDTO,
   ProductionPlanningWeekDTO,
 } from '@/types';
-import { resolveProductionEntityScope } from '@/lib/production-access-scope';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
 
 export const runtime = 'nodejs';
@@ -49,17 +45,10 @@ function addDays(value: Date, days: number): Date {
 }
 
 export async function GET(req: NextRequest) {
+  const requestId = randomUUID();
+  const requestStartedAt = performance.now();
   try {
-    const user = await requireUser();
-    const productionScope = resolveProductionEntityScope(user);
-    if (productionScope.canReconcile) {
-      await prisma.$transaction(async tx => {
-        await reconcileLegacyDeletedPlanQuantities(tx, { actorId: user.id });
-        await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
-        await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
-        await reconcileProductionPlanDrawingLinks(tx);
-      }, { maxWait: 10_000, timeout: 180_000 });
-    }
+    await requireUser();
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim().slice(0, 160);
     const status = String(req.nextUrl.searchParams.get('status') || '').trim();
     const customer = String(req.nextUrl.searchParams.get('customer') || '').trim().slice(0, 120);
@@ -148,7 +137,8 @@ export async function GET(req: NextRequest) {
       processPendingCount: batches.filter(batch => batch.releaseState !== 'draft' && (batch.processStatus === 'not_created' || batch.processStatus === 'draft')).length,
     };
     const customers = [...new Set(all.map(order => order.customerName))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
-    const [drawingProducts, salespersonRows] = await Promise.all([
+    const auxiliaryWarnings: Array<{ code: string; message: string }> = [];
+    const [drawingProductsResult, salespersonRowsResult] = await Promise.allSettled([
       prisma.drawingLibraryItem.findMany({
         where: { deletedAt: null },
         select: {
@@ -196,6 +186,24 @@ export async function GET(req: NextRequest) {
         take: 3000,
       }),
     ]);
+    const drawingProducts = drawingProductsResult.status === 'fulfilled' ? drawingProductsResult.value : [];
+    const salespersonRows = salespersonRowsResult.status === 'fulfilled' ? salespersonRowsResult.value : [];
+    if (drawingProductsResult.status === 'rejected') {
+      auxiliaryWarnings.push({ code: 'PLANNING_PRODUCT_OPTIONS_UNAVAILABLE', message: '产品选项暂时不可用，请稍后刷新' });
+      console.error('planning order auxiliary read failed', {
+        requestId,
+        part: 'product_options',
+        error: drawingProductsResult.reason,
+      });
+    }
+    if (salespersonRowsResult.status === 'rejected') {
+      auxiliaryWarnings.push({ code: 'PLANNING_SALESPEOPLE_UNAVAILABLE', message: '业务员选项暂时不可用，请稍后刷新' });
+      console.error('planning order auxiliary read failed', {
+        requestId,
+        part: 'salespeople',
+        error: salespersonRowsResult.reason,
+      });
+    }
     const salespersonByCustomer = new Map<string, string>();
     for (const row of salespersonRows) {
       if (row.salesperson && !salespersonByCustomer.has(row.customerName)) {
@@ -240,8 +248,9 @@ export async function GET(req: NextRequest) {
         qualityWarningPrintRequired: qualityWarnings.some(warning => warning.printPolicy === 'REQUIRED'),
       };
     });
-    return NextResponse.json({
+    const response = NextResponse.json({
       ok: true,
+      requestId,
       orders: records.map(serializeProductionPlanOrder),
       summary,
       customers,
@@ -254,11 +263,25 @@ export async function GET(req: NextRequest) {
         upcoming,
         history,
       },
+      warnings: auxiliaryWarnings,
     });
+    response.headers.set('Cache-Control', 'private, no-store');
+    response.headers.set('Server-Timing', `total;dur=${(performance.now() - requestStartedAt).toFixed(1)}`);
+    return response;
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    console.error('planning order list failed', error);
-    return NextResponse.json({ ok: false, error: '计划订单加载失败' }, { status: 500 });
+    console.error('planning order list failed', {
+      requestId,
+      code: 'PLANNING_ORDER_READ_FAILED',
+      durationMs: Number((performance.now() - requestStartedAt).toFixed(1)),
+      error,
+    });
+    return NextResponse.json({
+      ok: false,
+      error: '计划订单加载失败，请稍后重试',
+      code: 'PLANNING_ORDER_READ_FAILED',
+      requestId,
+    }, { status: 500 });
   }
 }
 

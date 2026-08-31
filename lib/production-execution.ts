@@ -21,7 +21,6 @@ import {
 } from '@/lib/production-carryovers';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
-import { materializeProductQualityWarningsForWorkOrders } from '@/lib/internal-quality-risks';
 import {
   productionArrangementCrossesWeek,
   resolveProductionArrangementProgress,
@@ -608,25 +607,24 @@ export async function resolveProductionWeek(
 
 export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhereInput {
   if (!week.weekStart) return { id: '__no_production_week__' };
-  const base: Prisma.WorkOrderWhereInput = {
-    deletedAt: null,
+  const activePlanType: Prisma.WorkOrderWhereInput = {
     planType: { in: ['weekly_plan', 'managed_plan'] },
   };
-  if (week.scope === 'carryover') {
-    return { ...base, weekStartDate: { lt: week.weekStart } };
-  }
-  const linkedProductionBatch: Prisma.WorkOrderWhereInput = {
+  const linkedProductionBatch = (
+    batchWhere: Prisma.ProductionPlanBatchWhereInput,
+  ): Prisma.WorkOrderWhereInput => ({
     OR: [
       {
         productionPlanBatch: {
-          is: { deletedAt: null, planOrder: { deletedAt: null } },
+          is: batchWhere,
         },
       },
       {
         parentWorkOrder: {
           is: {
+            deletedAt: null,
             productionPlanBatch: {
-              is: { deletedAt: null, planOrder: { deletedAt: null } },
+              is: batchWhere,
             },
           },
         },
@@ -634,34 +632,133 @@ export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhere
       {
         rootWorkOrder: {
           is: {
+            deletedAt: null,
             productionPlanBatch: {
-              is: { deletedAt: null, planOrder: { deletedAt: null } },
+              is: batchWhere,
             },
           },
         },
       },
     ],
+  });
+  const liveBatch: Prisma.ProductionPlanBatchWhereInput = {
+    deletedAt: null,
+    planOrder: { deletedAt: null },
   };
+  const incompleteWorkOrder: Prisma.WorkOrderWhereInput = {
+    completedAt: null,
+    NOT: {
+      OR: [
+        { stage: { in: ['completed', 'complete', 'done', '已完成'] } },
+        { status: { in: ['completed', 'complete', 'done', '已完成'] } },
+      ],
+    },
+  };
+  if (week.scope === 'carryover') {
+    const activeHistoricalBatch: Prisma.ProductionPlanBatchWhereInput = {
+      ...liveBatch,
+      // Weekly activation archives the previous batch even when its work order
+      // is unfinished. Preparation and archived are therefore valid historical
+      // carryover states alongside active, but only with a live batch/order link.
+      releaseState: { in: ['active', 'preparation', 'archived'] },
+      weekStartDate: { lt: week.weekStart },
+    };
+    return {
+      deletedAt: null,
+      AND: [
+        incompleteWorkOrder,
+        {
+          OR: [
+            // Preserve the canonical scope for normal releases.
+            {
+              AND: [
+                activePlanType,
+                { weekStartDate: { lt: week.weekStart } },
+              ],
+            },
+            // Some historical releases linked an active batch but never copied
+            // plan_type/week_start_date onto the work order. A live batch link
+            // is the only compatibility evidence admitted here; dates alone
+            // never make an unlinked order a carryover candidate.
+            {
+              AND: [
+                linkedProductionBatch(activeHistoricalBatch),
+                { planClearedAt: null },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  const selectedWeekBatch: Prisma.ProductionPlanBatchWhereInput = {
+    ...liveBatch,
+    weekStartDate: sameDayRange(week.weekStart),
+  };
+  const canonicalSelectedWeek: Prisma.WorkOrderWhereInput = {
+    AND: [
+      activePlanType,
+      linkedProductionBatch(liveBatch),
+      { weekStartDate: sameDayRange(week.weekStart) },
+    ],
+  };
+
   if (week.scope === 'current') {
     return {
-      ...base,
+      deletedAt: null,
       OR: [
         {
           AND: [
-            linkedProductionBatch,
+            canonicalSelectedWeek,
             { planActive: true },
-            { weekStartDate: sameDayRange(week.weekStart) },
+          ],
+        },
+        // Older planning releases could link a valid production batch to a
+        // work order without copying plan_type/week_start_date. The batch is
+        // the durable scheduling fact, so use its active selected-week link as
+        // a conservative read fallback. This does not infer quantity, labor or
+        // reporting facts and never admits an unlinked work order.
+        {
+          AND: [
+            linkedProductionBatch({ ...selectedWeekBatch, releaseState: 'active' }),
+            { planClearedAt: null },
           ],
         },
         activeProductionCarryoverWorkOrderWhere(week.weekStart),
       ],
     };
   }
+
+  const canonicalFutureOrHistory: Prisma.WorkOrderWhereInput = {
+    ...canonicalSelectedWeek,
+    ...(week.scope === 'next' || week.scope === 'afterNext'
+      ? { planActive: false, planClearedAt: null }
+      : {}),
+  };
+  if (week.scope === 'history') {
+    return {
+      deletedAt: null,
+      OR: [
+        canonicalFutureOrHistory,
+        linkedProductionBatch(selectedWeekBatch),
+      ],
+    };
+  }
+
   return {
-    ...base,
-    ...linkedProductionBatch,
-    ...(week.scope === 'next' || week.scope === 'afterNext' ? { planActive: false, planClearedAt: null } : {}),
-    weekStartDate: sameDayRange(week.weekStart),
+    deletedAt: null,
+    OR: [
+      canonicalFutureOrHistory,
+      ...(week.scope === 'next'
+        ? [{
+            AND: [
+              linkedProductionBatch({ ...selectedWeekBatch, releaseState: 'preparation' }),
+              { planClearedAt: null },
+            ],
+          } satisfies Prisma.WorkOrderWhereInput]
+        : []),
+    ],
   };
 }
 
@@ -1283,7 +1380,6 @@ export async function loadProductionExecution(input: {
     ? (page - 1) * pageSize
     : Math.min(Math.max(input.offset, 0), total);
   const pageOrderIds = filtered.slice(offset, offset + pageSize).map(order => order.id);
-  if (pageOrderIds.length) await materializeProductQualityWarningsForWorkOrders(pageOrderIds);
   const pageOrders = pageOrderIds.length
     ? await prisma.workOrder.findMany({
       where: { id: { in: pageOrderIds }, deletedAt: null },

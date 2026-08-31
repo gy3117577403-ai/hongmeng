@@ -65,6 +65,7 @@ import {
 } from '@/lib/planning-readiness';
 import { resolvePlanningFlow } from '@/lib/planning-flow';
 import { buildPlanningDrawingLibraryHref, buildPlanningReturnPath } from '@/lib/planning-navigation';
+import { auxiliaryValueAfterLoad, type ClientLoadWarning } from '@/lib/client-load-resilience';
 import {
   formatPlanningSopUpdatedAt,
   planningSopStage,
@@ -137,8 +138,12 @@ type PlanningPayload = {
   productOptions?: ProductionPlanProductOptionDTO[];
   salespeople?: string[];
   periods?: ProductionPlanningPeriodsDTO;
+  warnings?: ClientLoadWarning[];
   error?: string;
 };
+
+const planningProductOptionsWarningCode = 'PLANNING_PRODUCT_OPTIONS_UNAVAILABLE';
+const planningSalespeopleWarningCode = 'PLANNING_SALESPEOPLE_UNAVAILABLE';
 
 type OrderForm = {
   confirmation: string;
@@ -632,10 +637,25 @@ export default function PlanningCenterShell({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [planLoadError, setPlanLoadError] = useState('');
+  const [planLoadWarnings, setPlanLoadWarnings] = useState<ClientLoadWarning[]>([]);
+  const [lastPlanLoadedAt, setLastPlanLoadedAt] = useState<Date | null>(null);
   const [toast, setToast] = useState('');
   useToastBridge(toast, setToast);
   const [refreshToken, setRefreshToken] = useState(0);
-  useEffect(() => { const refreshControl = () => setRefreshToken(value => value + 1); window.addEventListener('production-control-updated', refreshControl); return () => window.removeEventListener('production-control-updated', refreshControl); }, []);
+  const planRequestInFlightRef = useRef(false);
+  const planRefreshPendingRef = useRef(false);
+  useEffect(() => {
+    const refreshControl = () => {
+      if (planRequestInFlightRef.current) {
+        planRefreshPendingRef.current = true;
+        return;
+      }
+      setRefreshToken(value => value + 1);
+    };
+    window.addEventListener('production-control-updated', refreshControl);
+    return () => window.removeEventListener('production-control-updated', refreshControl);
+  }, []);
   const [expandedOrderId, setExpandedOrderId] = useState('');
   const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
   const [travelerPrintIds, setTravelerPrintIds] = useState<string[]>([]);
@@ -712,8 +732,10 @@ export default function PlanningCenterShell({
 
   useEffect(() => {
     const controller = new AbortController();
+    planRequestInFlightRef.current = true;
     setLoading(true);
-    setError('');
+    setPlanLoadError('');
+    setPlanLoadWarnings([]);
     fetch('/api/planning/orders', { cache: 'no-store', signal: controller.signal })
       .then(async response => {
         const body = await responseBody<PlanningPayload>(response);
@@ -723,12 +745,27 @@ export default function PlanningCenterShell({
       })
       .then(body => {
         if (!body) return;
+        const loadWarnings = Array.isArray(body.warnings)
+          ? body.warnings.filter((warning): warning is ClientLoadWarning => Boolean(warning && typeof warning.code === 'string'))
+          : [];
         setOrders(body.orders || []);
         setSummary(body.summary || emptySummary);
         setCustomers(body.customers || []);
-        setProductOptions(body.productOptions || []);
-        setSalespeople(body.salespeople || []);
+        setProductOptions(current => auxiliaryValueAfterLoad(
+          current,
+          body.productOptions || [],
+          loadWarnings,
+          planningProductOptionsWarningCode,
+        ));
+        setSalespeople(current => auxiliaryValueAfterLoad(
+          current,
+          body.salespeople || [],
+          loadWarnings,
+          planningSalespeopleWarningCode,
+        ));
+        setPlanLoadWarnings(loadWarnings);
         setPeriods(body.periods);
+        setLastPlanLoadedAt(new Date());
         if (body.periods) {
           const editableStarts = (body.periods.upcoming?.length
             ? body.periods.upcoming
@@ -755,9 +792,17 @@ export default function PlanningCenterShell({
         }
       })
       .catch(reason => {
-        if (reason instanceof Error && reason.name !== 'AbortError') setError(reason.message);
+        if (reason instanceof Error && reason.name !== 'AbortError') setPlanLoadError(reason.message);
       })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+      .finally(() => {
+        if (controller.signal.aborted) return;
+        planRequestInFlightRef.current = false;
+        setLoading(false);
+        if (planRefreshPendingRef.current) {
+          planRefreshPendingRef.current = false;
+          setRefreshToken(value => value + 1);
+        }
+      });
     return () => controller.abort();
   }, [refreshToken]);
 
@@ -858,6 +903,10 @@ export default function PlanningCenterShell({
   useEffect(() => {
     const refreshAfterExternalChange = () => {
       if (document.visibilityState !== 'visible') return;
+      if (planRequestInFlightRef.current) {
+        planRefreshPendingRef.current = true;
+        return;
+      }
       const now = Date.now();
       if (now - lastExternalRefreshRef.current < 1200) return;
       lastExternalRefreshRef.current = now;
@@ -1993,11 +2042,22 @@ export default function PlanningCenterShell({
   const selectedPrintableWorkOrderIds = [...new Set(allBatches
     .filter(item => selectedBatchIds.includes(item.batch.id) && item.batch.workOrderId)
     .map(item => item.batch.workOrderId as string))];
+  const planDataAvailable = lastPlanLoadedAt !== null;
+  const planAuxiliaryWarningText = planLoadWarnings.length
+    ? `计划数据已正常加载；${Array.from(new Set(planLoadWarnings.map(warning => {
+      if (warning.code === planningProductOptionsWarningCode) return '产品选项暂未更新，已有选项保持不变';
+      if (warning.code === planningSalespeopleWarningCode) return '业务员选项暂未更新，已有选项保持不变';
+      return warning.message || '部分辅助选项暂未更新';
+    }))).join('；')}。`
+    : '';
+  const lastPlanLoadedTime = lastPlanLoadedAt?.toLocaleTimeString('zh-CN', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
   const views: Array<{ id: PlanningView; label: string; icon: typeof ClipboardList; count?: number }> = [
-    { id: 'schedule', label: '计划排程', icon: CalendarCheck2, count: summary.scheduledOrderCount },
+    { id: 'schedule', label: '计划排程', icon: CalendarCheck2, count: planDataAvailable ? summary.scheduledOrderCount : undefined },
     { id: 'month', label: '月度排产', icon: CalendarRange },
-    { id: 'orders', label: '订单管理', icon: ClipboardList, count: summary.pendingOrderCount },
-    { id: 'preparation', label: '下周生产', icon: PackageCheck, count: summary.preparationBatchCount },
+    { id: 'orders', label: '订单管理', icon: ClipboardList, count: planDataAvailable ? summary.pendingOrderCount : undefined },
+    { id: 'preparation', label: '下周生产', icon: PackageCheck, count: planDataAvailable ? summary.preparationBatchCount : undefined },
     { id: 'changes', label: '插单与变更', icon: FilePenLine },
     { id: 'history', label: '历史计划', icon: History },
   ];
@@ -2044,16 +2104,16 @@ export default function PlanningCenterShell({
           open={modeDrawer.open}
           moduleLabel="计划中心"
           mode="mass"
-          mass={{ href: '/weekly-plan-center', title: '量产计划', description: '订单排程、配料准备、工艺联动与生产下达', count: summary.scheduledOrderCount, countLabel: '单' }}
+          mass={{ href: '/weekly-plan-center', title: '量产计划', description: '订单排程、配料准备、工艺联动与生产下达', count: planDataAvailable ? summary.scheduledOrderCount : undefined, countLabel: '单' }}
           sample={{ href: '/weekly-plan-center?branch=samples', title: '样品组计划', description: '按客户等级下达样品资料采集与分项审核任务' }}
           onClose={modeDrawer.close}
         />
 
         <section className="planning-period-ribbon" aria-label="本周与下周计划状态">
-          <article className="current"><div><CalendarCheck2 aria-hidden="true" /><span><small>本周执行</small><strong>{periods ? `${periods.current.weekStartDate.slice(5)} - ${periods.current.weekEndDate.slice(5)}` : '加载中'}</strong></span></div><b>{summary.activeBatchCount}<small>批已进入生产</small></b><a href="/production?scope=current">进入生产<ChevronRight size={14} /></a></article>
+          <article className="current"><div><CalendarCheck2 aria-hidden="true" /><span><small>本周执行</small><strong>{periods ? `${periods.current.weekStartDate.slice(5)} - ${periods.current.weekEndDate.slice(5)}` : loading ? '加载中' : '未获取最新数据'}</strong></span></div><b>{planDataAvailable ? summary.activeBatchCount : '—'}<small>批已进入生产</small></b><a href="/production?scope=current">进入生产<ChevronRight size={14} /></a></article>
           <div className="planning-period-link"><span>提前准备</span><ArrowRight aria-hidden="true" /></div>
-          <article className="next"><div><CalendarClock aria-hidden="true" /><span><small>下周生产</small><strong>{periods ? `${periods.next.weekStartDate.slice(5)} - ${periods.next.weekEndDate.slice(5)}` : '加载中'}</strong></span></div><b>{summary.preparationBatchCount}<small>批已进入生产</small></b><a href="/production?scope=next">进入生产<ChevronRight size={14} /></a></article>
-          <div className="planning-readiness"><span><Warehouse size={15} />仓库异常 <b>{summary.warehouseExceptionCount}</b></span><span><Settings2 size={15} />待工艺 <b>{summary.processPendingCount}</b></span><span><ShieldAlert size={15} />缺工时 <b>{summary.missingProductTimeCount}</b></span><span><FilePenLine size={15} />缺 SOP <b>{summary.missingSopCount}</b></span></div>
+          <article className="next"><div><CalendarClock aria-hidden="true" /><span><small>下周生产</small><strong>{periods ? `${periods.next.weekStartDate.slice(5)} - ${periods.next.weekEndDate.slice(5)}` : loading ? '加载中' : '未获取最新数据'}</strong></span></div><b>{planDataAvailable ? summary.preparationBatchCount : '—'}<small>批已进入生产</small></b><a href="/production?scope=next">进入生产<ChevronRight size={14} /></a></article>
+          <div className="planning-readiness"><span><Warehouse size={15} />仓库异常 <b>{planDataAvailable ? summary.warehouseExceptionCount : '—'}</b></span><span><Settings2 size={15} />待工艺 <b>{planDataAvailable ? summary.processPendingCount : '—'}</b></span><span><ShieldAlert size={15} />缺工时 <b>{planDataAvailable ? summary.missingProductTimeCount : '—'}</b></span><span><FilePenLine size={15} />缺 SOP <b>{planDataAvailable ? summary.missingSopCount : '—'}</b></span></div>
         </section>
 
         <section className="planning-week-switcher" aria-label="周排单工作区">
@@ -2064,8 +2124,8 @@ export default function PlanningCenterShell({
             onClick={() => selectHistoryWeek(selectedHistoryWeek?.weekStartDate || periods?.history[0]?.weekStartDate || '')}
           >
             <History size={17} aria-hidden="true" />
-            <span><strong>历史周</strong><small>{selectedHistoryWeek ? `${selectedHistoryWeek.weekStartDate.slice(5)} - ${selectedHistoryWeek.weekEndDate.slice(5)}` : '暂无归档周'}</small></span>
-            <b>{periods?.history.length || 0}<small>周</small></b>
+            <span><strong>历史周</strong><small>{selectedHistoryWeek ? `${selectedHistoryWeek.weekStartDate.slice(5)} - ${selectedHistoryWeek.weekEndDate.slice(5)}` : planDataAvailable ? '暂无归档周' : '尚未获取数据'}</small></span>
+            <b>{planDataAvailable ? periods?.history.length || 0 : '—'}<small>周</small></b>
           </button>
           {editableWeeks.map(week => <button
             className={view === 'schedule' && selectedWeek?.key === week.key ? `active ${week.key}` : week.key}
@@ -2116,7 +2176,7 @@ export default function PlanningCenterShell({
                       onChange={() => toggleReadinessFilter(option.id)}
                     />
                     <span><strong>{option.label}</strong><small>{unavailable ? '排产后可筛选' : option.description}</small></span>
-                    <em>{readinessCounts[option.id]}</em>
+                    <em>{planDataAvailable ? readinessCounts[option.id] : '—'}</em>
                   </label>;
                 })}
               </div>
@@ -2134,7 +2194,13 @@ export default function PlanningCenterShell({
           </div>
         </section>
 
-        {error && <div className="planning-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误"><X size={15} /></button></div>}
+        {error
+          ? <div className="planning-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误"><X size={15} /></button></div>
+          : planLoadError
+            ? <div className="planning-error" role="alert"><AlertTriangle size={16} /><span>{planDataAvailable ? `未获取到最新数据，当前保留 ${lastPlanLoadedTime || '上次'} 成功加载的内容：${planLoadError}` : `数据加载失败，尚未获取到计划数据：${planLoadError}`}</span><button type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)} aria-label="重试加载计划数据" title="重试加载计划数据"><RefreshCw size={15} className={loading ? 'spin' : ''} /></button></div>
+            : planAuxiliaryWarningText
+              ? <div className="planning-error planning-auxiliary-warning" role="status" aria-live="polite"><AlertTriangle size={16} /><span>{planAuxiliaryWarningText}</span><button type="button" onClick={() => setPlanLoadWarnings([])} aria-label="关闭辅助数据提示"><X size={15} /></button></div>
+              : null}
 
         {view === 'month' && <section className="planning-month-view">
           <header className="planning-month-heading">
@@ -2177,7 +2243,7 @@ export default function PlanningCenterShell({
           {orderPoolOpen && <div className="planning-order-pool-drawer open">
             <button className="planning-order-pool-scrim" type="button" aria-label="关闭订单池" onClick={() => { setOrderPoolOpen(false); orderPoolTriggerRef.current?.focus(); }} />
             <aside className="planning-order-pool" role="dialog" aria-modal="true" aria-label="待安排订单池">
-              <header><div><span>待安排</span><h2>订单池</h2></div><b>{orderPool.length}</b><button ref={orderPoolCloseRef} type="button" aria-label="关闭订单池" onClick={() => { setOrderPoolOpen(false); orderPoolTriggerRef.current?.focus(); }}><X size={18} /></button></header>
+              <header><div><span>待安排</span><h2>订单池</h2></div><b>{planDataAvailable ? orderPool.length : '—'}</b><button ref={orderPoolCloseRef} type="button" aria-label="关闭订单池" onClick={() => { setOrderPoolOpen(false); orderPoolTriggerRef.current?.focus(); }}><X size={18} /></button></header>
               <div className="planning-pool-list hm-scroll-region" tabIndex={0}>
                 {orderPool.map(order => <article className={`priority-${order.priority}`} key={order.id}>
                   <div className="planning-pool-order"><span>{order.specification}</span><em>{priorityText(order.priority)}</em></div>
@@ -2190,7 +2256,7 @@ export default function PlanningCenterShell({
                     <button className="delete" type="button" disabled={saving} title="从计划系统删除，保留图纸与产品工时" aria-label={`删除计划 ${order.specification}`} onClick={() => { void deleteOrder(order); }}><Trash2 size={15} /></button>
                   </div>
                 </article>)}
-                {!loading && !orderPool.length && <div className="planning-empty compact"><CheckCircle2 /><strong>订单池已安排完毕</strong><span>新增订单或调整筛选后继续排程。</span></div>}
+                {!loading && planDataAvailable && !orderPool.length && <div className="planning-empty compact"><CheckCircle2 /><strong>订单池已安排完毕</strong><span>新增订单或调整筛选后继续排程。</span></div>}
               </div>
             </aside>
           </div>}
@@ -2202,11 +2268,13 @@ export default function PlanningCenterShell({
                 <h2>{selectedWeek ? `${selectedWeek.weekStartDate.slice(5)} - ${selectedWeek.weekEndDate.slice(5)}` : '生产周加载中'}</h2>
               </div>
               <div>
-                <button ref={orderPoolTriggerRef} className="pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池<b>{orderPool.length}</b></button>
+                <button ref={orderPoolTriggerRef} className="pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池<b>{planDataAvailable ? orderPool.length : '—'}</b></button>
                 <button className="export" type="button" aria-haspopup="dialog" onClick={event => { void openWeeklyPlanExport(event.currentTarget); }}><FileSpreadsheet size={15} />导出计划</button>
                 <button className="import" type="button" onClick={event => openPlanningImport(event.currentTarget)}><Upload size={15} />导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button>
-                <em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}</em>
+                <em>{planDataAvailable
+                  ? <>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}</>
+                  : '排产数据未获取'}</em>
               </div>
             </header>
             <WeekReconciliationBar
@@ -2292,20 +2360,20 @@ export default function PlanningCenterShell({
                 </Fragment>;
                 })}</tbody>
               </table>
-              {!loading && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>{readinessFilters.length ? '没有符合准备状态的批次' : `${editableWeekLabel(selectedWeekKey)}还没有排产批次`}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : `从左侧订单池安排到 ${selectedWeek?.weekStartDate.slice(5) || ''} - ${selectedWeek?.weekEndDate.slice(5) || ''}，或直接导入该周清单。`}</span></div>}
+              {!loading && planDataAvailable && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>{readinessFilters.length ? '没有符合准备状态的批次' : `${editableWeekLabel(selectedWeekKey)}还没有排产批次`}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : `从左侧订单池安排到 ${selectedWeek?.weekStartDate.slice(5) || ''} - ${selectedWeek?.weekEndDate.slice(5) || ''}，或直接导入该周清单。`}</span></div>}
             </div>
           </div>
         </section>}
 
         {view === 'orders' && <section className="planning-orders-view">
-          <header><div><span>实时订单</span><h2>生产订单池</h2><p>订单变化直接在这里维护，不再依赖重复上传 Excel。</p></div><b>{readinessFilters.length ? `筛选 ${filteredOrders.length} / ${baseFilteredOrders.length} 单` : `${filteredOrders.length} 单`}</b></header>
-          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th className="production-list-sequence">序号</th><th>客户 / 产品</th><th>业务员</th><th>规格 / 警示</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>单件 / 总工时</th><th>操作</th></tr></thead><tbody>{filteredOrders.map((order, rowIndex) => <tr key={order.id}><td className="production-list-sequence">{rowIndex + 1}</td><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b>{Boolean(order.qualityWarningCount) && <span className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']}风险 · {order.qualityWarningCount}{order.qualityWarningPrintRequired ? ' · 必打' : ''}</span>}</td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate || '客户交期待确认'}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${planningUnitMilliseconds(order) ? 'ready' : 'warning'}`}>{duration(planningUnitMilliseconds(order))}<small>{totalDuration(order.planningTotalMilliseconds)}</small></span></td><td><div className="planning-row-actions text"><button type="button" disabled={saving} onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" disabled={saving} onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>{readinessFilters.length ? '没有符合准备状态的订单' : '订单池为空'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '点击右上角“新建订单”开始建立实时计划。'}</span></div>}</div>
+          <header><div><span>实时订单</span><h2>生产订单池</h2><p>订单变化直接在这里维护，不再依赖重复上传 Excel。</p></div><b>{planDataAvailable ? readinessFilters.length ? `筛选 ${filteredOrders.length} / ${baseFilteredOrders.length} 单` : `${filteredOrders.length} 单` : '未获取数据'}</b></header>
+          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th className="production-list-sequence">序号</th><th>客户 / 产品</th><th>业务员</th><th>规格 / 警示</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>单件 / 总工时</th><th>操作</th></tr></thead><tbody>{filteredOrders.map((order, rowIndex) => <tr key={order.id}><td className="production-list-sequence">{rowIndex + 1}</td><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b>{Boolean(order.qualityWarningCount) && <span className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']}风险 · {order.qualityWarningCount}{order.qualityWarningPrintRequired ? ' · 必打' : ''}</span>}</td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate || '客户交期待确认'}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${planningUnitMilliseconds(order) ? 'ready' : 'warning'}`}>{duration(planningUnitMilliseconds(order))}<small>{totalDuration(order.planningTotalMilliseconds)}</small></span></td><td><div className="planning-row-actions text"><button type="button" disabled={saving} onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" disabled={saving} onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && planDataAvailable && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>{readinessFilters.length ? '没有符合准备状态的订单' : '订单池为空'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '点击右上角“新建订单”开始建立实时计划。'}</span></div>}</div>
         </section>}
 
         {view === 'preparation' && <section className="planning-preparation-view">
           <header><div><span>下周提前生产</span><h2>{periods ? `${periods.next.weekStartDate} 至 ${periods.next.weekEndDate}` : '下周生产清单'}</h2><p>排入下周后自动生成生产工单，可直接提前处理；跨周后自动转为本周执行。</p></div><a className="planning-primary-action" href="/production?scope=next"><Factory size={16} />进入下周生产</a></header>
-          <div className="planning-preparation-grid"><section><div className="planning-prep-heading"><Warehouse /><span><strong>仓库配料</strong><small>{preparationRows.filter(item => item.batch.warehouseStatus === 'completed').length} / {preparationRows.length} 已完成</small></span><a href="/workspace/warehouse?scope=preparation">进入仓库</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.warehouseStatus}`}><Boxes /></span><div><strong>{order.specification}</strong><small>{order.customerName} · {batch.quantity.toLocaleString()} 件</small></div><em>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '仓库异常' : '待配料'}</em></article>)}</section><section><div className="planning-prep-heading"><Settings2 /><span><strong>工艺准备</strong><small>{preparationRows.filter(item => item.batch.processStatus !== 'not_created' && item.batch.processStatus !== 'draft').length} / {preparationRows.length} 已确认</small></span><a href={productTimeConfigurationRoute(null, { scope: 'next', from: 'planning', returnTo: '/weekly-plan-center?restore=1' })} onClick={rememberPlanningState}>维护工时</a></div>{preparationRows.map(({ order, batch }) => { const unitMilliseconds = batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order); return <article key={batch.id}><span className={`state-${batch.processStatus}`}><Settings2 /></span><div><strong>{order.specification}</strong><small>{unitMilliseconds ? `单根 ${duration(unitMilliseconds)}${order.currentProductTimeVersion ? '' : ' · 批次计划值'}` : '单根工时待维护'}</small></div><em>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : '待工艺'}</em></article>; })}</section></div>
-          {!preparationRows.length && <div className="planning-empty"><PackageCheck /><strong>当前没有下周生产任务</strong><span>将订单排入下周后，系统会自动生成生产工单并显示在这里。</span></div>}
+          <div className="planning-preparation-grid"><section><div className="planning-prep-heading"><Warehouse /><span><strong>仓库配料</strong><small>{planDataAvailable ? `${preparationRows.filter(item => item.batch.warehouseStatus === 'completed').length} / ${preparationRows.length} 已完成` : '数据尚未获取'}</small></span><a href="/workspace/warehouse?scope=preparation">进入仓库</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.warehouseStatus}`}><Boxes /></span><div><strong>{order.specification}</strong><small>{order.customerName} · {batch.quantity.toLocaleString()} 件</small></div><em>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '仓库异常' : '待配料'}</em></article>)}</section><section><div className="planning-prep-heading"><Settings2 /><span><strong>工艺准备</strong><small>{planDataAvailable ? `${preparationRows.filter(item => item.batch.processStatus !== 'not_created' && item.batch.processStatus !== 'draft').length} / ${preparationRows.length} 已确认` : '数据尚未获取'}</small></span><a href={productTimeConfigurationRoute(null, { scope: 'next', from: 'planning', returnTo: '/weekly-plan-center?restore=1' })} onClick={rememberPlanningState}>维护工时</a></div>{preparationRows.map(({ order, batch }) => { const unitMilliseconds = batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order); return <article key={batch.id}><span className={`state-${batch.processStatus}`}><Settings2 /></span><div><strong>{order.specification}</strong><small>{unitMilliseconds ? `单根 ${duration(unitMilliseconds)}${order.currentProductTimeVersion ? '' : ' · 批次计划值'}` : '单根工时待维护'}</small></div><em>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : '待工艺'}</em></article>; })}</section></div>
+          {planDataAvailable && !preparationRows.length && <div className="planning-empty"><PackageCheck /><strong>当前没有下周生产任务</strong><span>将订单排入下周后，系统会自动生成生产工单并显示在这里。</span></div>}
         </section>}
 
         {view === 'changes' && <section className="planning-changes-view"><header><div><span>可追溯变更</span><h2>插单与计划调整记录</h2><p>已下达订单修改后同步关联工单，同时保留仓库与工艺处理进度。</p></div><b>{changes.length} 条</b></header><div className="planning-change-list hm-scroll-region">{changes.map(change => <article key={change.id}><i><FilePenLine /></i><div><strong>{changeActionText(change.action)}</strong><span>{change.actor?.displayName || change.actor?.username || '系统'} · {new Date(change.createdAt).toLocaleString('zh-CN')}</span><p>{change.reason || (change.action === 'direct_delete_plan_order' ? '未填写删除说明' : '常规计划操作')}</p></div><em>{change.planOrderId ? '订单变更' : '计划操作'}</em></article>)}{changesLoading && <div className="planning-loading">正在加载变更记录...</div>}{!changesLoading && !changes.length && <div className="planning-empty"><History /><strong>暂无计划变更</strong><span>新增、排程和下达操作会自动记录。</span></div>}</div></section>}
@@ -2355,7 +2423,7 @@ export default function PlanningCenterShell({
                 </nav></td>
               </tr>)}</tbody>
             </table>
-            {!loading && !historyRows.length && <div className="planning-empty"><History /><strong>该历史周暂无计划</strong><span>选择其他历史周查看；历史计划不会再混入本周排单清单。</span></div>}
+            {!loading && planDataAvailable && !historyRows.length && <div className="planning-empty"><History /><strong>该历史周暂无计划</strong><span>选择其他历史周查看；历史计划不会再混入本周排单清单。</span></div>}
           </div>
         </section>}
 

@@ -1167,7 +1167,7 @@ export async function deleteProductionPlanBatches(
 
 export async function reconcileLegacyDeletedPlanQuantities(
   tx: Prisma.TransactionClient,
-  input: { actorId: string; now?: Date },
+  input: { actorId: string | null; now?: Date },
 ): Promise<{ adjustedOrderCount: number; deletedOrderCount: number }> {
   const orders = await tx.productionPlanOrder.findMany({
     where: {
@@ -1556,7 +1556,7 @@ async function startReadyScheduledWorkOrder(
   tx: Prisma.TransactionClient,
   input: {
     workOrderId: string;
-    actorId: string;
+    actorId: string | null;
     now: Date;
     trigger: 'automatic_plan_release' | 'automatic_plan_reconciliation';
   },
@@ -1624,7 +1624,7 @@ export async function releaseProductionPlanBatch(
   input: {
     batchId: string;
     target: 'preparation' | 'active';
-    actorId: string;
+    actorId: string | null;
     now?: Date;
     trigger?: 'manual' | 'automatic_schedule' | 'automatic_reconciliation';
   },
@@ -1855,7 +1855,7 @@ export async function automaticallyReleaseProductionPlanBatch(
   tx: Prisma.TransactionClient,
   input: {
     batchId: string;
-    actorId: string;
+    actorId: string | null;
     now?: Date;
     trigger?: 'automatic_schedule' | 'automatic_reconciliation';
     confirmSopValidation?: boolean;
@@ -1894,9 +1894,52 @@ export async function automaticallyReleaseProductionPlanBatch(
   return { target, ...released };
 }
 
+/**
+ * Reconcile one already-released batch after its drawings, SOP or product-time
+ * data became ready. Keeping this operation batch-scoped lets the maintenance
+ * worker isolate a malformed batch instead of rolling back every other batch.
+ */
+export async function reconcileAutomaticallyReleasedProductionPlanBatch(
+  tx: Prisma.TransactionClient,
+  input: { batchId: string; actorId: string | null; now?: Date },
+): Promise<{ reconciled: boolean; started: boolean } | null> {
+  const batch = await tx.productionPlanBatch.findUnique({
+    where: { id: input.batchId },
+    select: {
+      id: true,
+      releaseState: true,
+      workOrderId: true,
+      deletedAt: true,
+      planOrder: { select: { deletedAt: true, status: true } },
+      workOrder: {
+        select: {
+          id: true,
+          stage: true,
+          status: true,
+          startedAt: true,
+          completedAt: true,
+        },
+      },
+    },
+  });
+  if (!batch || batch.deletedAt || batch.planOrder.deletedAt) return null;
+  if (batch.planOrder.status === 'paused' || batch.planOrder.status === 'cancelled') return null;
+  if (batch.releaseState !== 'active' || !batch.workOrderId || !batch.workOrder) return null;
+  const workOrderStage = normalizeWorkOrderStage(batch.workOrder.stage || batch.workOrder.status) || 'not_issued';
+  if (workOrderStage !== 'not_issued' || batch.workOrder.startedAt || batch.workOrder.completedAt) return null;
+  await createWorkOrderProcessRoute(tx, { workOrderId: batch.workOrderId, actorId: input.actorId });
+  const started = await startReadyScheduledWorkOrder(tx, {
+    workOrderId: batch.workOrderId,
+    actorId: input.actorId,
+    now: input.now || new Date(),
+    trigger: 'automatic_plan_reconciliation',
+  });
+  return { reconciled: true, started };
+}
+
 export async function reconcileAutomaticallyReleasedProductionPlanBatches(
   tx: Prisma.TransactionClient,
-  input: { actorId: string; now?: Date },
+  input: { actorId: string | null; now?: Date },
 ): Promise<{ active: number; preparation: number; warningCount: number; started: number }> {
   const now = input.now || new Date();
   const currentWeek = productionPlanTargetWeek('active', now);
@@ -1973,7 +2016,7 @@ export async function reconcileAutomaticallyReleasedProductionPlanBatches(
 
 export async function reconcileFutureActiveProductionPlanWeeks(
   tx: Prisma.TransactionClient,
-  input: { actorId: string; now?: Date },
+  input: { actorId: string | null; now?: Date },
 ): Promise<number> {
   const now = input.now || new Date();
   const targetWeek = productionPlanTargetWeek('active', now);

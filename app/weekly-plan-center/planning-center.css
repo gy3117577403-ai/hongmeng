@@ -814,6 +814,12 @@ main.planning-center-shell.hm-workbench-root {
   color: inherit;
 }
 
+.planning-center-shell .planning-error.planning-auxiliary-warning {
+  border-color: #fed7aa;
+  background: #fff8ed;
+  color: #9a4a0b;
+}
+
 .planning-center-shell .planning-schedule-workspace {
   position: relative;
   min-width: 0;
