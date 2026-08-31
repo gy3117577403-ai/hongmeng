@@ -35,10 +35,33 @@ export function materialHoldReason(status: string, exceptionType?: string | null
   return detail ? `${label}：${detail}` : label;
 }
 
+/** Material state is a risk signal, not a generic hard hold. */
+export async function overrideLegacyMaterialProductionHolds(
+  tx: Prisma.TransactionClient,
+  input: { actorId?: string | null; now?: Date; batchId?: string; workOrderId?: string } = {},
+): Promise<number> {
+  const result = await tx.productionPlanBatchHold.updateMany({
+    where: {
+      status: ACTIVE_HOLD_STATUS,
+      holdType: MATERIAL_HOLD_TYPE,
+      sourceType: 'WAREHOUSE_MATERIAL_TASK',
+      ...(input.batchId ? { batchId: input.batchId } : {}),
+      ...(input.workOrderId ? { workOrderId: input.workOrderId } : {}),
+    },
+    data: {
+      status: 'OVERRIDDEN',
+      resolvedAt: input.now || new Date(),
+      resolvedById: input.actorId || null,
+      overrideReason: 'MATERIAL_HARD_HOLD_POLICY_DISABLED',
+      version: { increment: 1 },
+    },
+  });
+  return result.count;
+}
+
 /**
- * Synchronize the current material execution hold in the same transaction as
- * the warehouse transition. A completed task resolves only the MATERIAL hold;
- * manual, quality and equipment controls remain independent.
+ * Warehouse transitions still call this compatibility hook. It only retires
+ * legacy material holds and never creates/reactivates a production hard hold.
  */
 export async function synchronizeMaterialProductionHold(
   tx: Prisma.TransactionClient,
@@ -49,52 +72,10 @@ export async function synchronizeMaterialProductionHold(
     select: { id: true, releaseState: true, deletedAt: true },
   });
   if (!batch || batch.deletedAt || batch.releaseState === 'draft' || batch.releaseState === 'archived') return;
-  const now = input.now || new Date();
-  const dedupeKey = `material:${batch.id}`;
-  if (input.status === 'completed') {
-    await tx.productionPlanBatchHold.updateMany({
-      where: { dedupeKey, status: ACTIVE_HOLD_STATUS },
-      data: {
-        status: 'RESOLVED',
-        resolvedAt: now,
-        resolvedById: input.actorId || null,
-        overrideReason: null,
-        version: { increment: 1 },
-      },
-    });
-    return;
-  }
-  const reasonCode = materialHoldReasonCode(input.status, input.exceptionType);
-  await tx.productionPlanBatchHold.upsert({
-    where: { dedupeKey },
-    create: {
-      batchId: batch.id,
-      workOrderId: input.workOrderId,
-      dedupeKey,
-      holdType: MATERIAL_HOLD_TYPE,
-      reasonCode,
-      sourceType: 'WAREHOUSE_MATERIAL_TASK',
-      sourceId: input.warehouseTaskId,
-      status: ACTIVE_HOLD_STATUS,
-      reason: materialHoldReason(input.status, input.exceptionType, input.exceptionNote),
-      expectedResolveAt: input.expectedAt || null,
-      frozenAt: now,
-      frozenById: input.actorId || null,
-    },
-    update: {
-      workOrderId: input.workOrderId,
-      reasonCode,
-      sourceType: 'WAREHOUSE_MATERIAL_TASK',
-      sourceId: input.warehouseTaskId,
-      status: ACTIVE_HOLD_STATUS,
-      reason: materialHoldReason(input.status, input.exceptionType, input.exceptionNote),
-      expectedResolveAt: input.expectedAt || null,
-      frozenAt: now,
-      frozenById: input.actorId || null,
-      resolvedAt: null,
-      resolvedById: null,
-      overrideReason: null,
-      version: { increment: 1 },
-    },
+  await overrideLegacyMaterialProductionHolds(tx, {
+    batchId: batch.id,
+    workOrderId: input.workOrderId,
+    actorId: input.actorId,
+    now: input.now,
   });
 }

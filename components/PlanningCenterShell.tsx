@@ -94,6 +94,10 @@ type EditableWeekKey = string;
 const PLANNING_RETURN_STATE_KEY = 'hm-planning-return-state';
 const planningWarningSeverityLabel = { LOW: '低', MEDIUM: '中', HIGH: '高', CRITICAL: '重大' } as const;
 
+function canDecideMaterialExecution(user: CurrentUserDTO): boolean {
+  return user.access.capabilities.includes('PLANNING:UPDATE');
+}
+
 type PlanningReturnState = {
   view: PlanningView;
   keyword: string;
@@ -125,7 +129,7 @@ const readinessOptions: Array<{
   { id: 'print_needs_reprint', label: '需要重打', description: '工艺、数量、图纸或 SOP 已变更' },
   { id: 'print_confirmed', label: '已确认打印', description: '实体纸张已打印并人工确认' },
   { id: 'ready_preparation', label: '可下达预备', description: '图纸、SOP 和工时均已就绪' },
-  { id: 'ready_production', label: '可启用生产', description: '生产资料、工时、配料和工艺均就绪' },
+  { id: 'ready_production', label: '全部准备完成', description: '生产资料、工时、配料和工艺均就绪' },
 ];
 
 const readyFilters = new Set<PlanningReadinessFilter>(['ready_preparation', 'ready_production']);
@@ -1053,7 +1057,7 @@ export default function PlanningCenterShell({
   ), [baseFilteredOrders, orderReadiness]);
   const orderPool = filteredOrders.filter(order => order.remainingQuantity > 0 && order.status !== 'cancelled' && order.status !== 'completed');
   const baseOpenScheduleRows = useMemo(() => allBatches.filter(({ order, batch }) => {
-    if (batch.releaseState === 'archived') return false;
+    if (batch.releaseState === 'archived' && batch.workOrderCompletedAt) return false;
     if (customer && order.customerName !== customer) return false;
     if (priority !== 'all' && order.priority !== priority) return false;
     const word = keyword.trim().toLocaleLowerCase();
@@ -1660,6 +1664,42 @@ export default function PlanningCenterShell({
     setRefreshToken(value => value + 1);
   }
 
+  async function toggleMaterialExecution(batch: ProductionPlanBatchDTO): Promise<void> {
+    const control = batch.materialExecutionControl;
+    if (!control || !control.required || !control.taskId) return;
+    const allowed = !control.effectiveAllowed;
+    const impact = allowed
+      ? '开启后，仅允许人工开工和该产品二维码报工；系统不会自动开工，缺料/待配料风险仍会保留。确认继续吗？'
+      : '关闭后，该产品后续人工开工和二维码报工会立即停止；已产生的报工记录不会回退。确认继续吗？';
+    if (!window.confirm(impact)) return;
+    const reason = window.prompt(allowed ? '请输入允许缺料开工的原因（至少 2 个字）' : '请输入撤销缺料开工的原因（至少 2 个字）', '')?.trim();
+    if (!reason) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/planning/batches/${batch.id}/material-execution`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          allowed,
+          expectedTaskVersion: control.taskVersion,
+          reason,
+        }),
+      });
+      const body = await responseBody<{ control?: ProductionPlanBatchDTO['materialExecutionControl'] }>(response);
+      if (!response.ok || !body.control) throw new Error(body.error || '更新缺料开工授权失败');
+      setToast(allowed
+        ? '已允许人工开工和二维码报工；物料风险仍保留，系统不会自动开工'
+        : '已关闭缺料开工；后续人工开工和二维码报工将被拦截');
+      publishProductionDataInvalidation({ kind: 'plan-batch-updated', entityId: batch.id });
+      setRefreshToken(value => value + 1);
+    } catch (reasonError) {
+      setError(reasonError instanceof Error ? reasonError.message : '更新缺料开工授权失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function toggleBatch(batchId: string): void {
     setSelectedBatchIds(current => current.includes(batchId) ? current.filter(id => id !== batchId) : [...current, batchId]);
   }
@@ -2204,7 +2244,7 @@ export default function PlanningCenterShell({
 
         {view === 'month' && <section className="planning-month-view">
           <header className="planning-month-heading">
-            <div><span>月度产能总览</span><h2>{selectedMonth.replace('-', '年')}月</h2><p>按批次内部计划完成日归属月份，冻结工时保留在承诺负荷中。</p></div>
+            <div><span>月度产能总览</span><h2>{selectedMonth.replace('-', '年')}月</h2><p>按批次内部计划完成日归属月份，人工或其他硬控制工时保留在承诺负荷中；物料风险不再作为计划冻结。</p></div>
             <div className="planning-month-actions">
               <button type="button" aria-label="上个月" onClick={() => setSelectedMonth(current => shiftPlanningMonth(current, -1))}>‹</button>
               <input type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value || currentPlanningMonth())} aria-label="选择月份" />
@@ -2216,7 +2256,7 @@ export default function PlanningCenterShell({
           {monthData && <>
             <div className="planning-month-kpis">
               <article><span>承诺排单工时</span><strong>{totalDuration(monthData.capacity.scheduledMilliseconds)}</strong><small>{monthData.capacity.batchCount} 批 · {monthData.capacity.missingTimeBatchCount ? `${monthData.capacity.missingTimeBatchCount} 批工时待补` : '工时完整'}</small></article>
-              <article className="frozen"><span>物料冻结工时</span><strong>{totalDuration(monthData.capacity.frozenMilliseconds)}</strong><small>{monthData.capacity.frozenBatchCount} 批当前不可执行</small></article>
+              <article className="frozen"><span>硬控制工时</span><strong>{totalDuration(monthData.capacity.frozenMilliseconds)}</strong><small>{monthData.capacity.frozenBatchCount} 批当前被生产控制</small></article>
               <article><span>可执行工时</span><strong>{totalDuration(monthData.capacity.executableMilliseconds)}</strong><small>承诺排单扣除有效冻结</small></article>
               <article><span>计划可用工时</span><strong>{totalDuration(monthData.capacity.plannedCapacityMilliseconds)}</strong><small>{monthData.capacity.employeeCount} 人 · {monthData.capacity.workdayCount} 个工作日</small></article>
               <article className="rate"><span>计划负荷率</span><strong>{planningCapacityRate(monthData.capacity.scheduledMilliseconds, monthData.capacity.plannedCapacityMilliseconds)}</strong><small>排单工时 / 计划可用工时</small></article>
@@ -2294,6 +2334,14 @@ export default function PlanningCenterShell({
                     return <article key={batch.id}>
                       <span><small>{batch.weekStartDate.slice(5)} - {batch.weekEndDate.slice(5)}</small><strong>{order.specification}</strong><em>{order.customerName} · {batch.quantity.toLocaleString()} 件</em></span>
                       <b className={`tone-${flow.tone}`}>{flow.label}</b>
+                      {batch.materialExecutionControl?.required && <button
+                        type="button"
+                        className={`planning-material-switch ${batch.materialExecutionControl.effectiveAllowed ? 'is-on' : ''} ${batch.materialExecutionControl.stale ? 'is-stale' : ''}`}
+                        aria-pressed={batch.materialExecutionControl.effectiveAllowed}
+                        disabled={saving || !canDecideMaterialExecution(user) || !batch.materialExecutionControl.taskId}
+                        title={batch.materialExecutionControl.stale ? '仓库物料状态已变化，必须重新授权' : batch.materialExecutionControl.reason || '设置遗留批次缺料开工授权'}
+                        onClick={() => { void toggleMaterialExecution(batch); }}
+                      ><span aria-hidden="true" />{batch.materialExecutionControl.stale ? '重新授权' : batch.materialExecutionControl.effectiveAllowed ? '已允许开工' : '允许开工'}</button>}
                       {batch.releaseState === 'draft'
                         ? <button type="button" onClick={event => { void previewMove(periods?.current.weekStartDate || '', event.currentTarget, [batch.id]); }}><MoveRight size={14} />移入本周</button>
                         : batch.workOrderId
@@ -2335,9 +2383,20 @@ export default function PlanningCenterShell({
                     <td><strong className={Boolean(order.customerDueDate) && (batch.estimatedCompletionDate || batch.plannedCompletionDate) > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate ? order.customerDueDate.slice(5) : '待确认'}</strong></td>
                     <td><strong>{duration(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
                     <td><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><a className={`planning-sop-stage ${sopInfo.stage}`} href={drawingLibraryHref} onClick={rememberPlanningState} title={sopInfo.title} aria-label={`SOP 状态 ${sopInfo.label}，进入图纸档案`}><FlaskConical size={12} />{sopInfo.label}</a>{Boolean(order.qualityWarningCount) && <a className={`planning-warning-link severity-${order.highestQualityWarningSeverity?.toLowerCase()}`} href={`${drawingLibraryHref}#quality-warning`} onClick={rememberPlanningState} title={`${order.qualityWarningCount} 条已归档产品异常警示`}><ShieldAlert size={12} />警示 {order.qualityWarningCount}</a>}</div></td>
-                    <td>{activeHold
-                      ? <span className="planning-status status-frozen" title={activeHold.reason}><strong><LockKeyhole size={12} />{activeHold.reasonCode === 'pending' ? '待配料冻结' : '物料冻结'}</strong><small>{activeHold.reason}</small></span>
-                      : <span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span>}</td>
+                    <td><div className="planning-material-control">
+                      <span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常/缺料' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span>
+                      {activeHold && <span className="planning-status status-frozen" title={activeHold.reason}><strong><LockKeyhole size={12} />生产冻结</strong><small>{activeHold.reason}</small></span>}
+                      {batch.materialExecutionControl?.required && <button
+                        type="button"
+                        className={`planning-material-switch ${batch.materialExecutionControl.effectiveAllowed ? 'is-on' : ''} ${batch.materialExecutionControl.stale ? 'is-stale' : ''}`}
+                        aria-pressed={batch.materialExecutionControl.effectiveAllowed}
+                        disabled={saving || !canDecideMaterialExecution(user) || !batch.materialExecutionControl.taskId}
+                        title={batch.materialExecutionControl.stale
+                          ? '仓库物料状态已变化，必须重新授权'
+                          : batch.materialExecutionControl.reason || (canDecideMaterialExecution(user) ? '设置缺料开工授权' : '仅计划人员或管理员可设置')}
+                        onClick={() => { void toggleMaterialExecution(batch); }}
+                      ><span aria-hidden="true" />{batch.materialExecutionControl.stale ? '重新授权' : batch.materialExecutionControl.effectiveAllowed ? '已允许开工' : '允许开工'}</button>}
+                    </div></td>
                     <td><span className={`planning-status status-${batch.processStatus}`}><strong>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</strong>{processFinishedAt && <small>{flowTime(processFinishedAt)}</small>}</span></td>
                     <td><a className={`planning-flow-link tone-${flow.tone}`} href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState} title="查看该批次完整流程"><strong>{flow.label}</strong>{flowFinishedAt && <small>{flowTime(flowFinishedAt)}</small>}</a></td>
                     <td><div className={`planning-print-status ${printState.tone}`}><span><strong>{printState.label}</strong>{printState.time && <small>{flowTime(printState.time)}</small>}{batch.travelerPrintMaterials && <span className="planning-print-materials">{(['TRAVELER', 'QUALITY_WARNING', 'SOP', 'DRAWING'] as const).map(material => {

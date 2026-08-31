@@ -70,6 +70,14 @@ async function createRouteFixture(prefix: string, label: string, actorId: string
       planType: 'managed_plan',
       planActive: true,
       startedAt: now,
+      materialTask: {
+        create: {
+          status: 'completed',
+          completedAt: now,
+          completedById: actorId,
+          updatedById: actorId,
+        },
+      },
       processRoute: {
         create: {
           templateName: `${prefix} ${label} route`,

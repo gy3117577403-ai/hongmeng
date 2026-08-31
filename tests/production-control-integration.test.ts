@@ -26,6 +26,7 @@ test('production control PostgreSQL: facts, replay, pauses, branches, dates, per
       code: `${prefix}-${label}`, customerName: prefix, productName: '控制测试产品', specification: prefix,
       stage: 'frontend', status: 'processing', planType: 'managed_plan', planActive: true, productionTargetQty: 20,
       uncompletedQty: '20', completedQty: '0', plannedAt: date, deliveryDay: day,
+      materialTask: { create: { status: 'completed', completedAt: new Date(), completedById: user.id, updatedById: user.id } },
       processRoute: { create: { templateName: prefix, templateVersion: 1, status: 'in_progress', version: 0, confirmedAt: new Date(), confirmedById: user.id, startedAt: new Date(),
         steps: { create: [1, 2].map(position => ({ processCode: `${prefix}-${label}-${position}`, processName: position === 1 ? '压接' : '检验', stageGroup: 'frontend', position, sequenceGroup: position, standardSource: 'integration_test', timeBasis: 'per_unit', unitLabel: '套', standardMillisecondsPerUnit: 1000, unitsPerProduct: 1, countsForEfficiency: true, inputQty: position === 1 ? 20 : 0, status: position === 1 ? 'current' : 'pending', startedAt: position === 1 ? new Date() : null })) },
       } },

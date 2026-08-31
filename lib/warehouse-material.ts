@@ -55,9 +55,19 @@ export function warehouseMaterialWorkOrderWhere(input: {
   currentWeekStart: Date;
   requestedWeekStart?: Date | null;
 }): Prisma.WorkOrderWhereInput {
-  const base: Prisma.WorkOrderWhereInput = {
-    deletedAt: null,
-    planType: { in: ['weekly_plan', 'managed_plan'] },
+  const managedPlanEvidence: Prisma.WorkOrderWhereInput = {
+    OR: [
+      { planType: { in: ['weekly_plan', 'managed_plan'] } },
+      {
+        productionPlanBatch: {
+          is: {
+            deletedAt: null,
+            releaseState: { in: ['preparation', 'active', 'archived'] },
+            planOrder: { deletedAt: null },
+          },
+        },
+      },
+    ],
   };
   const selectedWeekStart = warehouseMaterialScopeWeekStart(
     input.scope,
@@ -67,29 +77,44 @@ export function warehouseMaterialWorkOrderWhere(input: {
 
   if (input.scope === 'current') {
     return {
-      ...base,
-      OR: [
+      AND: [
+        { deletedAt: null },
+        managedPlanEvidence,
         {
-          planActive: true,
-          weekStartDate: sameWarehouseDay(input.currentWeekStart),
+          OR: [
+            {
+              planActive: true,
+              weekStartDate: sameWarehouseDay(input.currentWeekStart),
+            },
+            activeProductionCarryoverWorkOrderWhere(input.currentWeekStart),
+          ],
         },
-        activeProductionCarryoverWorkOrderWhere(input.currentWeekStart),
       ],
     };
   }
   if (input.scope === 'preparation') {
     return {
-      ...base,
-      planActive: false,
-      productionPlanBatch: { is: { releaseState: 'preparation', deletedAt: null } },
-      weekStartDate: sameWarehouseDay(selectedWeekStart!),
+      AND: [
+        { deletedAt: null },
+        managedPlanEvidence,
+        {
+          planActive: false,
+          productionPlanBatch: { is: { releaseState: 'preparation', deletedAt: null } },
+          weekStartDate: sameWarehouseDay(selectedWeekStart!),
+        },
+      ],
     };
   }
   return {
-    ...base,
-    weekStartDate: selectedWeekStart
-      ? sameWarehouseDay(selectedWeekStart)
-      : { lt: input.currentWeekStart },
+    AND: [
+      { deletedAt: null },
+      managedPlanEvidence,
+      {
+        weekStartDate: selectedWeekStart
+          ? sameWarehouseDay(selectedWeekStart)
+          : { lt: input.currentWeekStart },
+      },
+    ],
   };
 }
 

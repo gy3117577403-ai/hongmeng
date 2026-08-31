@@ -1,5 +1,5 @@
 FROM node:20-alpine AS base
-ARG APP_VERSION=v1.34.78
+ARG APP_VERSION=v1.34.79
 ARG APP_REVISION=local
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 APP_VERSION=$APP_VERSION APP_REVISION=$APP_REVISION
@@ -15,6 +15,12 @@ RUN cp -r .next/static .next/standalone/.next/static && if [ -d public ]; then c
 RUN node -e "const fs = require('node:fs'); fs.writeFileSync('.next/standalone/.release-image.json', JSON.stringify({ version: process.env.APP_VERSION, revision: process.env.APP_REVISION }) + '\\n')"
 
 FROM base AS runner
+ARG APP_VERSION=v1.34.79
+ARG APP_REVISION=local
+LABEL org.opencontainers.image.title="hongmeng-workorder-resource" \
+      org.opencontainers.image.version=$APP_VERSION \
+      org.opencontainers.image.revision=$APP_REVISION \
+      org.opencontainers.image.source="https://github.com/gy3117577403-ai/hongmeng"
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 DAILY_PLAN_ENABLED=true
 COPY --from=builder /app/.next/standalone ./.next/standalone
 COPY --from=builder /app/.next/static ./.next/standalone/.next/static

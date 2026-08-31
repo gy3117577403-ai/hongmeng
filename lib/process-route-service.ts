@@ -361,7 +361,10 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
   return prisma.$transaction(async tx => {
     const route = await tx.workOrderProcessRoute.findUnique({
       where: { id: input.routeId },
-      include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
+      include: {
+        workOrder: { include: { materialTask: { select: { status: true } } } },
+        steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } },
+      },
     });
     if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
     ensureExecutableWeeklyOrder(route.workOrder);
@@ -451,7 +454,11 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
     const firstSequenceGroup = first.sequenceGroup;
     const firstSteps = executableSteps.filter(step => step.sequenceGroup === firstSequenceGroup);
     const timeReadiness = processRouteExecutionReadiness(readinessSteps);
-    const shouldStart = stage !== 'not_issued' && timeReadiness.ready;
+    // Route confirmation may proceed while material is incomplete, but it must
+    // never auto-start on a risk authorization intended for manual execution.
+    const shouldStart = stage !== 'not_issued'
+      && timeReadiness.ready
+      && route.workOrder.materialTask?.status === 'completed';
     const firstGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
     const nextStage = shouldStart ? processStageForGroup(firstGroup) : stage;
     const update = await tx.workOrderProcessRoute.updateMany({
@@ -978,9 +985,15 @@ export async function startConfirmedProcessRoute(
 ): Promise<boolean> {
   const route = await tx.workOrderProcessRoute.findUnique({
     where: { workOrderId: input.workOrderId },
-    include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
+    include: {
+      workOrder: { include: { materialTask: { select: { status: true } } } },
+      steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } },
+    },
   });
   if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return false;
+  if (input.trigger && input.trigger !== 'manual_start' && route.workOrder.materialTask?.status !== 'completed') {
+    return false;
+  }
   try {
     await assertProductionMayRun(tx, route.workOrder.id);
   } catch (error) {

@@ -7,6 +7,7 @@ import {
   WorkOrderQrTicketStatus,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { loadMaterialExecutionControl } from '@/lib/material-execution-control';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { printableSourceFormat, type ImagePrintPaperSize } from '@/lib/printable-document';
 import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
@@ -1091,6 +1092,7 @@ export function resolveFieldReportAccess(input: {
   ticketStatus: WorkOrderQrTicketStatus;
   workOrder: { planType: string | null; planClearedAt: Date | null; stage: string; deletedAt: Date | null };
   route: { status: string; hasActiveSupplement?: boolean } | null;
+  materialExecutionAllowed?: boolean;
 }): FieldReportTicketView['access'] {
   if (input.ticketStatus === WorkOrderQrTicketStatus.REVOKED) {
     return { canReport: false, state: 'REVOKED', message: '该二维码已停用，请使用重新打印的流转单' };
@@ -1100,6 +1102,16 @@ export function resolveFieldReportAccess(input: {
   }
   if (!input.route || input.route.status === 'draft') {
     return { canReport: false, state: 'BLOCKED', message: '工艺路线尚未确认，请联系生产主管' };
+  }
+  if (input.materialExecutionAllowed === false && (
+    input.route.status === 'in_progress'
+    || input.route.hasActiveSupplement
+  )) {
+    return {
+      canReport: false,
+      state: 'BLOCKED',
+      message: '当前缺料或待配料，计划人员/管理员尚未开启“允许缺料开工”，二维码报工已暂停',
+    };
   }
   if (
     (input.route.status === 'completed' || input.workOrder.stage === 'completed')
@@ -1184,6 +1196,7 @@ export async function loadFieldReportTicket(
   }
   const order = ticket.workOrder;
   const route = order.processRoute;
+  const materialExecution = await loadMaterialExecutionControl(prisma, order.id);
   const activeTimeChanges = route
     ? await prisma.processRouteChange.findMany({
         where: {
@@ -1293,6 +1306,7 @@ export async function loadFieldReportTicket(
           && step.supplementObligation?.status === 'ACTIVE'
         )),
       } : null,
+      materialExecutionAllowed: materialExecution.effectiveAllowed,
     }),
   };
 }

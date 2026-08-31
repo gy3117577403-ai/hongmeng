@@ -4096,7 +4096,7 @@ function NextStepDialog({ request, saving, error, close, confirm }: {
       <div><Info size={17} aria-hidden="true" /><span><b>图纸状态</b><small>{order.drawingStatus || (order.documentCategoryCodes.includes('drawing') ? '已有原图' : '待补充')}</small></span><em>风险提醒</em></div>
       <div><AlertTriangle size={17} aria-hidden="true" /><span><b>配料状态</b><small>{warehouseMaterialText(order)}</small></span><em>风险提醒</em></div>
     </section>
-    <p className="production-flow-confirm-copy">确认后只启动已发布的工艺路线并进入首道工序，不修改计划周、图纸或配料状态。图纸和材料未齐会继续显示风险提醒，但不会阻止生产流转和报工。</p>
+    <p className="production-flow-confirm-copy">确认后只启动已发布的工艺路线并进入首道工序，不修改计划周、图纸或配料状态。缺料或待配料时，必须先由计划人员/管理员在计划中心开启“允许缺料开工”；授权后人工开工和二维码报工可正常执行，系统仍不会自动开工。</p>
     {error && <div className="form-error" role="alert">{error}</div>}
     <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '启动中...' : '确认开始生产'}</button></div>
   </section></div>;

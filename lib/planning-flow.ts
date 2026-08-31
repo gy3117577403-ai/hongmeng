@@ -52,9 +52,6 @@ export function resolvePlanningFlow(facts: PlanningFlowFacts): PlanningFlowState
   if (lifecycle.aggregateCompleted) {
     return { status: 'completed', label: '已完成', tone: 'complete', workflowStatus: 'closed', nextStep: null };
   }
-  if (facts.warehouseStatus === 'exception') {
-    return { status: 'material_exception', label: '仓库异常', tone: 'danger', workflowStatus: 'waiting', nextStep: '处理仓库异常' };
-  }
   if (!facts.drawingReady) {
     return { status: 'missing_drawing', label: '图纸待上传', tone: 'warning', workflowStatus: 'waiting', nextStep: '上传图纸资料' };
   }
@@ -63,9 +60,6 @@ export function resolvePlanningFlow(facts: PlanningFlowFacts): PlanningFlowState
   }
   if (!facts.timeReady) {
     return { status: 'missing_time', label: '工时待维护', tone: 'warning', workflowStatus: 'waiting', nextStep: '发布产品工时' };
-  }
-  if (facts.warehouseStatus !== 'completed') {
-    return { status: 'pending_material', label: '仓库待配料', tone: 'warning', workflowStatus: 'waiting', nextStep: '完成仓库配料' };
   }
   if (!hasConfirmedPlanningProcess(facts.processStatus)) {
     return { status: 'pending_process', label: '工艺待确认', tone: 'warning', workflowStatus: 'waiting', nextStep: '确认产品工艺' };

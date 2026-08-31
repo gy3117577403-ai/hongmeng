@@ -15,12 +15,13 @@ function facts(overrides: Partial<PlanningFlowFacts> = {}): PlanningFlowFacts {
   };
 }
 
-test('planning flow prioritizes preparation blockers in business order', () => {
-  assert.equal(resolvePlanningFlow(facts({ warehouseStatus: 'exception', drawingReady: false })).status, 'material_exception');
+test('planning flow keeps material as a side risk and prioritizes executable preparation facts', () => {
+  assert.equal(resolvePlanningFlow(facts({ warehouseStatus: 'exception', drawingReady: false })).status, 'missing_drawing');
   assert.equal(resolvePlanningFlow(facts({ drawingReady: false, timeReady: false })).status, 'missing_drawing');
   assert.equal(resolvePlanningFlow(facts({ sopReady: false, timeReady: false })).status, 'missing_sop');
   assert.equal(resolvePlanningFlow(facts({ timeReady: false, warehouseStatus: 'pending' })).status, 'missing_time');
-  assert.equal(resolvePlanningFlow(facts({ warehouseStatus: 'pending', processStatus: 'draft' })).status, 'pending_material');
+  assert.equal(resolvePlanningFlow(facts({ warehouseStatus: 'pending', processStatus: 'draft' })).status, 'pending_process');
+  assert.equal(resolvePlanningFlow(facts({ warehouseStatus: 'exception' })).status, 'ready_release');
   assert.equal(resolvePlanningFlow(facts({ processStatus: 'draft' })).status, 'pending_process');
 });
 

@@ -225,7 +225,7 @@ function printStatus(batch: ProductionPlanBatchDTO): string {
 
 function warehouseStatus(batch: ProductionPlanBatchDTO): string {
   const activeHold = batch.holds?.find(hold => hold.status === 'ACTIVE');
-  if (activeHold) return `物料冻结：${activeHold.reason}`;
+  if (activeHold) return `生产冻结：${activeHold.reason}`;
   if (batch.warehouseStatus === 'completed') return '已配料';
   if (batch.warehouseStatus === 'exception') return '仓库异常';
   if (batch.warehouseStatus === 'not_created') return '未下达';
@@ -304,7 +304,7 @@ function buildExceptionType(input: {
   if (input.order.drawingFileCount === 0) values.push('图纸缺失');
   if (input.order.sopFileCount === 0) values.push('SOP缺失');
   if (input.batch.warehouseStatus === 'exception') values.push('仓库异常');
-  if (input.batch.holds?.some(hold => hold.status === 'ACTIVE')) values.push('物料冻结');
+  if (input.batch.holds?.some(hold => hold.status === 'ACTIVE')) values.push('生产冻结');
   if (input.batch.processStatus === 'not_created' || input.batch.processStatus === 'draft') values.push('工艺待确认');
   if (input.batch.travelerPrintStatus === 'needs_reprint') values.push('流转单待重打');
   return [...new Set(values)].join('；');
@@ -391,7 +391,7 @@ function buildExportRow(input: {
     printStatus: printStatus(batch),
     exceptionType,
     remark: joinRemarks([carryoverRemark, order.sopRemark, order.remark,
-      activeHold ? `物料冻结：${activeHold.reason}` : null,
+      activeHold ? `生产冻结：${activeHold.reason}` : null,
       batch.productionControl?.note?.text ? `当前问题：${batch.productionControl.note.text}` : null,
       batch.productionControl?.pausedAt ? `已暂停：${batch.productionControl.pause?.reason || ''}` : null,
       batch.productionControl?.estimatedCompletionDate ? `内部预计完成：${batch.productionControl.estimatedCompletionDate}` : null,

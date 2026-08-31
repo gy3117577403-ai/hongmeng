@@ -39,7 +39,7 @@ export async function loadPlanningCapacity(
         totalMillisecondsSnapshot: true,
         unitMillisecondsSnapshot: true,
         planOrder: { select: { planningUnitMilliseconds: true } },
-        holds: { where: { status: 'ACTIVE' }, select: { id: true } },
+        holds: { where: { status: 'ACTIVE', holdType: { not: 'MATERIAL' } }, select: { id: true } },
       },
     }),
     prisma.employee.findMany({

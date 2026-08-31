@@ -56,4 +56,13 @@ test('ticket access is reportable only for active in-progress routes', () => {
     workOrder: executableOrder,
     route: { status: 'confirmed' },
   }).state, 'WAITING_START');
+  const blockedByMaterial = resolveFieldReportAccess({
+    ticketStatus: WorkOrderQrTicketStatus.ACTIVE,
+    workOrder: executableOrder,
+    route: { status: 'in_progress' },
+    materialExecutionAllowed: false,
+  });
+  assert.equal(blockedByMaterial.state, 'BLOCKED');
+  assert.equal(blockedByMaterial.canReport, false);
+  assert.match(blockedByMaterial.message, /允许缺料开工/);
 });

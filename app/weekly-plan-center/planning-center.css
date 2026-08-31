@@ -1823,6 +1823,58 @@ main.planning-center-shell.hm-workbench-root {
   color: #b42318;
 }
 
+.planning-center-shell .planning-material-control {
+  min-width: 94px;
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+}
+
+.planning-center-shell .planning-material-switch {
+  min-height: 22px;
+  padding: 2px 7px 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #ef9c63;
+  border-radius: 999px;
+  background: #fff8f1;
+  color: #a84c10;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.planning-center-shell .planning-material-switch > span {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #f28a42;
+  box-shadow: inset 0 0 0 4px #fff;
+}
+
+.planning-center-shell .planning-material-switch.is-on {
+  border-color: #5fc28a;
+  background: #eefaf3;
+  color: #237547;
+}
+
+.planning-center-shell .planning-material-switch.is-on > span {
+  background: #28a865;
+}
+
+.planning-center-shell .planning-material-switch.is-stale {
+  border-color: #e5a93d;
+  background: #fff8df;
+  color: #8b5d00;
+}
+
+.planning-center-shell .planning-material-switch:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
 .planning-center-shell .planning-board-heading button.pool {
   border-color: #d9e3ef;
   color: #3f6794;

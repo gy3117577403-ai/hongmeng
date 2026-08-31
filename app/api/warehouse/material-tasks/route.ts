@@ -108,19 +108,28 @@ export async function GET(req: NextRequest) {
 
     const page = integer(params.get('page'), 1, 100000);
     const pageSize = integer(params.get('pageSize'), 100, 300);
+    const planEvidence: Prisma.WorkOrderWhereInput = {
+      OR: [
+        { planType: { in: ['weekly_plan', 'managed_plan'] } },
+        { productionPlanBatch: { is: { deletedAt: null, planOrder: { deletedAt: null } } } },
+      ],
+    };
+    const weekScope: Prisma.WorkOrderWhereInput = scope === 'current'
+      ? warehouseMaterialWorkOrderWhere({ scope: 'current', currentWeekStart: naturalWeek.start })
+      : scope === 'preparation'
+        ? {
+            planActive: false,
+            productionPlanBatch: { is: { releaseState: 'preparation', deletedAt: null } },
+            weekStartDate: { gte: nextWeekStart },
+          }
+        : { weekStartDate: { lt: naturalWeek.start } };
     const weekOptionsWhere: Prisma.WorkOrderWhereInput = {
-      deletedAt: null,
-      planType: { in: ['weekly_plan', 'managed_plan'] },
-      materialTask: { isNot: null },
-      ...(scope === 'current'
-        ? warehouseMaterialWorkOrderWhere({ scope: 'current', currentWeekStart: naturalWeek.start })
-        : scope === 'preparation'
-          ? {
-              planActive: false,
-              productionPlanBatch: { is: { releaseState: 'preparation', deletedAt: null } },
-              weekStartDate: { gte: nextWeekStart },
-            }
-          : { weekStartDate: { lt: naturalWeek.start } }),
+      AND: [
+        { deletedAt: null },
+        { materialTask: { isNot: null } },
+        planEvidence,
+        weekScope,
+      ],
     };
     const [records, total, grouped, expectedOverdue, weekGroups] = await Promise.all([
       prisma.warehouseMaterialTask.findMany({

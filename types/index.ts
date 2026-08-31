@@ -1633,6 +1633,7 @@ export type ProductionPlanBatchDTO = {
   unitMillisecondsSnapshot?: number | null;
   totalMillisecondsSnapshot?: string | null;
   holds?: ProductionPlanBatchHoldDTO[];
+  materialExecutionControl?: import('@/lib/material-execution-control').MaterialExecutionControlView;
   warehouseStatus?: WarehouseMaterialStatus | 'not_created';
   processStatus?: ProcessRouteStatus | 'not_created';
   warehouseCompletedAt?: string | null;

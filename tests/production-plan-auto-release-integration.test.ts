@@ -196,15 +196,14 @@ test(
           assert.equal(currentBatch.workOrder?.stage, 'not_issued');
           assert.equal(currentBatch.workOrder?.startedAt, null);
           assert.equal(currentBatch.workOrder?.processRoute?.status, 'confirmed');
-          assert.equal(currentBatch.holds[0]?.status, 'ACTIVE');
-          assert.equal(currentBatch.holds[0]?.reasonCode, 'pending');
+          assert.equal(currentBatch.holds.length, 0, 'pending material is a risk, not an automatic hard hold');
           assert.equal(nextBatch.releaseState, 'preparation');
           assert.equal(nextBatch.workOrder?.planActive, false);
           assert.equal(currentBatch.workOrder?.materialTask?.status, 'pending');
           assert.ok(nextBatch.workOrder);
           assert.equal(nextBatch.workOrder.startedAt, null);
           assert.equal(nextBatch.workOrder.materialTask?.status, 'pending');
-          assert.equal(nextBatch.holds[0]?.status, 'ACTIVE');
+          assert.equal(nextBatch.holds.length, 0, 'preparation material is not frozen');
           assert.equal(nextBatch.workOrder.processRoute?.status, 'draft');
           assert.equal(nextBatch.workOrder.processRoute?.routeSource, 'product_time_pending');
 

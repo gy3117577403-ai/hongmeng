@@ -11,7 +11,7 @@ import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { allocateBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
-import { assertProductionMayRun, lockProductionWorkOrder } from '@/lib/production-pause-guard';
+import { assertProductionMayBeScheduled, lockProductionWorkOrder } from '@/lib/production-pause-guard';
 import { serializeProductionControl, PRODUCTION_CONTROL_SELECT } from '@/lib/production-control';
 import {
   normalizePlanningSopDrawingStatus,
@@ -20,7 +20,8 @@ import {
 } from '@/lib/planning-sop';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
-import { synchronizeMaterialProductionHold } from '@/lib/production-plan-holds';
+import { overrideLegacyMaterialProductionHolds, synchronizeMaterialProductionHold } from '@/lib/production-plan-holds';
+import { serializeMaterialExecutionControl } from '@/lib/material-execution-control';
 import type {
   ProductionPlanBatchDTO,
   ProductionPlanChangeDTO,
@@ -89,7 +90,7 @@ export const productionPlanOrderInclude = {
     orderBy: [{ weekStartDate: 'asc' as const }, { batchNo: 'asc' as const }],
     include: {
       holds: {
-        where: { status: 'ACTIVE' },
+        where: { status: 'ACTIVE', holdType: { not: 'MATERIAL' } },
         orderBy: { frozenAt: 'asc' as const },
         select: {
           id: true,
@@ -103,6 +104,9 @@ export const productionPlanOrderInclude = {
           resolvedAt: true,
         },
       },
+      materialExecutionDecisionBy: {
+        select: { id: true, displayName: true },
+      },
       workOrder: {
         select: {
           ...PRODUCTION_CONTROL_SELECT,
@@ -111,7 +115,9 @@ export const productionPlanOrderInclude = {
           completedAt: true,
           materialTask: {
             select: {
+              id: true,
               status: true,
+              version: true,
               completedAt: true,
             },
           },
@@ -1387,6 +1393,7 @@ function batchDto(
       resolvedAt: hold.resolvedAt?.toISOString() || null,
     })),
     warehouseStatus: (batch.workOrder?.materialTask?.status as ProductionPlanBatchDTO['warehouseStatus']) || 'not_created',
+    materialExecutionControl: serializeMaterialExecutionControl(batch),
     processStatus: (route?.status as ProductionPlanBatchDTO['processStatus']) || 'not_created',
     warehouseCompletedAt: batch.workOrder?.materialTask?.completedAt?.toISOString() || null,
     processConfirmedAt: route?.confirmedAt?.toISOString() || null,
@@ -1572,6 +1579,7 @@ async function startReadyScheduledWorkOrder(
           status: true,
           startedAt: true,
           completedAt: true,
+          materialTask: { select: { status: true } },
           drawingLibraryItem: {
             select: {
               files: {
@@ -1606,6 +1614,7 @@ async function startReadyScheduledWorkOrder(
     || stage !== 'not_issued'
     || route.workOrder.startedAt
     || route.workOrder.completedAt
+    || route.workOrder.materialTask?.status !== 'completed'
     || !resourceCodes.has('drawing')
     || !resourceCodes.has('sop')
     || !processRouteExecutionReadiness(route.steps).ready
@@ -1638,7 +1647,7 @@ export async function releaseProductionPlanBatch(
   });
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt) throw new Error('PLAN_BATCH_NOT_FOUND');
   if (batch.planOrder.status === 'paused' || batch.planOrder.status === 'cancelled') throw new Error('PLAN_ORDER_PAUSED');
-  if (batch.workOrderId) await assertProductionMayRun(tx, batch.workOrderId);
+  if (batch.workOrderId) await assertProductionMayBeScheduled(tx, batch.workOrderId);
   if (batch.releaseState === 'archived') throw new Error('PLAN_BATCH_ARCHIVED');
   if (productionPlanReleaseTransitionBlocker(batch.releaseState, input.target)) {
     throw new Error('PLAN_ACTIVE_BATCH_CANNOT_MOVE_TO_PREPARATION');
@@ -1729,6 +1738,7 @@ export async function releaseProductionPlanBatch(
           productionTargetQty: data.productionTargetQty,
           unitWorkHours: data.unitWorkHours,
           totalWorkHours: data.totalWorkHours,
+          planType: data.planType,
           deliveryDay: data.deliveryDay,
           weekStartDate: data.weekStartDate,
           weekEndDate: data.weekEndDate,
@@ -1945,6 +1955,7 @@ export async function reconcileAutomaticallyReleasedProductionPlanBatches(
   const currentWeek = productionPlanTargetWeek('active', now);
   const nextWeek = productionPlanTargetWeek('preparation', now);
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'production-plan-auto-release'}))`;
+  await overrideLegacyMaterialProductionHolds(tx, { actorId: input.actorId, now });
   const batches = await tx.productionPlanBatch.findMany({
     where: {
       deletedAt: null,
