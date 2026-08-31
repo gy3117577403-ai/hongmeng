@@ -326,14 +326,14 @@ jobs:
           done <<EOF
           $RELEASE_TAGS
           EOF
-      - name: Verify Sealos China mirror manifest and blobs
-        id: sealos_mirror
+      - name: Verify China mirror manifest and blobs
+        id: china_mirror
         continue-on-error: true
         timeout-minutes: 15
         env:
           UPSTREAM_IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-          SEALOS_IMAGE: ghcr.nju.edu.cn/${{ github.repository }}:${{ github.ref_name }}
-          SEALOS_REGISTRY: ghcr.nju.edu.cn
+          CHINA_MIRROR_IMAGE: ghcr.dockerproxy.net/${{ github.repository }}:${{ github.ref_name }}
+          CHINA_MIRROR_REGISTRY: ghcr.dockerproxy.net
           IMAGE_REPOSITORY: ${{ github.repository }}
           IMAGE_REFERENCE: ${{ github.ref_name }}
         run: |
@@ -342,11 +342,11 @@ jobs:
 
           mirror_digest=""
           for attempt in $(seq 1 4); do
-            mirror_digest="$(timeout 30s docker buildx imagetools inspect "$SEALOS_IMAGE" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            mirror_digest="$(timeout 30s docker buildx imagetools inspect "$CHINA_MIRROR_IMAGE" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
             if [ "$mirror_digest" = "$upstream_digest" ]; then
               break
             fi
-            echo "Sealos mirror is not synchronized yet ($attempt/4)"
+            echo "China mirror is not synchronized yet ($attempt/4)"
             sleep 15
           done
 
@@ -362,7 +362,7 @@ jobs:
           }
           trap cleanup_mirror_files EXIT
 
-          manifest_url="https://${SEALOS_REGISTRY}/v2/${IMAGE_REPOSITORY}/manifests/${IMAGE_REFERENCE}"
+          manifest_url="https://${CHINA_MIRROR_REGISTRY}/v2/${IMAGE_REPOSITORY}/manifests/${IMAGE_REFERENCE}"
           curl --fail --silent --show-error --location \
             --connect-timeout 10 --max-time 90 \
             --retry 5 --retry-all-errors --retry-delay 5 \
@@ -377,13 +377,13 @@ jobs:
 
           mapfile -t blob_digests < <(jq -r '.config.digest, .layers[].digest' "$manifest_file")
           if [ "${#blob_digests[@]}" -lt 2 ]; then
-            echo "Sealos manifest did not contain the expected config and layer blobs" >&2
+            echo "China mirror manifest did not contain the expected config and layer blobs" >&2
             exit 1
           fi
 
           for digest in "${blob_digests[@]}"; do
             verified=0
-            blob_url="https://${SEALOS_REGISTRY}/v2/${IMAGE_REPOSITORY}/blobs/${digest}"
+            blob_url="https://${CHINA_MIRROR_REGISTRY}/v2/${IMAGE_REPOSITORY}/blobs/${digest}"
             for attempt in $(seq 1 5); do
               rm -f "$blob_file"
               if curl --fail --silent --show-error --location \
@@ -393,40 +393,40 @@ jobs:
                 actual_digest="sha256:$(sha256sum "$blob_file" | awk '{ print $1 }')"
                 if [ "$actual_digest" = "$digest" ]; then
                   verified=1
-                  echo "Verified Sealos blob $digest ($(stat -c%s "$blob_file") bytes)"
+                  echo "Verified China mirror blob $digest ($(stat -c%s "$blob_file") bytes)"
                   break
                 fi
-                echo "Sealos blob digest mismatch ($attempt/5): expected=$digest actual=$actual_digest" >&2
+                echo "China mirror blob digest mismatch ($attempt/5): expected=$digest actual=$actual_digest" >&2
               else
-                echo "Sealos blob download failed ($attempt/5): $digest" >&2
+                echo "China mirror blob download failed ($attempt/5): $digest" >&2
               fi
               sleep $((attempt * 5))
             done
             if [ "$verified" != "1" ]; then
-              echo "Sealos blob verification failed after retries: $digest" >&2
+              echo "China mirror blob verification failed after retries: $digest" >&2
               exit 1
             fi
           done
 
           {
-            echo "### Sealos deployment image"
+            echo "### China mirror image"
             echo
-            echo "\`$SEALOS_IMAGE\`"
+            echo "\`$CHINA_MIRROR_IMAGE\`"
             echo
             echo "Verified digest: \`$upstream_digest\`"
             echo
-            echo "Downloaded and SHA-256 verified ${#blob_digests[@]} config/layer blobs from the Sealos mirror."
+            echo "Downloaded and SHA-256 verified ${#blob_digests[@]} config/layer blobs from the China mirror."
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Record unavailable Sealos mirror without blocking GHCR release
-        if: always() && steps.push_release.outcome == 'success' && steps.sealos_mirror.outcome != 'success'
+      - name: Record unavailable China mirror without blocking GHCR release
+        if: always() && steps.push_release.outcome == 'success' && steps.china_mirror.outcome != 'success'
         env:
-          SEALOS_IMAGE: ghcr.nju.edu.cn/${{ github.repository }}:${{ github.ref_name }}
+          CHINA_MIRROR_IMAGE: ghcr.dockerproxy.net/${{ github.repository }}:${{ github.ref_name }}
         run: |
-          echo "::warning::The verified GHCR image was published, but the Sealos China pull-through mirror did not respond within bounded retries."
+          echo "::warning::The verified GHCR image was published, but the China pull-through mirror did not respond within bounded retries."
           {
-            echo "### Sealos China mirror unavailable"
+            echo "### China mirror unavailable"
             echo
             echo "The verified GHCR image was published successfully. The pull-through mirror did not return the manifest and is not claimed as deployable:"
             echo
-            echo "\`$SEALOS_IMAGE\`"
+            echo "\`$CHINA_MIRROR_IMAGE\`"
           } >> "$GITHUB_STEP_SUMMARY"

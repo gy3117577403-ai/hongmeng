@@ -52,16 +52,17 @@ test('GHCR images retain immutable traceability tags and OCI identity labels', (
   assert.match(workflow, /^\s+declare -A pushed_tags=\(\)$/m);
   assert.match(workflow, /^\s+for attempt in \$\(seq 1 5\); do$/m);
   assert.match(workflow, /GHCR push failed after retries:/);
-  assert.match(workflow, /^\s+- name: Verify Sealos China mirror manifest and blobs$/m);
-  assert.match(workflow, /^\s+id: sealos_mirror$/m);
+  assert.match(workflow, /^\s+- name: Verify China mirror manifest and blobs$/m);
+  assert.match(workflow, /^\s+id: china_mirror$/m);
+  assert.match(workflow, /ghcr\.dockerproxy\.net\/\$\{\{ github\.repository \}\}:\$\{\{ github\.ref_name \}\}/);
   assert.match(workflow, /^\s+continue-on-error: true$/m);
   assert.match(workflow, /^\s+timeout-minutes: 15$/m);
   assert.match(workflow, /timeout 30s docker buildx imagetools inspect/);
   assert.match(workflow, /--connect-timeout 10 --max-time 90/);
   assert.match(workflow, /\/blobs\/\$\{digest\}/);
   assert.match(workflow, /sha256sum "\$blob_file"/);
-  assert.match(workflow, /Sealos blob verification failed after retries:/);
-  assert.match(workflow, /^\s+- name: Record unavailable Sealos mirror without blocking GHCR release$/m);
+  assert.match(workflow, /China mirror blob verification failed after retries:/);
+  assert.match(workflow, /^\s+- name: Record unavailable China mirror without blocking GHCR release$/m);
 });
 
 test('release image changes the standalone application layer for every immutable release', () => {
