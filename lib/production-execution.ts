@@ -21,6 +21,7 @@ import {
 } from '@/lib/production-carryovers';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
+import { loadWipWeekLaborMetrics } from '@/lib/wip-warehouse';
 import {
   productionArrangementCrossesWeek,
   resolveProductionArrangementProgress,
@@ -1553,7 +1554,11 @@ export async function summarizeProduction(week: ProductionWeek, scope?: Producti
   const now = new Date();
   const orders = (await loadProductionSummaryOrders(week, undefined, scope)).filter(isRootProductionOrder);
   const arrangementsByOrder = await loadProductionArrangementMap(orders, now, scope);
-  return summarizeProductionRecords(week, orders, arrangementsByOrder, now, scope);
+  const summary = summarizeProductionRecords(week, orders, arrangementsByOrder, now, scope);
+  const wipPlanMetrics = week.weekStart
+    ? await loadWipWeekLaborMetrics(week.weekStart)
+    : null;
+  return { ...summary, wipPlanMetrics };
 }
 
 export async function loadProductionOrderById(id: string, scope?: ProductionEntityScope) {

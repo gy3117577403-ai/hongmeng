@@ -66,6 +66,7 @@ test('production supervisor can use production and planning collaboration pages'
   assert.equal(canAccessAppRoute(supervisor, '/production'), true);
   assert.equal(canAccessAppRoute(supervisor, '/workspace/daily-plans'), true);
   assert.equal(canAccessAppRoute(supervisor, '/workspace/abnormal-times'), true);
+  assert.equal(canAccessAppRoute(supervisor, '/workspace/wip'), true);
   assert.equal(canAccessAppRoute(supervisor, '/weekly-plan-center'), false);
 });
 

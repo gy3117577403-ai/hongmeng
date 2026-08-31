@@ -415,6 +415,18 @@ type ProductionSummary = {
     completedOrders: number;
     percentage: number | null;
   };
+  wipPlanMetrics: {
+    weekStartDate: string;
+    weekEndDate: string;
+    nativePlannedMilliseconds: number;
+    movedOutMilliseconds: number;
+    scheduledInMilliseconds: number;
+    effectivePlannedMilliseconds: number;
+    completedMilliseconds: number;
+    percentage: number | null;
+    missingStandardStepCount: number;
+    unscheduledWipQuantity: number;
+  } | null;
   arrangementMetrics: ProductionArrangementMetrics;
   quantityTotals: {
     targetQty: number;
@@ -1828,7 +1840,7 @@ export default function ProductionExecutionCenter({
     withNextProcess: summary?.dispatchMetrics.withNextProcess || 0,
     dueSoon: summary?.dispatchMetrics.dueSoon || 0,
     completed: summary?.dispatchMetrics.completed || 0,
-    percentage: summary?.planTotals.percentage ?? null,
+    percentage: summary?.wipPlanMetrics?.percentage ?? summary?.planTotals.percentage ?? null,
   }), [summary]);
   const initialBoardLoading = loading && !board;
 
@@ -2942,7 +2954,7 @@ export default function ProductionExecutionCenter({
           <button type="button" className={dispatchPreset === 'next_process' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('next_process')}><span><ArrowRight size={18} aria-hidden="true" />有后续工序</span><strong>{summary ? dispatchMetric.withNextProcess : '—'}</strong><small>工艺路线存在下一道工序</small></button>
           <button type="button" className={dispatchPreset === 'due_soon' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('due_soon')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{summary ? dispatchMetric.dueSoon : '—'}</strong><small>客户交期在未来 0-2 天</small></button>
           <button type="button" className={dispatchPreset === 'completed' ? 'active completed' : 'completed'} onClick={() => applyDispatchPreset('completed')}><span><CheckCircle2 size={18} aria-hidden="true" />已完成</span><strong>{summary ? dispatchMetric.completed : '—'}</strong><small>当前周完成归档</small></button>
-          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />{scope === 'current' ? '本周计划达成率' : '计划达成率'}</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>{scope === 'current' ? '本周完成' : '完成订单'} {summary?.planTotals.completedOrders ?? '—'} / {scope === 'current' ? '本周计划' : '总订单'} {summary?.planTotals.totalOrders ?? '—'}{scope === 'current' && Boolean(summary?.navigation?.carryoverCount) ? ` · 遗留 ${summary?.navigation?.carryoverCount} 单另计` : ''}</small></div>
+          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />{scope === 'current' ? '本周动态计划达成率' : '动态计划达成率'}</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>{summary?.wipPlanMetrics ? `有效计划 ${(summary.wipPlanMetrics.effectivePlannedMilliseconds / 3_600_000).toFixed(1)} 小时 · 完成 ${(summary.wipPlanMetrics.completedMilliseconds / 3_600_000).toFixed(1)} 小时 · 仓内未排 ${summary.wipPlanMetrics.unscheduledWipQuantity} 件不计入` : `${scope === 'current' ? '本周完成' : '完成订单'} ${summary?.planTotals.completedOrders ?? '—'} / ${scope === 'current' ? '本周计划' : '总订单'} ${summary?.planTotals.totalOrders ?? '—'}`}</small></div>
         </section>
 
         <section className="production-dispatch-toolbar" aria-label="生产调度筛选">
@@ -4096,7 +4108,7 @@ function NextStepDialog({ request, saving, error, close, confirm }: {
       <div><Info size={17} aria-hidden="true" /><span><b>图纸状态</b><small>{order.drawingStatus || (order.documentCategoryCodes.includes('drawing') ? '已有原图' : '待补充')}</small></span><em>风险提醒</em></div>
       <div><AlertTriangle size={17} aria-hidden="true" /><span><b>配料状态</b><small>{warehouseMaterialText(order)}</small></span><em>风险提醒</em></div>
     </section>
-    <p className="production-flow-confirm-copy">确认后只启动已发布的工艺路线并进入首道工序，不修改计划周、图纸或配料状态。缺料或待配料时，必须先由计划人员/管理员在计划中心开启“允许缺料开工”；授权后人工开工和二维码报工可正常执行，系统仍不会自动开工。</p>
+    <p className="production-flow-confirm-copy">确认后只启动已发布的工艺路线并进入首道工序，不修改计划周、图纸或配料状态。未配料、待配料、缺料、料不齐或料错仅保留风险提示，不影响正常开工和二维码报工；只有明确的人工暂停或独立质量冻结才会阻止执行。</p>
     {error && <div className="form-error" role="alert">{error}</div>}
     <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '启动中...' : '确认开始生产'}</button></div>
   </section></div>;

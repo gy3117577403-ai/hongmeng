@@ -33,6 +33,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/weekly-plan-center', anyOf: ['PLANNING'] },
   { prefix: '/workspace/daily-plans', anyOf: ['PLANNING', 'PRODUCTION'], action: 'UPDATE' },
   { prefix: '/workspace/weekly-processes', anyOf: ['PLANNING', 'PRODUCTION'] },
+  { prefix: '/workspace/wip', anyOf: ['PLANNING', 'PRODUCTION'] },
   { prefix: '/drawing-library', anyOf: ['ENGINEERING', 'DRAWING_LIBRARY'] },
   { prefix: '/connector-assembly-manuals', anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'] },
   { prefix: '/connector-parameters', anyOf: ['ENGINEERING'] },

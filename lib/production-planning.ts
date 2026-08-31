@@ -1579,7 +1579,6 @@ async function startReadyScheduledWorkOrder(
           status: true,
           startedAt: true,
           completedAt: true,
-          materialTask: { select: { status: true } },
           drawingLibraryItem: {
             select: {
               files: {
@@ -1614,7 +1613,6 @@ async function startReadyScheduledWorkOrder(
     || stage !== 'not_issued'
     || route.workOrder.startedAt
     || route.workOrder.completedAt
-    || route.workOrder.materialTask?.status !== 'completed'
     || !resourceCodes.has('drawing')
     || !resourceCodes.has('sop')
     || !processRouteExecutionReadiness(route.steps).ready
@@ -1794,7 +1792,7 @@ export async function releaseProductionPlanBatch(
     actorId: input.actorId,
     now,
   });
-  const started = materialTask.status === 'completed' && await startReadyScheduledWorkOrder(tx, {
+  const started = await startReadyScheduledWorkOrder(tx, {
     workOrderId: workOrder.id,
     actorId: input.actorId,
     now,

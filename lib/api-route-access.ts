@@ -173,6 +173,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
     actionsByMethod: { POST: 'EXECUTE_WORKFLOW' },
   },
   { prefix: '/api/weekly-processes', anyOf: ['PLANNING', 'PRODUCTION'] },
+  { prefix: '/api/wip', anyOf: ['PLANNING', 'PRODUCTION'] },
   { prefix: '/api/production', anyOf: ['PRODUCTION', 'PLANNING', 'BUSINESS'] },
 
   { prefix: '/api/import/work-orders', anyOf: ['BUSINESS', 'PLANNING'] },

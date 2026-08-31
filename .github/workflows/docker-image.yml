@@ -124,6 +124,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:planning-integration
+      - name: Semi-finished warehouse PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/material-execution-control-integration.test.ts tests/wip-warehouse-integration.test.ts
       - name: Production carryover and test-week retirement PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

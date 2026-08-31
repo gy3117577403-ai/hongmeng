@@ -11,7 +11,7 @@ const rejectsCode = (code: string) => (error: unknown) => Boolean(
   error && typeof error === 'object' && 'code' in error && error.code === code,
 );
 
-test('material execution authorization gates execution, not planning, and expires on warehouse version change', {
+test('pending, shortage and wrong-material states never gate scheduling, start or reporting', {
   skip: !enabled,
   timeout: 60_000,
 }, async () => {
@@ -88,50 +88,29 @@ test('material execution authorization gates execution, not planning, and expire
   const batch = order.batches[0];
   try {
     await prisma.$transaction(tx => assertProductionMayBeScheduled(tx, workOrder.id));
-    await assert.rejects(
-      prisma.$transaction(tx => assertProductionMayRun(tx, workOrder.id)),
-      rejectsCode('MATERIAL_EXECUTION_NOT_AUTHORIZED'),
-    );
+    await prisma.$transaction(tx => assertProductionMayRun(tx, workOrder.id));
 
-    const allowed = await prisma.$transaction(tx => decideMaterialExecution(tx, {
+    await assert.rejects(prisma.$transaction(tx => decideMaterialExecution(tx, {
       batchId: batch.id,
       allowed: true,
       expectedTaskVersion: workOrder.materialTask!.version,
-      reason: '客户交期紧急，计划确认先行生产',
+      reason: '旧开关调用应被拒绝',
       actorId: actor.id,
       actorName: actor.displayName,
-    }));
-    assert.equal(allowed.effectiveAllowed, true);
-    await prisma.$transaction(tx => assertProductionMayRun(tx, workOrder.id));
+    })), rejectsCode('MATERIAL_EXECUTION_POLICY_RETIRED'));
     assert.equal(await prisma.$transaction(tx => startConfirmedProcessRoute(tx, {
       workOrderId: workOrder.id,
       userId: actor.id,
       actor: actor.displayName,
       now: new Date(),
       trigger: 'automatic_plan_reconciliation',
-    })), false, 'risk authorization never permits automatic start');
-    assert.equal(await prisma.$transaction(tx => startConfirmedProcessRoute(tx, {
-      workOrderId: workOrder.id,
-      userId: actor.id,
-      actor: actor.displayName,
-      now: new Date(),
-      trigger: 'manual_start',
-    })), true, 'risk authorization permits an explicit manual start');
-    assert.equal(await prisma.productionPlanChange.count({
-      where: { batchId: batch.id, action: 'allow_material_risk_execution' },
-    }), 1);
-    assert.equal(await prisma.operationLog.count({
-      where: { targetId: batch.id, action: 'allow_material_risk_execution' },
-    }), 1);
+    })), true, 'automatic start is independent of material readiness');
 
     await prisma.warehouseMaterialTask.update({
       where: { id: workOrder.materialTask!.id },
-      data: { status: 'exception', exceptionType: 'shortage', exceptionNote: '端子缺料', version: { increment: 1 } },
+      data: { status: 'exception', exceptionType: 'wrong_material', exceptionNote: '来料型号错误', version: { increment: 1 } },
     });
-    await assert.rejects(
-      prisma.$transaction(tx => assertProductionMayRun(tx, workOrder.id)),
-      rejectsCode('MATERIAL_EXECUTION_NOT_AUTHORIZED'),
-    );
+    await prisma.$transaction(tx => assertProductionMayRun(tx, workOrder.id));
   } finally {
     await prisma.productionPlanOrder.delete({ where: { id: order.id } });
     await prisma.operationLog.deleteMany({ where: { userId: actor.id } });

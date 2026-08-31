@@ -454,11 +454,9 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
     const firstSequenceGroup = first.sequenceGroup;
     const firstSteps = executableSteps.filter(step => step.sequenceGroup === firstSequenceGroup);
     const timeReadiness = processRouteExecutionReadiness(readinessSteps);
-    // Route confirmation may proceed while material is incomplete, but it must
-    // never auto-start on a risk authorization intended for manual execution.
-    const shouldStart = stage !== 'not_issued'
-      && timeReadiness.ready
-      && route.workOrder.materialTask?.status === 'completed';
+    // Material readiness is warning-only. Route start still requires released
+    // standards/resources and remains subject to explicit non-material holds.
+    const shouldStart = stage !== 'not_issued' && timeReadiness.ready;
     const firstGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
     const nextStage = shouldStart ? processStageForGroup(firstGroup) : stage;
     const update = await tx.workOrderProcessRoute.updateMany({
@@ -986,14 +984,11 @@ export async function startConfirmedProcessRoute(
   const route = await tx.workOrderProcessRoute.findUnique({
     where: { workOrderId: input.workOrderId },
     include: {
-      workOrder: { include: { materialTask: { select: { status: true } } } },
+      workOrder: true,
       steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } },
     },
   });
   if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return false;
-  if (input.trigger && input.trigger !== 'manual_start' && route.workOrder.materialTask?.status !== 'completed') {
-    return false;
-  }
   try {
     await assertProductionMayRun(tx, route.workOrder.id);
   } catch (error) {

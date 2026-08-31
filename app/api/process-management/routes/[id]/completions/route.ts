@@ -77,6 +77,7 @@ export async function POST(
       remark?: unknown;
       idempotencyKey?: unknown;
       expectedRouteVersion?: unknown;
+      wipAllocationId?: unknown;
       obligationId?: unknown;
       expectedObligationVersion?: unknown;
     };
@@ -118,6 +119,7 @@ export async function POST(
           remark: body.remark,
           requireParticipants: true,
           autoAssignLabor: true,
+          wipAllocationId: body.wipAllocationId,
           idempotencyKey: body.idempotencyKey,
           expectedRouteVersion: body.expectedRouteVersion,
           userId: user.id,

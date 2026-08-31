@@ -17,6 +17,7 @@ import {
   voidProcessActionConsumptionsForCompletion,
 } from '@/lib/process-action-consumption';
 import { processSupplementActualRequiredQty } from '@/lib/process-supplement-coverage';
+import { voidWipCreditsForCompletion } from '@/lib/wip-reporting';
 
 export class ProcessCompletionWithdrawalError extends Error {
   readonly status: number;
@@ -134,6 +135,14 @@ const withdrawalStateInclude = Prisma.validator<Prisma.ProcessCompletionInclude>
         where: { status: ProcessLaborClaimStatus.ACTIVE },
         include: { employee: { select: { id: true, name: true } } },
         orderBy: [{ claimedAt: 'asc' }, { id: 'asc' }],
+      },
+    },
+  },
+  wipCredits: {
+    where: { status: 'ACTIVE' },
+    select: {
+      allocationStep: {
+        select: { allocation: { select: { status: true } } },
       },
     },
   },
@@ -698,6 +707,14 @@ function previewFromState(
       message: '关联工时池已作废，需先核对工时台账',
     });
   }
+  if (state.wipCredits.some(credit => (
+    credit.allocationStep.allocation.status === 'SUPERSEDED'
+  ))) {
+    blockers.push({
+      code: 'PROCESS_WIP_RESCHEDULE_DEPENDENCY_EXISTS',
+      message: '该笔半成品报工已作为后续改排的数量依据；请先核对并撤销后续改排，再处理本次报工撤回',
+    });
+  }
 
   const claims = state.laborPool?.claims || [];
   const employeeNames = [...new Set(claims.map(claim => claim.employee.name))];
@@ -989,6 +1006,7 @@ async function applyWithdrawal(
       'PROCESS_COMPLETION_WITHDRAWAL_CONFLICT',
     );
   }
+  await voidWipCreditsForCompletion(tx, state.id, now);
   if (state.reportQuantityBasis === 'action') {
     await voidProcessActionConsumptionsForCompletion(tx, {
       completionId: state.id,

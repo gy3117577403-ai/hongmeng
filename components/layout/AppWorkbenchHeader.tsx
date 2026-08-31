@@ -87,6 +87,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays, modeSwitchable: true, openModeOnEnter: false },
       { href: '/workspace/daily-plans', label: '日出货计划', icon: CalendarClock },
       { href: '/workspace/weekly-processes', label: '周工序总览', icon: ListTree },
+      { href: '/workspace/wip', label: '半成品仓', icon: PackageOpen },
       { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
       { href: '/workspace/material-library', label: '物料库', icon: PackageOpen },
       { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },

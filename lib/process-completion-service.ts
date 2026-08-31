@@ -48,6 +48,11 @@ import {
   processSupplementActualRequiredQty,
   processSupplementRemainingQty,
 } from '@/lib/process-supplement-coverage';
+import {
+  creditWipCompletion,
+  resolveWipReportingAllocation,
+} from '@/lib/wip-reporting';
+import { WipWarehouseError } from '@/lib/wip-warehouse';
 
 export class ProcessCompletionServiceError extends Error {
   readonly status: number;
@@ -92,6 +97,7 @@ export type CompleteProcessStepCommand = {
   fieldReportTerminalId?: unknown;
   pinCredentialVersion?: unknown;
   fieldReportPinSession?: unknown;
+  wipAllocationId?: unknown;
   idempotencyKey: unknown;
   expectedRouteVersion: unknown;
   userId: string;
@@ -348,6 +354,7 @@ type ParsedCompletionCommand = {
   fieldReportTerminalId: string | null;
   pinCredentialVersion: number | null;
   fieldReportPinSession: ParsedFieldReportPinSessionEvidence | null;
+  wipAllocationId: string | null;
   idempotencyKey: string;
   expectedRouteVersion: number;
   userId: string;
@@ -421,6 +428,10 @@ const replayCompletionInclude = Prisma.validator<Prisma.ProcessCompletionInclude
   movements: {
     where: { voidedAt: null },
     select: { type: true, quantity: true },
+  },
+  wipCredits: {
+    where: { status: 'ACTIVE' },
+    select: { allocationStep: { select: { allocationId: true } } },
   },
   route: { select: { status: true, version: true } },
   step: { select: { inputQty: true, processedQty: true } },
@@ -1073,6 +1084,7 @@ export function parseProcessCompletionCommand(
     fieldReportTerminalId: fieldReportTerminalId || null,
     pinCredentialVersion,
     fieldReportPinSession,
+    wipAllocationId: cleanText(command.wipAllocationId, 80) || null,
     idempotencyKey: parseIdempotencyKey(command.idempotencyKey),
     expectedRouteVersion: parseExpectedRouteVersion(command.expectedRouteVersion),
     userId,
@@ -1295,6 +1307,7 @@ function assertIdempotentPayload(
 ): void {
   const storedEmployeeIds = completion.participants.map(item => item.employeeId).sort();
   const inputEmployeeIds = [...input.employeeIds].sort();
+  const storedWipAllocationIds = completion.wipCredits.map(item => item.allocationStep.allocationId);
   const matches = completion.routeId === input.routeId
     && completion.stepId === input.stepId
     && completion.processedQty === input.processedQty
@@ -1312,7 +1325,8 @@ function assertIdempotentPayload(
     && completion.createdById === input.userId
     && completionPrincipalIdentityMatches(completion, input)
     && storedEmployeeIds.length === inputEmployeeIds.length
-    && storedEmployeeIds.every((id, index) => id === inputEmployeeIds[index]);
+    && storedEmployeeIds.every((id, index) => id === inputEmployeeIds[index])
+    && (!input.wipAllocationId || storedWipAllocationIds.includes(input.wipAllocationId));
   if (!matches) {
     throw new ProcessCompletionServiceError(
       '请求标识已用于另一笔完成记录，请重新提交',
@@ -1324,6 +1338,7 @@ function assertIdempotentPayload(
 
 function normalizeServiceError(error: unknown): ProcessCompletionServiceError {
   if (error instanceof ProductionControlError) return new ProcessCompletionServiceError(error.message, error.status, error.code);
+  if (error instanceof WipWarehouseError) return new ProcessCompletionServiceError(error.message, error.status, error.code);
   if (isProductionSerializationConflict(error)) return new ProcessCompletionServiceError('生产状态或报工刚被更新，请刷新后重试', 409, 'PROCESS_ROUTE_VERSION_CONFLICT');
   if (error instanceof ProcessCompletionServiceError) return error;
   if (error instanceof ProcessCompletionDomainError) {
@@ -3872,6 +3887,14 @@ async function performProcessCompletion(
       'PROCESS_REPORTED_QTY_EXCEEDS_TARGET',
     );
   }
+  const wipResolution = await resolveWipReportingAllocation(tx, {
+    workOrderId: route.workOrderId,
+    stepId: current.id,
+    workDate: input.workDate,
+    processedQty: Math.max(0, input.processedQty - input.defectQty),
+    reportableQty,
+    requestedAllocationId: input.wipAllocationId,
+  });
   const reportQuantityBasis = normalizeProcessReportQuantityBasis(current.reportQuantityBasis);
   if (
     reportQuantityBasis === 'action'
@@ -4023,6 +4046,12 @@ async function performProcessCompletion(
         },
       } : {}),
     },
+  });
+  await creditWipCompletion(tx, {
+    resolution: wipResolution,
+    completionId: completion.id,
+    workDate: input.workDate,
+    idempotencyKey: input.idempotencyKey,
   });
   if (reportQuantityBasis === 'action') {
     try {

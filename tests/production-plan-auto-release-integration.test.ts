@@ -3,7 +3,6 @@ import test from 'node:test';
 import { prisma } from '../lib/prisma';
 import { productionWeekWhere } from '../lib/production-execution';
 import { reconcileAutomaticallyReleasedProductionPlanBatches } from '../lib/production-planning';
-import { synchronizeMaterialProductionHold } from '../lib/production-plan-holds';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
 
@@ -167,7 +166,7 @@ test(
             });
           assert.deepEqual(
             { active: first.active, preparation: first.preparation, started: first.started },
-            { active: 1, preparation: 1, started: 0 },
+            { active: 1, preparation: 1, started: 1 },
           );
           assert.equal(first.warningCount, 1);
 
@@ -193,9 +192,9 @@ test(
           ]);
           assert.equal(currentBatch.releaseState, 'active');
           assert.equal(currentBatch.workOrder?.planActive, true);
-          assert.equal(currentBatch.workOrder?.stage, 'not_issued');
-          assert.equal(currentBatch.workOrder?.startedAt, null);
-          assert.equal(currentBatch.workOrder?.processRoute?.status, 'confirmed');
+          assert.equal(currentBatch.workOrder?.stage, 'frontend');
+          assert.ok(currentBatch.workOrder?.startedAt);
+          assert.equal(currentBatch.workOrder?.processRoute?.status, 'in_progress');
           assert.equal(currentBatch.holds.length, 0, 'pending material is a risk, not an automatic hard hold');
           assert.equal(nextBatch.releaseState, 'preparation');
           assert.equal(nextBatch.workOrder?.planActive, false);
@@ -254,14 +253,12 @@ test(
           for (const task of materialTasks) {
             await tx.warehouseMaterialTask.update({
               where: { id: task.id },
-              data: { status: 'completed', completedAt: currentStart, completedById: actor.id, updatedById: actor.id },
-            });
-            await synchronizeMaterialProductionHold(tx, {
-              workOrderId: task.workOrderId,
-              warehouseTaskId: task.id,
-              status: 'completed',
-              actorId: actor.id,
-              now: currentStart,
+              data: {
+                status: 'exception',
+                exceptionType: 'wrong_material',
+                exceptionNote: '集成测试：料错仅提示',
+                updatedById: actor.id,
+              },
             });
           }
           const backfill = await reconcileAutomaticallyReleasedProductionPlanBatches(tx, {
@@ -270,7 +267,7 @@ test(
           });
           assert.deepEqual(
             { active: backfill.active, preparation: backfill.preparation, started: backfill.started },
-            { active: 0, preparation: 0, started: 2 },
+            { active: 0, preparation: 0, started: 1 },
           );
           const startedNext = await tx.productionPlanBatch.findFirstOrThrow({
             where: { planOrderId: nextOrder.id },

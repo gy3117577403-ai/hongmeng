@@ -7,7 +7,6 @@ import {
   WorkOrderQrTicketStatus,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { loadMaterialExecutionControl } from '@/lib/material-execution-control';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { printableSourceFormat, type ImagePrintPaperSize } from '@/lib/printable-document';
 import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
@@ -213,6 +212,16 @@ export type FieldReportTicketView = {
     name: string;
     steps: WorkOrderTravelerSnapshot['steps'];
   } | null;
+  wipAllocations?: Array<{
+    id: string;
+    lotId: string;
+    lotNo: string;
+    containerCode: string | null;
+    targetWeekStartDate: string;
+    targetWeekEndDate: string;
+    quantity: number;
+    steps: Array<{ stepId: string; remainingQty: number }>;
+  }>;
   access: {
     canReport: boolean;
     state: 'READY' | 'WAITING_START' | 'COMPLETED' | 'REVOKED' | 'BLOCKED';
@@ -1103,16 +1112,6 @@ export function resolveFieldReportAccess(input: {
   if (!input.route || input.route.status === 'draft') {
     return { canReport: false, state: 'BLOCKED', message: '工艺路线尚未确认，请联系生产主管' };
   }
-  if (input.materialExecutionAllowed === false && (
-    input.route.status === 'in_progress'
-    || input.route.hasActiveSupplement
-  )) {
-    return {
-      canReport: false,
-      state: 'BLOCKED',
-      message: '当前缺料或待配料，计划人员/管理员尚未开启“允许缺料开工”，二维码报工已暂停',
-    };
-  }
   if (
     (input.route.status === 'completed' || input.workOrder.stage === 'completed')
     && !input.route.hasActiveSupplement
@@ -1196,7 +1195,28 @@ export async function loadFieldReportTicket(
   }
   const order = ticket.workOrder;
   const route = order.processRoute;
-  const materialExecution = await loadMaterialExecutionControl(prisma, order.id);
+  const wipAllocations = route ? await prisma.wipWeekAllocation.findMany({
+    where: {
+      lot: { workOrderId: order.id },
+      status: { in: ['ACTIVE', 'IN_PROGRESS'] },
+    },
+    select: {
+      id: true,
+      targetWeekStartDate: true,
+      targetWeekEndDate: true,
+      quantity: true,
+      lot: { select: { id: true, lotNo: true, containerCode: true } },
+      steps: {
+        select: {
+          plannedQty: true,
+          completedQty: true,
+          lotStep: { select: { stepId: true } },
+        },
+      },
+    },
+    orderBy: [{ targetWeekStartDate: 'asc' }, { createdAt: 'asc' }],
+    take: 100,
+  }) : [];
   const activeTimeChanges = route
     ? await prisma.processRouteChange.findMany({
         where: {
@@ -1296,6 +1316,19 @@ export async function loadFieldReportTicket(
       };
       }),
     } : null,
+    wipAllocations: wipAllocations.map(allocation => ({
+      id: allocation.id,
+      lotId: allocation.lot.id,
+      lotNo: allocation.lot.lotNo,
+      containerCode: allocation.lot.containerCode,
+      targetWeekStartDate: allocation.targetWeekStartDate.toISOString().slice(0, 10),
+      targetWeekEndDate: allocation.targetWeekEndDate.toISOString().slice(0, 10),
+      quantity: allocation.quantity,
+      steps: allocation.steps.map(step => ({
+        stepId: step.lotStep.stepId,
+        remainingQty: Math.max(0, step.plannedQty - step.completedQty),
+      })),
+    })),
     access: resolveFieldReportAccess({
       ticketStatus: ticket.status,
       workOrder: order,
@@ -1306,7 +1339,6 @@ export async function loadFieldReportTicket(
           && step.supplementObligation?.status === 'ACTIVE'
         )),
       } : null,
-      materialExecutionAllowed: materialExecution.effectiveAllowed,
     }),
   };
 }

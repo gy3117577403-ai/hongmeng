@@ -63,6 +63,7 @@ type ReportForm = {
   team: string;
   workstation: string;
   remark: string;
+  wipAllocationId: string;
 };
 
 type BatchStepForm = {
@@ -275,6 +276,7 @@ function formFor(context: ProcessCompletionContext, currentEmployee: EmployeeOpt
     team: currentEmployee.team || '',
     workstation: '',
     remark: '',
+    wipAllocationId: '',
   };
 }
 
@@ -410,6 +412,14 @@ export default function FieldReportMobile({
   const hasReportableQuantity = Boolean(payload?.context && (
     payload.context.reportableQty > 0
     || (actionReporting && payload.context.reportableUnitQty > 0)
+  ));
+  const availableWipAllocations = (payload?.ticket.wipAllocations || []).filter(allocation => (
+    Boolean(form?.workDate)
+    && allocation.targetWeekStartDate <= form!.workDate
+    && allocation.targetWeekEndDate >= form!.workDate
+    && (reportMode === 'batch'
+      ? batchItems.some(item => allocation.steps.some(step => step.stepId === item.stepId && step.remainingQty > 0))
+      : allocation.steps.some(step => step.stepId === payload?.context?.step.id && step.remainingQty > 0))
   ));
   const batchSelectedSteps = routeSteps.filter(step => selectedStepIds.includes(step.id));
   const invalidBatchItems = batchItems.some(item => {
@@ -728,6 +738,7 @@ export default function FieldReportMobile({
           idempotencyKey,
           expectedRouteVersion: payload.context.routeVersion,
           expectedVersion: supplement?.version,
+          wipAllocationId: form.wipAllocationId || undefined,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -973,6 +984,8 @@ export default function FieldReportMobile({
         <div className="field-report-sheet-scroll">
           {reportMode === 'batch' && <section className="field-report-batch-summary"><ListChecks size={22} /><span><strong>{batchItems.map(item => item.processName).join('、')}</strong><small>系统将按工艺顺序提交，连续工序自动正常流转，跨序工序进入待前序覆盖。</small></span></section>}
           {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-date-card"><CalendarDays size={24} /><label><span>生产日期</span><input type="date" max={todayKey()} value={form.workDate} disabled={saving} onChange={event => setForm({ ...form, workDate: event.target.value })} /></label><strong>请务必核对</strong></section>}
+
+          {availableWipAllocations.length > 0 && <section className="field-report-date-card field-report-wip-card"><PackageCheck size={24} /><label><span>半成品批次（有多个时必选）</span><select value={form.wipAllocationId} disabled={saving} onChange={event => setForm({ ...form, wipAllocationId: event.target.value })}><option value="">普通数量 / 系统自动判断</option>{availableWipAllocations.map(allocation => <option key={allocation.id} value={allocation.id}>{allocation.lotNo}{allocation.containerCode ? ` · ${allocation.containerCode}` : ''} · {allocation.targetWeekStartDate} · {allocation.quantity} 件</option>)}</select></label><strong>同一产品二维码继续使用</strong></section>}
 
           {advanceReporting && <section className="field-report-advance"><AlertTriangle size={21} /><span><strong>本次属于提前报工</strong><small>允许先报当前工序，数量不会变成负数；前序补齐后系统自动覆盖并恢复正常流转。</small></span></section>}
           {selectedSupplement && <section className="field-report-advance supplement"><GitPullRequestArrow size={21} /><span><strong>NEW · 剩余数量实际报工</strong><small>{selectedSupplement.systemCoveredQty > 0 ? `系统已承接 ${quantity(selectedSupplement.systemCoveredQty)}，本次只记录剩余 ${quantity(selectedSupplement.actualRequiredQty)} 的实际人员与工时；` : ''}原后序已报完成保持不变。</small></span></section>}

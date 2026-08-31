@@ -18,24 +18,26 @@ function batch(input: { status: string; taskVersion: number; allowed: boolean; a
   } as Parameters<typeof serializeMaterialExecutionControl>[0];
 }
 
-test('material authorization is version-bound and completed material needs no authorization', () => {
+test('material states and historical decisions are warning-only compatibility data', () => {
   const pending = serializeMaterialExecutionControl(batch({
     status: 'pending', taskVersion: 3, allowed: true, authorizedVersion: 3,
   }));
-  assert.equal(pending.required, true);
+  assert.equal(pending.required, false);
   assert.equal(pending.effectiveAllowed, true);
   assert.equal(pending.stale, false);
+  assert.equal(pending.storedAllowed, true);
 
   const changed = serializeMaterialExecutionControl(batch({
     status: 'exception', taskVersion: 4, allowed: true, authorizedVersion: 3,
   }));
-  assert.equal(changed.effectiveAllowed, false);
-  assert.equal(changed.stale, true);
+  assert.equal(changed.effectiveAllowed, true);
+  assert.equal(changed.stale, false);
 
   const carryover = serializeMaterialExecutionControl(batch({
     status: 'pending', taskVersion: 4, allowed: false, authorizedVersion: null, releaseState: 'archived',
   }));
-  assert.equal(carryover.required, true, 'unfinished archived carryovers retain the material execution gate');
+  assert.equal(carryover.required, false, 'carryovers are never gated by material state');
+  assert.equal(carryover.effectiveAllowed, true);
 
   const completed = serializeMaterialExecutionControl(batch({
     status: 'completed', taskVersion: 5, allowed: false, authorizedVersion: null,

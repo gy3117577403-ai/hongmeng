@@ -62,7 +62,6 @@ test('ticket access is reportable only for active in-progress routes', () => {
     route: { status: 'in_progress' },
     materialExecutionAllowed: false,
   });
-  assert.equal(blockedByMaterial.state, 'BLOCKED');
-  assert.equal(blockedByMaterial.canReport, false);
-  assert.match(blockedByMaterial.message, /允许缺料开工/);
+  assert.equal(blockedByMaterial.state, 'READY');
+  assert.equal(blockedByMaterial.canReport, true);
 });

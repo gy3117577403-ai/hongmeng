@@ -334,6 +334,55 @@ enum DailyTaskAssignmentStatus {
   @@map("daily_task_assignment_status")
 }
 
+enum SemiFinishedLotKind {
+  WAITING_PRODUCTION
+  SEMI_FINISHED
+
+  @@map("semi_finished_lot_kind")
+}
+
+enum SemiFinishedPhysicalStatus {
+  VIRTUAL
+  STORED
+  ISSUED
+  COMPLETED
+  CANCELLED
+
+  @@map("semi_finished_physical_status")
+}
+
+enum SemiFinishedScheduleStatus {
+  UNSCHEDULED
+  PARTIALLY_SCHEDULED
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+
+  @@map("semi_finished_schedule_status")
+}
+
+enum WipRequirementStatus {
+  UNSCHEDULED
+  PARTIALLY_SCHEDULED
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+
+  @@map("wip_requirement_status")
+}
+
+enum WipWeekAllocationStatus {
+  ACTIVE
+  IN_PROGRESS
+  COMPLETED
+  SUPERSEDED
+  CANCELLED
+
+  @@map("wip_week_allocation_status")
+}
+
 enum DailyCrossTeamRequestStatus {
   PENDING
   APPROVED
@@ -529,6 +578,10 @@ model User {
   activatedProductionPlanBatches  ProductionPlanBatch[]                  @relation("ProductionPlanBatchActivatedBy")
   includedProductionCarryovers    ProductionCarryover[]                  @relation("ProductionCarryoverIncludedBy")
   decidedMaterialExecutionBatches ProductionPlanBatch[]                  @relation("ProductionPlanBatchMaterialExecutionDecisionBy")
+  enteredSemiFinishedLots         SemiFinishedLot[]                      @relation("SemiFinishedLotEnteredBy")
+  scheduledWipAllocations         WipWeekAllocation[]                    @relation("WipWeekAllocationScheduledBy")
+  wipEvents                       WipEvent[]                             @relation("WipEventActor")
+  wipInventoryMovements           WipInventoryMovement[]                 @relation("WipInventoryMovementActor")
   productionPlanChanges           ProductionPlanChange[]                 @relation("ProductionPlanChangeActor")
   createdProcessCompletions       ProcessCompletion[]                    @relation("ProcessCompletionCreatedBy")
   voidedProcessCompletions        ProcessCompletion[]                    @relation("ProcessCompletionVoidedBy")
@@ -711,6 +764,7 @@ model WorkOrder {
   productionPlanBatch      ProductionPlanBatch?
   productionPlanBatchHolds ProductionPlanBatchHold[]
   productionCarryovers     ProductionCarryover[]
+  semiFinishedLots         SemiFinishedLot[]
   parentWorkOrder          WorkOrder?                     @relation("WorkOrderBranchParent", fields: [parentWorkOrderId], references: [id], onDelete: SetNull)
   branchWorkOrders         WorkOrder[]                    @relation("WorkOrderBranchParent")
   rootWorkOrder            WorkOrder?                     @relation("WorkOrderBranchRoot", fields: [rootWorkOrderId], references: [id], onDelete: SetNull)
@@ -879,6 +933,7 @@ model WorkOrderProcessRoute {
   processRouteChanges       ProcessRouteChange[]
   supplementObligations     ProcessSupplementObligation[]
   productTimeDeployments    ProductTimeDeploymentRoute[]
+  semiFinishedLots          SemiFinishedLot[]
 
   @@index([status])
   @@index([templateId])
@@ -950,6 +1005,7 @@ model WorkOrderProcessStep {
   targetedRouteChangeDiffs     ProcessRouteChangeDiff[]      @relation("ProcessRouteChangeTargetStep")
   insertedBeforeObligations    ProcessSupplementObligation[] @relation("ProcessSupplementInsertBeforeStep")
   actionConsumptions           ProcessActionConsumption[]
+  semiFinishedLotSteps         SemiFinishedLotStep[]
 
   @@unique([routeId, position])
   @@index([routeId, status])
@@ -1227,6 +1283,7 @@ model ProductionTeam {
   requestingCrossTeamRequests DailyCrossTeamRequest[]           @relation("DailyCrossTeamRequestingTeam")
   targetCrossTeamRequests     DailyCrossTeamRequest[]           @relation("DailyCrossTeamTargetTeam")
   processCapabilities         ProductionTeamProcessCapability[]
+  wipWeekAllocations          WipWeekAllocation[]
 
   @@index([isActive, sortOrder])
   @@map("production_teams")
@@ -2143,6 +2200,7 @@ model ProcessCompletion {
   coverageAllocations          ProcessCompletionCoverage[]     @relation("CoveredProcessCompletion")
   triggeredCoverageAllocations ProcessCompletionCoverage[]     @relation("CoverageTriggerCompletion")
   supplementObligation         ProcessSupplementObligation?    @relation(fields: [supplementObligationId], references: [id], onDelete: Restrict)
+  wipCredits                   ProcessWipCredit[]
   sourcedActionConsumptions    ProcessActionConsumption[]      @relation("ActionConsumptionSource")
   consumedActionAllocations    ProcessActionConsumption[]      @relation("ActionConsumptionConsumer")
 
@@ -3002,6 +3060,7 @@ model ProductionPlanBatch {
   dailyShipmentItems            DailyShipmentPlanItem[]
   carryovers                    ProductionCarryover[]
   holds                         ProductionPlanBatchHold[]
+  semiFinishedLots              SemiFinishedLot[]
 
   @@unique([planOrderId, batchNo])
   @@index([weekStartDate, releaseState])
@@ -3065,6 +3124,202 @@ model ProductionCarryover {
   @@index([sourceWeekStartDate, status])
   @@index([workOrderId, targetWeekStartDate])
   @@map("production_carryovers")
+}
+
+model SemiFinishedLot {
+  id                     String                     @id @default(uuid())
+  lotNo                  String                     @unique @map("lot_no")
+  kind                   SemiFinishedLotKind        @default(SEMI_FINISHED)
+  productionPlanBatchId  String                     @map("production_plan_batch_id")
+  workOrderId            String                     @map("work_order_id")
+  routeId                String                     @map("route_id")
+  routeVersion           Int                        @map("route_version")
+  sourceWeekStartDate    DateTime                   @map("source_week_start_date") @db.Date
+  sourceWeekEndDate      DateTime                   @map("source_week_end_date") @db.Date
+  quantity               Int
+  completedStepIds       Json                       @default("[]") @map("completed_step_ids")
+  lastCompletedPosition  Int?                       @map("last_completed_position")
+  nextStepIds            Json                       @default("[]") @map("next_step_ids")
+  locationCode           String?                    @map("location_code")
+  containerCode          String?                    @unique @map("container_code")
+  materialStatusSnapshot String?                    @map("material_status_snapshot")
+  physicalStatus         SemiFinishedPhysicalStatus @default(VIRTUAL) @map("physical_status")
+  scheduleStatus         SemiFinishedScheduleStatus @default(UNSCHEDULED) @map("schedule_status")
+  reasonCode             String                     @map("reason_code")
+  reason                 String
+  enteredAt              DateTime                   @default(now()) @map("entered_at")
+  enteredById            String                     @map("entered_by_id")
+  closedAt               DateTime?                  @map("closed_at")
+  version                Int                        @default(0)
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  updatedAt              DateTime                   @updatedAt @map("updated_at")
+  productionPlanBatch    ProductionPlanBatch        @relation(fields: [productionPlanBatchId], references: [id], onDelete: Restrict)
+  workOrder              WorkOrder                  @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  route                  WorkOrderProcessRoute      @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  enteredBy              User                       @relation("SemiFinishedLotEnteredBy", fields: [enteredById], references: [id], onDelete: Restrict)
+  steps                  SemiFinishedLotStep[]
+  allocations            WipWeekAllocation[]
+  events                 WipEvent[]
+  inventoryMovements     WipInventoryMovement[]
+
+  @@index([workOrderId, scheduleStatus])
+  @@index([productionPlanBatchId, scheduleStatus])
+  @@index([sourceWeekStartDate, scheduleStatus])
+  @@index([physicalStatus, scheduleStatus, enteredAt])
+  @@index([enteredById])
+  @@map("semi_finished_lots")
+}
+
+model SemiFinishedLotStep {
+  id                            String                  @id @default(uuid())
+  lotId                         String                  @map("lot_id")
+  stepId                        String                  @map("step_id")
+  routeVersion                  Int                     @map("route_version")
+  processCode                   String                  @map("process_code")
+  processName                   String                  @map("process_name")
+  stageGroup                    String                  @map("stage_group")
+  position                      Int
+  sequenceGroup                 Int                     @map("sequence_group")
+  timeBasis                     String                  @map("time_basis")
+  standardMillisecondsPerUnit   Int                     @map("standard_milliseconds_per_unit")
+  setupMilliseconds             Int                     @default(0) @map("setup_milliseconds")
+  unitsPerProduct               Int                     @default(1) @map("units_per_product")
+  countsForEfficiency           Boolean                 @default(true) @map("counts_for_efficiency")
+  plannedQty                    Int                     @map("planned_qty")
+  processedQtyAtEntry           Int                     @default(0) @map("processed_qty_at_entry")
+  goodOutputQtyAtEntry          Int                     @default(0) @map("good_output_qty_at_entry")
+  remainingQty                  Int                     @map("remaining_qty")
+  remainingStandardMilliseconds BigInt                  @map("remaining_standard_milliseconds")
+  status                        WipRequirementStatus    @default(UNSCHEDULED)
+  createdAt                     DateTime                @default(now()) @map("created_at")
+  updatedAt                     DateTime                @updatedAt @map("updated_at")
+  lot                           SemiFinishedLot         @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  step                          WorkOrderProcessStep    @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  allocationSteps               WipWeekAllocationStep[]
+
+  @@unique([lotId, stepId])
+  @@index([stepId, status])
+  @@index([lotId, status, position])
+  @@map("semi_finished_lot_steps")
+}
+
+model WipWeekAllocation {
+  id                            String                  @id @default(uuid())
+  lotId                         String                  @map("lot_id")
+  sourceAllocationId            String?                 @map("source_allocation_id")
+  targetWeekStartDate           DateTime                @map("target_week_start_date") @db.Date
+  targetWeekEndDate             DateTime                @map("target_week_end_date") @db.Date
+  teamId                        String?                 @map("team_id")
+  quantity                      Int
+  plannedStandardMilliseconds   BigInt                  @map("planned_standard_milliseconds")
+  completedQty                  Int                     @default(0) @map("completed_qty")
+  completedStandardMilliseconds BigInt                  @default(0) @map("completed_standard_milliseconds")
+  status                        WipWeekAllocationStatus @default(ACTIVE)
+  reason                        String
+  scheduledById                 String                  @map("scheduled_by_id")
+  scheduledAt                   DateTime                @default(now()) @map("scheduled_at")
+  startedAt                     DateTime?               @map("started_at")
+  completedAt                   DateTime?               @map("completed_at")
+  supersededAt                  DateTime?               @map("superseded_at")
+  cancelledAt                   DateTime?               @map("cancelled_at")
+  version                       Int                     @default(0)
+  idempotencyKey                String                  @unique @map("idempotency_key")
+  createdAt                     DateTime                @default(now()) @map("created_at")
+  updatedAt                     DateTime                @updatedAt @map("updated_at")
+  lot                           SemiFinishedLot         @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  sourceAllocation              WipWeekAllocation?      @relation("WipAllocationReschedule", fields: [sourceAllocationId], references: [id], onDelete: SetNull)
+  rescheduledAllocations        WipWeekAllocation[]     @relation("WipAllocationReschedule")
+  team                          ProductionTeam?         @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  scheduledBy                   User                    @relation("WipWeekAllocationScheduledBy", fields: [scheduledById], references: [id], onDelete: Restrict)
+  steps                         WipWeekAllocationStep[]
+  events                        WipEvent[]
+
+  @@index([lotId, status])
+  @@index([targetWeekStartDate, status])
+  @@index([teamId, targetWeekStartDate, status])
+  @@index([sourceAllocationId])
+  @@index([scheduledById])
+  @@map("wip_week_allocations")
+}
+
+model WipWeekAllocationStep {
+  id                            String               @id @default(uuid())
+  allocationId                  String               @map("allocation_id")
+  lotStepId                     String               @map("lot_step_id")
+  plannedQty                    Int                  @map("planned_qty")
+  plannedStandardMilliseconds   BigInt               @map("planned_standard_milliseconds")
+  completedQty                  Int                  @default(0) @map("completed_qty")
+  completedStandardMilliseconds BigInt               @default(0) @map("completed_standard_milliseconds")
+  status                        WipRequirementStatus @default(SCHEDULED)
+  createdAt                     DateTime             @default(now()) @map("created_at")
+  updatedAt                     DateTime             @updatedAt @map("updated_at")
+  allocation                    WipWeekAllocation    @relation(fields: [allocationId], references: [id], onDelete: Cascade)
+  lotStep                       SemiFinishedLotStep  @relation(fields: [lotStepId], references: [id], onDelete: Restrict)
+  credits                       ProcessWipCredit[]
+
+  @@unique([allocationId, lotStepId])
+  @@index([lotStepId, status])
+  @@map("wip_week_allocation_steps")
+}
+
+model ProcessWipCredit {
+  id                   String                @id @default(uuid())
+  completionId         String                @map("completion_id")
+  allocationStepId     String                @map("allocation_step_id")
+  quantity             Int
+  standardMilliseconds BigInt                @map("standard_milliseconds")
+  workDate             DateTime              @map("work_date") @db.Date
+  status               String                @default("ACTIVE")
+  idempotencyKey       String                @unique @map("idempotency_key")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  voidedAt             DateTime?             @map("voided_at")
+  completion           ProcessCompletion     @relation(fields: [completionId], references: [id], onDelete: Restrict)
+  allocationStep       WipWeekAllocationStep @relation(fields: [allocationStepId], references: [id], onDelete: Restrict)
+
+  @@unique([completionId, allocationStepId])
+  @@index([allocationStepId, status])
+  @@index([workDate, status])
+  @@map("process_wip_credits")
+}
+
+model WipInventoryMovement {
+  id             String          @id @default(uuid())
+  lotId          String          @map("lot_id")
+  movementType   String          @map("movement_type")
+  quantity       Int
+  fromLocation   String?         @map("from_location")
+  toLocation     String?         @map("to_location")
+  reason         String
+  actorId        String          @map("actor_id")
+  idempotencyKey String          @unique @map("idempotency_key")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  lot            SemiFinishedLot @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  actor          User            @relation("WipInventoryMovementActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([lotId, createdAt])
+  @@index([actorId])
+  @@map("wip_inventory_movements")
+}
+
+model WipEvent {
+  id             String             @id @default(uuid())
+  lotId          String             @map("lot_id")
+  allocationId   String?            @map("allocation_id")
+  eventType      String             @map("event_type")
+  reason         String
+  beforeData     Json?              @map("before_data")
+  afterData      Json?              @map("after_data")
+  actorId        String             @map("actor_id")
+  idempotencyKey String             @unique @map("idempotency_key")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  lot            SemiFinishedLot    @relation(fields: [lotId], references: [id], onDelete: Cascade)
+  allocation     WipWeekAllocation? @relation(fields: [allocationId], references: [id], onDelete: SetNull)
+  actor          User               @relation("WipEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([lotId, createdAt])
+  @@index([allocationId, createdAt])
+  @@index([actorId])
+  @@map("wip_events")
 }
 
 model ProductionControlEvent {

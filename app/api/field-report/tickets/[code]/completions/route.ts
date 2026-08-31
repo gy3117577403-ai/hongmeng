@@ -71,6 +71,7 @@ export async function POST(
       remark?: unknown;
       idempotencyKey?: unknown;
       expectedRouteVersion?: unknown;
+      wipAllocationId?: unknown;
       items?: unknown;
     };
     const employeeIds = ensureFieldReportParticipants(currentEmployee.id, body.employeeIds);
@@ -89,6 +90,7 @@ export async function POST(
       userId: user.id,
       actor: `${currentEmployee.employeeNo} · ${currentEmployee.name}`,
       principalEmployeeId: currentEmployee.id,
+      wipAllocationId: body.wipAllocationId,
     };
     const data = Array.isArray(body.items)
       ? await completeProcessStepsBatch({

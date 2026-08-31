@@ -26,7 +26,7 @@ export async function loadPlanningCapacity(
   options: { now?: Date } = {},
 ): Promise<PlanningCapacityMetric> {
   const now = options.now || new Date();
-  const [batches, employees, attendance, overrides] = await Promise.all([
+  const [batches, employees, attendance, overrides, sourceWipLots, targetWipAllocations] = await Promise.all([
     prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
@@ -58,6 +58,31 @@ export async function loadPlanningCapacity(
       where: { workDate: { gte: range.start, lt: range.endExclusive } },
       select: { workDate: true, dayType: true, label: true, remark: true },
     }),
+    prisma.semiFinishedLot.findMany({
+      where: {
+        scheduleStatus: { not: 'CANCELLED' },
+        productionPlanBatch: {
+          plannedCompletionDate: { gte: range.start, lt: range.endExclusive },
+          deletedAt: null,
+        },
+      },
+      select: {
+        productionPlanBatch: { select: { plannedCompletionDate: true } },
+        steps: { select: { remainingStandardMilliseconds: true } },
+      },
+    }),
+    prisma.wipWeekAllocation.findMany({
+      where: {
+        targetWeekStartDate: { gte: range.start, lt: range.endExclusive },
+        status: { not: 'CANCELLED' },
+      },
+      select: {
+        targetWeekStartDate: true,
+        status: true,
+        plannedStandardMilliseconds: true,
+        completedStandardMilliseconds: true,
+      },
+    }),
   ]);
   let scheduled = 0n;
   let attendanceScopeScheduled = 0n;
@@ -79,6 +104,24 @@ export async function loadPlanningCapacity(
       frozen += total;
       frozenBatchCount += 1;
     }
+  }
+  // Dynamic weekly plan: unfinished labor moved into the WIP warehouse leaves
+  // the source plan; only an effective target-week allocation adds it back.
+  for (const lot of sourceWipLots) {
+    const moved = lot.steps.reduce((sum, step) => sum + step.remainingStandardMilliseconds, 0n);
+    scheduled = scheduled > moved ? scheduled - moved : 0n;
+    if (chinaDate(lot.productionPlanBatch.plannedCompletionDate) <= chinaDate(now)) {
+      attendanceScopeScheduled = attendanceScopeScheduled > moved
+        ? attendanceScopeScheduled - moved
+        : 0n;
+    }
+  }
+  for (const allocation of targetWipAllocations) {
+    const planned = allocation.status === 'SUPERSEDED'
+      ? allocation.completedStandardMilliseconds
+      : allocation.plannedStandardMilliseconds;
+    scheduled += planned;
+    if (chinaDate(allocation.targetWeekStartDate) <= chinaDate(now)) attendanceScopeScheduled += planned;
   }
   const overrideByDate = new Map(overrides.map(item => [chinaDate(item.workDate), item]));
   let plannedCapacity = 0n;
@@ -111,7 +154,7 @@ export async function loadPlanningCapacity(
     plannedCapacityMilliseconds: plannedCapacity.toString(),
     confirmedAttendanceMilliseconds: confirmedAttendance.toString(),
     missingTimeBatchCount,
-    batchCount: batches.length,
+    batchCount: batches.length + targetWipAllocations.filter(item => item.status !== 'SUPERSEDED').length,
     frozenBatchCount,
     employeeCount: employees.length,
     workdayCount,

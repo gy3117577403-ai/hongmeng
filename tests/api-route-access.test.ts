@@ -659,3 +659,37 @@ test('production bulk operations require workshop scope without restricting owni
   assert.equal(canAccessApiRoute(business, '/api/work-order-qr/prints', 'POST'), true);
   assert.equal(canAccessApiRoute(business, '/api/work-order-qr/prints/readiness', 'POST'), true);
 });
+
+test('WIP API is visible to planning and production while mutations require their write capability', () => {
+  const planning = context({
+    profile: 'PLANNING_COLLABORATOR',
+    departmentCode: 'PLANNING',
+    grantType: 'PRIMARY',
+    scopeKey: 'GLOBAL',
+  });
+  const supervisor = context({
+    profile: 'WORKSHOP_SUPERVISOR',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'WORKSHOP:main',
+  });
+  const productionReader = context({
+    profile: 'PRODUCTION_COLLABORATOR',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'WORKSHOP:main',
+  });
+  const fieldReporter = context({
+    profile: 'FIELD_REPORTER',
+    grantType: 'PRIMARY',
+    scopeKey: 'SELF',
+  });
+
+  assert.equal(canAccessApiRoute(planning, '/api/wip', 'GET'), true);
+  assert.equal(canAccessApiRoute(planning, '/api/wip', 'POST'), true);
+  assert.equal(canAccessApiRoute(supervisor, '/api/wip', 'GET'), true);
+  assert.equal(canAccessApiRoute(supervisor, '/api/wip', 'POST'), true);
+  assert.equal(canAccessApiRoute(productionReader, '/api/wip', 'GET'), true);
+  assert.equal(canAccessApiRoute(productionReader, '/api/wip', 'POST'), false);
+  assert.equal(canAccessApiRoute(fieldReporter, '/api/wip', 'GET'), false);
+});

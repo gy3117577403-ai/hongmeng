@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { ProductionControlError, serializeProductionControl } from '@/lib/production-control';
-import { loadMaterialExecutionControl } from '@/lib/material-execution-control';
 import { lockProductionWorkOrder } from '@/lib/production-work-order-lock';
 
 export { lockProductionWorkOrder } from '@/lib/production-work-order-lock';
@@ -86,22 +85,9 @@ export async function assertProductionMayRun(
     throw new ProductionControlError(`工单已暂停：${view.pause?.reason || '请联系计划或主管确认恢复'}。本次生产操作未提交。`, 'PRODUCTION_PAUSED', 409);
   }
 
-  const material = await loadMaterialExecutionControl(tx, root.id);
-  if (material.required && !material.effectiveAllowed) {
-    const state = material.taskStatus === 'exception'
-      ? '物料异常/缺料'
-      : material.taskStatus === 'pending'
-        ? '待配料'
-        : '配料未完成';
-    const reason = material.stale
-      ? '仓库物料状态已更新，原授权已失效'
-      : `当前为${state}`;
-    throw new ProductionControlError(
-      `${reason}。请由计划人员或管理员在计划中心开启“允许缺料开工”，再进行开工或二维码报工。`,
-      'MATERIAL_EXECUTION_NOT_AUTHORIZED',
-      409,
-    );
-  }
+  // Warehouse readiness and material exceptions are operational warnings.
+  // They never authorize or prohibit production. Explicit manual pauses and
+  // non-material holds remain the only generic execution guards here.
 }
 
 /** Read filters do not replace the transactional guard. */
