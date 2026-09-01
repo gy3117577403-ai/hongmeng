@@ -179,7 +179,7 @@ test(
             { active: first.active, preparation: first.preparation, started: first.started },
             { active: 1, preparation: 1, started: 1 },
           );
-          assert.equal(first.warningCount, 1);
+          assert.equal(first.warningCount, 2, 'missing product time and validating SOP are both retained as non-blocking warnings');
 
           const [currentBatch, nextBatch] = await Promise.all([
             tx.productionPlanBatch.findFirstOrThrow({
