@@ -4277,6 +4277,51 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   line-height: 1.35;
 }
 
+.hm-production-workbench .production-dispatch-row.is-wip-continuation {
+  border-left-color: #f26a21;
+  background: linear-gradient(90deg, #fffaf4 0, #fff 24%);
+  box-shadow: inset 4px 0 #f26a21;
+}
+
+.hm-production-workbench .wip-continuation-badge {
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: #bc4e13;
+  background: #fff0e2;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-wip-continuation-meta {
+  display: block;
+  max-width: 100%;
+  margin-top: 3px;
+  color: #c5571a;
+  font-size: 9px;
+  font-weight: 750;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .wip-continuation-badge.moved-out {
+  color: #53677e;
+  background: #edf2f6;
+}
+
+.hm-production-workbench .production-wip-continuation-meta.moved-out {
+  color: #5f7288;
+}
+
+.hm-production-workbench .production-dispatch-row-actions a.primary {
+  border-color: #f26a21;
+  color: #fff;
+  background: #f26a21;
+  text-decoration: none;
+}
+
 .hm-production-workbench .production-dispatch-product > .production-dispatch-readiness-badges {
   min-width: 0;
   display: flex;
@@ -4582,7 +4627,8 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   cursor: pointer;
 }
 
-.hm-production-workbench .production-dispatch-row-actions button.primary {
+.hm-production-workbench .production-dispatch-row-actions button.primary,
+.hm-production-workbench .production-dispatch-row-actions a.primary {
   grid-column: 1 / -1;
   min-height: 42px;
   border-color: var(--production-dispatch-orange);
@@ -4604,7 +4650,8 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   color: #bd5119;
 }
 
-.hm-production-workbench .production-dispatch-row-actions button.primary:hover:not(:disabled) {
+.hm-production-workbench .production-dispatch-row-actions button.primary:hover:not(:disabled),
+.hm-production-workbench .production-dispatch-row-actions a.primary:hover {
   border-color: var(--production-dispatch-orange-hover);
   background: var(--production-dispatch-orange-hover);
   color: #fff;

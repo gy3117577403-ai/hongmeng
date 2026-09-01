@@ -16,7 +16,11 @@ import {
   parsePlanDate,
 } from '@/lib/production-planning';
 import type { ProductionEntityScope } from '@/lib/production-access-scope';
-import { assertProductionScopeRead, assertProductionScopeWrite } from '@/lib/production-access-scope';
+import {
+  assertProductionScopeRead,
+  assertProductionScopeWrite,
+  assertProductionTeam,
+} from '@/lib/production-access-scope';
 import { lockProductionWorkOrder } from '@/lib/production-work-order-lock';
 
 const OPEN_LOT_STATUSES: SemiFinishedScheduleStatus[] = [
@@ -565,8 +569,12 @@ export async function scheduleWipLot(input: {
     }
     const teamId = cleanText(input.teamId, 80) || null;
     if (teamId) {
-      const team = await tx.productionTeam.findFirst({ where: { id: teamId, isActive: true }, select: { id: true } });
+      const team = await tx.productionTeam.findFirst({
+        where: { id: teamId, isActive: true },
+        select: { id: true, code: true, name: true, legacyTeamName: true },
+      });
       if (!team) throw new WipWarehouseError('所选生产班组不存在或已停用', 'WIP_TEAM_INVALID', 409);
+      assertProductionTeam(input.productionScope, team);
     }
     const stepCreates: Prisma.WipWeekAllocationStepCreateWithoutAllocationInput[] = [];
     let totalMilliseconds = 0n;
@@ -676,10 +684,40 @@ export async function rescheduleWipAllocation(input: {
   const requestKey = idempotencyKey(input.idempotencyKey, 'wip-reschedule');
   return prisma.$transaction(async tx => {
     const replay = await tx.wipWeekAllocation.findUnique({ where: { idempotencyKey: requestKey } });
-    if (replay) return replay;
+    if (replay) {
+      const requestedTeamId = cleanText(input.teamId, 80) || replay.teamId;
+      if (
+        replay.sourceAllocationId !== allocationId
+        || chinaDate(replay.targetWeekStartDate) !== targetWeek.startKey
+        || replay.teamId !== requestedTeamId
+        || replay.reason !== reason
+      ) {
+        throw new WipWarehouseError(
+          '该请求编号已用于另一组改排参数，请刷新当前安排后重试',
+          'WIP_IDEMPOTENCY_CONFLICT',
+          409,
+        );
+      }
+      return replay;
+    }
+    const sourceBeforeLock = await tx.wipWeekAllocation.findUnique({
+      where: { id: allocationId },
+      select: { lot: { select: { workOrderId: true } } },
+    });
+    if (!sourceBeforeLock) {
+      throw new WipWarehouseError('原排程不存在或已经完成/改排，不能再次改排', 'WIP_ALLOCATION_NOT_EDITABLE', 409);
+    }
+    await lockProductionWorkOrder(tx, sourceBeforeLock.lot.workOrderId);
+    // The work-order advisory lock serializes every WIP mutation for this
+    // product. Re-read after acquiring it so a second click cannot continue
+    // from the stale ACTIVE snapshot it observed before waiting.
     const source = await tx.wipWeekAllocation.findUnique({
       where: { id: allocationId },
-      include: { lot: true, steps: { orderBy: { createdAt: 'asc' } } },
+      include: {
+        lot: true,
+        team: { select: { id: true, code: true, name: true, legacyTeamName: true } },
+        steps: { orderBy: { createdAt: 'asc' } },
+      },
     });
     if (
       !source
@@ -691,12 +729,21 @@ export async function rescheduleWipAllocation(input: {
     if (chinaDate(source.targetWeekStartDate) === targetWeek.startKey) {
       throw new WipWarehouseError('目标周与原排程周相同，无需改排', 'WIP_RESCHEDULE_SAME_WEEK', 409);
     }
-    await lockProductionWorkOrder(tx, source.lot.workOrderId);
     const remainingQuantity = Math.max(0, source.quantity - source.completedQty);
     if (remainingQuantity <= 0) {
       throw new WipWarehouseError('原排程已经全部完成，没有可改排数量', 'WIP_RESCHEDULE_NOTHING_REMAINING', 409);
     }
     const teamId = cleanText(input.teamId, 80) || source.teamId;
+    if (teamId) {
+      const team = await tx.productionTeam.findFirst({
+        where: { id: teamId, isActive: true },
+        select: { id: true, code: true, name: true, legacyTeamName: true },
+      });
+      if (!team) throw new WipWarehouseError('所选生产班组不存在或已停用', 'WIP_TEAM_INVALID', 409);
+      assertProductionTeam(input.productionScope, team);
+    } else if (source.team) {
+      assertProductionTeam(input.productionScope, source.team);
+    }
     const stepCreates = source.steps
       .map(step => ({
         lotStep: { connect: { id: step.lotStepId } },
@@ -706,10 +753,17 @@ export async function rescheduleWipAllocation(input: {
       }))
       .filter(step => step.plannedQty > 0);
     const remainingMilliseconds = stepCreates.reduce((sum, step) => sum + step.plannedStandardMilliseconds, 0n);
-    await tx.wipWeekAllocation.update({
-      where: { id: source.id },
+    const sourceUpdate = await tx.wipWeekAllocation.updateMany({
+      where: {
+        id: source.id,
+        version: source.version,
+        status: { in: [WipWeekAllocationStatus.ACTIVE, WipWeekAllocationStatus.IN_PROGRESS] },
+      },
       data: { status: WipWeekAllocationStatus.SUPERSEDED, supersededAt: new Date(), version: { increment: 1 } },
     });
+    if (sourceUpdate.count !== 1) {
+      throw new WipWarehouseError('原排程已被其他操作改排，请刷新后查看最新安排', 'WIP_ALLOCATION_CHANGED', 409);
+    }
     const target = await tx.wipWeekAllocation.create({
       data: {
         lotId: source.lotId,
@@ -797,14 +851,23 @@ const listLotInclude = Prisma.validator<Prisma.SemiFinishedLotInclude>()({
     include: {
       team: { select: { id: true, name: true } },
       scheduledBy: { select: { id: true, displayName: true } },
-      steps: true,
+      steps: {
+        include: {
+          lotStep: { select: { stepId: true, processName: true, position: true } },
+        },
+        orderBy: { lotStep: { position: 'asc' } },
+      },
     },
     orderBy: { createdAt: 'desc' },
   },
 });
 
 function serializeAllocation(allocation: Prisma.WipWeekAllocationGetPayload<{
-  include: { team: { select: { id: true; name: true } }; scheduledBy: { select: { id: true; displayName: true } }; steps: true };
+  include: {
+    team: { select: { id: true; name: true } };
+    scheduledBy: { select: { id: true; displayName: true } };
+    steps: { include: { lotStep: { select: { stepId: true; processName: true; position: true } } } };
+  };
 }>) {
   return {
     id: allocation.id,
@@ -820,15 +883,24 @@ function serializeAllocation(allocation: Prisma.WipWeekAllocationGetPayload<{
     completedHours: hours(allocation.completedStandardMilliseconds),
     status: allocation.status,
     reason: allocation.reason,
+    version: allocation.version,
     scheduledBy: allocation.scheduledBy,
     scheduledAt: allocation.scheduledAt.toISOString(),
+    supersededAt: allocation.supersededAt?.toISOString() || null,
     steps: allocation.steps.map(step => ({
       id: step.id,
       lotStepId: step.lotStepId,
+      stepId: step.lotStep.stepId,
+      processName: step.lotStep.processName,
+      position: step.lotStep.position,
       plannedQty: step.plannedQty,
       completedQty: step.completedQty,
+      remainingQty: Math.max(0, step.plannedQty - step.completedQty),
       plannedHours: hours(step.plannedStandardMilliseconds),
       completedHours: hours(step.completedStandardMilliseconds),
+      remainingHours: hours(step.plannedStandardMilliseconds > step.completedStandardMilliseconds
+        ? step.plannedStandardMilliseconds - step.completedStandardMilliseconds
+        : 0n),
       status: step.status,
     })),
   };

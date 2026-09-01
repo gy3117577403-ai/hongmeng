@@ -168,11 +168,26 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .wip-allocation-list article small,
 .wip-allocation-list article span { color: var(--wip-muted); font-size: 9px; }
 .wip-allocation-list article > button { grid-column: 1 / -1; height: 28px; border: 1px solid #f0af79; border-radius: 7px; background: #fff8f1; color: #bd5119; font-weight: 800; cursor: pointer; }
+.wip-effective-arrangements > header > span { display: flex; flex-direction: column; }
+.wip-effective-arrangements > header small { color: var(--wip-orange); font-size: 9px; }
+.wip-effective-arrangements article.effective { padding: 10px; border: 1px solid #f2c39e; border-radius: 9px; background: linear-gradient(135deg, #fff9f3, #fff); }
+.wip-effective-arrangements .wip-empty.compact { padding: 16px 8px; }
+.wip-allocation-history { margin: 0 9px 12px; border: 1px solid var(--wip-line); border-radius: 10px; background: #f8fafc; }
+.wip-allocation-history summary { min-height: 38px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: #52657a; cursor: pointer; list-style: none; }
+.wip-allocation-history summary::-webkit-details-marker { display: none; }
+.wip-allocation-history summary span { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; }
+.wip-allocation-history summary em { font-style: normal; font-size: 10px; }
+.wip-allocation-history > div { padding: 0 10px 8px; }
+.wip-allocation-history article { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 8px 0; border-top: 1px dashed #dce4eb; }
+.wip-allocation-history article > div { display: flex; flex-direction: column; min-width: 0; }
+.wip-allocation-history article small,
+.wip-allocation-history article span { color: var(--wip-muted); font-size: 9px; }
+.wip-allocation-history article > i { align-self: start; padding: 4px 7px; border-radius: 999px; background: #edf1f5; color: #627184; font-style: normal; font-size: 9px; font-weight: 800; }
 .wip-detail-empty { min-height: 480px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--wip-muted); }
 .wip-detail-empty svg { color: #ed9d61; }
 .wip-empty { padding: 30px 15px; color: var(--wip-muted); text-align: center; font-size: 11px; }
 
-.wip-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgb(18 34 54 / 52%); backdrop-filter: blur(3px); }
+.wip-modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgb(18 34 54 / 52%); backdrop-filter: blur(1px); }
 .wip-entry-modal { width: min(760px, calc(100vw - 40px)); max-height: calc(100vh - 42px); overflow: hidden; border-radius: 16px; background: #fff; box-shadow: 0 24px 80px rgb(10 25 43 / 32%); }
 .wip-entry-modal > header { min-height: 74px; display: flex; justify-content: space-between; align-items: center; padding: 13px 17px; color: #fff; background: linear-gradient(120deg, #e85a17, #f58a37); }
 .wip-entry-modal > header span { display: flex; flex-direction: column; }
@@ -205,6 +220,76 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .wip-entry-modal footer button svg { width: 17px; }
 .wip-entry-modal footer button.secondary { color: #53657a; background: #e8edf2; }
 
+.wip-reschedule-backdrop { background: rgb(15 29 48 / 58%); }
+.wip-reschedule-modal { width: min(900px, calc(100vw - 36px)); max-height: calc(100vh - 34px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #f3b57f; border-radius: 18px; background: #fff; box-shadow: 0 28px 100px rgb(10 25 43 / 38%); outline: none; }
+.wip-reschedule-modal > header { min-height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #f2d6bd; background: linear-gradient(120deg, #fff8f1, #fff); }
+.wip-reschedule-modal > header div { min-width: 0; }
+.wip-reschedule-modal > header span { color: var(--wip-orange); font-size: 10px; font-weight: 850; letter-spacing: .06em; }
+.wip-reschedule-modal > header h2 { margin: 2px 0; font-size: 23px; }
+.wip-reschedule-modal > header p { margin: 0; color: var(--wip-muted); font-size: 11px; }
+.wip-reschedule-modal > header button { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid #e2e8ef; border-radius: 10px; background: #fff; color: #617186; cursor: pointer; }
+.wip-reschedule-progress { display: grid; grid-template-columns: max-content 1fr max-content 1fr max-content; align-items: center; gap: 10px; padding: 10px 24px; border-bottom: 1px solid var(--wip-line); background: #fff; }
+.wip-reschedule-progress span { display: inline-flex; align-items: center; gap: 7px; color: #8090a2; }
+.wip-reschedule-progress span b { width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid #cfd8e2; border-radius: 50%; background: #fff; font-size: 10px; }
+.wip-reschedule-progress span em { font-size: 10px; font-style: normal; font-weight: 800; }
+.wip-reschedule-progress span.active { color: var(--wip-orange); }
+.wip-reschedule-progress span.active b { border-color: var(--wip-orange); background: var(--wip-orange); color: #fff; }
+.wip-reschedule-progress span.done { color: #547189; }
+.wip-reschedule-progress span.done b { border-color: #b8c6d3; background: #eef3f7; color: #547189; }
+.wip-reschedule-progress > i { height: 1px; background: #dfe6ed; }
+.wip-reschedule-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px 18px; }
+.wip-current-arrangement { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 10px; border: 1px solid #f1ceb0; border-radius: 12px; background: #fffaf5; }
+.wip-current-arrangement span { min-width: 0; padding: 8px 10px; border-right: 1px solid #efd9c7; }
+.wip-current-arrangement span:last-child { border-right: 0; }
+.wip-current-arrangement small { display: block; margin-bottom: 3px; color: var(--wip-muted); font-size: 9px; }
+.wip-current-arrangement strong { font-size: 12px; }
+.wip-reschedule-section { margin-top: 12px; padding: 12px; border: 1px solid var(--wip-line); border-radius: 12px; }
+.wip-reschedule-section > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.wip-reschedule-section > header > span { display: inline-flex; align-items: center; gap: 8px; }
+.wip-reschedule-section > header b { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; color: #fff; background: var(--wip-orange); font-size: 11px; }
+.wip-reschedule-section > header strong { font-size: 14px; }
+.wip-reschedule-section > header small { color: var(--wip-muted); font-size: 9px; }
+.wip-reschedule-weeks { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; }
+.wip-reschedule-weeks button { position: relative; min-height: 78px; display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; padding: 9px; border: 1px solid #dce4eb; border-radius: 10px; background: #fff; color: var(--wip-ink); text-align: left; cursor: pointer; }
+.wip-reschedule-weeks button:hover:not(:disabled) { border-color: #f2a66e; background: #fffaf5; }
+.wip-reschedule-weeks button.selected { border-color: var(--wip-orange); background: #fff4e9; box-shadow: 0 0 0 2px rgb(242 106 33 / 10%); }
+.wip-reschedule-weeks button:disabled { background: #f3f5f7; }
+.wip-reschedule-weeks span { display: flex; flex-direction: column; }
+.wip-reschedule-weeks small { color: var(--wip-orange); font-size: 9px; font-weight: 850; }
+.wip-reschedule-weeks strong { font-size: 11px; }
+.wip-reschedule-weeks em { color: var(--wip-muted); font-style: normal; font-size: 9px; }
+.wip-reschedule-weeks i { position: absolute; right: 8px; top: 8px; width: 12px; height: 12px; border: 2px solid #c8d2dc; border-radius: 50%; }
+.wip-reschedule-weeks button.selected i { border: 3px solid var(--wip-orange); background: #fff; }
+.wip-reschedule-impact { border: 1px solid #e3e9ef; border-radius: 9px; overflow: hidden; }
+.wip-reschedule-impact > div { min-height: 36px; display: grid; grid-template-columns: minmax(170px, 1.4fr) .8fr .8fr .8fr; align-items: center; gap: 8px; padding: 0 10px; border-top: 1px solid #e7edf2; font-size: 10px; }
+.wip-reschedule-impact > div:first-child { border-top: 0; }
+.wip-reschedule-impact > div.head { min-height: 30px; color: #66768b; background: #f5f8fa; font-weight: 800; }
+.wip-reschedule-impact > div:not(.head) span:first-child { display: inline-flex; gap: 7px; align-items: center; font-weight: 800; }
+.wip-reschedule-impact > div:not(.head) span:first-child b { color: var(--wip-orange); }
+.wip-reschedule-impact > div:not(.head) span:last-child { color: #087252; font-weight: 800; }
+.wip-reschedule-rule { margin: 8px 0 0; display: flex; align-items: center; gap: 6px; color: #8b5b13; font-size: 9px; }
+.wip-reschedule-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.wip-reschedule-fields label { display: flex; flex-direction: column; gap: 4px; color: #617187; font-size: 10px; font-weight: 750; }
+.wip-reschedule-fields label.wide { grid-column: 1 / -1; }
+.wip-reschedule-fields select,
+.wip-reschedule-fields textarea { min-height: 38px; border: 1px solid #d7e0e8; border-radius: 8px; padding: 8px 10px; color: var(--wip-ink); background: #fff; }
+.wip-reschedule-fields textarea { min-height: 60px; resize: vertical; }
+.wip-reschedule-error { margin: 10px 0 0; display: flex; align-items: center; gap: 6px; padding: 9px 11px; color: #a2372c; background: #fff1ee; border-radius: 8px; font-size: 10px; }
+.wip-reschedule-modal > footer { min-height: 64px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 18px; border-top: 1px solid var(--wip-line); background: #f8fafc; }
+.wip-reschedule-modal > footer > span { margin-right: auto; color: var(--wip-muted); font-size: 10px; }
+.wip-reschedule-modal > footer button { min-width: 88px; height: 40px; border: 1px solid #d8e0e8; border-radius: 9px; background: #fff; color: #53657a; font-weight: 800; cursor: pointer; }
+.wip-reschedule-modal > footer button.primary { min-width: 176px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-color: var(--wip-orange); color: #fff; background: var(--wip-orange); }
+.wip-reschedule-success { min-height: 520px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 36px; text-align: center; }
+.wip-reschedule-success > svg { color: var(--wip-green); }
+.wip-reschedule-success h3 { margin: 12px 0 5px; font-size: 24px; }
+.wip-reschedule-success > p { max-width: 620px; margin: 0; color: var(--wip-muted); line-height: 1.7; }
+.wip-reschedule-success > div { width: min(520px, 100%); display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin: 22px 0; }
+.wip-reschedule-success > div span { padding: 13px; border: 1px solid #dfe8e3; border-radius: 10px; background: #f3fbf7; }
+.wip-reschedule-success > div small { display: block; color: var(--wip-muted); }
+.wip-reschedule-success nav { display: flex; gap: 9px; }
+.wip-reschedule-success nav a { min-width: 160px; height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #f0ad75; border-radius: 9px; color: #bd5119; background: #fff8f1; font-weight: 800; text-decoration: none; }
+.wip-reschedule-success nav a:first-child { color: #fff; background: var(--wip-orange); }
+
 @media (max-width: 1500px) {
   .wip-workbench { padding-left: 84px; }
   .wip-layout { grid-template-columns: 280px minmax(430px, 1fr) 340px; }
@@ -218,4 +303,23 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .wip-summary { grid-template-columns: repeat(3, 1fr); }
   .wip-layout { height: auto; grid-template-columns: 300px 1fr; }
   .wip-detail-panel { grid-column: 1 / -1; max-height: none; }
+  .wip-reschedule-weeks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .wip-reschedule-modal { width: calc(100vw - 18px); max-height: calc(100vh - 18px); }
+  .wip-reschedule-progress { padding-inline: 14px; gap: 6px; }
+  .wip-reschedule-progress span em { display: none; }
+  .wip-current-arrangement { grid-template-columns: 1fr; }
+  .wip-current-arrangement span { border-right: 0; border-bottom: 1px solid #efd9c7; }
+  .wip-current-arrangement span:last-child { border-bottom: 0; }
+  .wip-reschedule-section > header { align-items: flex-start; flex-direction: column; }
+  .wip-reschedule-weeks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wip-reschedule-impact { overflow-x: auto; }
+  .wip-reschedule-impact > div { min-width: 620px; }
+  .wip-reschedule-fields { grid-template-columns: 1fr; }
+  .wip-reschedule-fields label.wide { grid-column: auto; }
+  .wip-reschedule-modal > footer { align-items: stretch; flex-wrap: wrap; }
+  .wip-reschedule-modal > footer > span { width: 100%; }
+  .wip-reschedule-modal > footer button { flex: 1; }
 }

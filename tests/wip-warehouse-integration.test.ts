@@ -4,6 +4,8 @@ import test from 'node:test';
 import { WipWeekAllocationStatus } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { chinaWeekRange } from '../lib/production-planning';
+import { loadProductionExecution, resolveProductionWeek } from '../lib/production-execution';
+import { loadWipContinuations } from '../lib/wip-continuations';
 import {
   enterWipWarehouse,
   loadWipWeekLaborMetrics,
@@ -244,6 +246,68 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
     });
     assert.equal(rescheduled.quantity, 4);
     assert.equal(rescheduled.plannedStandardMilliseconds, 8_000n);
+
+    const [targetContinuations, sourceContinuations, targetExecution, sourceExecution] = await Promise.all([
+      loadWipContinuations({ targetWeekStartDate: laterWeekStart, productionScope: scope }),
+      loadWipContinuations({ sourceWeekStartDate: currentWeek.start, productionScope: scope }),
+      loadProductionExecution({
+        week: { scope: 'afterNext', weekStart: laterWeekStart, weekEnd: laterWeekEnd },
+        includeSummary: true,
+        productionScope: scope,
+      }),
+      loadProductionExecution({
+        week: { scope: 'current', weekStart: currentWeek.start, weekEnd: currentWeek.end },
+        includeSummary: true,
+        productionScope: scope,
+      }),
+    ]);
+    const targetProjection = targetContinuations.find(item => item.allocationId === rescheduled.id);
+    assert.ok(targetProjection);
+    assert.equal(targetProjection.remainingQty, 4);
+    assert.equal(targetProjection.remainingStandardMilliseconds, 8_000);
+    assert.deepEqual(targetProjection.steps.map(step => step.processName), ['剩余工序']);
+
+    const resolvedAfterNextWeek = await resolveProductionWeek(null, null, 'afterNext');
+    const targetProjectionFromChinaBoundary = await loadWipContinuations({
+      targetWeekStartDate: resolvedAfterNextWeek.weekStart,
+      workOrderId: workOrder.id,
+      productionScope: scope,
+    });
+    assert.equal(
+      targetProjectionFromChinaBoundary[0]?.allocationId,
+      rescheduled.id,
+      'China-local production week boundaries must resolve the date-only WIP allocation',
+    );
+    assert.ok(sourceContinuations.some(item => item.allocationId === rescheduled.id && item.crossWeek));
+    assert.ok(targetExecution.items.some(item => item.executionKey === `wip:${rescheduled.id}`));
+    const sourceExecutionOrder = sourceExecution.items.find(item => item.id === workOrder.id);
+    assert.ok(sourceExecutionOrder);
+    assert.ok(sourceExecutionOrder.wipMovedOutContinuations.some(item => item.allocationId === rescheduled.id));
+
+    await assert.rejects(
+      () => rescheduleWipAllocation({
+        allocationId: allocation.id,
+        targetWeekStartDate: nextWeekStart,
+        reason: '复用请求编号但改变目标周',
+        actorId: actor.id,
+        actorName: actor.displayName,
+        idempotencyKey: `${prefix}:reschedule`,
+        productionScope: scope,
+      }),
+      (error: unknown) => Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'WIP_IDEMPOTENCY_CONFLICT'),
+    );
+    await assert.rejects(
+      () => rescheduleWipAllocation({
+        allocationId: allocation.id,
+        targetWeekStartDate: laterWeekStart,
+        reason: '重复改排已失效来源安排',
+        actorId: actor.id,
+        actorName: actor.displayName,
+        idempotencyKey: `${prefix}:reschedule:stale`,
+        productionScope: scope,
+      }),
+      (error: unknown) => Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'WIP_ALLOCATION_NOT_EDITABLE'),
+    );
 
     const [sourceMetrics, oldTargetMetrics, newTargetMetrics] = await Promise.all([
       loadWipWeekLaborMetrics(currentWeek.start),

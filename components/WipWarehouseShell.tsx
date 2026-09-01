@@ -6,6 +6,8 @@ import {
   CalendarClock,
   CheckCircle2,
   Clock3,
+  Factory,
+  History,
   Layers3,
   LoaderCircle,
   PackageOpen,
@@ -14,7 +16,7 @@ import {
   Warehouse,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import type { CurrentUserDTO } from '@/types';
 
@@ -40,6 +42,7 @@ type Candidate = {
 
 type Allocation = {
   id: string;
+  version: number;
   sourceAllocationId: string | null;
   targetWeekStartDate: string;
   targetWeekEndDate: string;
@@ -52,6 +55,20 @@ type Allocation = {
   reason: string;
   scheduledBy: { id: string; displayName: string };
   scheduledAt: string;
+  supersededAt: string | null;
+  steps: Array<{
+    id: string;
+    stepId: string;
+    processName: string;
+    position: number;
+    plannedQty: number;
+    completedQty: number;
+    remainingQty: number;
+    plannedHours: number;
+    completedHours: number;
+    remainingHours: number;
+    status: string;
+  }>;
 };
 
 type Lot = {
@@ -140,6 +157,19 @@ type EntryDraft = {
   containerCode: string;
 };
 
+type RescheduleDraft = {
+  targetWeekStartDate: string;
+  teamId: string;
+  reasonCode: 'MATERIAL_CHANGE' | 'CAPACITY_BALANCE' | 'CUSTOMER_CHANGE' | 'OTHER';
+  note: string;
+};
+
+type RescheduleResult = {
+  allocationId: string;
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
+};
+
 const emptyData: WipPayload = {
   permissions: { canWrite: false },
   summary: { lotCount: 0, totalQuantity: 0, unscheduledQuantity: 0, scheduledQuantity: 0, totalRemainingHours: 0 },
@@ -167,6 +197,27 @@ function newRequestKey(prefix: string): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? `${prefix}:${crypto.randomUUID()}`
     : `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+}
+
+function productionExecutionLink(input: {
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
+  workOrderId: string;
+  allocationId: string;
+  weeks: WipPayload['weeks'];
+}): string {
+  const index = input.weeks.findIndex(week => week.startDate === input.targetWeekStartDate);
+  const scope = index === 0 ? 'current' : index === 1 ? 'next' : index === 2 ? 'afterNext' : 'history';
+  const params = new URLSearchParams({
+    scope,
+    workOrderId: input.workOrderId,
+    wipAllocationId: input.allocationId,
+  });
+  if (scope === 'history') {
+    params.set('weekStart', input.targetWeekStartDate);
+    params.set('weekEnd', input.targetWeekEndDate);
+  }
+  return `/production?${params.toString()}`;
 }
 
 async function responseData<T>(response: Response): Promise<{ data?: T; error?: string }> {
@@ -197,6 +248,16 @@ export default function WipWarehouseShell({
   });
   const [entryPreview, setEntryPreview] = useState<EntryPreview | null>(null);
   const [scheduleDraft, setScheduleDraft] = useState({ quantity: '', week: '', teamId: '', reason: '安排剩余半成品工序到目标生产周' });
+  const [rescheduleAllocation, setRescheduleAllocation] = useState<Allocation | null>(null);
+  const [rescheduleDraft, setRescheduleDraft] = useState<RescheduleDraft>({
+    targetWeekStartDate: '',
+    teamId: '',
+    reasonCode: 'MATERIAL_CHANGE',
+    note: '物料到货时间变化，改排剩余未完成工序',
+  });
+  const [rescheduleResult, setRescheduleResult] = useState<RescheduleResult | null>(null);
+  const [rescheduleError, setRescheduleError] = useState('');
+  const rescheduleDialogRef = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -232,9 +293,39 @@ export default function WipWarehouseShell({
     const timer = window.setTimeout(() => setToast(''), 3_000);
     return () => window.clearTimeout(timer);
   }, [toast]);
+  useEffect(() => {
+    if (!rescheduleAllocation) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = 'hidden';
+    const frame = window.requestAnimationFrame(() => rescheduleDialogRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !saving) {
+        event.preventDefault();
+        setRescheduleAllocation(null);
+        setRescheduleResult(null);
+        setRescheduleError('');
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, [rescheduleAllocation, saving]);
 
   const selectedLot = data.lots.find(lot => lot.id === selectedLotId) || null;
   const openLots = useMemo(() => data.lots.filter(lot => !['COMPLETED', 'CANCELLED'].includes(lot.scheduleStatus)), [data.lots]);
+  const currentAllocations = useMemo(
+    () => selectedLot?.allocations.filter(allocation => ['ACTIVE', 'IN_PROGRESS', 'COMPLETED'].includes(allocation.status)) || [],
+    [selectedLot],
+  );
+  const historicalAllocations = useMemo(
+    () => selectedLot?.allocations.filter(allocation => ['SUPERSEDED', 'CANCELLED'].includes(allocation.status)) || [],
+    [selectedLot],
+  );
 
   function openEntry(candidate: Candidate): void {
     setEntryCandidate(candidate);
@@ -327,26 +418,60 @@ export default function WipWarehouseShell({
     }
   }
 
-  async function reschedule(allocation: Allocation): Promise<void> {
+  function openReschedule(allocation: Allocation): void {
     const defaultWeek = data.weeks.find(week => week.startDate !== allocation.targetWeekStartDate)?.startDate || '';
-    const targetWeekStartDate = window.prompt('请输入新的目标周开始日期（YYYY-MM-DD，只能本周或未来周）', defaultWeek)?.trim();
-    if (!targetWeekStartDate) return;
-    const reason = window.prompt('请输入改排原因（已完成部分仍保留在原目标周）', '物料到货时间变化，改排剩余未完成工序')?.trim();
-    if (!reason) return;
+    setRescheduleAllocation(allocation);
+    setRescheduleDraft({
+      targetWeekStartDate: defaultWeek,
+      teamId: allocation.team?.id || '',
+      reasonCode: 'MATERIAL_CHANGE',
+      note: '物料到货时间变化，改排剩余未完成工序',
+    });
+    setRescheduleResult(null);
+    setRescheduleError('');
+  }
+
+  function closeReschedule(): void {
+    if (saving) return;
+    setRescheduleAllocation(null);
+    setRescheduleResult(null);
+    setRescheduleError('');
+  }
+
+  async function commitReschedule(): Promise<void> {
+    if (!rescheduleAllocation || !rescheduleDraft.targetWeekStartDate) return;
+    const reasonLabels: Record<RescheduleDraft['reasonCode'], string> = {
+      MATERIAL_CHANGE: '物料到货变化',
+      CAPACITY_BALANCE: '产能调整',
+      CUSTOMER_CHANGE: '客户交期调整',
+      OTHER: '其他原因',
+    };
+    const reason = `${reasonLabels[rescheduleDraft.reasonCode]}：${rescheduleDraft.note.trim()}`;
+    if (rescheduleDraft.note.trim().length < 2) {
+      setRescheduleError('请填写至少 2 个字的改排说明');
+      return;
+    }
     setSaving(true);
-    setError('');
+    setRescheduleError('');
     try {
-      await post({
+      const result = await post<{ id: string }>({
         action: 'reschedule',
-        allocationId: allocation.id,
-        targetWeekStartDate,
+        allocationId: rescheduleAllocation.id,
+        targetWeekStartDate: rescheduleDraft.targetWeekStartDate,
+        teamId: rescheduleDraft.teamId || null,
         reason,
         idempotencyKey: newRequestKey('wip-reschedule-ui'),
       });
       setToast('改排完成：原周只保留已完成部分，未完成工时已迁移到新目标周');
       await load(true);
+      const targetWeek = data.weeks.find(week => week.startDate === rescheduleDraft.targetWeekStartDate);
+      setRescheduleResult({
+        allocationId: result.id,
+        targetWeekStartDate: rescheduleDraft.targetWeekStartDate,
+        targetWeekEndDate: targetWeek?.endDate || '',
+      });
     } catch (reasonError) {
-      setError(reasonError instanceof Error ? reasonError.message : '改排失败');
+      setRescheduleError(reasonError instanceof Error ? reasonError.message : '改排失败');
     } finally {
       setSaving(false);
     }
@@ -427,7 +552,8 @@ export default function WipWarehouseShell({
             <label>原因<input maxLength={300} value={scheduleDraft.reason} onChange={event => setScheduleDraft({ ...scheduleDraft, reason: event.target.value })} /></label>
             <button type="button" disabled={saving || !scheduleDraft.week || !Number(scheduleDraft.quantity)} onClick={() => void scheduleLot()}>{saving ? <LoaderCircle className="spin" size={16} /> : <CalendarClock size={16} />}确认排入目标周</button>
           </section>}
-          <section className="wip-allocation-list"><header><strong>周次安排记录</strong><em>{selectedLot.allocations.length}</em></header>{selectedLot.allocations.map(allocation => <article key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity} 件 · {allocation.plannedHours} 小时</strong><span>{allocation.team?.name || '未指定班组'} · {allocation.reason}</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i>{['ACTIVE', 'IN_PROGRESS'].includes(allocation.status) && data.permissions.canWrite && <button type="button" disabled={saving} onClick={() => void reschedule(allocation)}>改排未完成</button>}</article>)}</section>
+          <section className="wip-allocation-list wip-effective-arrangements"><header><span><small>当前有效口径</small><strong>当前安排</strong></span><em>{currentAllocations.length}</em></header>{currentAllocations.map(allocation => <article className="effective" key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity.toLocaleString()} 件 · 剩余 {Math.max(0, allocation.quantity - allocation.completedQty).toLocaleString()} 件</strong><span>{allocation.team?.name || '未指定班组'} · 剩余 {(allocation.plannedHours - allocation.completedHours).toFixed(2)} 小时</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i>{['ACTIVE', 'IN_PROGRESS'].includes(allocation.status) && data.permissions.canWrite && <button type="button" disabled={saving} onClick={() => openReschedule(allocation)}>改排剩余未完成部分</button>}</article>)}{!currentAllocations.length && <p className="wip-empty compact">当前没有有效周次安排，可在上方排入目标周。</p>}</section>
+          {historicalAllocations.length > 0 && <details className="wip-allocation-history"><summary><span><History size={14} />历史安排</span><em>{historicalAllocations.length} 条</em></summary><div>{historicalAllocations.map(allocation => <article key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity.toLocaleString()} 件 · 已完成 {allocation.completedQty.toLocaleString()} 件</strong><span>{allocation.reason}</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i></article>)}</div></details>}
         </> : <div className="wip-detail-empty"><PackageOpen size={36} /><strong>选择半成品批次</strong><span>查看剩余工序、标准工时和跨周安排。</span></div>}
       </aside>
     </section>
@@ -439,6 +565,48 @@ export default function WipWarehouseShell({
         {entryPreview ? <section className="wip-entry-preview"><header><CheckCircle2 /><span><strong>转仓影响已核对</strong><small>不会撤回或迁移任何已报工事实</small></span></header><div><span><small>保留在来源周</small><strong>{entryPreview.completedSteps.length ? entryPreview.completedSteps.map(step => step.processName).join('、') : '尚无整道完成工序'}</strong></span><span><small>进入半成品仓</small><strong>{entryPreview.remainingSteps.map(step => step.processName).join('、')}</strong></span><span><small>暂不计周计划</small><strong>{entryPreview.quantity} 件 · {entryPreview.remainingHours} 小时</strong></span></div>{entryPreview.materialWarning && <p><AlertTriangle />{entryPreview.materialWarning}</p>}</section> : <section className="wip-entry-rule"><AlertTriangle /><span><strong>转仓不是撤单或暂停</strong><small>产品仍可正常开工和二维码报工。只有进入半成品仓的剩余数量需要按目标周执行；物料未齐或料错本身不会冻结。</small></span></section>}
       </div>
       <footer><span>{entryPreview ? '确认后生成独立半成品批次和完整审计记录' : '先预检剩余工序、数量和工时'}</span>{entryPreview ? <><button type="button" className="secondary" disabled={saving} onClick={() => setEntryPreview(null)}>返回修改</button><button type="button" disabled={saving} onClick={() => void commitEntry()}>{saving ? <LoaderCircle className="spin" /> : <PackageOpen />}确认转入</button></> : <button type="button" disabled={saving || !Number(entryDraft.quantity) || entryDraft.reason.trim().length < 2} onClick={() => void previewEntry()}>{saving ? <LoaderCircle className="spin" /> : <ArrowRight />}预检影响</button>}</footer>
+    </section></div>}
+
+    {rescheduleAllocation && selectedLot && <div className="wip-modal-backdrop wip-reschedule-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeReschedule(); }}><section ref={rescheduleDialogRef} className="wip-reschedule-modal" role="dialog" aria-modal="true" aria-labelledby="wip-reschedule-title" tabIndex={-1} data-testid="wip-reschedule-dialog">
+      <header>
+        <div><span>半成品续作 · 只迁移未完成事实</span><h2 id="wip-reschedule-title">改排剩余半成品</h2><p>{selectedLot.specification} · {selectedLot.lotNo}</p></div>
+        <button type="button" aria-label="关闭改排窗口" disabled={saving} onClick={closeReschedule}><X size={20} /></button>
+      </header>
+      <nav className="wip-reschedule-progress" aria-label="改排步骤">
+        <span className={rescheduleDraft.targetWeekStartDate || rescheduleResult ? 'done' : 'active'}><b>1</b><em>选择周次</em></span>
+        <i />
+        <span className={!rescheduleResult && rescheduleDraft.targetWeekStartDate ? 'active' : rescheduleResult ? 'done' : ''}><b>2</b><em>确认影响</em></span>
+        <i />
+        <span className={rescheduleResult ? 'active' : ''}><b>3</b><em>完成</em></span>
+      </nav>
+      {rescheduleResult ? <div className="wip-reschedule-success" data-testid="wip-reschedule-success">
+        <CheckCircle2 size={46} />
+        <h3>改排已完成</h3>
+        <p>原周已报工数量、报工记录和员工工时保持不变；剩余工序已进入 {rescheduleResult.targetWeekStartDate} 至 {rescheduleResult.targetWeekEndDate}。</p>
+        <div><span><small>新半成品安排</small><strong>{Math.max(0, rescheduleAllocation.quantity - rescheduleAllocation.completedQty).toLocaleString()} 件</strong></span><span><small>剩余标准工时</small><strong>{Math.max(0, rescheduleAllocation.plannedHours - rescheduleAllocation.completedHours).toFixed(2)} 小时</strong></span></div>
+        <nav>
+          <a href={productionExecutionLink({ targetWeekStartDate: rescheduleResult.targetWeekStartDate, targetWeekEndDate: rescheduleResult.targetWeekEndDate, workOrderId: selectedLot.workOrderId, allocationId: rescheduleResult.allocationId, weeks: data.weeks })}><Factory size={16} />查看生产执行</a>
+          <a href={`/weekly-plan-center?week=${encodeURIComponent(rescheduleResult.targetWeekStartDate)}`}><CalendarClock size={16} />查看计划中心</a>
+        </nav>
+      </div> : <>
+        <div className="wip-reschedule-body">
+          <section className="wip-current-arrangement"><span><small>当前有效安排</small><strong>{rescheduleAllocation.targetWeekStartDate} 至 {rescheduleAllocation.targetWeekEndDate}</strong></span><span><small>已完成事实保留</small><strong>{rescheduleAllocation.completedQty.toLocaleString()} 件 · {rescheduleAllocation.completedHours.toFixed(2)} 小时</strong></span><span><small>本次迁移</small><strong>{Math.max(0, rescheduleAllocation.quantity - rescheduleAllocation.completedQty).toLocaleString()} 件 · {Math.max(0, rescheduleAllocation.plannedHours - rescheduleAllocation.completedHours).toFixed(2)} 小时</strong></span></section>
+
+          <section className="wip-reschedule-section"><header><span><b>1</b><strong>选择目标生产周</strong></span><small>目标周会立即获得一条可执行的半成品续作任务</small></header><div className="wip-reschedule-weeks" role="radiogroup" aria-label="目标生产周">
+            {data.weeks.slice(0, 5).map(week => {
+              const disabled = week.startDate === rescheduleAllocation.targetWeekStartDate;
+              const selected = rescheduleDraft.targetWeekStartDate === week.startDate;
+              return <button key={week.startDate} type="button" role="radio" aria-checked={selected} disabled={disabled || saving} className={selected ? 'selected' : ''} onClick={() => setRescheduleDraft({ ...rescheduleDraft, targetWeekStartDate: week.startDate })}><span><small>{week.label}</small><strong>{week.startDate.slice(5)} - {week.endDate.slice(5)}</strong></span><em>{disabled ? '当前安排' : `${week.lotCount} 批 · ${week.plannedHours.toLocaleString()} 小时`}</em><i /></button>;
+            })}
+          </div></section>
+
+          <section className="wip-reschedule-section"><header><span><b>2</b><strong>核对迁移影响</strong></span><small>数据库工艺路线不回退，界面按半成品任务投影剩余工序</small></header><div className="wip-reschedule-impact"><div className="head"><span>剩余工序</span><span>剩余数量</span><span>剩余工时</span><span>改排结果</span></div>{rescheduleAllocation.steps.filter(step => step.remainingQty > 0).map(step => <div key={step.id}><span><b>{String(step.position).padStart(2, '0')}</b>{step.processName}</span><span>{step.remainingQty.toLocaleString()} 件</span><span>{step.remainingHours.toFixed(2)} 小时</span><span>进入目标周</span></div>)}</div><p className="wip-reschedule-rule"><AlertTriangle size={15} />已完成数量、报工记录、员工工时和原始工艺路线全部保留；本次仅生成新的剩余任务投影。</p></section>
+
+          <section className="wip-reschedule-section"><header><span><b>3</b><strong>执行信息与原因</strong></span><small>用于计划追踪和审计</small></header><div className="wip-reschedule-fields"><label>执行班组<select value={rescheduleDraft.teamId} disabled={saving} onChange={event => setRescheduleDraft({ ...rescheduleDraft, teamId: event.target.value })}><option value="">暂不指定</option>{data.teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>原因类别<select value={rescheduleDraft.reasonCode} disabled={saving} onChange={event => setRescheduleDraft({ ...rescheduleDraft, reasonCode: event.target.value as RescheduleDraft['reasonCode'] })}><option value="MATERIAL_CHANGE">物料到货变化</option><option value="CAPACITY_BALANCE">产能调整</option><option value="CUSTOMER_CHANGE">客户交期调整</option><option value="OTHER">其他原因</option></select></label><label className="wide">改排说明<textarea maxLength={300} value={rescheduleDraft.note} disabled={saving} onChange={event => setRescheduleDraft({ ...rescheduleDraft, note: event.target.value })} /></label></div></section>
+          {rescheduleError && <p className="wip-reschedule-error" role="alert"><AlertTriangle size={15} />{rescheduleError}</p>}
+        </div>
+        <footer><span>提交后，可直接跳转核对计划中心和生产执行</span><button type="button" disabled={saving} onClick={closeReschedule}>取消</button><button type="button" className="primary" disabled={saving || !rescheduleDraft.targetWeekStartDate || rescheduleDraft.note.trim().length < 2} onClick={() => void commitReschedule()} data-testid="wip-reschedule-submit">{saving ? <><LoaderCircle className="spin" size={16} />正在改排</> : <><CalendarClock size={16} />确认改排剩余任务</>}</button></footer>
+      </>}
     </section></div>}
   </main>;
 }

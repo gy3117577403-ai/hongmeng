@@ -83,6 +83,7 @@ import type {
   ProductionPlanPriority,
   ProductionPlanProductOptionDTO,
   ProductionPlanningPeriodsDTO,
+  ProductionPlanningWipContinuationDTO,
   ProductionPlanningMonthDTO,
   ProductionPlanningSummaryDTO,
 } from '@/types';
@@ -133,6 +134,7 @@ const readyFilters = new Set<PlanningReadinessFilter>(['ready_preparation', 'rea
 type PlanningPayload = {
   ok?: boolean;
   orders?: ProductionPlanOrderDTO[];
+  wipContinuations?: ProductionPlanningWipContinuationDTO[];
   summary?: ProductionPlanningSummaryDTO;
   customers?: string[];
   productOptions?: ProductionPlanProductOptionDTO[];
@@ -616,6 +618,7 @@ export default function PlanningCenterShell({
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [view, setView] = useState<PlanningView>('schedule');
   const [orders, setOrders] = useState<ProductionPlanOrderDTO[]>([]);
+  const [wipContinuations, setWipContinuations] = useState<ProductionPlanningWipContinuationDTO[]>([]);
   const [summary, setSummary] = useState<ProductionPlanningSummaryDTO>(emptySummary);
   const [customers, setCustomers] = useState<string[]>([]);
   const [productOptions, setProductOptions] = useState<ProductionPlanProductOptionDTO[]>([]);
@@ -747,6 +750,7 @@ export default function PlanningCenterShell({
           ? body.warnings.filter((warning): warning is ClientLoadWarning => Boolean(warning && typeof warning.code === 'string'))
           : [];
         setOrders(body.orders || []);
+        setWipContinuations(body.wipContinuations || []);
         setSummary(body.summary || emptySummary);
         setCustomers(body.customers || []);
         setProductOptions(current => auxiliaryValueAfterLoad(
@@ -1062,6 +1066,16 @@ export default function PlanningCenterShell({
   const scheduleRows = useMemo(() => baseScheduleRows.filter(({ order, batch }) => (
     matchesPlanningReadiness(order, batch, readinessFilters)
   )), [baseScheduleRows, readinessFilters]);
+  const selectedWipContinuations = useMemo(() => {
+    const word = keyword.trim().toLocaleLowerCase('zh-CN');
+    return wipContinuations.filter(item => {
+      if (!selectedWeekStartDate || item.targetWeekStartDate !== selectedWeekStartDate) return false;
+      if (customer && item.customerName !== customer) return false;
+      if (!word) return true;
+      return [item.customerName, item.productName, item.specification, item.lotNo, item.workOrderCode]
+        .some(value => value.toLocaleLowerCase('zh-CN').includes(word));
+    });
+  }, [customer, keyword, selectedWeekStartDate, wipContinuations]);
   const carryoverRows = useMemo(() => (
     periods
       ? baseOpenScheduleRows.filter(({ batch }) => batch.weekEndDate < periods.current.weekStartDate)
@@ -1135,6 +1149,8 @@ export default function PlanningCenterShell({
     const total = batchTotalMilliseconds(item.order, item.batch);
     return sum + (total ? Number(total) : 0);
   }, 0);
+  const selectedWipQuantity = selectedWipContinuations.reduce((sum, item) => sum + item.quantity, 0);
+  const selectedWipMilliseconds = selectedWipContinuations.reduce((sum, item) => sum + item.plannedStandardMilliseconds, 0);
   const carryoverQuantity = carryoverRows.reduce((sum, item) => sum + item.batch.quantity, 0);
   const historyQuantity = historyRows.reduce((sum, item) => sum + item.batch.quantity, 0);
   const editingBatch = batchDialog?.batchId
@@ -2264,7 +2280,7 @@ export default function PlanningCenterShell({
                 <button className="import" type="button" onClick={event => openPlanningImport(event.currentTarget)}><Upload size={15} />导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button>
                 <em>{planDataAvailable
-                  ? <>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}</>
+                  ? <>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 个正常批次`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}{selectedWipContinuations.length ? ` ｜ 半成品续作 ${selectedWipContinuations.length} 项 · ${selectedWipQuantity.toLocaleString()} 件 · ${duration(selectedWipMilliseconds)}` : ''}</>
                   : '排产数据未获取'}</em>
               </div>
             </header>
@@ -2273,6 +2289,41 @@ export default function PlanningCenterShell({
               weekStartDate={selectedWeek?.weekStartDate}
               weekEndDate={selectedWeek?.weekEndDate}
             />
+            {selectedWipContinuations.length > 0 && <section className="planning-wip-lane" aria-label={`半成品续作，共 ${selectedWipContinuations.length} 项`}>
+              <header>
+                <span><Boxes size={17} /><strong>半成品续作</strong><em>{selectedWipContinuations.length} 项</em></span>
+                <small>仅剩余工序和工时进入本周计划；来源周已报工事实保持不变</small>
+                <a href="/workspace/wip">进入半成品仓<ChevronRight size={13} /></a>
+              </header>
+              <div className="planning-wip-lane-list hm-scroll-region">
+                {selectedWipContinuations.map(item => {
+                  const productionScope = selectedWeekKey === 'current'
+                    ? 'current'
+                    : selectedWeekKey === 'next'
+                      ? 'next'
+                      : selectedWeekKey === 'afterNext'
+                        ? 'afterNext'
+                        : 'history';
+                  const productionParams = new URLSearchParams({
+                    scope: productionScope,
+                    workOrderId: item.workOrderId,
+                    wipAllocationId: item.allocationId,
+                  });
+                  if (productionScope === 'history') {
+                    productionParams.set('weekStart', item.targetWeekStartDate);
+                    productionParams.set('weekEnd', item.targetWeekEndDate);
+                  }
+                  return <article key={item.allocationId} data-wip-allocation-id={item.allocationId}>
+                    <span className="planning-wip-marker"><Boxes size={16} /></span>
+                    <div className="planning-wip-identity"><small>{item.lotNo}</small><strong>{item.specification}</strong><em>{item.customerName} · {item.productName}</em></div>
+                    <div className="planning-wip-quantity"><strong>{item.quantity.toLocaleString()} 件</strong><small>已完成 {item.completedQty.toLocaleString()} · 剩余 {item.remainingQty.toLocaleString()}</small></div>
+                    <div className="planning-wip-route"><strong>{item.steps.filter(step => step.remainingQty > 0).map(step => step.processName).join(' → ') || '续作已完成'}</strong><small>来源周 {item.sourceWeekStartDate.slice(5)} - {item.sourceWeekEndDate.slice(5)}</small></div>
+                    <div className="planning-wip-hours"><strong>{item.remainingHours.toLocaleString()} 小时</strong><small>{item.team?.name || '班组待安排'} · {item.status === 'COMPLETED' ? '已完成' : item.status === 'IN_PROGRESS' ? '生产中' : '待执行'}</small></div>
+                    <nav><a href={`/workspace/wip?batchId=${encodeURIComponent(item.productionPlanBatchId)}`}>查看安排</a><a href={`/production?${productionParams.toString()}`}><Factory size={13} />查看执行</a></nav>
+                  </article>;
+                })}
+              </div>
+            </section>}
             <section className={selectedWeekKey === 'current' && carryoverRows.length ? `planning-carryover ${carryoverOpen ? 'open' : ''}` : 'planning-carryover empty'} aria-label="历史周遗留未完">
               {selectedWeekKey === 'current' && carryoverRows.length > 0 && <>
                 <button className="planning-carryover-summary" type="button" aria-expanded={carryoverOpen} onClick={() => setCarryoverOpen(current => !current)}>

@@ -1,4 +1,10 @@
-import { DailyProcessTaskStatus, DailyProductionPlanStatus, DailyTaskAssignmentStatus, Prisma } from '@prisma/client';
+import {
+  DailyProcessTaskStatus,
+  DailyProductionPlanStatus,
+  DailyTaskAssignmentStatus,
+  Prisma,
+  WipWeekAllocationStatus,
+} from '@prisma/client';
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { productionPlanAttainmentForScope } from '@/lib/production-plan-attainment';
@@ -23,6 +29,10 @@ import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
 import { normalizePlanningSopStage } from '@/lib/planning-sop';
 import { loadWipWeekLaborMetrics } from '@/lib/wip-warehouse';
+import {
+  loadWipContinuations,
+  type WipContinuationProjection,
+} from '@/lib/wip-continuations';
 import {
   productionArrangementCrossesWeek,
   resolveProductionArrangementProgress,
@@ -582,6 +592,11 @@ export function naturalProductionWeek(now = new Date()): { start: Date; end: Dat
   return { start, end: addDays(start, 6) };
 }
 
+export function productionWeekReadOnly(week: ProductionWeek, now = new Date()): boolean {
+  if (!week.weekStart) return true;
+  return week.weekStart < naturalProductionWeek(now).start;
+}
+
 export async function resolveProductionWeek(
   weekStartInput?: string | null,
   weekEndInput?: string | null,
@@ -802,7 +817,7 @@ export async function loadProductionWeekNavigation(
     weekStartDate: sameDayRange(weekStart),
     ...productionBatchScopeWhere(scope),
   });
-  const [currentCount, nextCount, afterNextCount, carryoverCounts, historicalBatches] = await Promise.all([
+  const [currentCount, nextCount, afterNextCount, carryoverCounts, historicalBatches, navigationWip] = await Promise.all([
     prisma.productionPlanBatch.count({ where: planningBatchWhere(natural.start) }),
     prisma.productionPlanBatch.count({ where: planningBatchWhere(nextStart) }),
     prisma.productionPlanBatch.count({ where: planningBatchWhere(afterNextStart) }),
@@ -818,6 +833,7 @@ export async function loadProductionWeekNavigation(
       orderBy: { weekStartDate: 'desc' },
       take: 5000,
     }),
+    loadWipContinuations({ productionScope: scope }),
   ]);
   const historyMap = new Map<string, { weekStartDate: string; weekEndDate: string; count: number }>();
   for (const batch of historicalBatches) {
@@ -830,13 +846,25 @@ export async function loadProductionWeekNavigation(
       count: 1,
     });
   }
+  const crossWeekWip = navigationWip.filter(item => item.crossWeek);
+  const wipCountFor = (weekStartDate: string) => crossWeekWip.filter(item => item.targetWeekStartDate === weekStartDate).length;
+  for (const continuation of crossWeekWip) {
+    if ([chinaYmd(natural.start), chinaYmd(nextStart), chinaYmd(afterNextStart)].includes(continuation.targetWeekStartDate)) continue;
+    const current = historyMap.get(continuation.targetWeekStartDate);
+    if (current) current.count += 1;
+    else historyMap.set(continuation.targetWeekStartDate, {
+      weekStartDate: continuation.targetWeekStartDate,
+      weekEndDate: continuation.targetWeekEndDate,
+      count: 1,
+    });
+  }
   return {
-    current: { weekStartDate: chinaYmd(natural.start), weekEndDate: chinaYmd(natural.end), count: currentCount },
-    next: { weekStartDate: chinaYmd(nextStart), weekEndDate: chinaYmd(addDays(nextStart, 6)), count: nextCount },
-    afterNext: { weekStartDate: chinaYmd(afterNextStart), weekEndDate: chinaYmd(addDays(afterNextStart, 6)), count: afterNextCount },
+    current: { weekStartDate: chinaYmd(natural.start), weekEndDate: chinaYmd(natural.end), count: currentCount + wipCountFor(chinaYmd(natural.start)) },
+    next: { weekStartDate: chinaYmd(nextStart), weekEndDate: chinaYmd(addDays(nextStart, 6)), count: nextCount + wipCountFor(chinaYmd(nextStart)) },
+    afterNext: { weekStartDate: chinaYmd(afterNextStart), weekEndDate: chinaYmd(addDays(afterNextStart, 6)), count: afterNextCount + wipCountFor(chinaYmd(afterNextStart)) },
     carryoverCount: carryoverCounts.active,
     olderCarryoverCount: carryoverCounts.older,
-    history: [...historyMap.values()],
+    history: [...historyMap.values()].sort((first, second) => second.weekStartDate.localeCompare(first.weekStartDate)),
   };
 }
 
@@ -994,6 +1022,7 @@ export function serializeProductionOrder(
     null,
   );
   return {
+    executionKey: `order:${order.id}`,
     id: order.id,
     productionPlanBatchId: order.productionPlanBatch?.deletedAt
       ? null
@@ -1101,6 +1130,44 @@ export function serializeProductionOrder(
     weekEndDate: order.weekEndDate?.toISOString() || null,
     updatedAt: order.updatedAt.toISOString(),
     carryover,
+    wipContinuation: null,
+    wipContinuations: [] as WipContinuationProjection[],
+    wipMovedOutContinuations: [] as WipContinuationProjection[],
+  };
+}
+
+function serializeWipExecutionOrder(
+  order: ProductionExecutionOrderRecord,
+  continuation: WipContinuationProjection,
+  now = new Date(),
+) {
+  const base = serializeProductionOrder(order, now, null);
+  const completed = continuation.completedStandardMilliseconds;
+  const planned = continuation.plannedStandardMilliseconds;
+  const percentage = planned > 0 ? Math.round((completed / planned) * 1_000) / 10 : null;
+  return {
+    ...base,
+    executionKey: continuation.stableId,
+    productionPlanBatchId: continuation.productionPlanBatchId,
+    productionTargetQty: continuation.quantity,
+    importedTargetQty: continuation.quantity,
+    quantityTargetSource: 'weekly_plan' as const,
+    processName: continuation.steps.find(step => step.remainingQty > 0)?.processName || base.processName,
+    weekStartDate: `${continuation.targetWeekStartDate}T00:00:00.000Z`,
+    weekEndDate: `${continuation.targetWeekEndDate}T00:00:00.000Z`,
+    standardLaborProgress: {
+      totalStandardMilliseconds: String(planned),
+      completedStandardMilliseconds: String(completed),
+      remainingStandardMilliseconds: String(continuation.remainingStandardMilliseconds),
+      percentage,
+      stepCount: continuation.steps.length,
+      configuredStepCount: continuation.steps.length,
+      missingStandardStepCount: 0,
+      pendingCompletionStandardCount: 0,
+      targetQuantityMissing: false,
+    },
+    wipContinuation: continuation,
+    wipContinuations: [continuation],
   };
 }
 
@@ -1392,9 +1459,30 @@ export async function loadProductionExecution(input: {
 }) {
   const now = new Date();
   const filters = input.filters || {};
-  const all = await loadProductionSummaryOrders(input.week, filters.workOrderId, input.productionScope);
-  const arrangementsByOrder = await loadProductionArrangementMap(all, now, input.productionScope);
-  let summaryOrders = all;
+  const [nativeOrders, weekWipContinuations, sourceWeekWipContinuations] = await Promise.all([
+    loadProductionSummaryOrders(input.week, filters.workOrderId, input.productionScope),
+    input.week.weekStart
+      ? loadWipContinuations({ targetWeekStartDate: input.week.weekStart, productionScope: input.productionScope })
+      : Promise.resolve([] as WipContinuationProjection[]),
+    input.week.weekStart
+      ? loadWipContinuations({ sourceWeekStartDate: input.week.weekStart, productionScope: input.productionScope })
+      : Promise.resolve([] as WipContinuationProjection[]),
+  ]);
+  const movedOutContinuations = sourceWeekWipContinuations.filter(item => item.crossWeek);
+  const scopeWhere = productionWorkOrderScopeWhere(input.productionScope);
+  const wipWorkOrderIds = [...new Set([...weekWipContinuations, ...movedOutContinuations].map(item => item.workOrderId))];
+  const wipSummaryOrders = wipWorkOrderIds.length
+    ? await prisma.workOrder.findMany({
+        where: { id: { in: wipWorkOrderIds }, deletedAt: null, ...scopeWhere },
+        include: productionSummaryInclude,
+      })
+    : [];
+  const wipSummaryOrderById = new Map(wipSummaryOrders.map(order => [order.id, inheritProductionControl(order)] as const));
+  const allOrderMap = new Map<string, ProductionSummaryOrderRecord>();
+  for (const order of [...nativeOrders, ...wipSummaryOrders.map(inheritProductionControl)]) allOrderMap.set(order.id, order);
+  const allForArrangements = [...allOrderMap.values()];
+  const arrangementsByOrder = await loadProductionArrangementMap(allForArrangements, now, input.productionScope);
+  let summaryOrders = nativeOrders;
   let summaryArrangementsByOrder = arrangementsByOrder;
   // A deep link narrows the board to one work order, but the command-center
   // summary must retain its historical scope-wide meaning.
@@ -1402,26 +1490,89 @@ export async function loadProductionExecution(input: {
     summaryOrders = await loadProductionSummaryOrders(input.week, undefined, input.productionScope);
     summaryArrangementsByOrder = await loadProductionArrangementMap(summaryOrders, now, input.productionScope);
   }
-  let filtered = all.filter(order => matchesFilters(order, filters, input.week, arrangementsByOrder.get(order.id) || [], now));
-  if (!filters.workOrderId && input.view === 'today') filtered = filtered.filter(order => isTodayTask(order, now));
-  if (!filters.workOrderId && input.view === 'exceptions') filtered = filtered.filter(order => productionExceptionCodes(order, now).length > 0);
-  filtered.sort((first, second) => compareProductionOrders(first, second, now));
+  let filteredNative = nativeOrders.filter(order => matchesFilters(order, filters, input.week, arrangementsByOrder.get(order.id) || [], now));
+  let filteredWip = weekWipContinuations.filter(continuation => {
+    if (filters.workOrderId && continuation.workOrderId !== filters.workOrderId) return false;
+    const order = wipSummaryOrderById.get(continuation.workOrderId);
+    return Boolean(order && matchesFilters(order, filters, input.week, arrangementsByOrder.get(order.id) || [], now));
+  });
+  if (!filters.workOrderId && input.view === 'today') {
+    filteredNative = filteredNative.filter(order => isTodayTask(order, now));
+    filteredWip = filteredWip.filter(continuation => {
+      const order = wipSummaryOrderById.get(continuation.workOrderId);
+      return Boolean(order && isTodayTask(order, now));
+    });
+  }
+  if (!filters.workOrderId && input.view === 'exceptions') {
+    filteredNative = filteredNative.filter(order => productionExceptionCodes(order, now).length > 0);
+    filteredWip = filteredWip.filter(continuation => {
+      const order = wipSummaryOrderById.get(continuation.workOrderId);
+      return Boolean(order && productionExceptionCodes(order, now).length > 0);
+    });
+  }
+  // A deep link to a cross-week continuation must not also synthesize the
+  // original-week native row merely because workOrderId bypasses week scope.
+  if (filters.workOrderId && filteredWip.some(item => item.crossWeek)) {
+    filteredNative = filteredNative.filter(order => (
+      order.weekStartDate && input.week.weekStart
+        ? chinaYmd(order.weekStartDate) === chinaYmd(input.week.weekStart)
+        : false
+    ));
+  }
+  filteredNative.sort((first, second) => compareProductionOrders(first, second, now));
+  filteredWip.sort((first, second) => {
+    const firstOrder = wipSummaryOrderById.get(first.workOrderId);
+    const secondOrder = wipSummaryOrderById.get(second.workOrderId);
+    if (firstOrder && secondOrder) {
+      const orderComparison = compareProductionOrders(firstOrder, secondOrder, now);
+      if (orderComparison) return orderComparison;
+    }
+    return first.scheduledAt.localeCompare(second.scheduledAt) || first.allocationId.localeCompare(second.allocationId);
+  });
+  const nativeFilteredIds = new Set(filteredNative.map(order => order.id));
+  const sameWeekByWorkOrder = new Map<string, WipContinuationProjection[]>();
+  const standaloneWip = filteredWip.filter(continuation => {
+    if (continuation.crossWeek || !nativeFilteredIds.has(continuation.workOrderId)) return true;
+    const current = sameWeekByWorkOrder.get(continuation.workOrderId) || [];
+    current.push(continuation);
+    sameWeekByWorkOrder.set(continuation.workOrderId, current);
+    return false;
+  });
+  const tasks: Array<{
+    executionKey: string;
+    workOrderId: string;
+    order: ProductionSummaryOrderRecord;
+    continuation: WipContinuationProjection | null;
+  }> = [
+    ...filteredNative.map(order => ({ executionKey: `order:${order.id}`, workOrderId: order.id, order, continuation: null })),
+    ...standaloneWip.flatMap(continuation => {
+      const order = wipSummaryOrderById.get(continuation.workOrderId);
+      return order ? [{ executionKey: continuation.stableId, workOrderId: order.id, order, continuation }] : [];
+    }),
+  ];
+  tasks.sort((first, second) => (
+    compareProductionOrders(first.order, second.order, now)
+    || Number(Boolean(first.continuation)) - Number(Boolean(second.continuation))
+    || first.executionKey.localeCompare(second.executionKey)
+  ));
 
   const stageCounts: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
-  for (const order of filtered.filter(isRootProductionOrder)) {
+  for (const task of tasks.filter(item => isRootProductionOrder(item.order))) {
+    const order = task.order;
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const resolution = resolveEffectiveFrontendTransferredQty(order);
     const segments = resolution.ok ? resolution.state.segments : [{ stage, quantity: 0 }];
     for (const segment of segments) stageCounts[segment.stage] += 1;
   }
   const pageSize = Math.min(Math.max(input.pageSize || 120, 1), 5000);
-  const total = filtered.length;
+  const total = tasks.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(Math.max(input.page || 1, 1), totalPages);
   const offset = input.offset === undefined
     ? (page - 1) * pageSize
     : Math.min(Math.max(input.offset, 0), total);
-  const pageOrderIds = filtered.slice(offset, offset + pageSize).map(order => order.id);
+  const pageTasks = tasks.slice(offset, offset + pageSize);
+  const pageOrderIds = [...new Set(pageTasks.map(task => task.workOrderId))];
   const pageOrders = pageOrderIds.length
     ? await prisma.workOrder.findMany({
       where: { id: { in: pageOrderIds }, deletedAt: null },
@@ -1432,12 +1583,24 @@ export async function loadProductionExecution(input: {
   const carryoverByOrder = input.week.scope === 'current' && input.week.weekStart
     ? await loadProductionCarryoverMetadata(input.week.weekStart, pageOrderIds)
     : new Map<string, ProductionCarryoverMetadata>();
-  const items = pageOrderIds.flatMap(id => {
-    const order = pageOrderById.get(id);
-    return order ? [{
-      ...serializeProductionOrder(inheritProductionControl(order), now, carryoverByOrder.get(order.id) || null),
-      arrangements: arrangementsByOrder.get(order.id) || [],
-    }] : [];
+  const items = pageTasks.flatMap(task => {
+    const order = pageOrderById.get(task.workOrderId);
+    if (!order) return [];
+    const inherited = inheritProductionControl(order);
+    const serialized = task.continuation
+      ? serializeWipExecutionOrder(inherited, task.continuation, now)
+      : serializeProductionOrder(inherited, now, carryoverByOrder.get(order.id) || null);
+    const mergedContinuations = task.continuation
+      ? [task.continuation]
+      : sameWeekByWorkOrder.get(order.id) || [];
+    return [{
+      ...serialized,
+      wipContinuations: mergedContinuations,
+      wipMovedOutContinuations: task.continuation
+        ? []
+        : movedOutContinuations.filter(item => item.workOrderId === order.id),
+      arrangements: task.continuation ? [] : arrangementsByOrder.get(order.id) || [],
+    }];
   });
   const summaryRootOrders = input.includeSummary
     ? summaryOrders.filter(isRootProductionOrder)
@@ -1447,34 +1610,62 @@ export async function loadProductionExecution(input: {
     && input.week.weekStart
     ? await loadProductionCarryoverMetadata(input.week.weekStart, summaryRootOrders.map(order => order.id))
     : new Map<string, ProductionCarryoverMetadata>();
+  const summaryNativeIds = new Set(summaryRootOrders.map(order => order.id));
+  const summaryStandaloneWip = weekWipContinuations.filter(item => item.crossWeek || !summaryNativeIds.has(item.workOrderId));
   const executionCountBreakdown = input.includeSummary && input.week.scope === 'current'
     ? {
         nativeCurrent: Math.max(0, summaryRootOrders.length - summaryCarryoverByOrder.size),
         carryover: summaryCarryoverByOrder.size,
-        total: summaryRootOrders.length,
+        wipContinuation: summaryStandaloneWip.length,
+        total: summaryRootOrders.length + summaryStandaloneWip.length,
       }
     : null;
+  const summaryBase = input.includeSummary
+    ? summarizeProductionRecords(
+        input.week,
+        summaryRootOrders,
+        summaryArrangementsByOrder,
+        now,
+        input.productionScope,
+      )
+    : null;
+  const summaryWipRecords = summaryStandaloneWip.flatMap(continuation => {
+    const order = wipSummaryOrderById.get(continuation.workOrderId);
+    return order ? [{ continuation, order }] : [];
+  });
+  const summaryStageCounts = summaryBase ? { ...summaryBase.stageCounts } : null;
+  const summaryStageQuantityTotals = summaryBase ? { ...summaryBase.stageQuantityTotals } : null;
+  const summaryDispatchMetrics = summaryBase ? { ...summaryBase.dispatchMetrics } : null;
+  for (const item of summaryWipRecords) {
+    const stage = normalizeWorkOrderStage(item.order.stage || item.order.status) || 'not_issued';
+    if (summaryStageCounts) summaryStageCounts[stage] += 1;
+    if (summaryStageQuantityTotals) summaryStageQuantityTotals[stage] += item.continuation.remainingQty;
+    if (!summaryDispatchMetrics) continue;
+    if (item.continuation.status === WipWeekAllocationStatus.COMPLETED) summaryDispatchMetrics.completed += 1;
+    else if (item.continuation.status === WipWeekAllocationStatus.IN_PROGRESS || stage === 'frontend' || stage === 'backend') summaryDispatchMetrics.inProduction += 1;
+    else summaryDispatchMetrics.notStarted += 1;
+    if (item.continuation.steps.filter(step => step.remainingQty > 0).length > 1) summaryDispatchMetrics.withNextProcess += 1;
+    if (isProductionDueSoon(item.order, now)) summaryDispatchMetrics.dueSoon += 1;
+  }
   return {
     scope: input.week.scope,
-    readOnly: input.week.scope === 'history' || input.productionScope?.readOnly === true,
+    readOnly: productionWeekReadOnly(input.week, now) || input.productionScope?.readOnly === true,
     weekStartDate: input.week.weekStart ? chinaYmd(input.week.weekStart) : null,
     weekEndDate: input.week.weekEnd ? chinaYmd(input.week.weekEnd) : null,
     stageCounts,
     items,
-    arrangementMetrics: summarizeArrangementMetrics(all, arrangementsByOrder),
+    arrangementMetrics: summarizeArrangementMetrics(allForArrangements, arrangementsByOrder),
     filterOptions: {
-      customers: [...new Set(all.map(order => text(order.customerName)).filter(Boolean))].sort((first, second) => first.localeCompare(second, 'zh-CN')),
+      customers: [...new Set(allForArrangements.map(order => text(order.customerName)).filter(Boolean))].sort((first, second) => first.localeCompare(second, 'zh-CN')),
     },
     pagination: { page, pageSize, total, totalPages },
-    ...(input.includeSummary ? {
+    ...(input.includeSummary && summaryBase ? {
       summary: {
-        ...summarizeProductionRecords(
-          input.week,
-          summaryRootOrders,
-          summaryArrangementsByOrder,
-          now,
-          input.productionScope,
-        ),
+        ...summaryBase,
+        total: summaryBase.total + summaryStandaloneWip.length,
+        stageCounts: summaryStageCounts,
+        stageQuantityTotals: summaryStageQuantityTotals,
+        dispatchMetrics: summaryDispatchMetrics,
         executionCountBreakdown,
       },
     } : {}),
@@ -1573,7 +1764,7 @@ function summarizeProductionRecords(
   const currentWeekPlanKey = week.scope === 'current' && week.weekStart ? chinaYmd(week.weekStart) : null;
   return {
     scope: week.scope,
-    readOnly: week.scope === 'history' || scope?.readOnly === true,
+    readOnly: productionWeekReadOnly(week, now) || scope?.readOnly === true,
     weekStartDate: week.weekStart ? chinaYmd(week.weekStart) : null,
     weekEndDate: week.weekEnd ? chinaYmd(week.weekEnd) : null,
     total: orders.length,
@@ -1614,20 +1805,57 @@ export async function summarizeProduction(week: ProductionWeek, scope?: Producti
   const orders = (await loadProductionSummaryOrders(week, undefined, scope)).filter(isRootProductionOrder);
   const arrangementsByOrder = await loadProductionArrangementMap(orders, now, scope);
   const summary = summarizeProductionRecords(week, orders, arrangementsByOrder, now, scope);
-  const [wipPlanMetrics, carryoverByOrder] = await Promise.all([
+  const [wipPlanMetrics, carryoverByOrder, continuations] = await Promise.all([
     week.weekStart ? loadWipWeekLaborMetrics(week.weekStart) : Promise.resolve(null),
     week.scope === 'current' && week.weekStart
       ? loadProductionCarryoverMetadata(week.weekStart, orders.map(order => order.id))
       : Promise.resolve(new Map<string, ProductionCarryoverMetadata>()),
+    week.weekStart
+      ? loadWipContinuations({ targetWeekStartDate: week.weekStart, productionScope: scope })
+      : Promise.resolve([] as WipContinuationProjection[]),
   ]);
+  const nativeIds = new Set(orders.map(order => order.id));
+  const standaloneContinuations = continuations.filter(item => item.crossWeek || !nativeIds.has(item.workOrderId));
+  const continuationOrderIds = [...new Set(standaloneContinuations.map(item => item.workOrderId))];
+  const continuationOrders = continuationOrderIds.length
+    ? await prisma.workOrder.findMany({
+        where: { id: { in: continuationOrderIds }, deletedAt: null, ...productionWorkOrderScopeWhere(scope) },
+        include: productionSummaryInclude,
+      })
+    : [];
+  const continuationOrderById = new Map(continuationOrders.map(order => [order.id, inheritProductionControl(order)] as const));
+  const stageCounts = { ...summary.stageCounts };
+  const stageQuantityTotals = { ...summary.stageQuantityTotals };
+  const dispatchMetrics = { ...summary.dispatchMetrics };
+  for (const continuation of standaloneContinuations) {
+    const order = continuationOrderById.get(continuation.workOrderId);
+    if (!order) continue;
+    const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+    stageCounts[stage] += 1;
+    stageQuantityTotals[stage] += continuation.remainingQty;
+    if (continuation.status === WipWeekAllocationStatus.COMPLETED) dispatchMetrics.completed += 1;
+    else if (continuation.status === WipWeekAllocationStatus.IN_PROGRESS || stage === 'frontend' || stage === 'backend') dispatchMetrics.inProduction += 1;
+    else dispatchMetrics.notStarted += 1;
+    if (continuation.steps.filter(step => step.remainingQty > 0).length > 1) dispatchMetrics.withNextProcess += 1;
+    if (isProductionDueSoon(order, now)) dispatchMetrics.dueSoon += 1;
+  }
   const executionCountBreakdown = week.scope === 'current'
     ? {
         nativeCurrent: Math.max(0, orders.length - carryoverByOrder.size),
         carryover: carryoverByOrder.size,
-        total: orders.length,
+        wipContinuation: standaloneContinuations.length,
+        total: orders.length + standaloneContinuations.length,
       }
     : null;
-  return { ...summary, wipPlanMetrics, executionCountBreakdown };
+  return {
+    ...summary,
+    total: summary.total + standaloneContinuations.length,
+    stageCounts,
+    stageQuantityTotals,
+    dispatchMetrics,
+    wipPlanMetrics,
+    executionCountBreakdown,
+  };
 }
 
 export async function loadProductionOrderById(id: string, scope?: ProductionEntityScope) {

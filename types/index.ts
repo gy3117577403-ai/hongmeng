@@ -1720,6 +1720,54 @@ export type ProductionPlanningWeekDTO = {
   batchCount: number;
   totalQuantity: number;
   unfinishedCount?: number;
+  wipTaskCount?: number;
+  wipQuantity?: number;
+  wipPlannedMilliseconds?: string;
+};
+
+export type ProductionPlanningWipContinuationDTO = {
+  stableId: string;
+  allocationId: string;
+  lotId: string;
+  lotNo: string;
+  productionPlanBatchId: string;
+  workOrderId: string;
+  workOrderCode: string;
+  customerName: string;
+  productName: string;
+  specification: string;
+  sourceWeekStartDate: string;
+  sourceWeekEndDate: string;
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
+  quantity: number;
+  completedQty: number;
+  remainingQty: number;
+  plannedStandardMilliseconds: number;
+  completedStandardMilliseconds: number;
+  remainingStandardMilliseconds: number;
+  plannedHours: number;
+  completedHours: number;
+  remainingHours: number;
+  status: string;
+  reason: string;
+  materialWarning: string | null;
+  team: { id: string; code: string; name: string } | null;
+  scheduledBy: { id: string; displayName: string };
+  scheduledAt: string;
+  steps: Array<{
+    allocationStepId: string;
+    stepId: string;
+    processName: string;
+    position: number;
+    plannedQty: number;
+    completedQty: number;
+    remainingQty: number;
+    plannedStandardMilliseconds: number;
+    completedStandardMilliseconds: number;
+    remainingStandardMilliseconds: number;
+    status: string;
+  }>;
 };
 
 export type ProductionPlanningPeriodsDTO = {
@@ -1773,6 +1821,8 @@ export type ProductionPlanningSummaryDTO = {
   missingProductTimeCount: number;
   warehouseExceptionCount: number;
   processPendingCount: number;
+  thisWeekWipTaskCount?: number;
+  nextWeekWipTaskCount?: number;
 };
 
 export type ProcessStageGroup = 'frontend' | 'backend' | 'finish';

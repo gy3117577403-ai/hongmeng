@@ -21,6 +21,7 @@ import type {
   ProductionPlanningWeekDTO,
 } from '@/types';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
+import { loadWipContinuations } from '@/lib/wip-continuations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -74,6 +75,14 @@ export async function GET(req: NextRequest) {
       : records;
     const all = allRecords.map(serializeProductionPlanOrder);
     const batches = all.flatMap(order => order.batches);
+    const allWipContinuations = await loadWipContinuations({ take: 5000 });
+    const normalizedKeyword = keyword.toLocaleLowerCase('zh-CN');
+    const visibleWipContinuations = allWipContinuations.filter(item => {
+      if (customer && item.customerName !== customer) return false;
+      if (!normalizedKeyword) return true;
+      return [item.lotNo, item.workOrderCode, item.customerName, item.productName, item.specification]
+        .some(value => value.toLocaleLowerCase('zh-CN').includes(normalizedKeyword));
+    });
     const naturalCurrentWeek = chinaWeekRange(new Date());
     const currentStart = chinaDate(naturalCurrentWeek.start);
     const currentEnd = chinaDate(naturalCurrentWeek.end);
@@ -86,6 +95,7 @@ export async function GET(req: NextRequest) {
     const afterNextEnd = chinaDate(afterNextWeek.end);
     const weekSummary = (weekStartDate: string, weekEndDate: string): ProductionPlanningWeekDTO => {
       const weekBatches = batches.filter(batch => batch.weekStartDate === weekStartDate);
+      const weekWip = allWipContinuations.filter(item => item.targetWeekStartDate === weekStartDate);
       return {
         weekStartDate,
         weekEndDate,
@@ -94,6 +104,9 @@ export async function GET(req: NextRequest) {
         unfinishedCount: weekBatches.filter(batch => (
           batch.releaseState !== 'archived' && !batch.workOrderCompletedAt
         )).length,
+        wipTaskCount: weekWip.length,
+        wipQuantity: weekWip.reduce((sum, item) => sum + item.quantity, 0),
+        wipPlannedMilliseconds: String(weekWip.reduce((sum, item) => sum + item.plannedStandardMilliseconds, 0)),
       };
     };
     const historyMap = new Map<string, ProductionPlanningWeekDTO>();
@@ -116,8 +129,6 @@ export async function GET(req: NextRequest) {
         unfinishedCount: batch.releaseState !== 'archived' && !batch.workOrderCompletedAt ? 1 : 0,
       });
     }
-    const history = [...historyMap.values()]
-      .sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate));
     const upcoming = Array.from({ length: 12 }, (_, index) => {
       const week = chinaWeekRange(addDays(naturalCurrentWeek.start, index * 7));
       return weekSummary(chinaDate(week.start), chinaDate(week.end));
@@ -135,6 +146,8 @@ export async function GET(req: NextRequest) {
       missingProductTimeCount: all.filter(order => !order.effectiveUnitMilliseconds).length,
       warehouseExceptionCount: batches.filter(batch => batch.warehouseStatus === 'exception').length,
       processPendingCount: batches.filter(batch => batch.releaseState !== 'draft' && (batch.processStatus === 'not_created' || batch.processStatus === 'draft')).length,
+      thisWeekWipTaskCount: allWipContinuations.filter(item => item.targetWeekStartDate === currentStart).length,
+      nextWeekWipTaskCount: allWipContinuations.filter(item => item.targetWeekStartDate === nextStart).length,
     };
     const customers = [...new Set(all.map(order => order.customerName))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
     const auxiliaryWarnings: Array<{ code: string; message: string }> = [];
@@ -196,6 +209,30 @@ export async function GET(req: NextRequest) {
         error: drawingProductsResult.reason,
       });
     }
+    for (const continuation of allWipContinuations) {
+      if (continuation.targetWeekStartDate >= currentStart) continue;
+      const current = historyMap.get(continuation.targetWeekStartDate);
+      if (current) {
+        current.wipTaskCount = (current.wipTaskCount || 0) + 1;
+        current.wipQuantity = (current.wipQuantity || 0) + continuation.quantity;
+        current.wipPlannedMilliseconds = String(
+          BigInt(current.wipPlannedMilliseconds || '0') + BigInt(continuation.plannedStandardMilliseconds),
+        );
+        continue;
+      }
+      historyMap.set(continuation.targetWeekStartDate, {
+        weekStartDate: continuation.targetWeekStartDate,
+        weekEndDate: continuation.targetWeekEndDate,
+        batchCount: 0,
+        totalQuantity: 0,
+        unfinishedCount: 0,
+        wipTaskCount: 1,
+        wipQuantity: continuation.quantity,
+        wipPlannedMilliseconds: String(continuation.plannedStandardMilliseconds),
+      });
+    }
+    const history = [...historyMap.values()]
+      .sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate));
     if (salespersonRowsResult.status === 'rejected') {
       auxiliaryWarnings.push({ code: 'PLANNING_SALESPEOPLE_UNAVAILABLE', message: '业务员选项暂时不可用，请稍后刷新' });
       console.error('planning order auxiliary read failed', {
@@ -252,6 +289,7 @@ export async function GET(req: NextRequest) {
       ok: true,
       requestId,
       orders: records.map(serializeProductionPlanOrder),
+      wipContinuations: visibleWipContinuations,
       summary,
       customers,
       productOptions,

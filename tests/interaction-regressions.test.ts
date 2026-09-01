@@ -74,7 +74,7 @@ test('production execution exposes a permission-guarded WIP transfer preview', (
   assert.match(service, /productionPlanBatch:\s*\{[\s\S]*?id:\s*true,[\s\S]*?deletedAt:\s*true/);
   assert.match(service, /productionPlanBatchId:\s*order\.productionPlanBatch\?\.deletedAt[\s\S]*?order\.productionPlanBatch\?\.id \|\| null/);
   assert.match(component, /canManageWipWarehouse\(user\)/);
-  assert.match(component, /canManageWip && !readOnly && displayStage !== "completed" && order\.productionPlanBatchId && order\.processRoute/);
+  assert.match(component, /canManageWip && !readOnly && !isWipContinuation && !isMovedOutSource && displayStage !== "completed" && order\.productionPlanBatchId && order\.processRoute/);
   assert.match(component, /href=\{`\/workspace\/wip\?batchId=\$\{encodeURIComponent\(order\.productionPlanBatchId\)\}`\}/);
   assert.match(component, />转入半成品仓<\/Link>/);
 });
@@ -87,9 +87,44 @@ test('production week header separates plan batches from actual current and carr
   assert.match(service, /nativeCurrent:\s*Math\.max\(0, summaryRootOrders\.length - summaryCarryoverByOrder\.size\)/);
   assert.match(service, /carryover:\s*summaryCarryoverByOrder\.size/);
   assert.match(component, /本周计划 <b>/);
-  assert.match(component, /执行\{summary\.executionCountBreakdown\.nativeCurrent\}\+\{summary\.executionCountBreakdown\.carryover\}=\{summary\.executionCountBreakdown\.total\}/);
+  assert.match(component, /执行\{summary\.executionCountBreakdown\.nativeCurrent\}\+遗留\{summary\.executionCountBreakdown\.carryover\}\+半成品\{summary\.executionCountBreakdown\.wipContinuation\}=\{summary\.executionCountBreakdown\.total\}/);
   assert.match(component, /执行合计 \$\{summary\.executionCountBreakdown\.total\}/);
   assert.match(component, /refreshSignature=\{scope === 'current'[\s\S]*?summary\?\.executionCountBreakdown\?\.total/);
+});
+
+test('WIP rescheduling uses an interactive impact modal and exposes target-week result links', () => {
+  const component = readFileSync(resolve(repositoryRoot, 'components/WipWarehouseShell.tsx'), 'utf8');
+  const css = readFileSync(resolve(repositoryRoot, 'app/workspace/wip/wip-workbench.css'), 'utf8');
+
+  assert.doesNotMatch(component, /window\.prompt/);
+  assert.match(component, /data-testid="wip-reschedule-dialog"/);
+  assert.match(component, /当前有效安排/);
+  assert.match(component, /核对迁移影响/);
+  assert.match(component, /已完成数量、报工记录、员工工时和原始工艺路线全部保留/);
+  assert.match(component, /查看生产执行/);
+  assert.match(component, /查看计划中心/);
+  assert.match(css, /\.wip-reschedule-weeks[\s\S]*grid-template-columns:/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.wip-reschedule-modal/);
+});
+
+test('WIP continuation is projected into planning, production execution and process reporting', () => {
+  const planningApi = readFileSync(resolve(repositoryRoot, 'app/api/planning/orders/route.ts'), 'utf8');
+  const planningUi = readFileSync(resolve(repositoryRoot, 'components/PlanningCenterShell.tsx'), 'utf8');
+  const productionService = readFileSync(resolve(repositoryRoot, 'lib/production-execution.ts'), 'utf8');
+  const continuationService = readFileSync(resolve(repositoryRoot, 'lib/wip-continuations.ts'), 'utf8');
+  const productionUi = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
+
+  assert.match(planningApi, /loadWipContinuations/);
+  assert.match(planningApi, /wipContinuations:\s*visibleWipContinuations/);
+  assert.match(planningUi, /className="planning-wip-lane"/);
+  assert.match(productionService, /serializeWipExecutionOrder/);
+  assert.match(productionService, /wipMovedOutContinuations/);
+  assert.match(continuationService, /canonicalWipWeekDate/);
+  assert.match(productionUi, /data-wip-allocation-id=\{wipContinuation\?\.allocationId/);
+  assert.match(productionUi, /wipAllocationId:\s*completionOrder\.wipContinuation\?\.allocationId/);
+  assert.match(productionUi, /activeSteps=\{completionOrder\.wipContinuation[\s\S]*?filter\(step/);
+  assert.match(productionUi, /wipTargetStartsInFuture[\s\S]*?目标周开始后可扫码或在此报工/);
+  assert.match(productionUi, /半成品续作/);
 });
 
 test('current production keeps preparation and SOP-validation orders visible with warning badges', () => {

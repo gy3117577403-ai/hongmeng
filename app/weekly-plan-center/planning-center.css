@@ -4503,3 +4503,64 @@ main.planning-center-shell.hm-workbench-root {
 .planning-center-shell .planning-warning-text { color: #b84b0b; }.planning-center-shell .planning-warning-text.severity-critical { color: #b52f36; background: transparent; border: 0; }
 .planning-quality-warning-note { display: grid; grid-template-columns: 28px minmax(0,1fr); align-items: center; gap: 9px; padding: 10px 12px; border: 1px solid #f0b58c; border-radius: 10px; color: #df6113; background: linear-gradient(135deg,#fff3e8,#fff); box-shadow: 0 7px 18px rgba(179,69,6,.08); }.planning-quality-warning-note > span { display: grid; gap: 3px; }.planning-quality-warning-note strong { color: #445164; font-size: 12px; }.planning-quality-warning-note small { color: #748092; font-size: 10px; line-height: 1.55; }
 .planning-quality-warning-note.severity-critical { border-color: #e6a3a3; color: #c43b42; background: linear-gradient(135deg,#fff0f0,#fff); }
+/* Semi-finished continuations are an explicit planning lane. They are not
+   folded into native batch totals because only the target-week remainder
+   contributes to attainment. */
+.planning-wip-lane {
+  margin: 10px 12px;
+  border: 1px solid #f1c29c;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fffaf5;
+}
+
+.planning-wip-lane > header {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f2d7c1;
+  background: linear-gradient(90deg, #fff3e8, #fffaf5);
+}
+
+.planning-wip-lane > header > span,
+.planning-wip-lane > header > a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.planning-wip-lane > header > span { color: #cb5719; }
+.planning-wip-lane > header em { padding: 3px 7px; border-radius: 999px; color: #bd5119; background: #fff; font-style: normal; font-size: 10px; }
+.planning-wip-lane > header small { color: #738197; font-size: 10px; }
+.planning-wip-lane > header > a { color: #c45216; font-size: 11px; font-weight: 800; text-decoration: none; }
+.planning-wip-lane-list { max-height: 220px; overflow-y: auto; padding: 7px; }
+.planning-wip-lane-list article { min-height: 62px; display: grid; grid-template-columns: 34px minmax(180px, 1.25fr) minmax(110px, .7fr) minmax(220px, 1.35fr) minmax(115px, .7fr) auto; align-items: center; gap: 9px; margin-bottom: 6px; padding: 8px 10px; border: 1px solid #eadfd5; border-radius: 9px; background: #fff; }
+.planning-wip-marker { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: #d95d1b; background: #fff0e3; }
+.planning-wip-identity,
+.planning-wip-quantity,
+.planning-wip-route,
+.planning-wip-hours { display: flex; flex-direction: column; min-width: 0; }
+.planning-wip-lane-list small,
+.planning-wip-lane-list em { color: #748297; font-size: 9px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.planning-wip-lane-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.planning-wip-identity > small { color: #d15a1a; font-weight: 800; }
+.planning-wip-lane-list nav { display: flex; gap: 5px; }
+.planning-wip-lane-list nav a { height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 8px; border: 1px solid #efb584; border-radius: 7px; color: #bc4f15; background: #fff9f3; font-size: 9px; font-weight: 800; text-decoration: none; white-space: nowrap; }
+.planning-wip-lane-list nav a:last-child { color: #fff; background: #ef6a23; }
+
+@media (max-width: 1180px) {
+  .planning-wip-lane-list article { grid-template-columns: 34px 1fr 120px 1fr auto; }
+  .planning-wip-hours { display: none; }
+}
+
+@media (max-width: 760px) {
+  .planning-wip-lane > header { grid-template-columns: 1fr auto; }
+  .planning-wip-lane > header small { grid-column: 1 / -1; }
+  .planning-wip-lane-list article { grid-template-columns: 30px 1fr auto; }
+  .planning-wip-quantity,
+  .planning-wip-route { grid-column: 2 / -1; }
+  .planning-wip-lane-list nav { grid-column: 2 / -1; }
+}
