@@ -91,7 +91,14 @@ export async function compressImageForUpload(file: File, options: ImageOptimizeO
   }
   context.drawImage(bitmap, 0, 0, width, height);
 
-  const outputType = file.type === 'image/png' && file.size < MIN_COMPRESS_BYTES * 2 ? 'image/png' : 'image/jpeg';
+  // Forced camera normalization always produces JPEG because the generated
+  // camera filename is a .jpg. Keeping a small PNG payload while renaming it
+  // to .jpg makes server-side signature validation correctly reject it.
+  const outputType = options.force
+    ? 'image/jpeg'
+    : file.type === 'image/png' && file.size < MIN_COMPRESS_BYTES * 2
+      ? 'image/png'
+      : 'image/jpeg';
   const blob = await canvasToBlob(canvas, outputType, options.quality || DEFAULT_QUALITY);
   if ('close' in bitmap) {
     bitmap.close();

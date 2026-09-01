@@ -194,7 +194,7 @@ export type SampleTaskStatusDTO = 'PLANNED' | 'IN_PROGRESS' | 'SUBMITTED' | 'COM
 export type SampleDataStatusDTO = 'NO_DATA' | 'COLLECTING' | 'PENDING_REVIEW' | 'NEEDS_CHANGES' | 'PARTIALLY_PUBLISHED' | 'PROCESSED';
 export type SampleReviewStatusDTO = 'DRAFT' | 'PENDING' | 'CHANGES_REQUESTED' | 'APPROVED' | 'PUBLISHED' | 'VOIDED';
 export type SampleDataKindDTO = 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOTICE' | 'CUSTOM';
-export type SamplePhotoCategoryDTO = 'UNCLASSIFIED' | 'PROCESS' | 'MEASUREMENT' | 'FINISHED' | 'DETAIL' | 'EXCEPTION';
+export type SamplePhotoCategoryDTO = 'UNCLASSIFIED' | 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOTICE' | 'SEMI_FINISHED' | 'PROCESS' | 'MEASUREMENT' | 'FINISHED' | 'DETAIL' | 'EXCEPTION';
 export type SamplePublishModeDTO = 'APPEND' | 'REPLACE_MATCHING' | 'RECORD_ONLY';
 
 export type SampleTaskAssigneeDTO = {
@@ -212,6 +212,7 @@ export type SampleDataEntryDTO = {
   kind: SampleDataKindDTO;
   label: string | null;
   payload: Record<string, unknown>;
+  clientMutationId: string | null;
   reviewStatus: SampleReviewStatusDTO;
   publishMode: SamplePublishModeDTO | null;
   reviewComment: string | null;
@@ -231,6 +232,8 @@ export type SampleDataEntryDTO = {
 export type SamplePhotoDTO = {
   id: string;
   taskId: string;
+  linkedEntryId: string | null;
+  clientMutationId: string | null;
   category: SamplePhotoCategoryDTO;
   caption: string | null;
   originalName: string;

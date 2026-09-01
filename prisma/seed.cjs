@@ -187,6 +187,9 @@ async function main(prisma, env = process.env) {
     ['剥皮参数', 'sample_parameters', 6],
     ['样品过程图', 'sample_process', 7],
     ['测量证据', 'sample_measurement', 8],
+    ['样品工序与工时', 'sample_process_time', 9],
+    ['样品半成品', 'sample_semi_finished', 10],
+    ['样品异常参考', 'sample_exception', 11],
   ];
 
   for (const [name, code, sortOrder] of categories) {

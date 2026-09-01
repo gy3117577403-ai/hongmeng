@@ -33,10 +33,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const category = isSamplePhotoCategory(categoryValue) ? categoryValue : 'UNCLASSIFIED';
     const caption = cleanSampleText(form.get('caption'), 500);
     const captureSource = cleanSampleText(form.get('captureSource'), 30);
+    const clientMutationId = cleanSampleText(form.get('clientMutationId'), 80);
+    const linkedEntryId = cleanSampleText(form.get('linkedEntryId'), 80);
     const task = await prisma.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!task) return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
     if (task.status === 'CANCELLED' || task.status === 'COMPLETED') {
       return NextResponse.json({ ok: false, error: '已完成或已取消任务不能继续上传，请先重新打开任务' }, { status: 409 });
+    }
+    if (clientMutationId) {
+      const existing = await prisma.samplePhoto.findFirst({
+        where: { taskId: task.id, clientMutationId, deletedAt: null },
+        select: { taskId: true },
+      });
+      if (existing) {
+        const updated = await prisma.sampleTask.findUnique({ where: { id: existing.taskId }, include: sampleTaskInclude });
+        return NextResponse.json({ ok: true, task: updated ? serializeSampleTask(updated) : null });
+      }
     }
     const body = Buffer.from(await upload.arrayBuffer());
     const error = validateFileContent(upload.name, upload.type, upload.size, body);
@@ -50,14 +62,30 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       contentType: upload.type || 'application/octet-stream',
       originalName: upload.name,
     });
-    const photoId = await prisma.$transaction(async tx => {
+    const photoResult = await prisma.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${task.id}`}))`;
       const fresh = await tx.sampleTask.findFirst({ where: { id: task.id, deletedAt: null } });
       if (!fresh) throw new Error('SAMPLE_TASK_NOT_FOUND');
       if (fresh.status === 'CANCELLED' || fresh.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+      if (clientMutationId) {
+        const existing = await tx.samplePhoto.findFirst({
+          where: { taskId: fresh.id, clientMutationId, deletedAt: null },
+          select: { id: true },
+        });
+        if (existing) return { id: existing.id, duplicate: true };
+      }
+      if (linkedEntryId) {
+        const linkedEntry = await tx.sampleDataEntry.findFirst({
+          where: { id: linkedEntryId, taskId: fresh.id, deletedAt: null },
+          select: { id: true },
+        });
+        if (!linkedEntry) throw new Error('SAMPLE_LINKED_ENTRY_NOT_FOUND');
+      }
       const photo = await tx.samplePhoto.create({
         data: {
           taskId: fresh.id,
+          linkedEntryId,
+          clientMutationId,
           category,
           caption,
           originalName: upload.name,
@@ -89,13 +117,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           action: 'upload_sample_photo',
           targetType: 'sample_photo',
           targetId: photo.id,
-          detail: { taskId: fresh.id, taskCode: fresh.code, category, size: upload.size, sha256 },
+          detail: { taskId: fresh.id, taskCode: fresh.code, category, size: upload.size, sha256, linkedEntryId, clientMutationId },
         },
       });
-      return photo.id;
+      return { id: photo.id, duplicate: false };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    if (photoResult.duplicate && objectKey) await deleteObjectsBestEffort([objectKey]);
     objectKey = null;
-    const photo = await prisma.samplePhoto.findUnique({ where: { id: photoId }, select: { taskId: true } });
+    const photo = await prisma.samplePhoto.findUnique({ where: { id: photoResult.id }, select: { taskId: true } });
     const updated = photo
       ? await prisma.sampleTask.findUnique({ where: { id: photo.taskId }, include: sampleTaskInclude })
       : null;
@@ -106,6 +135,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务不能继续上传' }, { status: 409 });
+      if (error.message === 'SAMPLE_LINKED_ENTRY_NOT_FOUND') return NextResponse.json({ ok: false, error: '关联的采集记录不存在，请刷新后重试' }, { status: 409 });
     }
     console.error('upload sample photo failed', error);
     return NextResponse.json({ ok: false, error: '照片上传失败，请检查对象存储' }, { status: 500 });

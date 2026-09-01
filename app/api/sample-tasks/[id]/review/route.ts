@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ForbiddenError, forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import { prisma } from '@/lib/prisma';
 import {
   cleanSampleText,
@@ -31,6 +32,10 @@ function decision(value: unknown): ReviewDecision | null {
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
+    const canReview = user.laborRole === 'ADMIN'
+      || hasCapability(user.access, 'PROCESS', 'EXECUTE_WORKFLOW')
+      || hasCapability(user.access, 'PRODUCT_TIME', 'EXECUTE_WORKFLOW');
+    if (!canReview) throw new ForbiddenError('仅管理员或工艺流程人员可以审核样品采集内容');
     const actor = sampleActor(user);
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const itemType = body.itemType === 'photo' ? 'photo' : body.itemType === 'entry' ? 'entry' : null;
@@ -170,6 +175,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden(error.message);
     if (error instanceof SamplePublishError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }

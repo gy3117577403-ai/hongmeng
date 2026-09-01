@@ -348,6 +348,12 @@ export async function publishSampleEntry(
 function photoCategoryCode(category: string): string {
   if (category === 'FINISHED') return 'product';
   if (category === 'MEASUREMENT') return 'sample_measurement';
+  if (category === 'PROCESS_TIME') return 'sample_process_time';
+  if (category === 'STRIPPING') return 'sample_parameters';
+  if (category === 'MATERIAL') return 'material';
+  if (category === 'NOTICE') return 'notice';
+  if (category === 'SEMI_FINISHED') return 'sample_semi_finished';
+  if (category === 'EXCEPTION') return 'sample_exception';
   return 'sample_process';
 }
 

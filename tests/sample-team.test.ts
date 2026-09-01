@@ -100,6 +100,27 @@ test('sample migration stores metadata in PostgreSQL and keeps uploaded files in
   assert.doesNotMatch(uploadRoute, /writeFile|createWriteStream/);
 });
 
+test('mobile sample capture keeps every category optional and makes retries idempotent', () => {
+  const component = readFileSync('components/SampleCaptureMobile.tsx', 'utf8');
+  const migration = readFileSync('prisma/migrations/202609010001_sample_mobile_reliable_capture/migration.sql', 'utf8');
+
+  assert.match(component, /所有内容均为选填/);
+  assert.match(component, /未采集任何内容也可提交/);
+  assert.match(component, /window\.localStorage/);
+  assert.match(component, /window\.sessionStorage/);
+  assert.match(component, /indexedDB\.open/);
+  assert.match(component, /clientMutationId/);
+  assert.match(migration, /sample_data_entries_task_id_client_mutation_id_key/);
+  assert.match(migration, /sample_photos_task_id_client_mutation_id_key/);
+});
+
+test('forced camera normalization emits JPEG bytes for its generated jpg filename', () => {
+  const source = readFileSync('lib/image-client.ts', 'utf8');
+
+  assert.match(source, /const outputType = options\.force\s*\? 'image\/jpeg'/);
+  assert.match(source, /fileName: readableCameraName\(\)/);
+});
+
 test('sample planning workspace uses one compact master-detail surface instead of duplicate empty panels', () => {
   const component = readFileSync('components/SampleTeamCenter.tsx', 'utf8');
   const stylesheet = readFileSync('app/sample-team-workbench.css', 'utf8');

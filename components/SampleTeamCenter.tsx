@@ -153,6 +153,11 @@ const reviewStatusLabels: Record<string, string> = {
 
 const photoCategoryLabels: Record<SamplePhotoCategoryDTO, string> = {
   UNCLASSIFIED: '未分类',
+  PROCESS_TIME: '工序与工时照片',
+  STRIPPING: '剥皮参数照片',
+  MATERIAL: '辅料照片',
+  NOTICE: '注意事项照片',
+  SEMI_FINISHED: '半成品照片',
   PROCESS: '过程图',
   MEASUREMENT: '测量证据',
   FINISHED: '成品图',

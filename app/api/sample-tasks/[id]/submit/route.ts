@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  cleanSampleText,
   refreshSampleTaskDataStatus,
   sampleActor,
   sampleTaskInclude,
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const actor = sampleActor(user);
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const expectedVersion = Number(body.expectedVersion);
+    const clientMutationId = cleanSampleText(body.clientMutationId, 80);
     if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
       return NextResponse.json({ ok: false, error: '样品任务版本已失效，请刷新后重试' }, { status: 400 });
     }
@@ -25,6 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${params.id}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (clientMutationId && task.lastSubmissionMutationId === clientMutationId) return;
       if (task.version !== expectedVersion) throw new Error('SAMPLE_TASK_CONFLICT');
       if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
       const [entries, photos] = await Promise.all([
@@ -44,6 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           submittedAt: new Date(),
           updatedById: actor.id,
           updatedByName: actor.name,
+          lastSubmissionMutationId: clientMutationId,
           version: { increment: 1 },
         },
       });
@@ -60,6 +64,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             submittedEntries: entries.count,
             submittedPhotos: photos.count,
             emptySubmission: entries.count + photos.count === 0,
+            clientMutationId,
           },
         },
       });

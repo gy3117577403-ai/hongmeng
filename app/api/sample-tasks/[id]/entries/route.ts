@@ -24,17 +24,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (!isSampleDataKind(body.kind)) return NextResponse.json({ ok: false, error: '请选择数据类型' }, { status: 400 });
     const kind = body.kind;
     const payload = sanitizeSamplePayload(body.payload);
+    const clientMutationId = cleanSampleText(body.clientMutationId, 80);
     const entryId = await prisma.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${params.id}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
       if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+      if (clientMutationId) {
+        const existing = await tx.sampleDataEntry.findFirst({
+          where: { taskId: task.id, clientMutationId, deletedAt: null },
+          select: { id: true },
+        });
+        if (existing) return existing.id;
+      }
       const entry = await tx.sampleDataEntry.create({
         data: {
           taskId: task.id,
           kind,
           label: cleanSampleText(body.label, 200),
           payload,
+          clientMutationId,
           createdById: actor.id,
           createdByName: actor.name,
           updatedById: actor.id,
@@ -60,7 +69,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           action: 'create_sample_data_entry',
           targetType: 'sample_data_entry',
           targetId: entry.id,
-          detail: { taskId: task.id, taskCode: task.code, kind },
+          detail: { taskId: task.id, taskCode: task.code, kind, clientMutationId },
         },
       });
       return entry.id;

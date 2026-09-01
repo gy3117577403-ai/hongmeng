@@ -20,6 +20,11 @@ export const SAMPLE_DATA_KINDS: readonly SampleDataKindDTO[] = [
 
 export const SAMPLE_PHOTO_CATEGORIES: readonly SamplePhotoCategoryDTO[] = [
   'UNCLASSIFIED',
+  'PROCESS_TIME',
+  'STRIPPING',
+  'MATERIAL',
+  'NOTICE',
+  'SEMI_FINISHED',
   'PROCESS',
   'MEASUREMENT',
   'FINISHED',
@@ -242,6 +247,7 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
       kind: entry.kind as SampleDataKindDTO,
       label: entry.label,
       payload: jsonRecord(entry.payload),
+      clientMutationId: entry.clientMutationId,
       reviewStatus: entry.reviewStatus as SampleReviewStatusDTO,
       publishMode: entry.publishMode as SamplePublishModeDTO | null,
       reviewComment: entry.reviewComment,
@@ -260,6 +266,8 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     photos: task.photos.map(photo => ({
       id: photo.id,
       taskId: photo.taskId,
+      linkedEntryId: photo.linkedEntryId,
+      clientMutationId: photo.clientMutationId,
       category: photo.category as SamplePhotoCategoryDTO,
       caption: photo.caption,
       originalName: photo.originalName,
