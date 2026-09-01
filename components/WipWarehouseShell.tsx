@@ -12,7 +12,9 @@ import {
   LoaderCircle,
   PackageOpen,
   RefreshCw,
+  RotateCcw,
   Search,
+  Undo2,
   Warehouse,
   X,
 } from 'lucide-react';
@@ -73,6 +75,7 @@ type Allocation = {
 
 type Lot = {
   id: string;
+  version: number;
   lotNo: string;
   kind: string;
   productionPlanBatchId: string;
@@ -170,6 +173,40 @@ type RescheduleResult = {
   targetWeekEndDate: string;
 };
 
+type ReversalPreview = {
+  action: 'UNSCHEDULE_ALLOCATION' | 'RETURN_TO_SOURCE_ORDER';
+  allocationId?: string;
+  allocationVersion?: number;
+  lotId: string;
+  lotVersion?: number;
+  lotNo: string;
+  workOrderId: string;
+  workOrderCode: string;
+  targetWeekStartDate?: string;
+  targetWeekEndDate?: string;
+  sourceWeekStartDate?: string;
+  sourceWeekEndDate?: string;
+  quantity: number;
+  plannedHours?: number;
+  activeAllocationCount?: number;
+  physicalStatus?: string;
+  locationCode?: string | null;
+  containerCode?: string | null;
+  requiresPhysicalReturnConfirmation?: boolean;
+  resultScheduleStatus?: string;
+  preservesProductionFacts: true;
+};
+
+type ReversalDraft = {
+  kind: 'unschedule' | 'return';
+  allocation: Allocation | null;
+  lot: Lot;
+  reason: string;
+  physicalReturnConfirmed: boolean;
+  preview: ReversalPreview | null;
+  error: string;
+};
+
 const emptyData: WipPayload = {
   permissions: { canWrite: false },
   summary: { lotCount: 0, totalQuantity: 0, unscheduledQuantity: 0, scheduledQuantity: 0, totalRemainingHours: 0 },
@@ -189,6 +226,9 @@ function statusLabel(status: string): string {
     CANCELLED: '已取消',
     ACTIVE: '待执行',
     SUPERSEDED: '已改排',
+    VIRTUAL: '虚拟在仓',
+    STORED: '已入库',
+    ISSUED: '已发料',
   };
   return labels[status] || status;
 }
@@ -227,9 +267,15 @@ async function responseData<T>(response: Response): Promise<{ data?: T; error?: 
 export default function WipWarehouseShell({
   user,
   initialBatchId,
+  initialView,
+  initialWeekStartDate,
+  initialAllocationId,
 }: {
   user: CurrentUserDTO;
   initialBatchId: string;
+  initialView: string;
+  initialWeekStartDate: string;
+  initialAllocationId: string;
 }) {
   const [data, setData] = useState<WipPayload>(emptyData);
   const [keyword, setKeyword] = useState('');
@@ -257,6 +303,7 @@ export default function WipWarehouseShell({
   });
   const [rescheduleResult, setRescheduleResult] = useState<RescheduleResult | null>(null);
   const [rescheduleError, setRescheduleError] = useState('');
+  const [reversalDraft, setReversalDraft] = useState<ReversalDraft | null>(null);
   const rescheduleDialogRef = useRef<HTMLElement | null>(null);
 
   const load = useCallback(async (quiet = false) => {
@@ -270,9 +317,19 @@ export default function WipWarehouseShell({
       const body = await responseData<WipPayload>(response);
       if (!response.ok || !body.data) throw new Error(body.error || '半成品仓加载失败');
       setData(body.data);
-      setSelectedLotId(current => current && body.data!.lots.some(lot => lot.id === current)
-        ? current
-        : body.data!.lots[0]?.id || '');
+      setSelectedLotId(current => {
+        if (current && body.data!.lots.some(lot => lot.id === current)) return current;
+        const linkedLot = initialAllocationId
+          ? body.data!.lots.find(lot => lot.allocations.some(allocation => allocation.id === initialAllocationId))
+          : null;
+        const weekLot = initialWeekStartDate
+          ? body.data!.lots.find(lot => lot.allocations.some(allocation => (
+            allocation.targetWeekStartDate === initialWeekStartDate
+            && ['ACTIVE', 'IN_PROGRESS', 'COMPLETED'].includes(allocation.status)
+          )))
+          : null;
+        return linkedLot?.id || weekLot?.id || body.data!.lots[0]?.id || '';
+      });
       if (initialBatchId && body.data.candidates[0] && !entryCandidate) {
         const candidate = body.data.candidates[0];
         setEntryCandidate(candidate);
@@ -285,7 +342,7 @@ export default function WipWarehouseShell({
     } finally {
       setLoading(false);
     }
-  }, [entryCandidate, initialBatchId, keyword]);
+  }, [entryCandidate, initialAllocationId, initialBatchId, initialWeekStartDate, keyword]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
@@ -316,8 +373,20 @@ export default function WipWarehouseShell({
     };
   }, [rescheduleAllocation, saving]);
 
-  const selectedLot = data.lots.find(lot => lot.id === selectedLotId) || null;
-  const openLots = useMemo(() => data.lots.filter(lot => !['COMPLETED', 'CANCELLED'].includes(lot.scheduleStatus)), [data.lots]);
+  const lotView = ['scheduled', 'unscheduled'].includes(initialView) ? initialView : 'all';
+  const visibleLots = useMemo(() => data.lots.filter(lot => {
+    if (lotView === 'unscheduled' && lot.unscheduledQuantity <= 0) return false;
+    if (lotView === 'scheduled' && !lot.allocations.some(allocation => (
+      ['ACTIVE', 'IN_PROGRESS', 'COMPLETED'].includes(allocation.status)
+      && (!initialWeekStartDate || allocation.targetWeekStartDate === initialWeekStartDate)
+    ))) return false;
+    if (lotView === 'all' && initialWeekStartDate && !lot.allocations.some(allocation => (
+      ['ACTIVE', 'IN_PROGRESS', 'COMPLETED'].includes(allocation.status)
+      && allocation.targetWeekStartDate === initialWeekStartDate
+    ))) return false;
+    return true;
+  }), [data.lots, initialWeekStartDate, lotView]);
+  const selectedLot = visibleLots.find(lot => lot.id === selectedLotId) || visibleLots[0] || null;
   const currentAllocations = useMemo(
     () => selectedLot?.allocations.filter(allocation => ['ACTIVE', 'IN_PROGRESS', 'COMPLETED'].includes(allocation.status)) || [],
     [selectedLot],
@@ -477,6 +546,92 @@ export default function WipWarehouseShell({
     }
   }
 
+  function openUnschedule(allocation: Allocation): void {
+    if (!selectedLot) return;
+    setReversalDraft({
+      kind: 'unschedule',
+      allocation,
+      lot: selectedLot,
+      reason: '安排有误，撤销目标周安排并退回半成品仓待排',
+      physicalReturnConfirmed: false,
+      preview: null,
+      error: '',
+    });
+  }
+
+  function openReturnToOrder(): void {
+    if (!selectedLot) return;
+    setReversalDraft({
+      kind: 'return',
+      allocation: null,
+      lot: selectedLot,
+      reason: '转仓操作有误，撤销半成品覆盖并恢复原订单继续执行',
+      physicalReturnConfirmed: false,
+      preview: null,
+      error: '',
+    });
+  }
+
+  async function previewReversal(): Promise<void> {
+    if (!reversalDraft || reversalDraft.reason.trim().length < 2) return;
+    setSaving(true);
+    setReversalDraft(current => current ? { ...current, error: '' } : null);
+    try {
+      const preview = reversalDraft.kind === 'unschedule'
+        ? await post<ReversalPreview>({ action: 'preview_unschedule', allocationId: reversalDraft.allocation?.id })
+        : await post<ReversalPreview>({ action: 'preview_return_to_order', lotId: reversalDraft.lot.id });
+      setReversalDraft(current => current ? { ...current, preview } : null);
+    } catch (reason) {
+      setReversalDraft(current => current ? {
+        ...current,
+        error: reason instanceof Error ? reason.message : '撤销预检失败',
+      } : null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function commitReversal(): Promise<void> {
+    if (!reversalDraft?.preview) return;
+    if (reversalDraft.preview.requiresPhysicalReturnConfirmation && !reversalDraft.physicalReturnConfirmed) {
+      setReversalDraft(current => current ? { ...current, error: '请先确认实物已经退回原订单流转位置' } : null);
+      return;
+    }
+    setSaving(true);
+    setReversalDraft(current => current ? { ...current, error: '' } : null);
+    try {
+      if (reversalDraft.kind === 'unschedule') {
+        await post({
+          action: 'unschedule',
+          allocationId: reversalDraft.allocation?.id,
+          expectedVersion: reversalDraft.preview.allocationVersion,
+          reason: reversalDraft.reason,
+          idempotencyKey: newRequestKey('wip-unschedule-ui'),
+        });
+        setToast('目标周安排已撤销；该数量已退回半成品仓待排，原订单和报工事实未改动');
+      } else {
+        await post({
+          action: 'return_to_order',
+          lotId: reversalDraft.lot.id,
+          expectedVersion: reversalDraft.preview.lotVersion,
+          physicalReturnConfirmed: reversalDraft.physicalReturnConfirmed,
+          reason: reversalDraft.reason,
+          idempotencyKey: newRequestKey('wip-return-order-ui'),
+        });
+        setToast('半成品覆盖已撤销，剩余数量已回归原订单；历史报工、数量和工时保持不变');
+      }
+      setReversalDraft(null);
+      await load(true);
+    } catch (reason) {
+      setReversalDraft(current => current ? {
+        ...current,
+        error: reason instanceof Error ? reason.message : '撤销操作失败',
+      } : null);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
     location.href = '/login';
@@ -524,25 +679,31 @@ export default function WipWarehouseShell({
       </aside>
 
       <section className="wip-lot-panel">
-        <header><span><small>动态计划口径</small><strong>半成品批次</strong></span><em>{openLots.length} 个未关闭</em></header>
+        <header><span><small>动态计划口径</small><strong>{initialWeekStartDate ? `${initialWeekStartDate} 半成品续作` : '半成品批次'}</strong></span><em>{visibleLots.length} 个当前结果</em></header>
+        <nav className="wip-lot-views" aria-label="半成品批次视图">
+          <a className={lotView === 'all' && !initialWeekStartDate ? 'active' : ''} href="/workspace/wip">全部</a>
+          <a className={lotView === 'unscheduled' ? 'active' : ''} href="/workspace/wip?view=unscheduled">待排周</a>
+          <a className={lotView === 'scheduled' ? 'active' : ''} href="/workspace/wip?view=scheduled">已排周</a>
+          {initialWeekStartDate && <span>已定位目标周 {initialWeekStartDate}<a href="/workspace/wip?view=scheduled" aria-label="清除目标周筛选"><X size={12} /></a></span>}
+        </nav>
         <div className="wip-week-strip">
-          {data.weeks.slice(0, 5).map(week => <article key={week.startDate}><small>{week.label} · {week.startDate.slice(5)}</small><strong>{week.plannedQuantity.toLocaleString()} 件</strong><span>{week.plannedHours.toLocaleString()} 小时 · {week.lotCount} 批</span></article>)}
+          {data.weeks.map(week => <a className={initialWeekStartDate === week.startDate ? 'selected' : ''} href={`/workspace/wip?view=scheduled&week=${encodeURIComponent(week.startDate)}`} key={week.startDate}><small>{week.label} · {week.startDate.slice(5)}</small><strong>{week.plannedQuantity.toLocaleString()} 件</strong><span>{week.plannedHours.toLocaleString()} 小时 · {week.lotCount} 批</span></a>)}
         </div>
         <div className="wip-lot-table hm-scroll-region">
-          {data.lots.map(lot => <button type="button" key={lot.id} className={selectedLotId === lot.id ? 'selected' : ''} onClick={() => { setSelectedLotId(lot.id); setScheduleDraft(current => ({ ...current, quantity: String(lot.unscheduledQuantity) })); }}>
+          {visibleLots.map(lot => <button type="button" key={lot.id} className={selectedLot?.id === lot.id ? 'selected' : ''} onClick={() => { setSelectedLotId(lot.id); setScheduleDraft(current => ({ ...current, quantity: String(lot.unscheduledQuantity) })); }}>
             <span><small>{lot.lotNo}</small><strong>{lot.specification}</strong><em>{lot.customerName} · {lot.workOrderCode}</em></span>
             <b>{lot.quantity.toLocaleString()}<small> 件</small></b>
             <i className={lot.scheduleStatus.toLowerCase()}>{statusLabel(lot.scheduleStatus)}</i>
             <span><small>来源周 {lot.sourceWeekStartDate}</small><em>未排 {lot.unscheduledQuantity} · {lot.remainingHours} 小时</em></span>
           </button>)}
-          {!loading && !data.lots.length && <p className="wip-empty">半成品仓暂无批次。可从左侧任意来源周转入。</p>}
+          {!loading && !visibleLots.length && <p className="wip-empty">当前筛选下没有半成品批次。可切换“全部”或其他目标周查看。</p>}
         </div>
       </section>
 
       <aside className="wip-detail-panel">
         {selectedLot ? <>
           <header><span><small>{selectedLot.lotNo}</small><strong>{selectedLot.specification}</strong><em>{selectedLot.productName}</em></span><i className={selectedLot.scheduleStatus.toLowerCase()}>{statusLabel(selectedLot.scheduleStatus)}</i></header>
-          <section className="wip-origin-card"><span><small>来源生产周</small><strong>{selectedLot.sourceWeekStartDate} 至 {selectedLot.sourceWeekEndDate}</strong></span><span><small>原则</small><strong>已报工与员工工时不迁移</strong></span></section>
+          <section className="wip-origin-card"><span><small>来源生产周</small><strong>{selectedLot.sourceWeekStartDate} 至 {selectedLot.sourceWeekEndDate}</strong></span><span><small>原则</small><strong>已报工与员工工时不迁移</strong></span>{data.permissions.canWrite && !['COMPLETED', 'CANCELLED'].includes(selectedLot.scheduleStatus) && <button type="button" className="wip-return-order" disabled={saving} onClick={openReturnToOrder}><RotateCcw size={14} />撤销转仓并回归原订单</button>}</section>
           {selectedLot.materialStatusSnapshot && <p className="wip-material-note"><AlertTriangle size={15} />{selectedLot.materialStatusSnapshot}</p>}
           <section className="wip-step-list"><header><strong>剩余工序与工时</strong><em>{selectedLot.steps.length} 道</em></header>{selectedLot.steps.map(step => <article key={step.id}><b>{String(step.position).padStart(2, '0')}</b><span><strong>{step.processName}</strong><small>剩余 {step.remainingQty} 件</small></span><em>{step.remainingHours} 小时</em></article>)}</section>
           {data.permissions.canWrite && selectedLot.unscheduledQuantity > 0 && <section className="wip-schedule-form">
@@ -552,7 +713,7 @@ export default function WipWarehouseShell({
             <label>原因<input maxLength={300} value={scheduleDraft.reason} onChange={event => setScheduleDraft({ ...scheduleDraft, reason: event.target.value })} /></label>
             <button type="button" disabled={saving || !scheduleDraft.week || !Number(scheduleDraft.quantity)} onClick={() => void scheduleLot()}>{saving ? <LoaderCircle className="spin" size={16} /> : <CalendarClock size={16} />}确认排入目标周</button>
           </section>}
-          <section className="wip-allocation-list wip-effective-arrangements"><header><span><small>当前有效口径</small><strong>当前安排</strong></span><em>{currentAllocations.length}</em></header>{currentAllocations.map(allocation => <article className="effective" key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity.toLocaleString()} 件 · 剩余 {Math.max(0, allocation.quantity - allocation.completedQty).toLocaleString()} 件</strong><span>{allocation.team?.name || '未指定班组'} · 剩余 {(allocation.plannedHours - allocation.completedHours).toFixed(2)} 小时</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i>{['ACTIVE', 'IN_PROGRESS'].includes(allocation.status) && data.permissions.canWrite && <button type="button" disabled={saving} onClick={() => openReschedule(allocation)}>改排剩余未完成部分</button>}</article>)}{!currentAllocations.length && <p className="wip-empty compact">当前没有有效周次安排，可在上方排入目标周。</p>}</section>
+          <section className="wip-allocation-list wip-effective-arrangements"><header><span><small>当前有效口径</small><strong>当前安排</strong></span><em>{currentAllocations.length}</em></header>{currentAllocations.map(allocation => <article className={`effective ${initialAllocationId === allocation.id ? 'focused' : ''}`} key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity.toLocaleString()} 件 · 剩余 {Math.max(0, allocation.quantity - allocation.completedQty).toLocaleString()} 件</strong><span>{allocation.team?.name || '未指定班组'} · 剩余 {(allocation.plannedHours - allocation.completedHours).toFixed(2)} 小时</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i>{['ACTIVE', 'IN_PROGRESS'].includes(allocation.status) && data.permissions.canWrite && <nav className="wip-allocation-actions"><button type="button" disabled={saving} onClick={() => openReschedule(allocation)}>改排剩余部分</button><button type="button" className="danger" disabled={saving} onClick={() => openUnschedule(allocation)}><Undo2 size={12} />撤销周安排</button></nav>}</article>)}{!currentAllocations.length && <p className="wip-empty compact">当前没有有效周次安排，可在上方排入目标周。</p>}</section>
           {historicalAllocations.length > 0 && <details className="wip-allocation-history"><summary><span><History size={14} />历史安排</span><em>{historicalAllocations.length} 条</em></summary><div>{historicalAllocations.map(allocation => <article key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity.toLocaleString()} 件 · 已完成 {allocation.completedQty.toLocaleString()} 件</strong><span>{allocation.reason}</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i></article>)}</div></details>}
         </> : <div className="wip-detail-empty"><PackageOpen size={36} /><strong>选择半成品批次</strong><span>查看剩余工序、标准工时和跨周安排。</span></div>}
       </aside>
@@ -593,7 +754,7 @@ export default function WipWarehouseShell({
           <section className="wip-current-arrangement"><span><small>当前有效安排</small><strong>{rescheduleAllocation.targetWeekStartDate} 至 {rescheduleAllocation.targetWeekEndDate}</strong></span><span><small>已完成事实保留</small><strong>{rescheduleAllocation.completedQty.toLocaleString()} 件 · {rescheduleAllocation.completedHours.toFixed(2)} 小时</strong></span><span><small>本次迁移</small><strong>{Math.max(0, rescheduleAllocation.quantity - rescheduleAllocation.completedQty).toLocaleString()} 件 · {Math.max(0, rescheduleAllocation.plannedHours - rescheduleAllocation.completedHours).toFixed(2)} 小时</strong></span></section>
 
           <section className="wip-reschedule-section"><header><span><b>1</b><strong>选择目标生产周</strong></span><small>目标周会立即获得一条可执行的半成品续作任务</small></header><div className="wip-reschedule-weeks" role="radiogroup" aria-label="目标生产周">
-            {data.weeks.slice(0, 5).map(week => {
+            {data.weeks.map(week => {
               const disabled = week.startDate === rescheduleAllocation.targetWeekStartDate;
               const selected = rescheduleDraft.targetWeekStartDate === week.startDate;
               return <button key={week.startDate} type="button" role="radio" aria-checked={selected} disabled={disabled || saving} className={selected ? 'selected' : ''} onClick={() => setRescheduleDraft({ ...rescheduleDraft, targetWeekStartDate: week.startDate })}><span><small>{week.label}</small><strong>{week.startDate.slice(5)} - {week.endDate.slice(5)}</strong></span><em>{disabled ? '当前安排' : `${week.lotCount} 批 · ${week.plannedHours.toLocaleString()} 小时`}</em><i /></button>;
@@ -607,6 +768,18 @@ export default function WipWarehouseShell({
         </div>
         <footer><span>提交后，可直接跳转核对计划中心和生产执行</span><button type="button" disabled={saving} onClick={closeReschedule}>取消</button><button type="button" className="primary" disabled={saving || !rescheduleDraft.targetWeekStartDate || rescheduleDraft.note.trim().length < 2} onClick={() => void commitReschedule()} data-testid="wip-reschedule-submit">{saving ? <><LoaderCircle className="spin" size={16} />正在改排</> : <><CalendarClock size={16} />确认改排剩余任务</>}</button></footer>
       </>}
+    </section></div>}
+
+    {reversalDraft && <div className="wip-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setReversalDraft(null); }}><section className="wip-reversal-modal" role="dialog" aria-modal="true" aria-labelledby="wip-reversal-title">
+      <header><div><small>{reversalDraft.kind === 'unschedule' ? '只撤销当前目标周投影' : '关闭整个半成品覆盖层'}</small><h2 id="wip-reversal-title">{reversalDraft.kind === 'unschedule' ? '撤销周安排' : '撤销转仓并回归原订单'}</h2><p>{reversalDraft.lot.lotNo} · {reversalDraft.lot.specification}</p></div><button type="button" aria-label="关闭撤销窗口" disabled={saving} onClick={() => setReversalDraft(null)}><X size={19} /></button></header>
+      <div className="wip-reversal-body">
+        <p className="wip-reversal-warning"><AlertTriangle size={18} /><span><strong>{reversalDraft.kind === 'unschedule' ? '不会回归原订单' : '仅允许没有半成品续作进度的批次'}</strong><small>{reversalDraft.kind === 'unschedule' ? '撤销后数量回到半成品仓“待排周”，以后可重新安排。' : '任何半成品报工、完成数量或员工工时都会阻止整批回归。'}</small></span></p>
+        <label>撤销原因<textarea maxLength={300} disabled={saving || Boolean(reversalDraft.preview)} value={reversalDraft.reason} onChange={event => setReversalDraft(current => current ? { ...current, reason: event.target.value } : null)} /></label>
+        {reversalDraft.preview && <section className="wip-reversal-preview"><header><CheckCircle2 size={18} /><strong>影响预检通过</strong></header><dl><div><dt>原订单</dt><dd>{reversalDraft.preview.workOrderCode}</dd></div><div><dt>影响数量</dt><dd>{reversalDraft.preview.quantity.toLocaleString()} 件</dd></div>{reversalDraft.preview.targetWeekStartDate && <div><dt>撤销目标周</dt><dd>{reversalDraft.preview.targetWeekStartDate} 至 {reversalDraft.preview.targetWeekEndDate}</dd></div>}{reversalDraft.preview.sourceWeekStartDate && <div><dt>回归来源周</dt><dd>{reversalDraft.preview.sourceWeekStartDate} 至 {reversalDraft.preview.sourceWeekEndDate}</dd></div>}<div><dt>事实保护</dt><dd>原报工、数量、工时、工艺路线均不改写</dd></div></dl></section>}
+        {reversalDraft.preview?.requiresPhysicalReturnConfirmation && <label className="wip-physical-confirm"><input type="checkbox" checked={reversalDraft.physicalReturnConfirmed} disabled={saving} onChange={event => setReversalDraft(current => current ? { ...current, physicalReturnConfirmed: event.target.checked } : null)} /><span><strong>我已确认实物退回原订单流转位置</strong><small>当前状态 {statusLabel(reversalDraft.preview?.physicalStatus || '')} · 库位 {reversalDraft.preview?.locationCode || '未登记'} · 容器 {reversalDraft.preview?.containerCode || '未登记'}</small></span></label>}
+        {reversalDraft.error && <p className="wip-reversal-error" role="alert"><AlertTriangle size={15} />{reversalDraft.error}</p>}
+      </div>
+      <footer><span>{reversalDraft.preview ? '再次确认后执行，操作会写入计划变更和审计日志' : '先检查进度、版本和原订单状态'}</span><button type="button" disabled={saving} onClick={() => setReversalDraft(null)}>取消</button>{reversalDraft.preview ? <button type="button" className="danger" disabled={saving || Boolean(reversalDraft.preview.requiresPhysicalReturnConfirmation && !reversalDraft.physicalReturnConfirmed)} onClick={() => void commitReversal()}>{saving ? <LoaderCircle className="spin" size={15} /> : <RotateCcw size={15} />}确认执行撤销</button> : <button type="button" className="primary" disabled={saving || reversalDraft.reason.trim().length < 2} onClick={() => void previewReversal()}>{saving ? <LoaderCircle className="spin" size={15} /> : <ArrowRight size={15} />}预检影响</button>}</footer>
     </section></div>}
   </main>;
 }

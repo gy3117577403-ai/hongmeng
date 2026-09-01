@@ -105,6 +105,8 @@ test('WIP rescheduling uses an interactive impact modal and exposes target-week 
   assert.match(component, /查看计划中心/);
   assert.match(css, /\.wip-reschedule-weeks[\s\S]*grid-template-columns:/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.wip-reschedule-modal/);
+  assert.doesNotMatch(component, /data\.weeks\.slice\(0, 5\)/);
+  assert.match(component, /data\.weeks\.map\(week/);
 });
 
 test('WIP continuation is projected into planning, production execution and process reporting', () => {
@@ -116,7 +118,8 @@ test('WIP continuation is projected into planning, production execution and proc
 
   assert.match(planningApi, /loadWipContinuations/);
   assert.match(planningApi, /wipContinuations:\s*visibleWipContinuations/);
-  assert.match(planningUi, /className="planning-wip-lane"/);
+  assert.match(planningUi, /className="planning-wip-branch"/);
+  assert.doesNotMatch(planningUi, /className="planning-wip-lane"/);
   assert.match(productionService, /serializeWipExecutionOrder/);
   assert.match(productionService, /wipMovedOutContinuations/);
   assert.match(continuationService, /canonicalWipWeekDate/);
@@ -125,6 +128,40 @@ test('WIP continuation is projected into planning, production execution and proc
   assert.match(productionUi, /activeSteps=\{completionOrder\.wipContinuation[\s\S]*?filter\(step/);
   assert.match(productionUi, /wipTargetStartsInFuture[\s\S]*?目标周开始后可扫码或在此报工/);
   assert.match(productionUi, /半成品续作/);
+});
+
+test('WIP correction is reversible only through guarded unschedule and source-order return flows', () => {
+  const api = readFileSync(resolve(repositoryRoot, 'app/api/wip/route.ts'), 'utf8');
+  const service = readFileSync(resolve(repositoryRoot, 'lib/wip-warehouse.ts'), 'utf8');
+  const component = readFileSync(resolve(repositoryRoot, 'components/WipWarehouseShell.tsx'), 'utf8');
+
+  for (const action of ['preview_unschedule', 'unschedule', 'preview_return_to_order', 'return_to_order']) {
+    assert.match(api, new RegExp(`action === '${action}'`));
+  }
+  assert.match(service, /WIP_UNSCHEDULE_HAS_PROGRESS/);
+  assert.match(service, /WIP_RETURN_HAS_PROGRESS/);
+  assert.match(service, /WIP_PHYSICAL_RETURN_REQUIRED/);
+  assert.match(service, /completedFactsPreserved:\s*true/);
+  assert.match(service, /reportingFactsPreserved:\s*true/);
+  assert.match(service, /laborFactsPreserved:\s*true/);
+  assert.match(component, /撤销周安排/);
+  assert.match(component, /撤销转仓并回归原订单/);
+  assert.match(component, /我已确认实物退回原订单流转位置/);
+});
+
+test('WIP execution rows keep a purple entity identity after generic zebra and hover rules', () => {
+  const component = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
+  const css = readFileSync(resolve(repositoryRoot, 'app/production/production-workbench.css'), 'utf8');
+  const tokens = readFileSync(resolve(repositoryRoot, 'app/styles/hm-design-tokens.css'), 'utf8');
+  const genericRowIndex = css.lastIndexOf('.hm-production-workbench .production-dispatch-row:nth-child(even)');
+  const purpleRowIndex = css.lastIndexOf('.hm-production-workbench .production-dispatch-row.is-wip-continuation:nth-child(even)');
+
+  assert.ok(purpleRowIndex > genericRowIndex);
+  assert.match(tokens, /--hm-color-entity-wip:\s*#6d28d9/);
+  assert.match(css, /is-wip-continuation:focus-within[\s\S]*?--hm-color-entity-wip-soft-hover/);
+  assert.match(component, /来源周 \{wipContinuation\.sourceWeekStartDate\.slice\(5\)\} → 目标周 \{wipContinuation\.targetWeekStartDate\.slice\(5\)\}/);
+  assert.match(component, /setTargetWipAllocationId/);
+  assert.match(component, /is-deep-link-target/);
 });
 
 test('current production keeps preparation and SOP-validation orders visible with warning badges', () => {

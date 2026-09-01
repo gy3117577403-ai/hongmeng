@@ -1075,12 +1075,14 @@ function executionParams(
   page = 1,
   workOrderId = '',
   displaySize = 12,
+  wipAllocationId = '',
 ): URLSearchParams {
   const params = new URLSearchParams({ view, page: '1', pageSize: '60' });
   if (page > 1) params.set('displayPage', String(page));
   if (displaySize !== 12) params.set('displaySize', String(displaySize));
   params.set('scope', scope);
   if (workOrderId) params.set('workOrderId', workOrderId);
+  if (wipAllocationId) params.set('wipAllocationId', wipAllocationId);
   if (keyword) params.set('keyword', keyword);
   if (quick.length) params.set('quick', quick.join(','));
   if (scope === 'history' && weekStart) params.set('weekStart', weekStart);
@@ -1230,6 +1232,7 @@ export default function ProductionExecutionCenter({
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [targetWorkOrderId, setTargetWorkOrderId] = useState('');
+  const [targetWipAllocationId, setTargetWipAllocationId] = useState('');
   const [quick, setQuick] = useState<QuickFilter[]>([]);
   const [advanced, setAdvanced] = useState<AdvancedFilters>(emptyAdvanced);
   const [draftAdvanced, setDraftAdvanced] = useState<AdvancedFilters>(emptyAdvanced);
@@ -1248,7 +1251,9 @@ export default function ProductionExecutionCenter({
     weekStart,
     1,
     targetWorkOrderId,
-  ).toString(), [advanced, debouncedKeyword, quick, scope, targetWorkOrderId, view, weekStart]);
+    12,
+    targetWipAllocationId,
+  ).toString(), [advanced, debouncedKeyword, quick, scope, targetWipAllocationId, targetWorkOrderId, view, weekStart]);
   const activeBoardCacheKeyRef = useRef(activeBoardCacheKey);
   activeBoardCacheKeyRef.current = activeBoardCacheKey;
   const board = cacheBoundSnapshotValue(boardSnapshot, activeBoardCacheKey);
@@ -1413,6 +1418,7 @@ export default function ProductionExecutionCenter({
       ? new URL(restored.returnUrl, window.location.origin).searchParams
       : params;
     setTargetWorkOrderId((sourceParams.get('workOrderId') || '').trim().slice(0, 120));
+    setTargetWipAllocationId((sourceParams.get('wipAllocationId') || '').trim().slice(0, 120));
     const parsedView = restored?.view || sourceParams.get('view');
     const parsedKeyword = restored?.keyword ?? sourceParams.get('keyword') ?? '';
     const parsedQuick = restored?.quick
@@ -1454,10 +1460,10 @@ export default function ProductionExecutionCenter({
 
   useEffect(() => {
     if (!stateReady) return;
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize, targetWipAllocationId);
     if (returnKeyRef.current) params.set('returnKey', returnKeyRef.current);
     window.history.replaceState(window.history.state, '', `/production?${params.toString()}`);
-  }, [advanced, debouncedKeyword, dispatchPageSize, page, quick, scope, stateReady, targetWorkOrderId, view, weekStart]);
+  }, [advanced, debouncedKeyword, dispatchPageSize, page, quick, scope, stateReady, targetWipAllocationId, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     if (!stateReady || summaryRefreshToken === 0 || processedSummaryRefreshRef.current === summaryRefreshToken) return undefined;
@@ -1493,7 +1499,7 @@ export default function ProductionExecutionCenter({
     requestRef.current = requestId;
     productionRequestInFlightRef.current = true;
     const controller = new AbortController();
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId, 12, targetWipAllocationId);
     const cacheKey = activeBoardCacheKey;
     if (reconciliationRefreshTokenRef.current !== refreshToken) {
       reconciliationRefreshTokenRef.current = refreshToken;
@@ -1541,7 +1547,19 @@ export default function ProductionExecutionCenter({
         setLoading(false);
       });
     return () => controller.abort();
-  }, [activeBoardCacheKey, advanced, debouncedKeyword, quick, refreshToken, scope, stateReady, targetWorkOrderId, view, weekStart]);
+  }, [activeBoardCacheKey, advanced, debouncedKeyword, quick, refreshToken, scope, stateReady, targetWipAllocationId, targetWorkOrderId, view, weekStart]);
+
+  useEffect(() => {
+    if (!board || !targetWipAllocationId) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const selector = `[data-wip-allocation-id="${CSS.escape(targetWipAllocationId)}"]`;
+      const row = boardShellRef.current?.querySelector<HTMLElement>(selector);
+      if (!row) return;
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      row.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [board, targetWipAllocationId]);
 
   useEffect(() => {
     if (loading || !board || !pendingRestoreRef.current) return;
@@ -1580,7 +1598,7 @@ export default function ProductionExecutionCenter({
           if (sessionStorage.getItem('production-execution:pending-return') === returnKey) sessionStorage.removeItem('production-execution:pending-return');
           pendingRestoreRef.current = null;
           returnKeyRef.current = '';
-          const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize);
+          const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize, targetWipAllocationId);
           window.history.replaceState(window.history.state, '', `/production?${params.toString()}`);
         } else if (attempt < 8) {
           timer = window.setTimeout(restore, 100);
@@ -1592,7 +1610,7 @@ export default function ProductionExecutionCenter({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [advanced, board, debouncedKeyword, dispatchPageSize, loading, page, quick, scope, targetWorkOrderId, view, weekStart]);
+  }, [advanced, board, debouncedKeyword, dispatchPageSize, loading, page, quick, scope, targetWipAllocationId, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     document.body.classList.toggle('hongmeng-webview', Boolean(window.__HONGMENG_WEBVIEW__));
@@ -2686,7 +2704,7 @@ export default function ProductionExecutionCenter({
   }
 
   function captureReturnState(returnKey: string, focusedOrderId: string, focusedStage?: StageKey): string {
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize, targetWipAllocationId);
     params.set('returnKey', returnKey);
     const returnUrl = `/production?${params.toString()}`;
     const focusedCard = findProductionOrderCard(focusedOrderId, focusedStage);
@@ -2835,7 +2853,7 @@ export default function ProductionExecutionCenter({
   }
 
   function productionDocumentParams(selectedOnly = false): URLSearchParams {
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId, 12, targetWipAllocationId);
     params.delete('page'); params.delete('pageSize');
     if (selectedOnly) selected.forEach(id => params.append('selectedWorkOrderId', id));
     return params;
@@ -2939,16 +2957,17 @@ export default function ProductionExecutionCenter({
           </div>
           <nav className="production-dispatch-week-tabs" aria-label="生产周范围">
             <label className={scope === 'history' ? 'active' : ''}>
-              <span>{customFutureWeek ? '指定周' : '历史周'}</span>
+              <span>{customFutureWeek ? '指定周' : '历史 / 指定周'}</span>
               <select
-                aria-label="选择历史生产周"
+                aria-label="选择历史或指定生产周"
                 value={scope === 'history' ? weekStart : ''}
                 onFocus={() => {
                   if (scope !== 'history') changeWeekScope('history');
                 }}
                 onChange={event => changeWeekScope('history', event.target.value)}
               >
-                <option value="" disabled>选择历史周</option>
+                <option value="" disabled>选择历史 / 指定周</option>
+                {scope === 'history' && weekStart && !(summary?.navigation?.history ?? []).some(item => item.weekStartDate === weekStart) && <option value={weekStart}>{customFutureWeek ? '指定未来周' : '指定周'} · {dateText(summary?.weekStartDate || weekStart)} - {dateText(summary?.weekEndDate || weekStart)}</option>}
                 {(summary?.navigation?.history ?? []).map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)} · {item.count} 批</option>)}
               </select>
             </label>
@@ -3037,7 +3056,7 @@ export default function ProductionExecutionCenter({
         </section>
 
         <section className="production-dispatch-toolbar" aria-label="生产调度筛选">
-          <label className="production-dispatch-search"><Search size={18} aria-hidden="true" /><input value={keyword} onChange={event => { setTargetWorkOrderId(''); setKeyword(event.target.value); }} placeholder="搜索客户、型号、工单或品名" /></label>
+          <label className="production-dispatch-search"><Search size={18} aria-hidden="true" /><input value={keyword} onChange={event => { setTargetWorkOrderId(''); setTargetWipAllocationId(''); setKeyword(event.target.value); }} placeholder="搜索客户、型号、工单或品名" /></label>
           <div className="production-dispatch-presets" aria-label="调度视图">
             <button className={dispatchPreset === 'all' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'all'} onClick={() => applyDispatchPreset('all')}>全部</button>
             <button className={dispatchPreset === 'today' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'today'} onClick={() => applyDispatchPreset('today')}>今日交付</button>
@@ -3098,6 +3117,7 @@ export default function ProductionExecutionCenter({
                 batchMode={batchMode}
                 selected={selected}
                 saving={saving}
+                highlighted={Boolean(targetWipAllocationId && item.order.wipContinuation?.allocationId === targetWipAllocationId)}
                 toggleSelected={toggleSelected}
                 openDetail={openDetail}
                 openNextStep={openNextStep}
@@ -3261,6 +3281,7 @@ type ProductionDispatchRowProps = {
   batchMode: boolean;
   selected: string[];
   saving: boolean;
+  highlighted: boolean;
   toggleSelected: (id: string) => void;
   openDetail: (order: ProductionOrder, tab?: DetailTab) => void;
   openNextStep: (order: ProductionOrder, displayStage: StageKey) => void;
@@ -3311,6 +3332,7 @@ function ProductionDispatchRow({
   batchMode,
   selected,
   saving,
+  highlighted,
   toggleSelected,
   openDetail,
   openNextStep,
@@ -3417,7 +3439,7 @@ function ProductionDispatchRow({
     openNextStep(order, displayStage);
   }
 
-  return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${order.carryover ? 'is-carryover' : ''} ${isWipContinuation ? 'is-wip-continuation' : ''} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-wip-allocation-id={wipContinuation?.allocationId || undefined} data-production-stage={displayStage}>
+  return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${order.carryover ? 'is-carryover' : ''} ${isWipContinuation ? 'is-wip-continuation' : ''} ${highlighted ? 'is-deep-link-target' : ''} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-wip-allocation-id={wipContinuation?.allocationId || undefined} data-production-stage={displayStage} tabIndex={highlighted ? -1 : undefined}>
     <div className="production-list-sequence">{rowNumber}</div>
     <div className="production-dispatch-row-identity">
       <div className="production-dispatch-row-select">
@@ -3429,7 +3451,7 @@ function ProductionDispatchRow({
         <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.carryover && <em className="carryover-badge" title={`原生产周 ${order.carryover.originalWeekStartDate}，订单与资料未复制`}>{order.carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' : '上周遗留'}</em>}{isWipContinuation && <em className="wip-continuation-badge" title={`半成品批次 ${wipContinuation?.lotNo}，仅显示目标周剩余工序和工时`}>半成品续作</em>}{isMovedOutSource && <em className="wip-continuation-badge moved-out" title="本周保留已报工事实，未完成工序已转到新的目标周">剩余已转出</em>}{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
         <button type="button" title={`${specText(order)}；进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
         <small title={`${order.productName || '品名待补充'}${order.businessCode ? ` · ${order.businessCode}` : ''}`}>{order.productName || '品名待补充'}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>
-        {wipContinuation && <span className="production-wip-continuation-meta">{wipContinuation.lotNo} · 来源周 {wipContinuation.sourceWeekStartDate.slice(5)} · 剩余 {wipContinuation.remainingQty.toLocaleString()} 件</span>}
+        {wipContinuation && <span className="production-wip-continuation-meta">{wipContinuation.lotNo} · 来源周 {wipContinuation.sourceWeekStartDate.slice(5)} → 目标周 {wipContinuation.targetWeekStartDate.slice(5)} · 剩余 {wipContinuation.remainingQty.toLocaleString()} 件</span>}
         {movedOutContinuation && <span className="production-wip-continuation-meta moved-out">本周只保留已报工事实 · 剩余任务在 {movedOutContinuation.targetWeekStartDate.slice(5)} 周</span>}
         {(order.planReleaseState === 'preparation' || order.sopStage === 'validating' || !order.documentCategoryCodes.includes('sop')) && <span className="production-dispatch-readiness-badges">
           {order.planReleaseState === 'preparation' && <em className="preparation" title="本周计划已形成工单，但尚未激活；不影响在生产执行中查看和安排">本周预备</em>}

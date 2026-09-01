@@ -2142,7 +2142,7 @@ export default function PlanningCenterShell({
           >
             {week.key === 'current' ? <CalendarCheck2 size={17} aria-hidden="true" /> : <CalendarClock size={17} aria-hidden="true" />}
             <span><strong>{editableWeekLabel(week.key)}</strong><small>{week.weekStartDate.slice(5)} - {week.weekEndDate.slice(5)}</small></span>
-            <b>{week.batchCount}<small>批</small></b>
+            <b>{week.batchCount}<small>批</small>{Boolean(week.wipTaskCount) && <em className="planning-week-wip-count">+{week.wipTaskCount} 项半成品</em>}</b>
           </button>)}
         </section>
 
@@ -2289,41 +2289,11 @@ export default function PlanningCenterShell({
               weekStartDate={selectedWeek?.weekStartDate}
               weekEndDate={selectedWeek?.weekEndDate}
             />
-            {selectedWipContinuations.length > 0 && <section className="planning-wip-lane" aria-label={`半成品续作，共 ${selectedWipContinuations.length} 项`}>
-              <header>
-                <span><Boxes size={17} /><strong>半成品续作</strong><em>{selectedWipContinuations.length} 项</em></span>
-                <small>仅剩余工序和工时进入本周计划；来源周已报工事实保持不变</small>
-                <a href="/workspace/wip">进入半成品仓<ChevronRight size={13} /></a>
-              </header>
-              <div className="planning-wip-lane-list hm-scroll-region">
-                {selectedWipContinuations.map(item => {
-                  const productionScope = selectedWeekKey === 'current'
-                    ? 'current'
-                    : selectedWeekKey === 'next'
-                      ? 'next'
-                      : selectedWeekKey === 'afterNext'
-                        ? 'afterNext'
-                        : 'history';
-                  const productionParams = new URLSearchParams({
-                    scope: productionScope,
-                    workOrderId: item.workOrderId,
-                    wipAllocationId: item.allocationId,
-                  });
-                  if (productionScope === 'history') {
-                    productionParams.set('weekStart', item.targetWeekStartDate);
-                    productionParams.set('weekEnd', item.targetWeekEndDate);
-                  }
-                  return <article key={item.allocationId} data-wip-allocation-id={item.allocationId}>
-                    <span className="planning-wip-marker"><Boxes size={16} /></span>
-                    <div className="planning-wip-identity"><small>{item.lotNo}</small><strong>{item.specification}</strong><em>{item.customerName} · {item.productName}</em></div>
-                    <div className="planning-wip-quantity"><strong>{item.quantity.toLocaleString()} 件</strong><small>已完成 {item.completedQty.toLocaleString()} · 剩余 {item.remainingQty.toLocaleString()}</small></div>
-                    <div className="planning-wip-route"><strong>{item.steps.filter(step => step.remainingQty > 0).map(step => step.processName).join(' → ') || '续作已完成'}</strong><small>来源周 {item.sourceWeekStartDate.slice(5)} - {item.sourceWeekEndDate.slice(5)}</small></div>
-                    <div className="planning-wip-hours"><strong>{item.remainingHours.toLocaleString()} 小时</strong><small>{item.team?.name || '班组待安排'} · {item.status === 'COMPLETED' ? '已完成' : item.status === 'IN_PROGRESS' ? '生产中' : '待执行'}</small></div>
-                    <nav><a href={`/workspace/wip?batchId=${encodeURIComponent(item.productionPlanBatchId)}`}>查看安排</a><a href={`/production?${productionParams.toString()}`}><Factory size={13} />查看执行</a></nav>
-                  </article>;
-                })}
-              </div>
-            </section>}
+            {selectedWipContinuations.length > 0 && <aside className="planning-wip-branch" aria-label={`半成品续作独立分支，共 ${selectedWipContinuations.length} 项`}>
+              <span><Boxes size={17} /><strong>半成品续作独立分支</strong><em>{selectedWipContinuations.length} 项 · {selectedWipQuantity.toLocaleString()} 件 · {duration(selectedWipMilliseconds)}</em></span>
+              <small>本表只保留正常订单；半成品剩余工序在独立台账管理，并已计入本周口径。</small>
+              <a href={`/workspace/wip?view=scheduled&week=${encodeURIComponent(selectedWeekStartDate)}`}>查看本周半成品<ChevronRight size={13} /></a>
+            </aside>}
             <section className={selectedWeekKey === 'current' && carryoverRows.length ? `planning-carryover ${carryoverOpen ? 'open' : ''}` : 'planning-carryover empty'} aria-label="历史周遗留未完">
               {selectedWeekKey === 'current' && carryoverRows.length > 0 && <>
                 <button className="planning-carryover-summary" type="button" aria-expanded={carryoverOpen} onClick={() => setCarryoverOpen(current => !current)}>
@@ -2366,11 +2336,17 @@ export default function PlanningCenterShell({
                   });
                   const sopInfo = sopStageInfo(order);
                   const activeHold = batch.holds?.find(hold => hold.status === 'ACTIVE') || null;
+                  const movedOutContinuations = wipContinuations.filter(item => (
+                    item.productionPlanBatchId === batch.id
+                    && item.sourceWeekStartDate === batch.weekStartDate
+                    && item.targetWeekStartDate !== item.sourceWeekStartDate
+                    && item.status !== 'CANCELLED'
+                  ));
                   return <Fragment key={batch.id}>
                   <tr data-batch-id={batch.id} className={`state-${batch.releaseState} ${activeHold ? 'state-frozen' : ''} ${expandedOrderId === batch.id ? 'expanded' : ''}`}>
                     <td className="production-list-sequence">{rowIndex + 1}</td>
                     <td className="select-cell"><input type="checkbox" aria-label={`选择 ${order.specification} 第 ${batch.batchNo} 批`} checked={selectedBatchIds.includes(batch.id)} disabled={batch.releaseState === 'archived'} onChange={() => toggleBatch(batch.id)} /></td>
-                    <td><button className="planning-product-link" type="button" title={`${order.specification} · ${order.productName}${order.qualityWarningCount ? ` · ${order.qualityWarningCount}条质量警示` : ''}`} onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><strong>{order.specification}{Boolean(order.qualityWarningCount) && <em className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']} · {order.qualityWarningCount}</em>}</strong><span>{order.customerName} · {order.productName}</span><small>{order.salesperson ? `业务员 ${order.salesperson} · ` : ''}第 {batch.batchNo} 批{order.qualityWarningPrintRequired ? ' · 警示附页必打' : ''}</small></button></td>
+                    <td><button className="planning-product-link" type="button" title={`${order.specification} · ${order.productName}${order.qualityWarningCount ? ` · ${order.qualityWarningCount}条质量警示` : ''}`} onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><strong>{order.specification}{Boolean(order.qualityWarningCount) && <em className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']} · {order.qualityWarningCount}</em>}</strong><span>{order.customerName} · {order.productName}</span><small>{order.salesperson ? `业务员 ${order.salesperson} · ` : ''}第 {batch.batchNo} 批{order.qualityWarningPrintRequired ? ' · 警示附页必打' : ''}</small>{movedOutContinuations.length > 0 && <em className="planning-wip-moved-badge"><Boxes size={11} />剩余已转至 {movedOutContinuations.map(item => item.targetWeekStartDate.slice(5)).join('、')} 周</em>}</button></td>
                     <td><b>{batch.quantity.toLocaleString()}</b><small>订单 {order.orderQuantity.toLocaleString()}</small></td>
                     <td><strong title={`${batch.weekStartDate} 至 ${batch.weekEndDate}`}>{weekLabel(batch, periods)}</strong><small>{batch.weekStartDate.slice(5)} - {batch.weekEndDate.slice(5)}</small></td>
                     <td><strong>{(batch.estimatedCompletionDate || batch.plannedCompletionDate).slice(5)}</strong><small>原计划 {batch.plannedCompletionDate.slice(5)}</small>{batch.workOrderId && canAdjustProductionDates(user) && <ProductionControlButton workOrderId={batch.workOrderId} mode="adjust_date">调整日期</ProductionControlButton>}</td>
@@ -2404,7 +2380,7 @@ export default function PlanningCenterShell({
                 </Fragment>;
                 })}</tbody>
               </table>
-              {!loading && planDataAvailable && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>{readinessFilters.length ? '没有符合准备状态的批次' : `${editableWeekLabel(selectedWeekKey)}还没有排产批次`}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : `从左侧订单池安排到 ${selectedWeek?.weekStartDate.slice(5) || ''} - ${selectedWeek?.weekEndDate.slice(5) || ''}，或直接导入该周清单。`}</span></div>}
+              {!loading && planDataAvailable && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>{readinessFilters.length ? '没有符合准备状态的批次' : selectedWipContinuations.length ? '本周没有正常批次，半成品在独立分支' : `${editableWeekLabel(selectedWeekKey)}还没有排产批次`}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : selectedWipContinuations.length ? '使用上方“查看本周半成品”进入独立台账，不再与正常订单挤在同一张表。' : `从左侧订单池安排到 ${selectedWeek?.weekStartDate.slice(5) || ''} - ${selectedWeek?.weekEndDate.slice(5) || ''}，或直接导入该周清单。`}</span></div>}
             </div>
           </div>
         </section>}

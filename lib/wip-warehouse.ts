@@ -837,6 +837,445 @@ export async function rescheduleWipAllocation(input: {
   });
 }
 
+export type WipUnschedulePreview = {
+  action: 'UNSCHEDULE_ALLOCATION';
+  allocationId: string;
+  allocationVersion: number;
+  lotId: string;
+  lotNo: string;
+  workOrderId: string;
+  workOrderCode: string;
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
+  quantity: number;
+  plannedStandardMilliseconds: number;
+  plannedHours: number;
+  resultScheduleStatus: 'UNSCHEDULED' | 'PARTIALLY_SCHEDULED';
+  preservesProductionFacts: true;
+};
+
+async function unschedulePreviewWithDb(db: WipDb, allocationIdInput: unknown): Promise<WipUnschedulePreview> {
+  const allocationId = cleanText(allocationIdInput, 80);
+  if (!allocationId) throw new WipWarehouseError('请选择需要撤销的半成品周安排', 'WIP_ALLOCATION_REQUIRED');
+  const allocation = await db.wipWeekAllocation.findUnique({
+    where: { id: allocationId },
+    include: {
+      lot: {
+        include: {
+          workOrder: { select: { id: true, code: true, businessCode: true } },
+          allocations: { select: { id: true, status: true, quantity: true, completedQty: true } },
+        },
+      },
+      steps: {
+        include: { credits: { where: { status: 'ACTIVE' }, select: { id: true } } },
+      },
+    },
+  });
+  if (!allocation || (allocation.status !== WipWeekAllocationStatus.ACTIVE && allocation.status !== WipWeekAllocationStatus.IN_PROGRESS)) {
+    throw new WipWarehouseError('该周安排不存在，或已经完成、改排、取消', 'WIP_ALLOCATION_NOT_EDITABLE', 409);
+  }
+  const hasProgress = allocation.completedQty > 0
+    || allocation.completedStandardMilliseconds > 0n
+    || allocation.steps.some(step => (
+      step.completedQty > 0
+      || step.completedStandardMilliseconds > 0n
+      || step.credits.length > 0
+    ));
+  if (hasProgress) {
+    throw new WipWarehouseError(
+      '该安排已经产生半成品报工或完成工时，不能直接撤销；可使用“改排剩余未完成部分”保留既有事实',
+      'WIP_UNSCHEDULE_HAS_PROGRESS',
+      409,
+    );
+  }
+  const coveredAfter = allocation.lot.allocations.reduce((sum, item) => (
+    item.id === allocation.id ? sum : sum + effectiveAllocationQuantity(item)
+  ), 0);
+  return {
+    action: 'UNSCHEDULE_ALLOCATION',
+    allocationId: allocation.id,
+    allocationVersion: allocation.version,
+    lotId: allocation.lot.id,
+    lotNo: allocation.lot.lotNo,
+    workOrderId: allocation.lot.workOrder.id,
+    workOrderCode: allocation.lot.workOrder.businessCode || allocation.lot.workOrder.code,
+    targetWeekStartDate: chinaDate(allocation.targetWeekStartDate),
+    targetWeekEndDate: chinaDate(allocation.targetWeekEndDate),
+    quantity: allocation.quantity,
+    plannedStandardMilliseconds: bigintNumber(allocation.plannedStandardMilliseconds),
+    plannedHours: hours(allocation.plannedStandardMilliseconds),
+    resultScheduleStatus: coveredAfter > 0 ? 'PARTIALLY_SCHEDULED' : 'UNSCHEDULED',
+    preservesProductionFacts: true,
+  };
+}
+
+export async function previewWipAllocationUnschedule(input: {
+  allocationId: unknown;
+  productionScope: ProductionEntityScope;
+}): Promise<WipUnschedulePreview> {
+  assertProductionScopeWrite(input.productionScope);
+  return unschedulePreviewWithDb(prisma, input.allocationId);
+}
+
+export async function unscheduleWipAllocation(input: {
+  allocationId: unknown;
+  expectedVersion: unknown;
+  reason: unknown;
+  actorId: string;
+  actorName: string;
+  idempotencyKey?: unknown;
+  productionScope: ProductionEntityScope;
+}) {
+  assertProductionScopeWrite(input.productionScope);
+  const allocationId = cleanText(input.allocationId, 80);
+  const expectedVersion = Number(input.expectedVersion);
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+    throw new WipWarehouseError('周安排版本无效，请刷新后重试', 'WIP_ALLOCATION_VERSION_INVALID', 409);
+  }
+  const reason = requiredReason(input.reason);
+  const requestKey = idempotencyKey(input.idempotencyKey, 'wip-unschedule');
+  return prisma.$transaction(async tx => {
+    const replay = await tx.wipEvent.findUnique({
+      where: { idempotencyKey: requestKey },
+      select: { allocation: true },
+    });
+    if (replay?.allocation) return replay.allocation;
+    const beforeLock = await tx.wipWeekAllocation.findUnique({
+      where: { id: allocationId },
+      select: { lot: { select: { workOrderId: true } } },
+    });
+    if (!beforeLock) throw new WipWarehouseError('周安排不存在', 'WIP_ALLOCATION_NOT_EDITABLE', 409);
+    await lockProductionWorkOrder(tx, beforeLock.lot.workOrderId);
+    const preview = await unschedulePreviewWithDb(tx, allocationId);
+    if (preview.allocationVersion !== expectedVersion) {
+      throw new WipWarehouseError('周安排已被其他操作修改，请刷新后重试', 'WIP_ALLOCATION_CHANGED', 409);
+    }
+    const allocation = await tx.wipWeekAllocation.findUnique({
+      where: { id: allocationId },
+      include: {
+        lot: {
+          include: {
+            productionPlanBatch: { select: { id: true, planOrderId: true } },
+          },
+        },
+      },
+    });
+    if (!allocation) throw new WipWarehouseError('周安排不存在', 'WIP_ALLOCATION_NOT_EDITABLE', 409);
+    const changed = await tx.wipWeekAllocation.updateMany({
+      where: {
+        id: allocation.id,
+        version: expectedVersion,
+        status: { in: [WipWeekAllocationStatus.ACTIVE, WipWeekAllocationStatus.IN_PROGRESS] },
+      },
+      data: {
+        status: WipWeekAllocationStatus.CANCELLED,
+        cancelledAt: new Date(),
+        version: { increment: 1 },
+      },
+    });
+    if (changed.count !== 1) {
+      throw new WipWarehouseError('周安排已被其他操作修改，请刷新后重试', 'WIP_ALLOCATION_CHANGED', 409);
+    }
+    await tx.wipWeekAllocationStep.updateMany({
+      where: { allocationId: allocation.id },
+      data: { status: WipRequirementStatus.CANCELLED },
+    });
+    await tx.wipInventoryMovement.create({
+      data: {
+        lotId: allocation.lotId,
+        movementType: 'CANCEL',
+        quantity: allocation.quantity,
+        fromLocation: allocation.lot.locationCode,
+        reason,
+        actorId: input.actorId,
+        idempotencyKey: `${requestKey}:movement`,
+      },
+    });
+    await tx.wipEvent.create({
+      data: {
+        lotId: allocation.lotId,
+        allocationId: allocation.id,
+        eventType: 'UNSCHEDULE_WEEK',
+        reason,
+        beforeData: {
+          targetWeekStartDate: preview.targetWeekStartDate,
+          targetWeekEndDate: preview.targetWeekEndDate,
+          quantity: preview.quantity,
+          plannedStandardMilliseconds: preview.plannedStandardMilliseconds,
+        },
+        afterData: { scheduleStatus: preview.resultScheduleStatus, returnedToWipPool: true },
+        actorId: input.actorId,
+        idempotencyKey: requestKey,
+      },
+    });
+    await recomputeLotScheduleStatus(tx, allocation.lotId);
+    await tx.productionPlanChange.create({
+      data: {
+        planOrderId: allocation.lot.productionPlanBatch.planOrderId,
+        batchId: allocation.lot.productionPlanBatch.id,
+        action: 'unschedule_semi_finished_allocation',
+        beforeData: {
+          allocationId: allocation.id,
+          targetWeekStartDate: preview.targetWeekStartDate,
+          quantity: preview.quantity,
+        },
+        afterData: { returnedToWipPool: true, scheduleStatus: preview.resultScheduleStatus },
+        impactData: { completedFactsPreserved: true, originalOrderPreserved: true },
+        reason,
+        actorId: input.actorId,
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.actorId,
+        action: 'unschedule_semi_finished_allocation',
+        targetType: 'wip_week_allocation',
+        targetId: allocation.id,
+        detail: { actorName: input.actorName, lotId: allocation.lotId, preview, reason },
+      },
+    });
+    return tx.wipWeekAllocation.findUniqueOrThrow({ where: { id: allocation.id } });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 8_000,
+    timeout: 25_000,
+  });
+}
+
+export type WipReturnToOrderPreview = {
+  action: 'RETURN_TO_SOURCE_ORDER';
+  lotId: string;
+  lotVersion: number;
+  lotNo: string;
+  workOrderId: string;
+  workOrderCode: string;
+  productionPlanBatchId: string;
+  sourceWeekStartDate: string;
+  sourceWeekEndDate: string;
+  quantity: number;
+  activeAllocationCount: number;
+  physicalStatus: SemiFinishedPhysicalStatus;
+  locationCode: string | null;
+  containerCode: string | null;
+  requiresPhysicalReturnConfirmation: boolean;
+  preservesProductionFacts: true;
+  result: 'ORIGINAL_ORDER_RESTORED';
+};
+
+async function returnToOrderPreviewWithDb(db: WipDb, lotIdInput: unknown): Promise<WipReturnToOrderPreview> {
+  const lotId = cleanText(lotIdInput, 80);
+  if (!lotId) throw new WipWarehouseError('请选择需要回归原订单的半成品批次', 'WIP_LOT_REQUIRED');
+  const lot = await db.semiFinishedLot.findUnique({
+    where: { id: lotId },
+    include: {
+      productionPlanBatch: { select: { id: true, deletedAt: true, planOrderId: true } },
+      workOrder: {
+        select: {
+          id: true,
+          code: true,
+          businessCode: true,
+          completedAt: true,
+          processRoute: { select: { status: true } },
+        },
+      },
+      allocations: {
+        include: {
+          steps: { include: { credits: { where: { status: 'ACTIVE' }, select: { id: true } } } },
+        },
+      },
+    },
+  });
+  if (!lot || lot.scheduleStatus === SemiFinishedScheduleStatus.CANCELLED) {
+    throw new WipWarehouseError('半成品批次不存在或已经回归原订单', 'WIP_LOT_NOT_FOUND', 404);
+  }
+  if (lot.productionPlanBatch.deletedAt || lot.workOrder.completedAt || lot.workOrder.processRoute?.status === 'completed') {
+    throw new WipWarehouseError('原订单已删除或已经完工，不能回归；请先核对原订单状态', 'WIP_SOURCE_ORDER_NOT_OPEN', 409);
+  }
+  if (!lot.workOrder.processRoute || !['confirmed', 'in_progress'].includes(lot.workOrder.processRoute.status)) {
+    throw new WipWarehouseError('原订单工艺路线当前不可执行，不能回归', 'WIP_SOURCE_ROUTE_NOT_EXECUTABLE', 409);
+  }
+  const hasProgress = lot.allocations.some(allocation => (
+    allocation.completedQty > 0
+    || allocation.completedStandardMilliseconds > 0n
+    || allocation.status === WipWeekAllocationStatus.COMPLETED
+    || allocation.steps.some(step => (
+      step.completedQty > 0
+      || step.completedStandardMilliseconds > 0n
+      || step.credits.length > 0
+    ))
+  ));
+  if (hasProgress) {
+    throw new WipWarehouseError(
+      '该半成品批次已经产生续作报工、完成数量或员工工时，不能整批回归原订单；请保留批次并改排剩余部分',
+      'WIP_RETURN_HAS_PROGRESS',
+      409,
+    );
+  }
+  if (lot.physicalStatus === SemiFinishedPhysicalStatus.COMPLETED) {
+    throw new WipWarehouseError('该半成品批次已经完成，不能回归原订单', 'WIP_RETURN_COMPLETED', 409);
+  }
+  const activeAllocationCount = lot.allocations.filter(allocation => (
+    allocation.status !== WipWeekAllocationStatus.CANCELLED
+  )).length;
+  return {
+    action: 'RETURN_TO_SOURCE_ORDER',
+    lotId: lot.id,
+    lotVersion: lot.version,
+    lotNo: lot.lotNo,
+    workOrderId: lot.workOrder.id,
+    workOrderCode: lot.workOrder.businessCode || lot.workOrder.code,
+    productionPlanBatchId: lot.productionPlanBatch.id,
+    sourceWeekStartDate: chinaDate(lot.sourceWeekStartDate),
+    sourceWeekEndDate: chinaDate(lot.sourceWeekEndDate),
+    quantity: lot.quantity,
+    activeAllocationCount,
+    physicalStatus: lot.physicalStatus,
+    locationCode: lot.locationCode,
+    containerCode: lot.containerCode,
+    requiresPhysicalReturnConfirmation: lot.physicalStatus === SemiFinishedPhysicalStatus.STORED
+      || lot.physicalStatus === SemiFinishedPhysicalStatus.ISSUED,
+    preservesProductionFacts: true,
+    result: 'ORIGINAL_ORDER_RESTORED',
+  };
+}
+
+export async function previewWipReturnToOrder(input: {
+  lotId: unknown;
+  productionScope: ProductionEntityScope;
+}): Promise<WipReturnToOrderPreview> {
+  assertProductionScopeWrite(input.productionScope);
+  return returnToOrderPreviewWithDb(prisma, input.lotId);
+}
+
+export async function returnWipLotToOrder(input: {
+  lotId: unknown;
+  expectedVersion: unknown;
+  physicalReturnConfirmed?: unknown;
+  reason: unknown;
+  actorId: string;
+  actorName: string;
+  idempotencyKey?: unknown;
+  productionScope: ProductionEntityScope;
+}) {
+  assertProductionScopeWrite(input.productionScope);
+  const lotId = cleanText(input.lotId, 80);
+  const expectedVersion = Number(input.expectedVersion);
+  if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+    throw new WipWarehouseError('半成品批次版本无效，请刷新后重试', 'WIP_LOT_VERSION_INVALID', 409);
+  }
+  const reason = requiredReason(input.reason);
+  const requestKey = idempotencyKey(input.idempotencyKey, 'wip-return-order');
+  return prisma.$transaction(async tx => {
+    const replay = await tx.wipEvent.findUnique({
+      where: { idempotencyKey: requestKey },
+      select: { lot: { select: { id: true, lotNo: true, scheduleStatus: true } } },
+    });
+    if (replay) return replay.lot;
+    const beforeLock = await tx.semiFinishedLot.findUnique({
+      where: { id: lotId },
+      select: { workOrderId: true },
+    });
+    if (!beforeLock) throw new WipWarehouseError('半成品批次不存在', 'WIP_LOT_NOT_FOUND', 404);
+    await lockProductionWorkOrder(tx, beforeLock.workOrderId);
+    const preview = await returnToOrderPreviewWithDb(tx, lotId);
+    if (preview.lotVersion !== expectedVersion) {
+      throw new WipWarehouseError('半成品批次已被其他操作修改，请刷新后重试', 'WIP_LOT_CHANGED', 409);
+    }
+    if (preview.requiresPhysicalReturnConfirmation && input.physicalReturnConfirmed !== true) {
+      throw new WipWarehouseError('该批次存在实物库位或已发料，请先确认实物已退回原订单流转位置', 'WIP_PHYSICAL_RETURN_REQUIRED', 409);
+    }
+    const lot = await tx.semiFinishedLot.findUnique({
+      where: { id: lotId },
+      include: { productionPlanBatch: { select: { id: true, planOrderId: true } } },
+    });
+    if (!lot) throw new WipWarehouseError('半成品批次不存在', 'WIP_LOT_NOT_FOUND', 404);
+    const now = new Date();
+    await tx.wipWeekAllocation.updateMany({
+      where: { lotId: lot.id, status: { not: WipWeekAllocationStatus.CANCELLED } },
+      data: { status: WipWeekAllocationStatus.CANCELLED, cancelledAt: now, version: { increment: 1 } },
+    });
+    await tx.wipWeekAllocationStep.updateMany({
+      where: { allocation: { lotId: lot.id }, status: { not: WipRequirementStatus.CANCELLED } },
+      data: { status: WipRequirementStatus.CANCELLED },
+    });
+    await tx.semiFinishedLotStep.updateMany({
+      where: { lotId: lot.id },
+      data: { status: WipRequirementStatus.CANCELLED },
+    });
+    const changed = await tx.semiFinishedLot.updateMany({
+      where: { id: lot.id, version: expectedVersion, scheduleStatus: { not: SemiFinishedScheduleStatus.CANCELLED } },
+      data: {
+        scheduleStatus: SemiFinishedScheduleStatus.CANCELLED,
+        physicalStatus: SemiFinishedPhysicalStatus.CANCELLED,
+        closedAt: now,
+        version: { increment: 1 },
+      },
+    });
+    if (changed.count !== 1) {
+      throw new WipWarehouseError('半成品批次已被其他操作修改，请刷新后重试', 'WIP_LOT_CHANGED', 409);
+    }
+    await tx.wipInventoryMovement.create({
+      data: {
+        lotId: lot.id,
+        movementType: 'CANCEL',
+        quantity: lot.quantity,
+        fromLocation: lot.locationCode,
+        reason,
+        actorId: input.actorId,
+        idempotencyKey: `${requestKey}:movement`,
+      },
+    });
+    await tx.wipEvent.create({
+      data: {
+        lotId: lot.id,
+        eventType: 'RETURN_TO_SOURCE_ORDER',
+        reason,
+        beforeData: {
+          scheduleStatus: lot.scheduleStatus,
+          physicalStatus: lot.physicalStatus,
+          activeAllocationCount: preview.activeAllocationCount,
+          quantity: lot.quantity,
+        },
+        afterData: { scheduleStatus: 'CANCELLED', physicalStatus: 'CANCELLED', originalOrderRestored: true },
+        actorId: input.actorId,
+        idempotencyKey: requestKey,
+      },
+    });
+    await tx.productionPlanChange.create({
+      data: {
+        planOrderId: lot.productionPlanBatch.planOrderId,
+        batchId: lot.productionPlanBatch.id,
+        action: 'return_semi_finished_to_source_order',
+        beforeData: { lotId: lot.id, lotNo: lot.lotNo, quantity: lot.quantity },
+        afterData: { originalOrderRestored: true, sourceWeekStartDate: preview.sourceWeekStartDate },
+        impactData: {
+          completedFactsPreserved: true,
+          routeFactsPreserved: true,
+          reportingFactsPreserved: true,
+          laborFactsPreserved: true,
+          physicalReturnConfirmed: Boolean(input.physicalReturnConfirmed),
+        },
+        reason,
+        actorId: input.actorId,
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.actorId,
+        action: 'return_semi_finished_to_source_order',
+        targetType: 'semi_finished_lot',
+        targetId: lot.id,
+        detail: { actorName: input.actorName, preview, reason },
+      },
+    });
+    return { id: lot.id, lotNo: lot.lotNo, scheduleStatus: SemiFinishedScheduleStatus.CANCELLED };
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 8_000,
+    timeout: 25_000,
+  });
+}
+
 const listLotInclude = Prisma.validator<Prisma.SemiFinishedLotInclude>()({
   enteredBy: { select: { id: true, displayName: true } },
   workOrder: { select: { code: true, businessCode: true, stage: true } },
@@ -918,6 +1357,7 @@ function serializeLot(lot: Prisma.SemiFinishedLotGetPayload<{ include: typeof li
   const remainingLabor = entryLabor > completedLabor ? entryLabor - completedLabor : 0n;
   return {
     id: lot.id,
+    version: lot.version,
     lotNo: lot.lotNo,
     kind: lot.kind,
     productionPlanBatchId: lot.productionPlanBatchId,

@@ -10145,3 +10145,51 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-size: 8px;
   line-height: 10px;
 }
+
+/* Half-finished continuations are a separate business entity. Keep this block
+   after the generic zebra/hover rules so its purple identity is never washed
+   out by ordinary production-row styling. Status and risk colors remain on
+   their own controls inside the row. */
+.hm-production-workbench .production-dispatch-row.is-wip-continuation,
+.hm-production-workbench .production-dispatch-row.is-wip-continuation:nth-child(even) {
+  border-left-color: var(--hm-color-entity-wip-strong, #5b21b6);
+  background: linear-gradient(90deg, var(--hm-color-entity-wip-soft, #f5f3ff) 0, #faf8ff 58%, #fff 100%);
+  box-shadow: inset 4px 0 var(--hm-color-entity-wip, #6d28d9);
+}
+
+.hm-production-workbench .production-dispatch-row.is-wip-continuation:hover,
+.hm-production-workbench .production-dispatch-row.is-wip-continuation:focus-within {
+  border-left-color: var(--hm-color-entity-wip-strong, #5b21b6);
+  background: var(--hm-color-entity-wip-soft-hover, #ede9fe);
+  box-shadow: inset 4px 0 var(--hm-color-entity-wip, #6d28d9), inset 0 0 0 1px var(--hm-color-entity-wip-border, #c4b5fd), 0 8px 20px rgb(91 33 182 / 14%);
+}
+
+.hm-production-workbench .production-dispatch-row.is-wip-continuation.is-deep-link-target {
+  outline: 3px solid rgb(109 40 217 / 30%);
+  outline-offset: -3px;
+}
+
+.hm-production-workbench .production-dispatch-row.is-wip-continuation .production-dispatch-product > button,
+.hm-production-workbench .production-dispatch-row.is-wip-continuation .production-wip-continuation-meta {
+  color: var(--hm-color-entity-wip-strong, #5b21b6);
+}
+
+.hm-production-workbench .production-dispatch-row.is-wip-continuation .wip-continuation-badge {
+  color: #fff;
+  background: var(--hm-color-entity-wip, #6d28d9);
+}
+
+.hm-production-workbench .production-dispatch-row.is-wip-continuation .production-dispatch-stage-dot {
+  background: var(--hm-color-entity-wip, #6d28d9);
+  box-shadow: 0 0 0 3px var(--hm-color-entity-wip-border, #c4b5fd);
+}
+
+.hm-production-workbench .wip-continuation-badge.moved-out {
+  border: 1px solid var(--hm-color-entity-wip-border, #c4b5fd);
+  color: var(--hm-color-entity-wip-strong, #5b21b6);
+  background: var(--hm-color-entity-wip-soft, #f5f3ff);
+}
+
+.hm-production-workbench .production-wip-continuation-meta.moved-out {
+  color: var(--hm-color-entity-wip-strong, #5b21b6);
+}

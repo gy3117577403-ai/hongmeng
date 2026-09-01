@@ -9,9 +9,13 @@ import { loadWipContinuations } from '../lib/wip-continuations';
 import {
   enterWipWarehouse,
   loadWipWeekLaborMetrics,
+  previewWipAllocationUnschedule,
   previewWipEntry,
+  previewWipReturnToOrder,
   rescheduleWipAllocation,
+  returnWipLotToOrder,
   scheduleWipLot,
+  unscheduleWipAllocation,
 } from '../lib/wip-warehouse';
 import {
   creditWipCompletion,
@@ -178,6 +182,72 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
       productionScope: scope,
     });
     assert.equal(allocation.plannedStandardMilliseconds, 12_000n);
+
+    const correctionLot = await enterWipWarehouse({
+      batchId: batch.id,
+      quantity: 2,
+      reason: '建立零进度撤销回归测试批次',
+      actorId: actor.id,
+      actorName: actor.displayName,
+      idempotencyKey: `${prefix}:correction:enter`,
+      productionScope: scope,
+    });
+    const correctionAllocation = await scheduleWipLot({
+      lotId: correctionLot.id,
+      quantity: 2,
+      targetWeekStartDate: laterWeekStart,
+      reason: '先安排到后续周用于撤销测试',
+      actorId: actor.id,
+      actorName: actor.displayName,
+      idempotencyKey: `${prefix}:correction:schedule`,
+      productionScope: scope,
+    });
+    const unschedulePreview = await previewWipAllocationUnschedule({
+      allocationId: correctionAllocation.id,
+      productionScope: scope,
+    });
+    assert.equal(unschedulePreview.resultScheduleStatus, 'UNSCHEDULED');
+    await unscheduleWipAllocation({
+      allocationId: correctionAllocation.id,
+      expectedVersion: unschedulePreview.allocationVersion,
+      reason: '目标周选择错误，撤销后重新安排',
+      actorId: actor.id,
+      actorName: actor.displayName,
+      idempotencyKey: `${prefix}:correction:unschedule`,
+      productionScope: scope,
+    });
+    const cancelledAllocation = await prisma.wipWeekAllocation.findUniqueOrThrow({ where: { id: correctionAllocation.id } });
+    assert.equal(cancelledAllocation.status, WipWeekAllocationStatus.CANCELLED);
+    const correctionLotAfterUnschedule = await prisma.semiFinishedLot.findUniqueOrThrow({ where: { id: correctionLot.id } });
+    assert.equal(correctionLotAfterUnschedule.scheduleStatus, 'UNSCHEDULED');
+
+    await scheduleWipLot({
+      lotId: correctionLot.id,
+      quantity: 2,
+      targetWeekStartDate: nextWeekStart,
+      reason: '重新安排后测试整批回归原订单',
+      actorId: actor.id,
+      actorName: actor.displayName,
+      idempotencyKey: `${prefix}:correction:reschedule`,
+      productionScope: scope,
+    });
+    const returnPreview = await previewWipReturnToOrder({ lotId: correctionLot.id, productionScope: scope });
+    assert.equal(returnPreview.result, 'ORIGINAL_ORDER_RESTORED');
+    assert.equal(returnPreview.requiresPhysicalReturnConfirmation, false);
+    await returnWipLotToOrder({
+      lotId: correctionLot.id,
+      expectedVersion: returnPreview.lotVersion,
+      reason: '确认转仓操作有误，回归原订单继续执行',
+      actorId: actor.id,
+      actorName: actor.displayName,
+      idempotencyKey: `${prefix}:correction:return`,
+      productionScope: scope,
+    });
+    const returnedLot = await prisma.semiFinishedLot.findUniqueOrThrow({ where: { id: correctionLot.id } });
+    assert.equal(returnedLot.scheduleStatus, 'CANCELLED');
+    assert.equal(returnedLot.physicalStatus, 'CANCELLED');
+    const availableAfterReturn = await previewWipEntry({ batchId: batch.id, quantity: 4, productionScope: scope });
+    assert.equal(availableAfterReturn.availableQuantity, 4);
 
     const reportAndCredit = async (idempotencyKey: string) => prisma.$transaction(async tx => {
       const resolution = await resolveWipReportingAllocation(tx, {

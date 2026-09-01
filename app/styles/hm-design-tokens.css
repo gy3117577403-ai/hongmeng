@@ -19,6 +19,11 @@
   --hm-color-success-soft: #edf8f0;
   --hm-color-info: #3569a8;
   --hm-color-info-soft: #eef5ff;
+  --hm-color-entity-wip: #6d28d9;
+  --hm-color-entity-wip-strong: #5b21b6;
+  --hm-color-entity-wip-soft: #f5f3ff;
+  --hm-color-entity-wip-soft-hover: #ede9fe;
+  --hm-color-entity-wip-border: #c4b5fd;
   --hm-space-1: 4px;
   --hm-space-2: 8px;
   --hm-space-3: 12px;

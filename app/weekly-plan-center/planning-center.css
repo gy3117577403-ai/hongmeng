@@ -1176,8 +1176,16 @@ main.planning-center-shell.hm-workbench-root {
 }
 
 .planning-center-shell .planning-schedule-board {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
 }
+
+.planning-week-wip-count { display: block; margin-top: 1px; color: #6d28d9; font-size: 8px; font-style: normal; font-weight: 850; white-space: nowrap; }
+.planning-wip-branch { min-height: 44px; margin: 8px 12px 0; padding: 7px 10px; display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; align-items: center; gap: 10px; border: 1px solid #c4b5fd; border-radius: 10px; background: linear-gradient(90deg, #f5f3ff, #faf8ff); }
+.planning-wip-branch > span { display: inline-flex; align-items: center; gap: 6px; color: #5b21b6; }
+.planning-wip-branch > span em { padding: 3px 7px; border-radius: 999px; color: #6d28d9; background: #fff; font-size: 9px; font-style: normal; }
+.planning-wip-branch > small { color: #6b7280; font-size: 9px; }
+.planning-wip-branch > a { display: inline-flex; align-items: center; gap: 4px; padding: 7px 9px; border-radius: 7px; color: #fff; background: #6d28d9; font-size: 9px; font-weight: 850; text-decoration: none; white-space: nowrap; }
+.planning-wip-moved-badge { width: fit-content; margin-top: 3px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid #c4b5fd; border-radius: 999px; color: #5b21b6; background: #f5f3ff; font-size: 8px; font-weight: 850; text-decoration: none; }
 
 .planning-center-shell .planning-history-view {
   grid-template-rows: auto auto minmax(0, 1fr);

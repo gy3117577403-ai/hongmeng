@@ -10,9 +10,13 @@ import { serializeWipApiValue } from '@/lib/wip-api-serialization';
 import {
   enterWipWarehouse,
   listWipWarehouse,
+  previewWipAllocationUnschedule,
   previewWipEntry,
+  previewWipReturnToOrder,
   rescheduleWipAllocation,
+  returnWipLotToOrder,
   scheduleWipLot,
+  unscheduleWipAllocation,
   WipWarehouseError,
 } from '@/lib/wip-warehouse';
 
@@ -110,6 +114,41 @@ export async function POST(req: NextRequest) {
         allocationId: body.allocationId,
         targetWeekStartDate: body.targetWeekStartDate,
         teamId: body.teamId,
+        reason: body.reason,
+        idempotencyKey: body.idempotencyKey,
+      });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
+    }
+    if (action === 'preview_unschedule') {
+      const data = await previewWipAllocationUnschedule({
+        allocationId: body.allocationId,
+        productionScope,
+      });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
+    }
+    if (action === 'unschedule') {
+      const data = await unscheduleWipAllocation({
+        ...common,
+        allocationId: body.allocationId,
+        expectedVersion: body.expectedVersion,
+        reason: body.reason,
+        idempotencyKey: body.idempotencyKey,
+      });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
+    }
+    if (action === 'preview_return_to_order') {
+      const data = await previewWipReturnToOrder({
+        lotId: body.lotId,
+        productionScope,
+      });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
+    }
+    if (action === 'return_to_order') {
+      const data = await returnWipLotToOrder({
+        ...common,
+        lotId: body.lotId,
+        expectedVersion: body.expectedVersion,
+        physicalReturnConfirmed: body.physicalReturnConfirmed,
         reason: body.reason,
         idempotencyKey: body.idempotencyKey,
       });
