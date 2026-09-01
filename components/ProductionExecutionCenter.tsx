@@ -33,6 +33,7 @@ import { formatProcessDuration } from '@/lib/process-time';
 import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { subscribeProductionDataInvalidations } from '@/lib/production-data-client-sync';
 import { productTimeConfigurationRoute, type ProductTimeRouteScope } from '@/lib/workflow-routes';
+import { canManageWipWarehouse } from '@/lib/wip-access';
 import type {
   CurrentUserDTO,
   InternalQualityRiskSeverity,
@@ -277,6 +278,9 @@ type ProductionReassignmentForm = {
 type ProductionOrder = {
   productionControl?: ProductionControlView;
   id: string;
+  productionPlanBatchId?: string | null;
+  planReleaseState?: string | null;
+  planActivatedAt?: string | null;
   code: string;
   businessCode?: string | null;
   specification?: string | null;
@@ -334,6 +338,9 @@ type ProductionOrder = {
   } | null;
   processRoute?: WorkOrderProcessRouteDTO | null;
   drawingLibraryItemId?: string | null;
+  sopStage?: 'standard' | 'new_product' | 'validating' | null;
+  sopRemark?: string | null;
+  sopMetadataUpdatedAt?: string | null;
   qualityRiskAlertCount: number;
   qualityRiskHighestSeverity?: InternalQualityRiskSeverity | null;
   documentCompleteness: string;
@@ -415,6 +422,11 @@ type ProductionSummary = {
     completedOrders: number;
     percentage: number | null;
   };
+  executionCountBreakdown?: {
+    nativeCurrent: number;
+    carryover: number;
+    total: number;
+  } | null;
   wipPlanMetrics: {
     weekStartDate: string;
     weekEndDate: string;
@@ -1187,6 +1199,7 @@ export default function ProductionExecutionCenter({
       || user.access.capabilities.includes('PLANNING:UPDATE')
     );
   const canSelectProduction = canAdministerProduction || canScheduleProduction;
+  const canManageWip = canManageWipWarehouse(user);
   const canPrintTravelers = user.access.capabilities.includes('PRODUCTION:EXECUTE_WORKFLOW')
     || user.access.capabilities.includes('SYSTEM_CONFIGURATION:READ');
   const canViewQualityRisks = user.laborRole === 'ADMIN'
@@ -1229,6 +1242,8 @@ export default function ProductionExecutionCenter({
   const summary = board
     ? cacheBoundSnapshotValue(summarySnapshot, activeBoardCacheKey)
     : null;
+  const displayedCurrentCarryoverCount = summary?.executionCountBreakdown?.carryover
+    ?? summary?.navigation?.carryoverCount;
   const [refreshToken, setRefreshToken] = useState(0);
   const productionRequestInFlightRef = useRef(false);
   const autoRefreshFailureCountRef = useRef(0);
@@ -2898,7 +2913,23 @@ export default function ProductionExecutionCenter({
                 {(summary?.navigation?.history ?? []).map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)} · {item.count} 批</option>)}
               </select>
             </label>
-            <button className={scope === 'current' ? 'active' : ''} type="button" aria-pressed={scope === 'current'} onClick={() => changeWeekScope('current')}>本周 <b>{summary?.navigation?.current?.count ?? '—'}</b>{Boolean(summary?.navigation?.carryoverCount) && <em>+ 遗留 {summary?.navigation?.carryoverCount}</em>}</button>
+            <button
+              className={`${scope === 'current' ? 'active ' : ''}production-current-week-tab`.trim()}
+              type="button"
+              aria-pressed={scope === 'current'}
+              title={scope === 'current' && summary?.executionCountBreakdown
+                ? `本周计划批次 ${summary.navigation?.current.count ?? '暂不可用'}；本周执行工单 ${summary.executionCountBreakdown.nativeCurrent}；遗留执行 ${summary.executionCountBreakdown.carryover}；执行合计 ${summary.executionCountBreakdown.total}`
+                : '本周计划批次与生产执行范围'}
+              onClick={() => changeWeekScope('current')}
+            >
+              <span>本周计划 <b>{summary?.navigation?.current?.count ?? '—'}</b></span>
+              {scope === 'current' && summary?.executionCountBreakdown
+                ? <i
+                    aria-label={`本周执行 ${summary.executionCountBreakdown.nativeCurrent}，遗留执行 ${summary.executionCountBreakdown.carryover}，合计 ${summary.executionCountBreakdown.total}`}
+                    title="本周执行 + 遗留执行 = 当前执行合计"
+                  >执行{summary.executionCountBreakdown.nativeCurrent}+{summary.executionCountBreakdown.carryover}={summary.executionCountBreakdown.total}</i>
+                : Boolean(displayedCurrentCarryoverCount) && <em>+ 遗留 {displayedCurrentCarryoverCount}</em>}
+            </button>
             <button className={scope === 'next' ? 'active' : ''} type="button" aria-pressed={scope === 'next'} onClick={() => changeWeekScope('next')}>下周 <b>{summary?.navigation?.next?.count ?? '—'}</b></button>
             <button className={scope === 'afterNext' ? 'active' : ''} type="button" aria-pressed={scope === 'afterNext'} onClick={() => changeWeekScope('afterNext')}>下下周 <b>{summary?.navigation?.afterNext?.count ?? '—'}</b></button>
           </nav>
@@ -2946,6 +2977,15 @@ export default function ProductionExecutionCenter({
           className="production-week-reconciliation"
           weekStartDate={summary?.weekStartDate}
           weekEndDate={summary?.weekEndDate}
+          checkExecutionEligibility={scope === 'current'}
+          refreshSignature={scope === 'current'
+            ? [
+                summary?.navigation?.current?.count ?? '',
+                summary?.executionCountBreakdown?.nativeCurrent ?? '',
+                summary?.executionCountBreakdown?.carryover ?? '',
+                summary?.executionCountBreakdown?.total ?? '',
+              ].join(':')
+            : undefined}
         />}
 
         <section className="production-dispatch-metrics" aria-label="生产调度指标" aria-busy={initialBoardLoading}>
@@ -3013,6 +3053,7 @@ export default function ProductionExecutionCenter({
                 canAdjustDates={canAdjustProductionDates(user)}
                 readOnly={board?.readOnly || (scope === 'history' && item.order.stage === 'completed')}
                 canAdministerProduction={canAdministerProduction}
+                canManageWip={canManageWip}
                 canSelectProduction={canSelectProduction}
                 canScheduleProduction={canScheduleProduction}
                 batchMode={batchMode}
@@ -3171,6 +3212,7 @@ type ProductionDispatchRowProps = {
   item: ProductionCardView;
   readOnly: boolean;
   canAdministerProduction: boolean;
+  canManageWip: boolean;
   canSelectProduction: boolean;
   canScheduleProduction: boolean;
   batchMode: boolean;
@@ -3220,6 +3262,7 @@ function ProductionDispatchRow({
   item,
   readOnly,
   canAdministerProduction,
+  canManageWip,
   canSelectProduction,
   canScheduleProduction,
   batchMode,
@@ -3319,6 +3362,11 @@ function ProductionDispatchRow({
         <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.carryover && <em className="carryover-badge" title={`原生产周 ${order.carryover.originalWeekStartDate}，订单与资料未复制`}>{order.carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' : '上周遗留'}</em>}{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
         <button type="button" title={`${specText(order)}；进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
         <small title={`${order.productName || '品名待补充'}${order.businessCode ? ` · ${order.businessCode}` : ''}`}>{order.productName || '品名待补充'}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>
+        {(order.planReleaseState === 'preparation' || order.sopStage === 'validating' || !order.documentCategoryCodes.includes('sop')) && <span className="production-dispatch-readiness-badges">
+          {order.planReleaseState === 'preparation' && <em className="preparation" title="本周计划已形成工单，但尚未激活；不影响在生产执行中查看和安排">本周预备</em>}
+          {order.sopStage === 'validating' && <em className="sop-validating" title={order.sopRemark || 'SOP 正在验证；状态仅提示，不阻断开工和报工'}>SOP验证中</em>}
+          {!order.documentCategoryCodes.includes('sop') && <em className="sop-missing" title="尚未上传有效 SOP；订单仍显示在生产执行，现场需关注资料补充">SOP待补</em>}
+        </span>}
         <div className="production-dispatch-product-quantity"><span>数量</span><b>{targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'} {unitLabel}</b></div>
       </div>
       <div className="production-dispatch-row-icon-actions">
@@ -3388,6 +3436,13 @@ function ProductionDispatchRow({
       <>{order.productionControl?.pausedAt
         ? <ProductionControlButton workOrderId={order.id} mode={canManageControl && !readOnly ? "resume" : "history"} className="primary">{canManageControl && !readOnly ? "恢复生产" : "查看暂停"}</ProductionControlButton>
         : <button className="primary" type="button" disabled={saving} onClick={runPrimaryAction}>{primaryText}</button>}
+      {canManageWip && !readOnly && displayStage !== "completed" && order.productionPlanBatchId && order.processRoute
+        && <Link
+          className="production-wip-transfer-action"
+          href={`/workspace/wip?batchId=${encodeURIComponent(order.productionPlanBatchId)}`}
+          prefetch={false}
+          title="进入半成品仓预检；确认剩余数量和原因后才会正式转入"
+        >转入半成品仓</Link>}
       {canManageControl && !readOnly && !order.productionControl?.pausedAt && displayStage !== "completed" && <ProductionControlButton workOrderId={order.id} mode="pause">暂停生产</ProductionControlButton>}</>
     </div>
   </article>;

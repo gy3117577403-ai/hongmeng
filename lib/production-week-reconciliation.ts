@@ -15,12 +15,18 @@ import {
 export type ReconciliationBatchRow = {
   id: string;
   specification: string;
+  releaseState: string;
   workOrderId: string | null;
   workOrder: {
     id: string;
     code: string;
     specification: string | null;
+    parentWorkOrderId: string | null;
+    rootWorkOrderId: string | null;
     weekStartDate: Date | null;
+    planType: string | null;
+    planActive: boolean;
+    planClearedAt: Date | null;
     deletedAt: Date | null;
   } | null;
 };
@@ -51,13 +57,16 @@ function issue(
 export function buildProductionWeekReconciliation(input: {
   weekStartDate: string;
   weekEndDate: string;
+  checkExecutionEligibility?: boolean;
   batches: ReconciliationBatchRow[];
   workOrders: ReconciliationWorkOrderRow[];
 }): ProductionWeekReconciliationDTO {
   const selectedBatchIds = new Set(input.batches.map(batch => batch.id));
   const validLinkedWorkOrderIds = new Set<string>();
+  const executableWorkOrderIds = new Set<string>();
   const planMissingWorkOrders: Array<{ id: string; code: string; detail: string }> = [];
   const weekMismatches: Array<{ id: string; code: string; detail: string }> = [];
+  const executionMismatches: Array<{ id: string; code: string; detail: string }> = [];
 
   for (const batch of input.batches) {
     if (!batch.workOrderId || !batch.workOrder || batch.workOrder.deletedAt) {
@@ -69,15 +78,42 @@ export function buildProductionWeekReconciliation(input: {
       continue;
     }
     const workOrderWeek = chinaDateKey(batch.workOrder.weekStartDate);
-    if (workOrderWeek !== input.weekStartDate) {
+    const sameProductionWeek = workOrderWeek === input.weekStartDate;
+    if (!sameProductionWeek) {
       weekMismatches.push({
         id: batch.workOrder.id,
         code: batch.workOrder.specification || batch.workOrder.code,
         detail: `计划属于 ${input.weekStartDate}，工单属于 ${workOrderWeek || '未设置生产周'}`,
       });
-      continue;
+    } else {
+      validLinkedWorkOrderIds.add(batch.workOrder.id);
     }
-    validLinkedWorkOrderIds.add(batch.workOrder.id);
+    if (input.checkExecutionEligibility) {
+      const rootWorkOrder = !batch.workOrder.parentWorkOrderId && !batch.workOrder.rootWorkOrderId;
+      const canonicalCurrentWeek = rootWorkOrder
+        && sameProductionWeek
+        && ['weekly_plan', 'managed_plan'].includes(batch.workOrder.planType || '')
+        && !batch.workOrder.planClearedAt;
+      const releasedBatchFallback = rootWorkOrder
+        && ['active', 'preparation'].includes(batch.releaseState)
+        && !batch.workOrder.planClearedAt;
+      if (canonicalCurrentWeek || releasedBatchFallback) {
+        executableWorkOrderIds.add(batch.workOrder.id);
+      } else {
+        executionMismatches.push({
+          id: batch.id,
+          code: batch.specification,
+          detail: [
+            '未进入本周执行',
+            `批次状态 ${batch.releaseState || '未设置'}`,
+            `工单${batch.workOrder.planActive ? '已启用' : '未启用'}`,
+            `计划类型 ${batch.workOrder.planType || '未设置'}`,
+            batch.workOrder.planClearedAt ? '工单计划已清除' : '工单计划未清除',
+            rootWorkOrder ? '根工单' : '关联分支工单',
+          ].join(' · '),
+        });
+      }
+    }
   }
 
   const workOrdersMissingPlan = input.workOrders
@@ -91,7 +127,9 @@ export function buildProductionWeekReconciliation(input: {
     }));
 
   const workflowMissingWorkOrders = input.batches
-    .filter(batch => batch.workOrderId && !validLinkedWorkOrderIds.has(batch.workOrderId))
+    .filter(batch => batch.workOrderId
+      && !validLinkedWorkOrderIds.has(batch.workOrderId)
+      && !executableWorkOrderIds.has(batch.workOrderId))
     .map(batch => ({
       id: batch.id,
       code: batch.specification,
@@ -103,10 +141,14 @@ export function buildProductionWeekReconciliation(input: {
     issue('work_order_week_mismatch', '计划与工单生产周不一致', weekMismatches),
     issue('work_order_missing_plan', '旧版工单未关联本周计划', workOrdersMissingPlan),
     issue('workflow_missing_work_order', '流程缺少同周有效生产工单', workflowMissingWorkOrders),
+    issue('work_order_not_executable', '计划批次未进入本周执行', executionMismatches),
   ].filter((item): item is ProductionWeekReconciliationIssueDTO => Boolean(item));
 
   // 规范周视图只以计划批次为主线；旧版独立工单留在差异清单，不混入三端统计。
   const productionWorkOrderCount = validLinkedWorkOrderIds.size;
+  const executableWorkOrderCount = input.checkExecutionEligibility
+    ? executableWorkOrderIds.size
+    : null;
   const workflowInstanceCount = input.batches.length;
   const differenceCount = issues.reduce((sum, item) => sum + item.count, 0);
   return {
@@ -114,10 +156,12 @@ export function buildProductionWeekReconciliation(input: {
     weekEndDate: input.weekEndDate,
     planBatchCount: input.batches.length,
     productionWorkOrderCount,
+    executableWorkOrderCount,
     workflowInstanceCount,
     alignedWorkOrderCount: validLinkedWorkOrderIds.size,
     aligned: differenceCount === 0
       && input.batches.length === productionWorkOrderCount
+      && (executableWorkOrderCount === null || input.batches.length === executableWorkOrderCount)
       && input.batches.length === workflowInstanceCount,
     differenceCount,
     issues,
@@ -127,6 +171,7 @@ export function buildProductionWeekReconciliation(input: {
 export async function loadProductionWeekReconciliation(
   weekStartInput?: string | null,
   scope?: ProductionEntityScope,
+  options?: { checkExecutionEligibility?: boolean },
 ): Promise<ProductionWeekReconciliationDTO> {
   const weekStart = parseWeek(weekStartInput);
   if (!weekStart) throw new Error('生产周开始日期格式不正确');
@@ -149,6 +194,7 @@ export async function loadProductionWeekReconciliation(
       },
       select: {
         id: true,
+        releaseState: true,
         workOrderId: true,
         planOrder: { select: { specification: true } },
         workOrder: {
@@ -156,7 +202,12 @@ export async function loadProductionWeekReconciliation(
             id: true,
             code: true,
             specification: true,
+            parentWorkOrderId: true,
+            rootWorkOrderId: true,
             weekStartDate: true,
+            planType: true,
+            planActive: true,
+            planClearedAt: true,
             deletedAt: true,
           },
         },
@@ -193,9 +244,11 @@ export async function loadProductionWeekReconciliation(
   return buildProductionWeekReconciliation({
     weekStartDate,
     weekEndDate,
+    checkExecutionEligibility: options?.checkExecutionEligibility === true,
     batches: batches.map(batch => ({
       id: batch.id,
       specification: batch.planOrder.specification,
+      releaseState: batch.releaseState,
       workOrderId: batch.workOrderId,
       workOrder: batch.workOrder,
     })),

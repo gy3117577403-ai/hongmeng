@@ -115,7 +115,7 @@ const readinessOptions: Array<{
   { id: 'missing_time', label: '工时未维护', description: '没有有效单套工时' },
   { id: 'missing_drawing', label: '图纸未下发', description: '没有有效原图文件' },
   { id: 'missing_sop', label: 'SOP 未下发', description: '没有有效 SOP 文件' },
-  { id: 'sop_validating', label: 'SOP 验证中', description: '允许排产，下达时必须单独确认' },
+  { id: 'sop_validating', label: 'SOP 验证中', description: '允许排产并进入生产执行，清单持续提示验证状态' },
   { id: 'sop_new_product', label: '新品 SOP', description: '处于新品导入阶段的 SOP' },
   { id: 'sop_unregistered', label: 'SOP 未登记', description: '尚未维护 SOP 生命周期状态' },
   { id: 'missing_material', label: '材料未配', description: '仓库未下达或配料未完成' },
@@ -667,9 +667,7 @@ export default function PlanningCenterShell({
   const [activeProductIndex, setActiveProductIndex] = useState(-1);
   const [batchDialog, setBatchDialog] = useState<{ orderId: string; batchId?: string } | null>(null);
   const [batchDraft, setBatchDraft] = useState<BatchForm>({ quantity: '', unitSeconds: '', weekStartDate: '', plannedCompletionDate: '', reason: '' });
-  const [batchSopConfirmed, setBatchSopConfirmed] = useState(false);
   const [releasePreview, setReleasePreview] = useState<ReleasePreview | null>(null);
-  const [releaseSopConfirmed, setReleaseSopConfirmed] = useState(false);
   const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null);
   const [historicalDeleteTarget, setHistoricalDeleteTarget] = useState<HistoricalDeleteTarget | null>(null);
   const [historicalDeleteReason, setHistoricalDeleteReason] = useState('');
@@ -997,7 +995,7 @@ export default function PlanningCenterShell({
   const batchReleaseState = batchDialog?.batchId
     ? batchOrder?.batches.find(item => item.id === batchDialog.batchId)?.releaseState || null
     : null;
-  const batchRequiresSopConfirmation = Boolean(
+  const batchHasSopValidationWarning = Boolean(
     batchDraftAutomaticReleaseTarget
     && batchOrder?.sopStage === 'validating'
     && (!batchReleaseState || batchReleaseState === 'draft'),
@@ -1007,9 +1005,8 @@ export default function PlanningCenterShell({
     const timeIsValid = !batchDraft.unitSeconds.trim() || Boolean(batchDraftUnitMilliseconds);
     return Number.isInteger(quantity) && quantity > 0
       && Boolean(batchDraft.weekStartDate && batchDraft.plannedCompletionDate)
-      && timeIsValid
-      && (!batchRequiresSopConfirmation || batchSopConfirmed);
-  }, [batchDraft.plannedCompletionDate, batchDraft.quantity, batchDraft.unitSeconds, batchDraft.weekStartDate, batchDraftUnitMilliseconds, batchRequiresSopConfirmation, batchSopConfirmed]);
+      && timeIsValid;
+  }, [batchDraft.plannedCompletionDate, batchDraft.quantity, batchDraft.unitSeconds, batchDraft.weekStartDate, batchDraftUnitMilliseconds]);
   const visibleProductOptions = useMemo(() => {
     const word = productKeyword.trim().toLocaleLowerCase();
     const filtered = word
@@ -1259,9 +1256,7 @@ export default function PlanningCenterShell({
     }
     setOrderDialog(null);
     setBatchDialog(null);
-    setBatchSopConfirmed(false);
     setReleasePreview(null);
-    setReleaseSopConfirmed(false);
     setDeletePreview(null);
     setActivationPreview(null);
     setMovePreview(null);
@@ -1434,7 +1429,6 @@ export default function PlanningCenterShell({
       plannedCompletionDate: batch?.plannedCompletionDate || defaultWeekEnd,
       reason: '',
     });
-    setBatchSopConfirmed(false);
     setBatchDialog({ orderId: order.id, batchId: batch?.id });
   }
 
@@ -1620,7 +1614,6 @@ export default function PlanningCenterShell({
           ...batchDraft,
           unitMilliseconds: batchDraftUnitMilliseconds,
           confirmImpact,
-          confirmSopValidation: batchSopConfirmed,
         }),
       });
       const body = await responseBody<{
@@ -1667,7 +1660,6 @@ export default function PlanningCenterShell({
   async function previewRelease(target: ReleasePreview['target'], trigger: HTMLElement): Promise<void> {
     if (!selectedBatchIds.length) { setToast('请先勾选排产批次'); return; }
     dialogTriggerRef.current = trigger;
-    setReleaseSopConfirmed(false);
     setSaving(true);
     setError('');
     try {
@@ -1695,7 +1687,6 @@ export default function PlanningCenterShell({
           batchIds: selectedBatchIds,
           target: releasePreview.target,
           confirmWarnings: true,
-          confirmSopValidation: releaseSopConfirmed,
         }),
       });
       const body = await responseBody<{ result?: { releasedCount: number; warningCount: number } }>(response);
@@ -2629,7 +2620,7 @@ export default function PlanningCenterShell({
         </div>
         <div className="planning-dialog-note"><CalendarClock /><span><strong>{batchDraftAutomaticReleaseTarget ? '保存后自动进入生产执行' : batchDraftUnitMilliseconds ? '批次工时随排程冻结' : '先排程，后补工时'}</strong><small>{batchDraftAutomaticReleaseTarget === 'active' ? '本周排产会自动生成工单并显示在本周生产；缺工时的批次保持待配置。' : batchDraftAutomaticReleaseTarget === 'preparation' ? '下周排产会自动生成工单并显示在下周生产，可提前处理。' : batchDraftUnitMilliseconds ? '保存后会把单根工时和本批总工时应用到当前批次；不会改写产品工时库。' : '下下周先保留排程草稿，进入下周范围后由系统自动下达。'}</small></span></div>
         {batchOrder && Boolean(batchOrder.qualityWarningCount) && <div className={`planning-quality-warning-note severity-${batchOrder.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert /><span><strong>该产品有 {batchOrder.qualityWarningCount} 条生效异常警示</strong><small>{batchOrder.qualityWarningPrintRequired ? '至少一条为“必须随单打印”，生成流转单时系统会强制加入固定 A4 警示附页。' : '批次进入生产后会显示警示标识；计划下发时可选择附加固定 A4 警示页。'}</small></span></div>}
-        {batchRequiresSopConfirmation && batchOrder && <label className="planning-sop-confirmation" title={sopStageInfo(batchOrder).title}><input type="checkbox" checked={batchSopConfirmed} onChange={event => setBatchSopConfirmed(event.target.checked)} /><FlaskConical /><span><strong>确认按“验证中”SOP安排生产</strong><small>{batchOrder.sopRemark || '该产品 SOP 尚在验证阶段，请先确认适用范围和现场注意事项。'}{batchOrder.sopFileCount ? '' : ' 当前同时缺少有效 SOP 文件，生产启动前仍必须补齐。'}</small></span></label>}
+        {batchHasSopValidationWarning && batchOrder && <div className="planning-sop-confirmation" title={sopStageInfo(batchOrder).title}><FlaskConical /><span><strong>SOP 验证中，不阻断进入生产执行</strong><small>{batchOrder.sopRemark || '该产品 SOP 尚在验证阶段，生产执行会持续显示验证状态。'}{batchOrder.sopFileCount ? '' : ' 当前同时缺少有效 SOP 文件，将继续显示资料待补充提示。'}</small></span></div>}
         {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
       </div>
       <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !canSaveBatch} onClick={() => { void saveBatch(); }}>{saving ? '保存中...' : batchDraftAutomaticReleaseTarget ? '保存并进入生产' : batchDraftUnitMilliseconds ? '保存并应用工时' : '保存排程草稿'}</button></footer>
@@ -2646,11 +2637,11 @@ export default function PlanningCenterShell({
         </section>
         {releasePreview.target === 'preparation' && <div className="planning-dialog-note"><PackageCheck /><span><strong>进入下周生产并启动仓库准备</strong><small>生产周统一为 {releasePreview.targetWeekStartDate} 至 {releasePreview.targetWeekEndDate}；缺少工序工时的批次可先配料，补齐发布后再开始工序。</small></span></div>}
         {releasePreview.target === 'active' && <div className="planning-dialog-note"><Factory /><span><strong>进入本周生产并启动仓库准备</strong><small>同步本周执行清单与仓库配料；缺少工序工时的批次保持生产待配置，补齐发布后才能进行工序流转。</small></span></div>}
-        {releasePreview.validatingSopCount > 0 && <label className="planning-sop-confirmation release"><input type="checkbox" checked={releaseSopConfirmed} onChange={event => setReleaseSopConfirmed(event.target.checked)} /><FlaskConical /><span><strong>我已确认 {releasePreview.validatingSopCount} 个“验证中”SOP 的适用范围</strong><small>验证中不等于已定版。本次确认只授权本批计划使用，不会把 SOP 自动改成标准状态。</small></span></label>}
+        {releasePreview.validatingSopCount > 0 && <div className="planning-sop-confirmation release"><FlaskConical /><span><strong>{releasePreview.validatingSopCount} 个 SOP 正在验证，不阻断同步生产</strong><small>验证状态会保留在生产执行清单中；SOP 状态不会因本次同步自动改成标准。</small></span></div>}
         <div className="planning-warning-list">{releasePreview.items.map(item => <article key={item.batchId} className={item.sopValidationRequired ? 'sop-validating' : ''}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong>{item.sopValidationRequired && <span className="sop-context"><FlaskConical size={13} />验证中{item.sopRemark ? ` · ${item.sopRemark}` : ''}{formatPlanningSopUpdatedAt(item.sopMetadataUpdatedAt) ? ` · 更新 ${formatPlanningSopUpdatedAt(item.sopMetadataUpdatedAt)}` : ''}</span>}{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.filter(message => !message.startsWith('SOP处于验证中')).map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">资料检查通过</span>}</article>)}</div>
         {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
       </div>
-      <footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || releasePreview.blockers > 0 || (releasePreview.validatingSopCount > 0 && !releaseSopConfirmed)} onClick={() => { void commitRelease(); }}>{saving ? '同步中...' : releasePreview.validatingSopCount > 0 ? '确认验证条件并同步' : '确认同步'}</button></footer>
+      <footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || releasePreview.blockers > 0} onClick={() => { void commitRelease(); }}>{saving ? '同步中...' : releasePreview.validatingSopCount > 0 ? '保留验证提示并同步' : '确认同步'}</button></footer>
     </div>}
 
     {deletePreview && <div ref={dialogRef} className="planning-dialog delete-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-delete-dialog-title"><header><div><span>危险操作预检</span><h2 id="planning-delete-dialog-title">删除所选计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary four"><div><span>所选批次</span><strong>{deletePreview.batchCount}</strong></div><div><span>删除草稿</span><strong>{deletePreview.draftDeleteCount}</strong></div><div><span>撤回未开工</span><strong>{deletePreview.withdrawCount}</strong></div><div><span>禁止删除</span><strong className={deletePreview.blockers ? 'danger' : ''}>{deletePreview.blockers}</strong></div></section><div className="planning-dialog-note danger"><ShieldAlert /><span><strong>删除数量不会回到订单池</strong><small>只移除计划订单、排产批次和未开工工单；产品档案、图纸文件、产品工序与标准工时全部保留。已开工计划仍禁止删除。</small></span></div><div className="planning-warning-list">{deletePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong><span className={item.action === 'blocked' ? 'blocker' : item.action === 'withdraw_unstarted' ? 'warning' : 'ready'}>{item.message}</span></article>)}</div>{deletePreview.blockers > 0 && <div className="planning-dialog-error"><AlertTriangle />请取消勾选已开工或已完成的批次后再删除，本次不会处理任何批次。</div>}{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="danger" disabled={saving || deletePreview.blockers > 0} onClick={() => { void commitDeletion(); }}>{saving ? '删除中...' : '确认删除计划'}</button></footer></div>}

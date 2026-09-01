@@ -4,7 +4,7 @@ import {
   formatPlanningSopUpdatedAt,
   normalizePlanningSopDrawingStatus,
   normalizePlanningSopStage,
-  planningSopRequiresReleaseConfirmation,
+  planningSopIsValidating,
   planningSopStage,
   planningSopTooltip,
 } from '../lib/planning-sop';
@@ -20,11 +20,11 @@ test('normalizes only supported planning SOP metadata values', () => {
   assert.equal(planningSopStage(null), 'unregistered');
 });
 
-test('requires an explicit release confirmation only for validating SOPs', () => {
-  assert.equal(planningSopRequiresReleaseConfirmation('validating'), true);
-  assert.equal(planningSopRequiresReleaseConfirmation('standard'), false);
-  assert.equal(planningSopRequiresReleaseConfirmation('new_product'), false);
-  assert.equal(planningSopRequiresReleaseConfirmation(null), false);
+test('identifies validating SOPs for warning and audit context', () => {
+  assert.equal(planningSopIsValidating('validating'), true);
+  assert.equal(planningSopIsValidating('standard'), false);
+  assert.equal(planningSopIsValidating('new_product'), false);
+  assert.equal(planningSopIsValidating(null), false);
 });
 
 test('tooltip exposes file existence, lifecycle stage, remark, and update time together', () => {

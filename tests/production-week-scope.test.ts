@@ -114,6 +114,7 @@ test('production week scopes keep canonical current, future, and carryover queri
 
   assert.match(current, /"planActive":true/);
   assert.match(current, /"productionPlanBatch"/);
+  assert.match(current, /"releaseState":\{"in":\["active","preparation"\]\}/);
   assert.match(current, /"gte":"2026-07-19T16:00:00.000Z"/);
   assert.match(next, /"planActive":false/);
   assert.match(next, /"planClearedAt":null/);
@@ -140,7 +141,7 @@ test('production execution uses linked batch facts only for legacy scheduling me
   const history = JSON.stringify(productionWeekWhere({ scope: 'history', weekStart: historyStart, weekEnd: historyEnd }));
   const carryover = JSON.stringify(productionWeekWhere({ scope: 'carryover', weekStart: currentStart, weekEnd: currentEnd }));
 
-  assert.match(current, /"releaseState":"active"/);
+  assert.match(current, /"releaseState":\{"in":\["active","preparation"\]\}/);
   assert.match(next, /"releaseState":"preparation"/);
   assert.match(history, /"weekStartDate":\{"gte":"2026-08-23T16:00:00.000Z"/);
   assert.match(carryover, /"releaseState":\{"in":\["active","preparation","archived"\]\}/);
@@ -512,7 +513,7 @@ test('missing product process profile can release for warehouse preparation but 
   }
 });
 
-test('validating SOP remains schedulable but is surfaced as a separate release confirmation', async () => {
+test('validating SOP remains schedulable and is surfaced as a release warning', async () => {
   const tx = {
     productionPlanBatch: {
       findMany: async () => [{

@@ -30,7 +30,7 @@ export function planningSopStage(value: unknown): PlanningSopStage {
   return normalizePlanningSopStage(value) || 'unregistered';
 }
 
-export function planningSopRequiresReleaseConfirmation(value: unknown): boolean {
+export function planningSopIsValidating(value: unknown): boolean {
   return planningSopStage(value) === 'validating';
 }
 

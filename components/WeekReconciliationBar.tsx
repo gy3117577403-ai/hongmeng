@@ -13,10 +13,14 @@ type ReconciliationResponse = {
 export function WeekReconciliationBar({
   weekStartDate,
   weekEndDate,
+  checkExecutionEligibility = false,
+  refreshSignature,
   className = '',
 }: {
   weekStartDate?: string | null;
   weekEndDate?: string | null;
+  checkExecutionEligibility?: boolean;
+  refreshSignature?: string | number | null;
   className?: string;
 }) {
   const [data, setData] = useState<ProductionWeekReconciliationDTO | null>(null);
@@ -32,7 +36,9 @@ export function WeekReconciliationBar({
     const controller = new AbortController();
     setLoading(true);
     setError('');
-    fetch(`/api/production/week-reconciliation?weekStart=${encodeURIComponent(weekStartDate)}`, {
+    const params = new URLSearchParams({ weekStart: weekStartDate });
+    if (checkExecutionEligibility) params.set('checkExecution', '1');
+    fetch(`/api/production/week-reconciliation?${params.toString()}`, {
       cache: 'no-store',
       signal: controller.signal,
     })
@@ -50,7 +56,7 @@ export function WeekReconciliationBar({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [weekStartDate]);
+  }, [checkExecutionEligibility, refreshSignature, weekStartDate]);
 
   if (!weekStartDate) return null;
   if (loading && !data) {
@@ -77,6 +83,7 @@ export function WeekReconciliationBar({
     <dl>
       <div><dt>计划批次</dt><dd>{data.planBatchCount}</dd></div>
       <div><dt>生产工单</dt><dd>{data.productionWorkOrderCount}</dd></div>
+      {data.executableWorkOrderCount !== null && <div><dt>当前执行</dt><dd>{data.executableWorkOrderCount}</dd></div>}
       <div><dt>流程实例</dt><dd>{data.workflowInstanceCount}</dd></div>
     </dl>
     {data.aligned

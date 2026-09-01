@@ -3485,6 +3485,17 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   text-align: center;
 }
 
+.hm-production-workbench .production-dispatch-week-tabs > button > i {
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #eaf2ff;
+  color: #2866a8;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
 .hm-production-workbench .production-dispatch-week-tabs label span {
   flex: 0 0 auto;
 }
@@ -4266,6 +4277,37 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   line-height: 1.35;
 }
 
+.hm-production-workbench .production-dispatch-product > .production-dispatch-readiness-badges {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.hm-production-workbench .production-dispatch-product > .production-dispatch-readiness-badges em {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  font-style: normal;
+  font-weight: 760;
+}
+
+.hm-production-workbench .production-dispatch-readiness-badges em.preparation {
+  background: #fff3d6;
+  color: #a04d08;
+}
+
+.hm-production-workbench .production-dispatch-readiness-badges em.sop-validating {
+  background: #f3e8ff;
+  color: #7e22ce;
+}
+
+.hm-production-workbench .production-dispatch-readiness-badges em.sop-missing {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
 .hm-production-workbench .production-dispatch-product-quantity {
   min-width: 0;
   display: flex;
@@ -4518,10 +4560,14 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   gap: 6px;
 }
 
-.hm-production-workbench .production-dispatch-row-actions button {
+.hm-production-workbench .production-dispatch-row-actions button,
+.hm-production-workbench .production-dispatch-row-actions a {
   min-width: 0;
   min-height: 36px;
   padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   border: 1px solid var(--production-dispatch-line);
   border-radius: 7px;
@@ -4531,6 +4577,7 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-size: 12px;
   font-weight: 700;
   text-overflow: ellipsis;
+  text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -4544,10 +4591,17 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-size: 14px;
 }
 
-.hm-production-workbench .production-dispatch-row-actions button:hover:not(:disabled) {
+.hm-production-workbench .production-dispatch-row-actions button:hover:not(:disabled),
+.hm-production-workbench .production-dispatch-row-actions a:hover {
   border-color: #eea272;
   background: var(--production-dispatch-orange-soft);
   color: var(--production-dispatch-orange);
+}
+
+.hm-production-workbench .production-dispatch-row-actions .production-wip-transfer-action {
+  border-color: #f0b486;
+  background: #fff8f1;
+  color: #bd5119;
 }
 
 .hm-production-workbench .production-dispatch-row-actions button.primary:hover:not(:disabled) {
@@ -5507,7 +5561,8 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
     grid-template-columns: minmax(235px, 1.38fr) minmax(110px, .7fr) minmax(110px, .7fr) minmax(120px, .76fr) minmax(110px, .68fr) minmax(120px, .72fr);
   }
 
-  .hm-production-workbench .production-dispatch-row-actions button {
+  .hm-production-workbench .production-dispatch-row-actions button,
+  .hm-production-workbench .production-dispatch-row-actions a {
     padding-right: 3px;
     padding-left: 3px;
   }
@@ -10002,4 +10057,44 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   }
 
   .hm-production-workbench .production-quality-risk-facts p.wide { grid-column: auto; }
+}
+
+/* Keep the current-week plan/execution equation readable inside the compact
+   four-column tablet header without letting it overlap the next-week tab. */
+.hm-production-workbench .production-dispatch-week-tabs > button.production-current-week-tab {
+  min-width: 0;
+  overflow: hidden;
+  flex-direction: column;
+  gap: 0;
+  padding-inline: 3px;
+  line-height: 1;
+}
+
+.hm-production-workbench .production-current-week-tab > span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-dispatch-week-tabs > button.production-current-week-tab > i {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0;
+  background: transparent;
+  font-size: 8px;
+  line-height: 10px;
+  text-overflow: ellipsis;
+}
+
+.hm-production-workbench .production-current-week-tab > em {
+  margin-left: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 8px;
+  line-height: 10px;
 }

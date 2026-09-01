@@ -216,6 +216,8 @@ export default function WipWarehouseShell({
         const candidate = body.data.candidates[0];
         setEntryCandidate(candidate);
         setEntryDraft(current => ({ ...current, quantity: String(candidate.availableQuantity) }));
+      } else if (initialBatchId && body.data.candidates.length === 0) {
+        setError('该工单当前暂无可转数量：可能已全部转入半成品仓，或末道工序已全部完工。');
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '半成品仓加载失败');

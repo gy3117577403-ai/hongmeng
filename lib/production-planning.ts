@@ -16,7 +16,7 @@ import { serializeProductionControl, PRODUCTION_CONTROL_SELECT } from '@/lib/pro
 import {
   normalizePlanningSopDrawingStatus,
   normalizePlanningSopStage,
-  planningSopRequiresReleaseConfirmation,
+  planningSopIsValidating,
 } from '@/lib/planning-sop';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
@@ -780,7 +780,7 @@ export async function previewProductionPlanRelease(
     } else if (!effectiveUnitMilliseconds) {
       warnings.push('已发布产品工时暂无有效总工时：可先下达仓库配料，生产启动前必须修正');
     }
-    const sopValidationRequired = planningSopRequiresReleaseConfirmation(refs.sopStage);
+    const sopValidationRequired = planningSopIsValidating(refs.sopStage);
     if (sopValidationRequired) {
       warnings.push(`SOP处于验证中：${refs.sopRemark || '请确认验证范围和使用条件'}`);
     }
@@ -1672,7 +1672,7 @@ export async function releaseProductionPlanBatch(
   } else if (!effectiveUnitMilliseconds) {
     warnings.push('产品工时待修正：仓库可先配料，生产启动前必须补齐有效总工时');
   }
-  if (planningSopRequiresReleaseConfirmation(references.sopStage)) {
+  if (planningSopIsValidating(references.sopStage)) {
     warnings.push(`SOP处于验证中：${references.sopRemark || '需按验证条件执行并保留确认记录'}`);
   }
   const code = workOrderCode(batch.planOrder.sourceOrderNo, batch.planOrder.sourceLineNo, batch.batchNo);
@@ -1824,7 +1824,7 @@ export async function releaseProductionPlanBatch(
         warehouseTaskCreated: true,
         productTimePending,
         sopStage: references.sopStage,
-        sopValidationRequired: planningSopRequiresReleaseConfirmation(references.sopStage),
+        sopValidationRequired: planningSopIsValidating(references.sopStage),
         processWarnings: warnings.length,
         automaticallyStarted: started,
         weekRealigned: chinaDate(batch.weekStartDate) !== chinaDate(alignedWeek.weekStartDate),
@@ -1849,7 +1849,7 @@ export async function releaseProductionPlanBatch(
         warehouseTaskCreated: true,
         productTimePending,
         sopStage: references.sopStage,
-        sopValidationRequired: planningSopRequiresReleaseConfirmation(references.sopStage),
+        sopValidationRequired: planningSopIsValidating(references.sopStage),
         warnings: warnings.length,
         automaticallyStarted: started,
         trigger: input.trigger || 'manual',
@@ -1866,7 +1866,6 @@ export async function automaticallyReleaseProductionPlanBatch(
     actorId: string | null;
     now?: Date;
     trigger?: 'automatic_schedule' | 'automatic_reconciliation';
-    confirmSopValidation?: boolean;
   },
 ): Promise<({ target: AutomaticProductionPlanReleaseTarget } & Awaited<ReturnType<typeof releaseProductionPlanBatch>>) | null> {
   const batch = await tx.productionPlanBatch.findUnique({
@@ -1891,7 +1890,6 @@ export async function automaticallyReleaseProductionPlanBatch(
     now: input.now,
   });
   if (preview.blockers > 0) return null;
-  if (preview.validatingSopCount > 0 && !input.confirmSopValidation) return null;
   const released = await releaseProductionPlanBatch(tx, {
     batchId: batch.id,
     target,

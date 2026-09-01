@@ -21,6 +21,7 @@ import {
 } from '@/lib/production-carryovers';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
+import { normalizePlanningSopStage } from '@/lib/planning-sop';
 import { loadWipWeekLaborMetrics } from '@/lib/wip-warehouse';
 import {
   productionArrangementCrossesWeek,
@@ -32,12 +33,28 @@ export const PRODUCTION_CATEGORY_CODES = ['drawing', 'sop', 'product', 'material
 
 export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
   rootWorkOrder: { select: PRODUCTION_CONTROL_SELECT },
+  productionPlanBatch: {
+    select: {
+      id: true,
+      deletedAt: true,
+      releaseState: true,
+      activatedAt: true,
+    },
+  },
   drawingLibraryItem: {
     select: {
       id: true,
       files: {
         where: { deletedAt: null },
         select: { category: { select: { code: true } } },
+      },
+      sopDocument: {
+        select: {
+          sopStage: true,
+          remark: true,
+          updatedAt: true,
+          deletedAt: true,
+        },
       },
     },
   },
@@ -717,12 +734,14 @@ export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhere
         },
         // Older planning releases could link a valid production batch to a
         // work order without copying plan_type/week_start_date. The batch is
-        // the durable scheduling fact, so use its active selected-week link as
-        // a conservative read fallback. This does not infer quantity, labor or
-        // reporting facts and never admits an unlinked work order.
+        // the durable scheduling fact. Both active and preparation batches are
+        // visible in the current-week execution list: SOP/material readiness is
+        // rendered as a warning and must never hide an otherwise valid order.
+        // This does not infer quantity, labor or reporting facts and never
+        // admits an unlinked work order.
         {
           AND: [
-            linkedProductionBatch({ ...selectedWeekBatch, releaseState: 'active' }),
+            linkedProductionBatch({ ...selectedWeekBatch, releaseState: { in: ['active', 'preparation'] } }),
             { planClearedAt: null },
           ],
         },
@@ -837,17 +856,21 @@ export function executionCompleteness(order: ProductionStatusOrderRecord) {
   };
 }
 
-export function hasOriginalProductionDrawing(order: Pick<ProductionExecutionOrderRecord, 'drawingLibraryItem'>): boolean {
+type ProductionDocumentOrder = {
+  drawingLibraryItem: { files: Array<{ category: { code: string } }> } | null;
+};
+
+export function hasOriginalProductionDrawing(order: ProductionDocumentOrder): boolean {
   const codes = new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || []);
   return codes.has('drawing');
 }
 
-export function hasProductionSop(order: Pick<ProductionExecutionOrderRecord, 'drawingLibraryItem'>): boolean {
+export function hasProductionSop(order: ProductionDocumentOrder): boolean {
   const codes = new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || []);
   return codes.has('sop');
 }
 
-export function hasRequiredProductionDocuments(order: Pick<ProductionExecutionOrderRecord, 'drawingLibraryItem'>): boolean {
+export function hasRequiredProductionDocuments(order: ProductionDocumentOrder): boolean {
   return hasOriginalProductionDrawing(order) && hasProductionSop(order);
 }
 
@@ -972,6 +995,15 @@ export function serializeProductionOrder(
   );
   return {
     id: order.id,
+    productionPlanBatchId: order.productionPlanBatch?.deletedAt
+      ? null
+      : order.productionPlanBatch?.id || null,
+    planReleaseState: order.productionPlanBatch?.deletedAt
+      ? null
+      : order.productionPlanBatch?.releaseState || null,
+    planActivatedAt: order.productionPlanBatch?.deletedAt
+      ? null
+      : order.productionPlanBatch?.activatedAt?.toISOString() || null,
     code: order.code,
     businessCode: order.businessCode,
     specification: order.specification,
@@ -1030,6 +1062,15 @@ export function serializeProductionOrder(
     } : null,
     processRoute: order.processRoute ? serializeProcessRoute(order.processRoute) : null,
     drawingLibraryItemId: order.drawingLibraryItemId,
+    sopStage: order.drawingLibraryItem?.sopDocument?.deletedAt
+      ? null
+      : normalizePlanningSopStage(order.drawingLibraryItem?.sopDocument?.sopStage),
+    sopRemark: order.drawingLibraryItem?.sopDocument?.deletedAt
+      ? null
+      : order.drawingLibraryItem?.sopDocument?.remark || null,
+    sopMetadataUpdatedAt: order.drawingLibraryItem?.sopDocument?.deletedAt
+      ? null
+      : order.drawingLibraryItem?.sopDocument?.updatedAt?.toISOString() || null,
     qualityRiskAlertCount: effectiveQualityRiskAlerts.length,
     qualityRiskHighestSeverity,
     documentCategoryCodes: [...new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || [])],
@@ -1398,6 +1439,21 @@ export async function loadProductionExecution(input: {
       arrangements: arrangementsByOrder.get(order.id) || [],
     }] : [];
   });
+  const summaryRootOrders = input.includeSummary
+    ? summaryOrders.filter(isRootProductionOrder)
+    : [];
+  const summaryCarryoverByOrder = input.includeSummary
+    && input.week.scope === 'current'
+    && input.week.weekStart
+    ? await loadProductionCarryoverMetadata(input.week.weekStart, summaryRootOrders.map(order => order.id))
+    : new Map<string, ProductionCarryoverMetadata>();
+  const executionCountBreakdown = input.includeSummary && input.week.scope === 'current'
+    ? {
+        nativeCurrent: Math.max(0, summaryRootOrders.length - summaryCarryoverByOrder.size),
+        carryover: summaryCarryoverByOrder.size,
+        total: summaryRootOrders.length,
+      }
+    : null;
   return {
     scope: input.week.scope,
     readOnly: input.week.scope === 'history' || input.productionScope?.readOnly === true,
@@ -1411,13 +1467,16 @@ export async function loadProductionExecution(input: {
     },
     pagination: { page, pageSize, total, totalPages },
     ...(input.includeSummary ? {
-      summary: summarizeProductionRecords(
-        input.week,
-        summaryOrders.filter(isRootProductionOrder),
-        summaryArrangementsByOrder,
-        now,
-        input.productionScope,
-      ),
+      summary: {
+        ...summarizeProductionRecords(
+          input.week,
+          summaryRootOrders,
+          summaryArrangementsByOrder,
+          now,
+          input.productionScope,
+        ),
+        executionCountBreakdown,
+      },
     } : {}),
   };
 }
@@ -1555,10 +1614,20 @@ export async function summarizeProduction(week: ProductionWeek, scope?: Producti
   const orders = (await loadProductionSummaryOrders(week, undefined, scope)).filter(isRootProductionOrder);
   const arrangementsByOrder = await loadProductionArrangementMap(orders, now, scope);
   const summary = summarizeProductionRecords(week, orders, arrangementsByOrder, now, scope);
-  const wipPlanMetrics = week.weekStart
-    ? await loadWipWeekLaborMetrics(week.weekStart)
+  const [wipPlanMetrics, carryoverByOrder] = await Promise.all([
+    week.weekStart ? loadWipWeekLaborMetrics(week.weekStart) : Promise.resolve(null),
+    week.scope === 'current' && week.weekStart
+      ? loadProductionCarryoverMetadata(week.weekStart, orders.map(order => order.id))
+      : Promise.resolve(new Map<string, ProductionCarryoverMetadata>()),
+  ]);
+  const executionCountBreakdown = week.scope === 'current'
+    ? {
+        nativeCurrent: Math.max(0, orders.length - carryoverByOrder.size),
+        carryover: carryoverByOrder.size,
+        total: orders.length,
+      }
     : null;
-  return { ...summary, wipPlanMetrics };
+  return { ...summary, wipPlanMetrics, executionCountBreakdown };
 }
 
 export async function loadProductionOrderById(id: string, scope?: ProductionEntityScope) {

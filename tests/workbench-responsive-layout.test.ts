@@ -62,3 +62,9 @@ test('production command collapses secondary actions and keeps the side panel wi
   assert.match(stylesheet, /@media \(max-width: 1680px\)[\s\S]*?\.production-command-secondary\s*\{[\s\S]*?display:\s*none/);
   assert.match(stylesheet, /\.production-week-reconciliation\.aligned\s*\{[\s\S]*?display:\s*none/);
 });
+
+test('headerless WIP workbench removes the shared header reservation', () => {
+  const stylesheet = source('app/workspace/wip/wip-workbench.css');
+
+  assert.match(stylesheet, /main\.wip-workbench\.hm-workbench-root\.hm-workbench-root\s*\{[\s\S]*?--hm-shell-header:\s*0px;[\s\S]*?padding-top:\s*0;/);
+});

@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
     const data = await loadProductionWeekReconciliation(
       req.nextUrl.searchParams.get('weekStart'),
       productionScope,
+      { checkExecutionEligibility: req.nextUrl.searchParams.get('checkExecution') === '1' },
     );
     return NextResponse.json({ ok: true, data });
   } catch (error) {

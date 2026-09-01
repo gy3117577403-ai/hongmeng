@@ -11,6 +11,13 @@
   padding: 12px 14px 18px 96px;
 }
 
+/* This page hides AppWorkbenchHeader, so it must not inherit the shared
+   64px header reservation. Keep the rail/layout offsets unchanged. */
+main.wip-workbench.hm-workbench-root.hm-workbench-root {
+  --hm-shell-header: 0px;
+  padding-top: 0;
+}
+
 .wip-topbar {
   min-height: 72px;
   display: grid;

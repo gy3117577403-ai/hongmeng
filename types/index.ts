@@ -3225,7 +3225,8 @@ export type ProductionWeekReconciliationIssueCode =
   | 'plan_missing_work_order'
   | 'work_order_week_mismatch'
   | 'work_order_missing_plan'
-  | 'workflow_missing_work_order';
+  | 'workflow_missing_work_order'
+  | 'work_order_not_executable';
 
 export type ProductionWeekReconciliationIssueDTO = {
   code: ProductionWeekReconciliationIssueCode;
@@ -3243,6 +3244,7 @@ export type ProductionWeekReconciliationDTO = {
   weekEndDate: string;
   planBatchCount: number;
   productionWorkOrderCount: number;
+  executableWorkOrderCount: number | null;
   workflowInstanceCount: number;
   alignedWorkOrderCount: number;
   aligned: boolean;

@@ -8,7 +8,6 @@ import {
   processQuantityLedgerIsLocked,
 } from '@/lib/process-quantity-ledger-guard';
 import {
-  automaticProductionPlanReleaseTarget,
   automaticallyReleaseProductionPlanBatch,
   deleteProductionPlanBatches,
   effectivePlanningUnitMilliseconds,
@@ -96,14 +95,6 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         });
       }
       const refs = await resolvePlanningReferences(tx, existing.planOrder);
-      const automaticTarget = automaticProductionPlanReleaseTarget({
-        weekStartDate: parsed.data.weekStartDate,
-        releaseState: existing.releaseState,
-        workOrderId: existing.workOrderId,
-      });
-      if (automaticTarget && refs.sopStage === 'validating' && body.confirmSopValidation !== true) {
-        throw new Error('PLAN_SOP_VALIDATION_CONFIRMATION_REQUIRED');
-      }
       const effectiveUnitMilliseconds = effectivePlanningUnitMilliseconds(
         parsed.data.unitMilliseconds,
         refs.unitMilliseconds,
@@ -172,7 +163,6 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         batchId: existing.id,
         actorId: user.id,
         trigger: 'automatic_schedule',
-        confirmSopValidation: body.confirmSopValidation === true,
       });
       const record = await tx.productionPlanOrder.findUniqueOrThrow({
         where: { id: existing.planOrderId },
@@ -192,13 +182,6 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof Error && error.message === 'PLAN_SOP_VALIDATION_CONFIRMATION_REQUIRED') {
-      return NextResponse.json({
-        ok: false,
-        requiresSopValidationConfirmation: true,
-        error: '该产品 SOP 处于验证中，请确认验证范围和使用条件后再进入生产',
-      }, { status: 409 });
-    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
       return NextResponse.json({ ok: false, error: '排产批次已被其他操作更新，请刷新后重试' }, { status: 409 });
     }

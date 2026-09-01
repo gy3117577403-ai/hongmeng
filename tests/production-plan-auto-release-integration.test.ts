@@ -87,6 +87,17 @@ test(
               },
             ])),
           });
+          await tx.sopDocument.create({
+            data: {
+              drawingLibraryItemId: currentDrawing.id,
+              title: 'Current week validating SOP',
+              sopStage: 'validating',
+              drawingStatus: 'available',
+              remark: '集成测试：验证中状态只提示，不阻断进入生产执行',
+              createdById: actor.id,
+              updatedById: actor.id,
+            },
+          });
           await tx.productTimeProfile.create({
             data: {
               drawingLibraryItemId: currentDrawing.id,

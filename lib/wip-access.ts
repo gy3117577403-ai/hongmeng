@@ -1,9 +1,9 @@
-import type { AccessContext } from '@/lib/department-access';
-
 type WipAccessSubject = {
   laborRole: string;
   dailyPlanningRoles: readonly string[];
-  access: Pick<AccessContext, 'effectiveGrants'>;
+  access: {
+    effectiveGrants: readonly { profile: string }[];
+  };
 };
 
 const WIP_MANAGER_PROFILES = new Set([
