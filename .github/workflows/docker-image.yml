@@ -337,8 +337,9 @@ jobs:
           IMAGE_REPOSITORY: ${{ github.repository }}
           IMAGE_REFERENCE: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           upstream_digest="$(timeout 30s docker buildx imagetools inspect "$UPSTREAM_IMAGE" | awk '$1 == "Digest:" { print $2; exit }')"
-          test -n "$upstream_digest"
+          [[ "$upstream_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
 
           mirror_digest=""
           for attempt in $(seq 1 4); do
@@ -351,7 +352,7 @@ jobs:
           done
 
           if [ "$mirror_digest" != "$upstream_digest" ]; then
-            echo "Sealos mirror digest mismatch: upstream=$upstream_digest mirror=${mirror_digest:-missing}" >&2
+            echo "China mirror digest mismatch: upstream=$upstream_digest mirror=${mirror_digest:-missing}" >&2
             exit 1
           fi
 
@@ -371,7 +372,7 @@ jobs:
 
           downloaded_manifest_digest="sha256:$(sha256sum "$manifest_file" | awk '{ print $1 }')"
           if [ "$downloaded_manifest_digest" != "$upstream_digest" ]; then
-            echo "Downloaded Sealos manifest digest mismatch: expected=$upstream_digest actual=$downloaded_manifest_digest" >&2
+            echo "Downloaded China mirror manifest digest mismatch: expected=$upstream_digest actual=$downloaded_manifest_digest" >&2
             exit 1
           fi
 
@@ -408,6 +409,8 @@ jobs:
             fi
           done
 
+          echo "digest=$upstream_digest" >> "$GITHUB_OUTPUT"
+
           {
             echo "### China mirror image"
             echo
@@ -429,4 +432,130 @@ jobs:
             echo "The verified GHCR image was published successfully. The pull-through mirror did not return the manifest and is not claimed as deployable:"
             echo
             echo "\`$CHINA_MIRROR_IMAGE\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Anonymous China mirror pull and clean sample runtime smoke
+        if: steps.china_mirror.outcome == 'success'
+        timeout-minutes: 20
+        env:
+          CHINA_MIRROR_IMAGE: ghcr.dockerproxy.net/${{ github.repository }}:${{ github.ref_name }}
+          EXPECTED_IMAGE_DIGEST: ${{ steps.china_mirror.outputs.digest }}
+          EXPECTED_APP_VERSION: ${{ github.ref_name }}
+          SESSION_SECRET: ci-china-mirror-sample-session-secret-1234567890
+          SEED_ADMIN_USERNAME: samplemirroradmin
+          SEED_ADMIN_PASSWORD: Codex-Sample-Mirror-Seed-2026!Z
+          SMOKE_ADMIN_CHANGED_PASSWORD: Codex-Sample-Mirror-Changed-2026!R
+          S3_ACCESS_KEY_ID: samplemirroraccess
+          S3_SECRET_ACCESS_KEY: Codex-Sample-Mirror-MinIO-Secret-2026!Z
+          OUTBOX_WORKER_TOKEN: ci-china-mirror-outbox-worker-token-1234567890
+        run: |
+          set -euo pipefail
+          anonymous_config="$(mktemp -d)"
+          network="hongmeng-sample-mirror-${GITHUB_RUN_ID}"
+          postgres_name="hongmeng-sample-mirror-postgres"
+          minio_name="hongmeng-sample-mirror-minio"
+          app_name="hongmeng-sample-mirror-app"
+          cleanup() {
+            docker rm -f "$app_name" "$minio_name" "$postgres_name" >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+            rm -rf "$anonymous_config"
+          }
+          trap cleanup EXIT
+
+          export DOCKER_CONFIG="$anonymous_config"
+          docker pull "$CHINA_MIRROR_IMAGE"
+          mirror_repository="${CHINA_MIRROR_IMAGE%:*}"
+          mirror_digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$CHINA_MIRROR_IMAGE" | awk -F@ -v repository="$mirror_repository" '$1 == repository { print $2; exit }')"
+          [[ "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$mirror_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$mirror_digest" = "$EXPECTED_IMAGE_DIGEST"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$CHINA_MIRROR_IMAGE")" = "linux/amd64"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$CHINA_MIRROR_IMAGE")" = "$EXPECTED_APP_VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CHINA_MIRROR_IMAGE")" = "$GITHUB_SHA"
+
+          docker network create "$network" >/dev/null
+          docker run -d --name "$postgres_name" --network "$network" --tmpfs /var/lib/postgresql/data \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=hongmeng_sample_mirror \
+            postgres:16-alpine >/dev/null
+          docker run -d --name "$minio_name" --network "$network" --tmpfs /data \
+            -p 127.0.0.1:29000:9000 \
+            -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" \
+            minio/minio:latest server /data --address :9000 --console-address :9001 >/dev/null
+
+          postgres_ready=0
+          for attempt in $(seq 1 40); do
+            if docker exec "$postgres_name" pg_isready -U postgres -d hongmeng_sample_mirror >/dev/null 2>&1; then
+              postgres_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$postgres_ready" != "1" ]; then
+            docker logs "$postgres_name"
+            exit 1
+          fi
+
+          minio_ready=0
+          for attempt in $(seq 1 40); do
+            if docker run --rm --network "$network" minio/mc:latest \
+              alias set sample "http://${minio_name}:9000" "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" >/dev/null 2>&1; then
+              minio_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$minio_ready" != "1" ]; then
+            docker logs "$minio_name"
+            exit 1
+          fi
+          docker run --rm --network "$network" --entrypoint /bin/sh minio/mc:latest -c \
+            "mc alias set sample http://${minio_name}:9000 '$S3_ACCESS_KEY_ID' '$S3_SECRET_ACCESS_KEY' >/dev/null && mc mb -p sample/workorder-resources"
+
+          docker run -d --name "$app_name" --network "$network" -p 127.0.0.1:3300:3000 \
+            -e APP_BASE_URL=http://127.0.0.1:3300 \
+            -e DATABASE_URL="postgresql://postgres:postgres@${postgres_name}:5432/hongmeng_sample_mirror?schema=public" \
+            -e SESSION_SECRET="$SESSION_SECRET" \
+            -e SEED_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" \
+            -e SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            -e S3_ENDPOINT="http://${minio_name}:9000" \
+            -e S3_PUBLIC_ENDPOINT=http://127.0.0.1:29000 \
+            -e S3_REGION=auto \
+            -e S3_BUCKET=workorder-resources \
+            -e S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" \
+            -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
+            -e S3_FORCE_PATH_STYLE=true \
+            -e PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            -e PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS=2 \
+            "$CHINA_MIRROR_IMAGE" >/dev/null
+
+          app_ready=0
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:3300/api/ready >/dev/null; then
+              app_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$app_ready" != "1" ]; then
+            docker logs "$app_name"
+            exit 1
+          fi
+
+          SAMPLE_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_QA_ALLOW_DISPOSABLE_MUTATION=clean-ci-runtime \
+            EXPECTED_APP_VERSION="$EXPECTED_APP_VERSION" \
+            SMOKE_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" \
+            SMOKE_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            SMOKE_ADMIN_CHANGED_PASSWORD="$SMOKE_ADMIN_CHANGED_PASSWORD" \
+            node scripts/smoke-sample-capture.mjs
+
+          docker stop --time 20 "$app_name" >/dev/null
+          test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
+          {
+            echo "### Anonymous China mirror runtime acceptance"
+            echo
+            echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed the sample capture lifecycle smoke."
           } >> "$GITHUB_STEP_SUMMARY"

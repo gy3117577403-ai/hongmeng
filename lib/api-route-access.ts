@@ -395,9 +395,28 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
     };
   }
 
+  if (/^\/api\/sample-tasks\/[^/]+\/sections(?:\/[^/]+)?$/.test(path)) {
+    return {
+      prefix: '/api/sample-tasks/:id/sections',
+      anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+      actionsByMethod: { GET: 'READ', PUT: 'EXECUTE_WORKFLOW' },
+      productionMinimumScope: 'WORKSHOP',
+    };
+  }
+
   if (/^\/api\/sample-tasks\/[^/]+\/submit$/.test(path)) {
     return {
       prefix: '/api/sample-tasks/:id/submit',
+      anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+      action: 'EXECUTE_WORKFLOW',
+      productionMinimumScope: 'WORKSHOP',
+    };
+  }
+
+
+  if (/^\/api\/sample-tasks\/[^/]+\/withdraw-submission$/.test(path)) {
+    return {
+      prefix: '/api/sample-tasks/:id/withdraw-submission',
       anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
       action: 'EXECUTE_WORKFLOW',
       productionMinimumScope: 'WORKSHOP',

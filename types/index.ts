@@ -196,6 +196,31 @@ export type SampleReviewStatusDTO = 'DRAFT' | 'PENDING' | 'CHANGES_REQUESTED' | 
 export type SampleDataKindDTO = 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOTICE' | 'CUSTOM';
 export type SamplePhotoCategoryDTO = 'UNCLASSIFIED' | 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOTICE' | 'SEMI_FINISHED' | 'PROCESS' | 'MEASUREMENT' | 'FINISHED' | 'DETAIL' | 'EXCEPTION';
 export type SamplePublishModeDTO = 'APPEND' | 'REPLACE_MATCHING' | 'RECORD_ONLY';
+export type SampleDraftSectionKindDTO = 'PROCESS_TIME' | 'STRIPPING';
+
+export type SampleDraftSectionDTO = {
+  id: string;
+  taskId: string;
+  kind: SampleDraftSectionKindDTO;
+  schemaVersion: number;
+  revision: number;
+  lastSubmittedRevision?: number;
+  payload: { rows?: Array<Record<string, unknown>> } & Record<string, unknown>;
+  uiState: Record<string, unknown>;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SampleSubmissionSummaryDTO = {
+  id: string;
+  revision: number;
+  status: string;
+  submittedBy: string | null;
+  submittedAt: string;
+  withdrawnBy: string | null;
+  withdrawnAt: string | null;
+};
 
 export type SampleTaskAssigneeDTO = {
   id: string;
@@ -213,6 +238,7 @@ export type SampleDataEntryDTO = {
   label: string | null;
   payload: Record<string, unknown>;
   clientMutationId: string | null;
+  submissionRevision: number | null;
   reviewStatus: SampleReviewStatusDTO;
   publishMode: SamplePublishModeDTO | null;
   reviewComment: string | null;
@@ -240,6 +266,9 @@ export type SamplePhotoDTO = {
   mimeType: string;
   size: number;
   captureSource: string | null;
+  sourceOriginalName: string | null;
+  sortOrder: number;
+  submissionRevision: number | null;
   reviewStatus: SampleReviewStatusDTO;
   reviewComment: string | null;
   uploadedBy: string | null;
@@ -274,6 +303,11 @@ export type SampleTaskDTO = {
   dataStatus: SampleDataStatusDTO;
   planRemark: string | null;
   version: number;
+  submissionRevision: number;
+  activeSubmissionId: string | null;
+  lastEditedKind: SampleDraftSectionKindDTO | null;
+  lastEditedRowId: string | null;
+  activeSubmission: SampleSubmissionSummaryDTO | null;
   startedAt: string | null;
   submittedAt: string | null;
   completedAt: string | null;
@@ -283,6 +317,7 @@ export type SampleTaskDTO = {
   createdAt: string;
   updatedAt: string;
   assignees: SampleTaskAssigneeDTO[];
+  sections: SampleDraftSectionDTO[];
   entries: SampleDataEntryDTO[];
   photos: SamplePhotoDTO[];
   counts: {

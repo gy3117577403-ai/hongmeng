@@ -19,6 +19,7 @@ import {
   PackageCheck,
   Pencil,
   Plus,
+  Printer,
   QrCode,
   RefreshCw,
   Search,
@@ -32,6 +33,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ModuleModeDrawer, ModuleModeTrigger, useModuleModeDrawer } from '@/components/layout/ModuleModeDrawer';
 import { writeClipboardText } from '@/lib/client-platform';
+import { hasCapability } from '@/lib/department-access';
 import type {
   CurrentUserDTO,
   SampleDataEntryDTO,
@@ -89,6 +91,9 @@ type ReviewRequest = {
   title: string;
   kind?: string;
   category?: SamplePhotoCategoryDTO;
+  processName?: string;
+  processDefinitionId?: string;
+  processOrigin?: string;
 };
 
 const emptySummary: SampleTeamSummaryDTO = {
@@ -292,6 +297,8 @@ export default function SampleTeamCenter({
   const [reviewMode, setReviewMode] = useState<SamplePublishModeDTO>('APPEND');
   const [reviewComment, setReviewComment] = useState('');
   const [reviewCategory, setReviewCategory] = useState<SamplePhotoCategoryDTO>('UNCLASSIFIED');
+  const [reviewProcessBinding, setReviewProcessBinding] = useState('');
+  const [reviewProcessStage, setReviewProcessStage] = useState<'frontend' | 'backend' | 'finish'>('frontend');
   const [reviewSaving, setReviewSaving] = useState(false);
   const initialSelectedRef = useRef(false);
   const lastDetailTaskRef = useRef('');
@@ -302,6 +309,8 @@ export default function SampleTeamCenter({
     [taskView, tasks, todayKey],
   );
   const selected = visibleTasks.find(task => task.id === selectedId) || visibleTasks[0] || null;
+  const canCreateReviewProcess = user.laborRole === 'ADMIN'
+    || hasCapability(user.access, 'PROCESS', 'EXECUTE_WORKFLOW');
   const activeTasks = useMemo(() => tasks.filter(task => task.status !== 'CANCELLED'), [tasks]);
   const viewCounts = useMemo(() => ({
     ALL: activeTasks.length,
@@ -508,21 +517,39 @@ export default function SampleTeamCenter({
   }
 
   function openReview(item: SampleDataEntryDTO | SamplePhotoDTO, itemType: 'entry' | 'photo', decision: typeof reviewDecision) {
+    const entry = itemType === 'entry' ? item as SampleDataEntryDTO : null;
+    const processName = entry?.kind === 'PROCESS_TIME' && typeof entry.payload.processName === 'string'
+      ? entry.payload.processName.trim()
+      : '';
+    const processDefinitionId = entry?.kind === 'PROCESS_TIME' && typeof entry.payload.processDefinitionId === 'string'
+      ? entry.payload.processDefinitionId
+      : '';
+    const processOrigin = entry?.kind === 'PROCESS_TIME' && typeof entry.payload.processOrigin === 'string'
+      ? entry.payload.processOrigin
+      : '';
     const title = itemType === 'entry'
-      ? `${dataKindLabels[(item as SampleDataEntryDTO).kind] || '样品数据'} · ${(item as SampleDataEntryDTO).label || '未命名记录'}`
+      ? `${dataKindLabels[entry!.kind] || '样品数据'} · ${entry!.label || '未命名记录'}`
       : `${photoCategoryLabels[(item as SamplePhotoDTO).category]} · ${(item as SamplePhotoDTO).caption || (item as SamplePhotoDTO).originalName}`;
     setReviewRequest({
       itemType,
       itemId: item.id,
       expectedVersion: item.version,
       title,
-      kind: itemType === 'entry' ? (item as SampleDataEntryDTO).kind : undefined,
+      kind: entry?.kind,
       category: itemType === 'photo' ? (item as SamplePhotoDTO).category : undefined,
+      processName,
+      processDefinitionId,
+      processOrigin,
     });
     setReviewDecision(decision);
     setReviewMode(decision === 'APPROVE' ? 'RECORD_ONLY' : 'APPEND');
     setReviewComment('');
     setReviewCategory(itemType === 'photo' ? (item as SamplePhotoDTO).category : 'UNCLASSIFIED');
+    const exactProcess = processName
+      ? context.processes.find(process => process.name.trim().toLocaleLowerCase('zh-CN') === processName.toLocaleLowerCase('zh-CN'))
+      : undefined;
+    setReviewProcessBinding(processDefinitionId || exactProcess?.id || (entry?.kind === 'PROCESS_TIME' && canCreateReviewProcess ? '__create__' : ''));
+    setReviewProcessStage('frontend');
   }
 
   async function saveReview() {
@@ -536,10 +563,14 @@ export default function SampleTeamCenter({
           itemType: reviewRequest.itemType,
           itemId: reviewRequest.itemId,
           expectedVersion: reviewRequest.expectedVersion,
+          expectedTaskVersion: selected.version,
           decision: reviewDecision,
           publishMode: reviewDecision === 'APPROVE' ? 'RECORD_ONLY' : reviewMode,
           comment: reviewComment,
           category: reviewCategory,
+          processDefinitionId: reviewProcessBinding && reviewProcessBinding !== '__create__' ? reviewProcessBinding : undefined,
+          createProcessDefinition: reviewProcessBinding === '__create__',
+          processStageGroup: reviewProcessStage,
         }),
       });
       const body = await responseJson(response);
@@ -839,7 +870,7 @@ export default function SampleTeamCenter({
         <section className="sample-qr-dialog" role="dialog" aria-modal="true" aria-label="样品采集二维码">
           <header><div><span>样品采集二维码</span><h2>{qrTask.code}</h2></div><button type="button" aria-label="关闭" onClick={() => setQrTask(null)}><X /></button></header>
           <div className="sample-qr-content">{qrDataUrl ? <Image unoptimized priority width={260} height={260} src={qrDataUrl} alt={`${qrTask.code}样品采集二维码`} /> : <Loader2 className="spin" />}<strong>{qrTask.specification}</strong><p>{qrTask.customerName} · {taskLevelText(qrTask)}</p><small>扫码后填写数据与拍摄照片，不会生成量产报工或效率。</small></div>
-          <footer><button type="button" onClick={() => void copyCaptureLink(qrTask)}><Copy size={15} />复制链接</button><Link className="primary" href={qrTask.captureUrl} prefetch={false}>打开采集页</Link></footer>
+          <footer><button type="button" onClick={() => void copyCaptureLink(qrTask)}><Copy size={15} />复制链接</button><Link href={`/sample-print/${encodeURIComponent(qrTask.id)}?mode=current&from=${encodeURIComponent(mode)}`} prefetch={false}><Printer size={15} />打印标准采集单</Link><Link className="primary" href={qrTask.captureUrl} prefetch={false}>打开采集页</Link></footer>
         </section>
       </div>}
 
@@ -855,10 +886,18 @@ export default function SampleTeamCenter({
             </div>
             {reviewDecision === 'PUBLISH' && reviewRequest.itemType === 'entry' && <label><span>发布方式</span><select value={reviewMode} onChange={event => setReviewMode(event.target.value as SamplePublishModeDTO)}><option value="APPEND">追加为新记录</option><option value="REPLACE_MATCHING">替换同名/同部位当前记录</option></select></label>}
             {reviewDecision === 'PUBLISH' && reviewRequest.itemType === 'photo' && <label><span>照片分类</span><select value={reviewCategory} onChange={event => setReviewCategory(event.target.value as SamplePhotoCategoryDTO)}>{Object.entries(photoCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
-            {reviewRequest.kind === 'PROCESS_TIME' && reviewDecision === 'PUBLISH' && <div className="sample-review-note"><AlertTriangle size={17} /><span><strong>先同步到受控产品工时草稿</strong><small>仍需在产品工序与工时页面预览关联工单影响后正式发布，避免绕过现有生产安全门禁。</small></span></div>}
+            {reviewRequest.kind === 'PROCESS_TIME' && reviewDecision === 'PUBLISH' && <>
+              <label><span>正式工序归属</span><select value={reviewProcessBinding} onChange={event => setReviewProcessBinding(event.target.value)}>
+                <option value="">请选择已有正式工序</option>
+                {context.processes.map(process => <option key={process.id} value={process.id}>{process.name}{process.code ? ` · ${process.code}` : ''}</option>)}
+                {canCreateReviewProcess && reviewRequest.processOrigin !== 'MASTER' && reviewRequest.processName && <option value="__create__">新增“{reviewRequest.processName}”为正式工序</option>}
+              </select><small>{reviewRequest.processOrigin === 'MASTER' ? '已关联正式工序；如需纠正可重新选择。' : '候选名称不会直接污染工序库，必须在这里映射或由工艺管理员受控新增。'}</small></label>
+              {reviewProcessBinding === '__create__' && <label><span>新工序所属阶段</span><select value={reviewProcessStage} onChange={event => setReviewProcessStage(event.target.value as typeof reviewProcessStage)}><option value="frontend">前段</option><option value="backend">后段</option><option value="finish">收尾</option></select></label>}
+              <div className="sample-review-note"><AlertTriangle size={17} /><span><strong>先同步到受控产品工时草稿</strong><small>仍需在产品工序与工时页面预览关联工单影响后正式发布，避免绕过现有生产安全门禁。</small></span></div>
+            </>}
             <label><span>{reviewDecision === 'CHANGES_REQUESTED' ? '修改意见（自由填写，可留空）' : '审核备注（可留空）'}</span><textarea value={reviewComment} onChange={event => setReviewComment(event.target.value)} placeholder="不提供固定原因选项" /></label>
           </div>
-          <footer><button type="button" disabled={reviewSaving} onClick={() => setReviewRequest(null)}>取消</button><button className={reviewDecision === 'VOID' ? 'danger' : 'primary'} type="button" disabled={reviewSaving} onClick={() => void saveReview()}>{reviewSaving ? <><Loader2 className="spin" size={15} />处理中</> : '确认审核'}</button></footer>
+          <footer><button type="button" disabled={reviewSaving} onClick={() => setReviewRequest(null)}>取消</button><button className={reviewDecision === 'VOID' ? 'danger' : 'primary'} type="button" disabled={reviewSaving || (reviewRequest.kind === 'PROCESS_TIME' && reviewDecision === 'PUBLISH' && !reviewProcessBinding)} onClick={() => void saveReview()}>{reviewSaving ? <><Loader2 className="spin" size={15} />处理中</> : '确认审核'}</button></footer>
         </section>
       </div>}
     </main>

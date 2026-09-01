@@ -8,6 +8,8 @@ import {
   parseOptionalNonNegativeInteger,
   parseOptionalSampleDate,
   sampleActor,
+  sampleDraftSectionHasData,
+  sampleDraftSectionHasUnsubmittedChange,
   sampleTaskInclude,
   serializeSampleTask,
 } from '@/lib/sample-team';
@@ -55,6 +57,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (existing.version !== expectedVersion) throw new Error('SAMPLE_TASK_CONFLICT');
       let status = existing.status;
       const lifecycle: Prisma.SampleTaskUpdateInput = {};
+      let noDataCompletion = false;
       if (action === 'START') {
         if (status !== 'CANCELLED' && status !== 'COMPLETED') {
           status = 'IN_PROGRESS';
@@ -62,10 +65,31 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         }
       } else if (action === 'COMPLETE') {
         if (status !== 'CANCELLED') {
+          const [blockingEntries, blockingPhotos, totalEntries, totalPhotos, sections] = await Promise.all([
+            tx.sampleDataEntry.count({ where: { taskId: existing.id, deletedAt: null, reviewStatus: { in: ['DRAFT', 'PENDING', 'CHANGES_REQUESTED'] } } }),
+            tx.samplePhoto.count({ where: { taskId: existing.id, deletedAt: null, reviewStatus: { in: ['DRAFT', 'PENDING', 'CHANGES_REQUESTED'] } } }),
+            tx.sampleDataEntry.count({ where: { taskId: existing.id, deletedAt: null } }),
+            tx.samplePhoto.count({ where: { taskId: existing.id, deletedAt: null } }),
+            tx.sampleDraftSection.findMany({ where: { taskId: existing.id }, select: { payload: true, revision: true, lastSubmittedRevision: true } }),
+          ]);
+          const hasDraftSectionData = sections.some(section => sampleDraftSectionHasData(section.payload));
+          const hasUnsubmittedSectionData = sections.some(sampleDraftSectionHasUnsubmittedChange);
+          if (existing.activeSubmissionId || blockingEntries + blockingPhotos > 0 || hasUnsubmittedSectionData) {
+            throw new Error('SAMPLE_TASK_HAS_UNFINISHED_DATA');
+          }
+          if (totalEntries + totalPhotos === 0 && !hasDraftSectionData) {
+            if (body.confirmNoData !== true) throw new Error('SAMPLE_TASK_CONFIRM_NO_DATA_REQUIRED');
+            noDataCompletion = true;
+          }
           status = 'COMPLETED';
           lifecycle.completedAt = now;
         }
       } else if (action === 'CANCEL') {
+        const pendingReviewCount = await tx.sampleDataEntry.count({ where: { taskId: existing.id, deletedAt: null, reviewStatus: 'PENDING' } })
+          + await tx.samplePhoto.count({ where: { taskId: existing.id, deletedAt: null, reviewStatus: 'PENDING' } });
+        if (existing.status === 'SUBMITTED' || existing.activeSubmissionId || pendingReviewCount > 0) {
+          throw new Error('SAMPLE_TASK_SUBMITTED_CANCEL_BLOCKED');
+        }
         status = 'CANCELLED';
         lifecycle.cancelledAt = now;
       } else if (action === 'REOPEN') {
@@ -125,7 +149,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           action: action === 'UPDATE' ? 'update_sample_task' : `sample_task_${action.toLowerCase()}`,
           targetType: 'sample_task',
           targetId: existing.id,
-          detail: { fromStatus: existing.status, toStatus: status, expectedVersion },
+          detail: { fromStatus: existing.status, toStatus: status, expectedVersion, noDataCompletion },
         },
       });
       return existing.id;
@@ -137,6 +161,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_HAS_UNFINISHED_DATA') return NextResponse.json({ ok: false, error: '任务仍有草稿、待审核或退回修改内容，处理完成后才能结束任务' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_CONFIRM_NO_DATA_REQUIRED') return NextResponse.json({ ok: false, error: '任务没有任何采集记录，请明确确认“无采集数据完成”' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_SUBMITTED_CANCEL_BLOCKED') return NextResponse.json({ ok: false, error: '任务正在审核中，请先撤回提交或由审核人员退回后再取消' }, { status: 409 });
       if (error.message === 'INVALID_SAMPLE_DATE') return NextResponse.json({ ok: false, error: '计划完成日期格式无效' }, { status: 400 });
       if (error.message === 'INVALID_SAMPLE_NUMBER') return NextResponse.json({ ok: false, error: '数量或优先级格式无效' }, { status: 400 });
     }

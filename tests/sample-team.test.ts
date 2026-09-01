@@ -8,6 +8,8 @@ import {
   parseOptionalNonNegativeInteger,
   parseOptionalSampleDate,
   sampleTaskStatusAfterCapture,
+  sampleRequestHash,
+  sanitizeSampleDraftSection,
   sanitizeSamplePayload,
 } from '../lib/sample-team';
 
@@ -48,7 +50,7 @@ test('sample task data state is count and review driven rather than completeness
 
 test('capture starts a sample task but never changes a closed task state', () => {
   assert.equal(sampleTaskStatusAfterCapture('PLANNED'), 'IN_PROGRESS');
-  assert.equal(sampleTaskStatusAfterCapture('SUBMITTED'), 'IN_PROGRESS');
+  assert.equal(sampleTaskStatusAfterCapture('SUBMITTED'), 'SUBMITTED');
   assert.equal(sampleTaskStatusAfterCapture('COMPLETED'), 'COMPLETED');
   assert.equal(sampleTaskStatusAfterCapture('CANCELLED'), 'CANCELLED');
 });
@@ -78,7 +80,83 @@ test('review contract is item-level, optimistic, and supports free-form optional
   assert.match(reviewRoute, /expectedVersion/);
   assert.match(reviewRoute, /cleanSampleText\(body\.comment/);
   assert.doesNotMatch(reviewRoute, /reasonCode|fixedReason|reasonOptions/);
-  assert.doesNotMatch(reviewRoute, /updateMany\(\{\s*where:\s*\{\s*taskId/);
+  assert.match(reviewRoute, /sampleDataEntry\.updateMany\(\{\s*where:\s*\{\s*id:\s*entry\.id/);
+  assert.match(reviewRoute, /submissionRevision:\s*task\.submissionRevision/);
+});
+
+test('durable sample section drafts validate row shape, limits, and proposed process boundaries', () => {
+  const process = sanitizeSampleDraftSection('PROCESS_TIME', {
+    rows: [
+      { rowId: 'row-1', position: 0, processDefinitionId: null, processName: '新工序', processOrigin: 'PROPOSED', measuredMilliseconds: 12500 },
+      { rowId: 'row-2', position: 1, processDefinitionId: null, processName: '', processOrigin: 'PROPOSED', measuredMilliseconds: null },
+    ],
+  });
+  assert.equal((process.rows as Array<Record<string, unknown>>)[0].measuredMilliseconds, 12500);
+  assert.throws(() => sanitizeSampleDraftSection('PROCESS_TIME', {
+    rows: [{ rowId: 'row-1', position: 0, processDefinitionId: 'master-id', processName: '裁线', processOrigin: 'PROPOSED', measuredMilliseconds: 1000 }],
+  }), /INVALID_SAMPLE_PROCESS_REFERENCE/);
+  assert.throws(() => sanitizeSampleDraftSection('STRIPPING', {
+    rows: Array.from({ length: 51 }, (_, index) => ({ rowId: `row-${index}`, position: index, model: '' })),
+  }), /SAMPLE_DRAFT_ROW_LIMIT/);
+});
+
+test('sample mutation request hashes are canonical and distinguish changed content', () => {
+  const first = sampleRequestHash({ kind: 'NOTICE', payload: { content: '注意压接', severity: 'high' } });
+  const reordered = sampleRequestHash({ payload: { severity: 'high', content: '注意压接' }, kind: 'NOTICE' });
+  const changed = sampleRequestHash({ kind: 'NOTICE', payload: { content: '注意裁线', severity: 'high' } });
+  assert.equal(first, reordered);
+  assert.notEqual(first, changed);
+});
+
+test('P0 sample capture routes enforce submit lock, withdrawal, completion, and candidate mapping contracts', () => {
+  const sections = readFileSync('app/api/sample-tasks/[id]/sections/[kind]/route.ts', 'utf8');
+  const submit = readFileSync('app/api/sample-tasks/[id]/submit/route.ts', 'utf8');
+  const withdraw = readFileSync('app/api/sample-tasks/[id]/withdraw-submission/route.ts', 'utf8');
+  const task = readFileSync('app/api/sample-tasks/[id]/route.ts', 'utf8');
+  const review = readFileSync('app/api/sample-tasks/[id]/review/route.ts', 'utf8');
+  const entry = readFileSync('app/api/sample-tasks/[id]/entries/route.ts', 'utf8');
+  const photo = readFileSync('app/api/sample-tasks/[id]/photos/route.ts', 'utf8');
+  const schema = readFileSync('prisma/schema.prisma', 'utf8');
+  const migration = readFileSync('prisma/migrations/202609020001_sample_capture_p0_p3/migration.sql', 'utf8');
+  const legacyMigration = readFileSync('prisma/migrations/202609020002_sample_capture_legacy_backfill/migration.sql', 'utf8');
+  const center = readFileSync('components/SampleTeamCenter.tsx', 'utf8');
+
+  assert.match(sections, /expectedTaskVersion/);
+  assert.match(sections, /expectedSectionRevision/);
+  assert.match(sections, /SAMPLE_TASK_SUBMITTED/);
+  assert.match(submit, /SAMPLE_EMPTY_SUBMISSION/);
+  assert.match(submit, /sampleSubmission\.create/);
+  assert.match(submit, /taskId_mutationId/);
+  assert.match(submit, /\{ id: rowId, kind, draftSectionKind: null, draftRowId: null \}/);
+  assert.match(withdraw, /SAMPLE_SUBMISSION_REVIEW_STARTED/);
+  assert.match(withdraw, /withdrawalMutationId/);
+  assert.match(task, /SAMPLE_TASK_HAS_UNFINISHED_DATA/);
+  assert.match(task, /SAMPLE_TASK_SUBMITTED_CANCEL_BLOCKED/);
+  assert.match(task, /confirmNoData/);
+  assert.match(review, /processDefinitionId/);
+  assert.match(review, /SAMPLE_PROCESS_MAPPING_REQUIRED/);
+  assert.match(review, /create_process_definition_from_sample_review/);
+  assert.match(review, /SAMPLE_PROCESS_CREATE_FORBIDDEN/);
+  assert.match(center, /正式工序归属/);
+  assert.match(center, /createProcessDefinition: reviewProcessBinding === '__create__'/);
+  assert.match(entry, /SAMPLE_TASK_SUBMITTED/);
+  assert.match(entry, /taskId_clientMutationId/);
+  assert.match(entry, /SAMPLE_ENTRY_MUTATION_CONFLICT/);
+  assert.match(photo, /SAMPLE_PHOTO_MUTATION_TOMBSTONED/);
+  assert.match(photo, /existing\.sha256 !== sha256/);
+  assert.match(photo, /Photo append is commutative/);
+  assert.doesNotMatch(photo, /fresh\.version !== expectedTaskVersion/);
+  assert.match(schema, /model SampleDraftSection/);
+  assert.match(schema, /model SampleSubmission/);
+  assert.match(schema, /lastSubmittedRevision/);
+  assert.match(migration, /CREATE TABLE "sample_draft_sections"/);
+  assert.match(migration, /CREATE TABLE "sample_submissions"/);
+  assert.match(migration, /"last_submitted_revision" INTEGER NOT NULL DEFAULT 0/);
+  assert.match(migration, /"withdrawal_mutation_id" TEXT/);
+  assert.match(migration, /sample_entries_draft_row_submission_key/);
+  assert.match(legacyMigration, /legacy-sample-submission-/);
+  assert.match(legacyMigration, /ON CONFLICT \("task_id", "revision"\) DO NOTHING/);
+  assert.match(legacyMigration, /"active_submission_id" = CASE WHEN submission\."status" = 'PENDING'/);
 });
 
 test('field-only sample capture context does not expose the employee or product directory', () => {
@@ -100,18 +178,19 @@ test('sample migration stores metadata in PostgreSQL and keeps uploaded files in
   assert.doesNotMatch(uploadRoute, /writeFile|createWriteStream/);
 });
 
-test('mobile sample capture keeps every category optional and makes retries idempotent', () => {
+test('mobile sample capture separates durable drafts, submission, withdrawal, and photo retries', () => {
   const component = readFileSync('components/SampleCaptureMobile.tsx', 'utf8');
-  const migration = readFileSync('prisma/migrations/202609010001_sample_mobile_reliable_capture/migration.sql', 'utf8');
+  const migration = readFileSync('prisma/migrations/202609020001_sample_capture_p0_p3/migration.sql', 'utf8');
 
-  assert.match(component, /所有内容均为选填/);
-  assert.match(component, /未采集任何内容也可提交/);
-  assert.match(component, /window\.localStorage/);
-  assert.match(component, /window\.sessionStorage/);
+  assert.match(component, /保存草稿/);
+  assert.match(component, /撤回提交/);
+  assert.match(component, /\/sections/);
   assert.match(component, /indexedDB\.open/);
+  assert.match(component, /multiple/);
   assert.match(component, /clientMutationId/);
-  assert.match(migration, /sample_data_entries_task_id_client_mutation_id_key/);
-  assert.match(migration, /sample_photos_task_id_client_mutation_id_key/);
+  assert.match(migration, /sample_draft_sections/);
+  assert.match(migration, /sample_submissions/);
+  assert.match(migration, /"request_hash" TEXT/);
 });
 
 test('forced camera normalization emits JPEG bytes for its generated jpg filename', () => {

@@ -75,8 +75,6 @@
 
 final result: passed
 
----
-
 # v1.34.86 半成品续作与改排 Design QA
 
 ## 验收事实源
@@ -117,8 +115,6 @@ final result: passed
 - 本次发布容器镜像，但不自动切换 Sealos、正式数据库或生产流量。
 
 final result: passed
-
----
 
 # v1.34.85 手机样品扫码采集 Design QA
 
@@ -171,5 +167,53 @@ final result: passed
 - 参考稿里的数量、文件名、进度百分比属于概念数据；实现只显示当前任务的真实采集和同步数量。
 - 实现保留产品现有字体、路由、登录和服务端业务 DTO，不复制概念图中的虚构业务状态。
 - 本次发布镜像，不自动切换 Sealos、正式数据库或生产流量。
+
+final result: passed
+
+---
+
+# v1.34.91 样品专注分区式采集与标准打印 Design QA
+
+## 验收目标与环境
+
+- 用户选定参考稿：`C:\Users\31175\.codex\generated_images\01a05c71-404e-7181-9a32-d15b60fd1579\exec-097660bf-8c9d-4131-bfb7-0a32d359583d.png`
+- 实现与参考对照：`C:\Users\31175\Desktop\鸿蒙软件\artifacts\sample-capture-p0-p3-v13491\reference-implementation-comparison.jpg`
+- 手机工序工时：`C:\Users\31175\Desktop\鸿蒙软件\artifacts\sample-capture-p0-p3-v13491\mobile-process-time-390x844.jpg`
+- 手机剥皮参数：`C:\Users\31175\Desktop\鸿蒙软件\artifacts\sample-capture-p0-p3-v13491\mobile-stripping-390x844.jpg`
+- 手机照片队列：`C:\Users\31175\Desktop\鸿蒙软件\artifacts\sample-capture-p0-p3-v13491\mobile-photo-queue-2-local-390x844.jpg`
+- A4 标准打印：`C:\Users\31175\Desktop\鸿蒙软件\artifacts\sample-capture-p0-p3-v13491\sample-print-a4-1366x1024.jpg` 与 `sample-print-a4-bottom-1366x1024.jpg`
+- 验收环境：全新隔离 PostgreSQL 数据库、全新 MinIO bucket 和生产模式 Next.js；未连接或修改 Sealos、正式数据库和生产流量。
+
+## P0–P3 结果
+
+- P0：工序工时默认五行，工序支持下拉检索和自由候选输入；剥皮参数默认一行；两类均可追加空白行、独立保存、恢复草稿、编辑和提交审核。
+- P0：保存与提交严格分离；提交生成不可变 revision 快照，撤回后可继续编辑并形成下一 revision。
+- P1：相机与相册入口分离；相册支持多选，照片支持队列预览、排序、删除、重试和继续编辑；文件进入 S3 兼容对象存储，数据库只保存元数据与软删除状态。
+- P1：候选工序不会自动污染正式工序库；审核时必须绑定现有正式工序，或由管理员/工艺权限人员受控创建并绑定。
+- P2：二维码可打印为 A4 标准样品采集单，包含任务/产品身份、工序工时、剥皮参数、辅料规格和注意事项；打印页不缓存动态业务数据。
+- P2：旧样品任务补齐 revision ledger、active submission 和历史条目归属；旧工序数据按原 entry 接管，避免重复创建。
+- P3：补齐并发照片写入的 PostgreSQL `P2034` 串行化冲突重试、请求幂等、对象孤儿清理、提交/撤回锁定、审计记录和生产模式 clean smoke。
+
+## 对照轮次
+
+### Pass 1 — blocked
+
+- [P1] 两张照片并发上传时，真实 PostgreSQL 出现一次 `P2034` write conflict；修复为仅针对 `P2034` 的完整 Serializable 事务重试，S3 上传保持恰好一次。
+- [P0] 审核界面缺少候选工序到正式工序的映射入口；补齐正式工序选择和具备权限时的受控新建，事务失败不会遗留孤立正式工序。
+- [P0] 旧 `SUBMITTED/PENDING` 样品缺少 revision ledger，旧工序草稿提交可能重复；新增幂等回填迁移和原 entry 接管。
+- [P2] 开发模式打印响应头由 Next.js 强制为 `no-store`，缺少 `private`；未放宽验收，改由生产模式验证真实响应头。
+
+### Pass 2 — passed
+
+- 真实浏览器在 `390 × 844` 验证五行工序、追加第六行、自由候选、保存后刷新恢复、剥皮参数和两张本地照片队列；控制台错误与警告均为 0。
+- A4 打印在 `1366 × 1024` 验证真实二维码、工序工时、剥皮参数、辅料规格和注意事项的完整上下页排版。
+- 全新生产模式环境完成 123 个迁移、种子和 31 项业务检查；两张并发照片均为 HTTP 201，对象下载内容与 PNG 文件头一致，删除后保留软删除证据。
+- revision 1 撤回、revision 2 再提交、旧工序 entry 不重复、候选工序受控创建与绑定均通过；打印页 HTTP 200，`Cache-Control` 同时包含 `private` 与 `no-store`。
+
+## 已接受差异与发布边界
+
+- 参考稿使用概念任务、工序和图片；实现使用隔离环境生成的真实任务、真实 revision、真实对象存储元数据，因此内容值不同。
+- 实现沿用现有产品的登录、橙色设计语言、数据库模型和 API 权限能力，不复制参考稿中的虚构状态。
+- 本次交付镜像与验收证据；不会自动切换 Sealos、正式数据库或生产流量。
 
 final result: passed

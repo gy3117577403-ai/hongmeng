@@ -151,9 +151,12 @@ test('sample capture is available to field reporters while plan and review comma
 
   assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/code/qr-code', 'GET'), true);
   assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/entries', 'POST'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/sections', 'GET'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/sections/PROCESS_TIME', 'PUT'), true);
   assert.equal(canAccessApiRoute(reporter, '/api/sample-entries/entry-1', 'PATCH'), true);
   assert.equal(canAccessApiRoute(reporter, '/api/sample-photos/photo-1', 'DELETE'), true);
   assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/submit', 'POST'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/withdraw-submission', 'POST'), true);
   assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks', 'POST'), false);
   assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/review', 'POST'), false);
   assert.equal(canAccessApiRoute(planning, '/api/sample-tasks', 'POST'), true);

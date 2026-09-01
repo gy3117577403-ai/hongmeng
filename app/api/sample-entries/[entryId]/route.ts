@@ -26,7 +26,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { entryId: s
     const actor = sampleActor(user);
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const expectedVersion = Number(body.expectedVersion);
-    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    const expectedTaskVersion = Number(body.expectedTaskVersion);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !Number.isInteger(expectedTaskVersion) || expectedTaskVersion < 1) {
       return NextResponse.json({ ok: false, error: '数据版本已失效，请刷新后重试' }, { status: 400 });
     }
     if (body.kind !== undefined && !isSampleDataKind(body.kind)) {
@@ -39,7 +40,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { entryId: s
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${entry.taskId}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: entry.taskId, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (task.version !== expectedTaskVersion) throw new Error('SAMPLE_TASK_CONFLICT');
       if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+      if (task.status === 'SUBMITTED' || task.activeSubmissionId) throw new Error('SAMPLE_TASK_SUBMITTED');
       if (entry.version !== expectedVersion) throw new Error('SAMPLE_ENTRY_CONFLICT');
       if (entry.reviewStatus === 'PUBLISHED' || entry.publishedEntityId) throw new Error('SAMPLE_ENTRY_PUBLISHED');
       const updated = await tx.sampleDataEntry.updateMany({
@@ -60,8 +63,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { entryId: s
         },
       });
       if (updated.count !== 1) throw new Error('SAMPLE_ENTRY_CONFLICT');
-      await tx.sampleTask.update({
-        where: { id: task.id },
+      const taskUpdated = await tx.sampleTask.updateMany({
+        where: { id: task.id, version: expectedTaskVersion },
         data: {
           status: 'IN_PROGRESS',
           submittedAt: null,
@@ -70,6 +73,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { entryId: s
           version: { increment: 1 },
         },
       });
+      if (taskUpdated.count !== 1) throw new Error('SAMPLE_TASK_CONFLICT');
       await refreshSampleTaskDataStatus(tx, task.id);
       await tx.operationLog.create({
         data: {
@@ -88,7 +92,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { entryId: s
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_ENTRY_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品数据不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
+      if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务不能修改数据' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_SUBMITTED') return NextResponse.json({ ok: false, error: '样品数据已经提交，请先撤回提交再编辑' }, { status: 409 });
       if (error.message === 'SAMPLE_ENTRY_CONFLICT') return NextResponse.json({ ok: false, error: '该数据已被其他人修改，请刷新后重试' }, { status: 409 });
       if (error.message === 'SAMPLE_ENTRY_PUBLISHED') return NextResponse.json({ ok: false, error: '已发布数据不能覆盖，请新增一条修订记录' }, { status: 409 });
       if (error.message === 'SAMPLE_PAYLOAD_TOO_LARGE') return NextResponse.json({ ok: false, error: '单条样品数据过大，请拆分记录' }, { status: 413 });
@@ -104,7 +110,8 @@ export async function DELETE(req: NextRequest, { params }: { params: { entryId: 
     const actor = sampleActor(user);
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const expectedVersion = Number(body.expectedVersion);
-    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    const expectedTaskVersion = Number(body.expectedTaskVersion);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !Number.isInteger(expectedTaskVersion) || expectedTaskVersion < 1) {
       return NextResponse.json({ ok: false, error: '数据版本已失效，请刷新后重试' }, { status: 400 });
     }
     const taskId = await prisma.$transaction(async tx => {
@@ -113,7 +120,9 @@ export async function DELETE(req: NextRequest, { params }: { params: { entryId: 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${entry.taskId}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: entry.taskId, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (task.version !== expectedTaskVersion) throw new Error('SAMPLE_TASK_CONFLICT');
       if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+      if (task.status === 'SUBMITTED' || task.activeSubmissionId) throw new Error('SAMPLE_TASK_SUBMITTED');
       if (entry.version !== expectedVersion) throw new Error('SAMPLE_ENTRY_CONFLICT');
       if (entry.reviewStatus === 'PUBLISHED' || entry.publishedEntityId) throw new Error('SAMPLE_ENTRY_PUBLISHED');
       const updated = await tx.sampleDataEntry.updateMany({
@@ -121,8 +130,8 @@ export async function DELETE(req: NextRequest, { params }: { params: { entryId: 
         data: { deletedAt: new Date(), updatedById: actor.id, updatedByName: actor.name, version: { increment: 1 } },
       });
       if (updated.count !== 1) throw new Error('SAMPLE_ENTRY_CONFLICT');
-      await tx.sampleTask.update({
-        where: { id: entry.taskId },
+      const taskUpdated = await tx.sampleTask.updateMany({
+        where: { id: entry.taskId, version: expectedTaskVersion },
         data: {
           status: 'IN_PROGRESS',
           submittedAt: null,
@@ -131,6 +140,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { entryId: 
           version: { increment: 1 },
         },
       });
+      if (taskUpdated.count !== 1) throw new Error('SAMPLE_TASK_CONFLICT');
       await refreshSampleTaskDataStatus(tx, entry.taskId);
       await tx.operationLog.create({
         data: {
@@ -149,7 +159,9 @@ export async function DELETE(req: NextRequest, { params }: { params: { entryId: 
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_ENTRY_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品数据不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
+      if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务不能删除数据' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_SUBMITTED') return NextResponse.json({ ok: false, error: '样品数据已经提交，请先撤回提交再删除' }, { status: 409 });
       if (error.message === 'SAMPLE_ENTRY_CONFLICT') return NextResponse.json({ ok: false, error: '该数据已被其他人修改，请刷新后重试' }, { status: 409 });
       if (error.message === 'SAMPLE_ENTRY_PUBLISHED') return NextResponse.json({ ok: false, error: '已发布数据不能删除，请新增修订记录' }, { status: 409 });
     }

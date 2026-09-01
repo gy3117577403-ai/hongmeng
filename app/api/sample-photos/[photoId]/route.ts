@@ -25,7 +25,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { photoId: s
     const actor = sampleActor(user);
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const expectedVersion = Number(body.expectedVersion);
-    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    const expectedTaskVersion = Number(body.expectedTaskVersion);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !Number.isInteger(expectedTaskVersion) || expectedTaskVersion < 1) {
       return NextResponse.json({ ok: false, error: '照片版本已失效，请刷新后重试' }, { status: 400 });
     }
     if (body.category !== undefined && !isSamplePhotoCategory(body.category)) {
@@ -37,14 +38,26 @@ export async function PATCH(req: NextRequest, { params }: { params: { photoId: s
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${photo.taskId}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: photo.taskId, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (task.version !== expectedTaskVersion) throw new Error('SAMPLE_TASK_CONFLICT');
       if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+      if (task.status === 'SUBMITTED' || task.activeSubmissionId || photo.reviewStatus === 'PENDING') throw new Error('SAMPLE_TASK_SUBMITTED');
       if (photo.version !== expectedVersion) throw new Error('SAMPLE_PHOTO_CONFLICT');
       if (photo.reviewStatus === 'PUBLISHED' || photo.publishedFileId) throw new Error('SAMPLE_PHOTO_PUBLISHED');
+      const linkedEntryId = body.linkedEntryId === undefined ? photo.linkedEntryId : cleanSampleText(body.linkedEntryId, 80);
+      if (linkedEntryId) {
+        const linkedEntry = await tx.sampleDataEntry.findFirst({ where: { id: linkedEntryId, taskId: task.id, deletedAt: null }, select: { id: true } });
+        if (!linkedEntry) throw new Error('SAMPLE_LINKED_ENTRY_NOT_FOUND');
+      }
+      const sortOrder = body.sortOrder === undefined ? photo.sortOrder : Number(body.sortOrder);
+      if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 10_000) throw new Error('SAMPLE_PHOTO_SORT_INVALID');
       const updated = await tx.samplePhoto.updateMany({
         where: { id: photo.id, version: expectedVersion, deletedAt: null },
         data: {
           category: isSamplePhotoCategory(body.category) ? body.category : photo.category,
           caption: body.caption === undefined ? photo.caption : cleanSampleText(body.caption, 500),
+          captureSource: body.captureSource === undefined ? photo.captureSource : cleanSampleText(body.captureSource, 30),
+          linkedEntryId,
+          sortOrder,
           reviewStatus: 'DRAFT',
           reviewComment: null,
           reviewedById: null,
@@ -54,8 +67,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { photoId: s
         },
       });
       if (updated.count !== 1) throw new Error('SAMPLE_PHOTO_CONFLICT');
-      await tx.sampleTask.update({
-        where: { id: task.id },
+      const taskUpdated = await tx.sampleTask.updateMany({
+        where: { id: task.id, version: expectedTaskVersion },
         data: {
           status: 'IN_PROGRESS',
           submittedAt: null,
@@ -64,6 +77,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { photoId: s
           version: { increment: 1 },
         },
       });
+      if (taskUpdated.count !== 1) throw new Error('SAMPLE_TASK_CONFLICT');
       await refreshSampleTaskDataStatus(tx, task.id);
       await tx.operationLog.create({
         data: {
@@ -71,7 +85,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { photoId: s
           action: 'update_sample_photo',
           targetType: 'sample_photo',
           targetId: photo.id,
-          detail: { taskId: task.id, category: body.category || photo.category, expectedVersion },
+          detail: { taskId: task.id, category: body.category || photo.category, expectedVersion, expectedTaskVersion, linkedEntryId, sortOrder },
         },
       });
       return task.id;
@@ -82,7 +96,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { photoId: s
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_PHOTO_NOT_FOUND') return NextResponse.json({ ok: false, error: '照片不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
+      if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务不能修改照片' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_SUBMITTED') return NextResponse.json({ ok: false, error: '样品数据已经提交，请先撤回提交再修改照片' }, { status: 409 });
+      if (error.message === 'SAMPLE_LINKED_ENTRY_NOT_FOUND') return NextResponse.json({ ok: false, error: '关联的采集记录不存在，请刷新后重试' }, { status: 409 });
+      if (error.message === 'SAMPLE_PHOTO_SORT_INVALID') return NextResponse.json({ ok: false, error: '照片排序值无效' }, { status: 400 });
       if (error.message === 'SAMPLE_PHOTO_CONFLICT') return NextResponse.json({ ok: false, error: '照片已被其他人修改，请刷新后重试' }, { status: 409 });
       if (error.message === 'SAMPLE_PHOTO_PUBLISHED') return NextResponse.json({ ok: false, error: '已发布照片不能覆盖，请上传新版本' }, { status: 409 });
     }
@@ -97,7 +115,9 @@ export async function DELETE(req: NextRequest, { params }: { params: { photoId: 
     const actor = sampleActor(user);
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const expectedVersion = Number(body.expectedVersion);
-    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+    const expectedTaskVersion = Number(body.expectedTaskVersion);
+    const deleteReason = cleanSampleText(body.deleteReason, 500);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !Number.isInteger(expectedTaskVersion) || expectedTaskVersion < 1) {
       return NextResponse.json({ ok: false, error: '照片版本已失效，请刷新后重试' }, { status: 400 });
     }
     const taskId = await prisma.$transaction(async tx => {
@@ -106,16 +126,24 @@ export async function DELETE(req: NextRequest, { params }: { params: { photoId: 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${photo.taskId}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: photo.taskId, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (task.version !== expectedTaskVersion) throw new Error('SAMPLE_TASK_CONFLICT');
       if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+      if (task.status === 'SUBMITTED' || task.activeSubmissionId || photo.reviewStatus === 'PENDING') throw new Error('SAMPLE_TASK_SUBMITTED');
       if (photo.version !== expectedVersion) throw new Error('SAMPLE_PHOTO_CONFLICT');
       if (photo.reviewStatus === 'PUBLISHED' || photo.publishedFileId) throw new Error('SAMPLE_PHOTO_PUBLISHED');
       const updated = await tx.samplePhoto.updateMany({
         where: { id: photo.id, version: expectedVersion, deletedAt: null },
-        data: { deletedAt: new Date(), version: { increment: 1 } },
+        data: {
+          deletedAt: new Date(),
+          deletedById: actor.id,
+          deletedByName: actor.name,
+          deleteReason,
+          version: { increment: 1 },
+        },
       });
       if (updated.count !== 1) throw new Error('SAMPLE_PHOTO_CONFLICT');
-      await tx.sampleTask.update({
-        where: { id: photo.taskId },
+      const taskUpdated = await tx.sampleTask.updateMany({
+        where: { id: photo.taskId, version: expectedTaskVersion },
         data: {
           status: 'IN_PROGRESS',
           submittedAt: null,
@@ -124,6 +152,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { photoId: 
           version: { increment: 1 },
         },
       });
+      if (taskUpdated.count !== 1) throw new Error('SAMPLE_TASK_CONFLICT');
       await refreshSampleTaskDataStatus(tx, photo.taskId);
       await tx.operationLog.create({
         data: {
@@ -131,7 +160,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { photoId: 
           action: 'delete_sample_photo',
           targetType: 'sample_photo',
           targetId: photo.id,
-          detail: { taskId: photo.taskId, softDelete: true, objectRetained: true },
+          detail: { taskId: photo.taskId, softDelete: true, objectRetained: true, deleteReason },
         },
       });
       return photo.taskId;
@@ -142,7 +171,9 @@ export async function DELETE(req: NextRequest, { params }: { params: { photoId: 
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_PHOTO_NOT_FOUND') return NextResponse.json({ ok: false, error: '照片不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
+      if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务不能删除照片' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_SUBMITTED') return NextResponse.json({ ok: false, error: '待审核照片不能直接删除，请先撤回提交' }, { status: 409 });
       if (error.message === 'SAMPLE_PHOTO_CONFLICT') return NextResponse.json({ ok: false, error: '照片已被其他人修改，请刷新后重试' }, { status: 409 });
       if (error.message === 'SAMPLE_PHOTO_PUBLISHED') return NextResponse.json({ ok: false, error: '已发布照片不能删除，请上传新版本' }, { status: 409 });
     }

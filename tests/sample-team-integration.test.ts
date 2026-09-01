@@ -1,11 +1,103 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import test from 'node:test';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { publishSampleEntry } from '../lib/sample-team-publish';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
+const legacyBackfillSql = readFileSync(
+  resolve(import.meta.dirname, '../prisma/migrations/202609020002_sample_capture_legacy_backfill/migration.sql'),
+  'utf8',
+);
+
+test(
+  'legacy submitted sample rows receive one idempotent active submission ledger',
+  { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
+  async () => {
+    const prefix = `IT-SAMPLE-LEGACY-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const actor = await prisma.user.create({
+      data: {
+        username: `${prefix}-ADMIN`,
+        passwordHash: 'integration-test-not-a-login-hash',
+        displayName: `${prefix} reviewer`,
+      },
+    });
+    const item = await prisma.drawingLibraryItem.create({
+      data: {
+        customerName: 'legacy-integration-test',
+        productName: 'legacy sample product',
+        specification: `${prefix}-PRODUCT`,
+        libraryKey: `${prefix}-LIBRARY`,
+      },
+    });
+    const task = await prisma.sampleTask.create({
+      data: {
+        code: `${prefix}-TASK`,
+        qrCode: `${prefix}-QR`,
+        drawingLibraryItemId: item.id,
+        customerNameSnapshot: item.customerName,
+        productNameSnapshot: item.productName,
+        specificationSnapshot: item.specification,
+        status: 'SUBMITTED',
+        submittedAt: new Date(),
+        createdById: actor.id,
+        createdByName: actor.displayName,
+        updatedById: actor.id,
+        updatedByName: actor.displayName,
+      },
+    });
+
+    try {
+      const [entry, photo] = await Promise.all([
+        prisma.sampleDataEntry.create({
+          data: {
+            taskId: task.id,
+            kind: 'PROCESS_TIME',
+            label: '旧版候选工序',
+            payload: { processName: '旧版候选工序', recommendedSeconds: 10 },
+            reviewStatus: 'PENDING',
+          },
+        }),
+        prisma.samplePhoto.create({
+          data: {
+            taskId: task.id,
+            category: 'PROCESS_TIME',
+            originalName: 'legacy.png',
+            mimeType: 'image/png',
+            size: 8,
+            objectKey: `sample-legacy/${prefix}.png`,
+            sha256: '0'.repeat(64),
+            reviewStatus: 'PENDING',
+          },
+        }),
+      ]);
+
+      await prisma.$executeRawUnsafe(legacyBackfillSql);
+      await prisma.$executeRawUnsafe(legacyBackfillSql);
+
+      const [persisted, submissions, persistedEntry, persistedPhoto] = await Promise.all([
+        prisma.sampleTask.findUnique({ where: { id: task.id }, include: { activeSubmission: true } }),
+        prisma.sampleSubmission.findMany({ where: { taskId: task.id } }),
+        prisma.sampleDataEntry.findUnique({ where: { id: entry.id } }),
+        prisma.samplePhoto.findUnique({ where: { id: photo.id } }),
+      ]);
+      assert.equal(persisted?.status, 'SUBMITTED');
+      assert.equal(persisted?.submissionRevision, 1);
+      assert.equal(persisted?.activeSubmission?.status, 'PENDING');
+      assert.equal(persistedEntry?.submissionRevision, 1);
+      assert.equal(persistedPhoto?.submissionRevision, 1);
+      assert.equal(submissions.length, 1);
+      assert.equal((submissions[0]?.snapshot as Record<string, unknown>).legacyMigration, true);
+    } finally {
+      await prisma.sampleTask.delete({ where: { id: task.id } });
+      await prisma.drawingLibraryItem.delete({ where: { id: item.id } });
+      await prisma.user.delete({ where: { id: actor.id } });
+    }
+  },
+);
 
 test(
   'item review publishes product records while keeping process time in a draft and production ledgers untouched',
@@ -54,13 +146,67 @@ test(
     const connectorParameterIds: string[] = [];
 
     try {
-      const [materialEntry, strippingEntry, processTimeEntry, emptyEntry] = await Promise.all([
+      const section = await prisma.sampleDraftSection.create({
+        data: {
+          taskId: task.id,
+          kind: 'PROCESS_TIME',
+          payload: { rows: [{ rowId: 'row-1', position: 0, processDefinitionId: null, processName: '候选裁线', processOrigin: 'PROPOSED', measuredMilliseconds: 10000 }] },
+          uiState: { lastEditedRowId: 'row-1' },
+          lastMutationId: `${prefix}-SECTION-MUTATION`,
+          lastRequestHash: `${prefix}-SECTION-HASH`,
+        },
+      });
+      const submission = await prisma.sampleSubmission.create({
+        data: {
+          taskId: task.id,
+          revision: 1,
+          mutationId: `${prefix}-SUBMISSION-MUTATION`,
+          requestHash: `${prefix}-SUBMISSION-HASH`,
+          snapshot: { schemaVersion: 1, sectionId: section.id },
+          submittedById: actor.id,
+          submittedByName: actor.displayName,
+        },
+      });
+      await prisma.sampleTask.update({
+        where: { id: task.id },
+        data: { submissionRevision: 1, activeSubmissionId: submission.id, status: 'SUBMITTED' },
+      });
+      const persisted = await prisma.sampleTask.findUnique({
+        where: { id: task.id },
+        include: { draftSections: true, activeSubmission: true },
+      });
+      assert.equal(persisted?.draftSections[0]?.revision, 1);
+      assert.equal(persisted?.activeSubmission?.id, submission.id);
+      await prisma.sampleSubmission.update({
+        where: { id: submission.id },
+        data: {
+          status: 'WITHDRAWN',
+          withdrawalMutationId: `${prefix}-WITHDRAW-MUTATION`,
+          withdrawalRequestHash: `${prefix}-WITHDRAW-HASH`,
+          withdrawnAt: new Date(),
+        },
+      });
+      await prisma.sampleTask.update({
+        where: { id: task.id },
+        data: { activeSubmissionId: null, status: 'IN_PROGRESS' },
+      });
+
+      const [materialEntry, candidateProcessEntry, strippingEntry, processTimeEntry, emptyEntry] = await Promise.all([
         prisma.sampleDataEntry.create({
           data: {
             taskId: task.id,
             kind: 'MATERIAL',
             label: '波纹管',
             payload: { lengthMm: 320, model: 'BWG-10' },
+            reviewStatus: 'PENDING',
+          },
+        }),
+        prisma.sampleDataEntry.create({
+          data: {
+            taskId: task.id,
+            kind: 'PROCESS_TIME',
+            label: '候选裁线',
+            payload: { processDefinitionId: null, processName: '候选裁线', processOrigin: 'PROPOSED', recommendedSeconds: 10 },
             reviewStatus: 'PENDING',
           },
         }),
@@ -91,7 +237,7 @@ test(
           },
         }),
       ]);
-      entryIds.push(materialEntry.id, strippingEntry.id, processTimeEntry.id, emptyEntry.id);
+      entryIds.push(materialEntry.id, strippingEntry.id, processTimeEntry.id, candidateProcessEntry.id, emptyEntry.id);
 
       const actorSnapshot = { id: actor.id, name: actor.displayName || actor.username };
       await assert.rejects(
@@ -101,19 +247,31 @@ test(
         ),
         /没有可发布内容/,
       );
+      await assert.rejects(
+        prisma.$transaction(
+          tx => publishSampleEntry(tx, task, candidateProcessEntry, actorSnapshot, 'APPEND'),
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        ),
+        /尚未关联工序库/,
+      );
 
       const results = await prisma.$transaction(async tx => {
         const material = await publishSampleEntry(tx, task, materialEntry, actorSnapshot, 'APPEND');
         const stripping = await publishSampleEntry(tx, task, strippingEntry, actorSnapshot, 'REPLACE_MATCHING');
         const processTime = await publishSampleEntry(tx, task, processTimeEntry, actorSnapshot, 'APPEND');
         const emptyRecordOnly = await publishSampleEntry(tx, task, emptyEntry, actorSnapshot, 'RECORD_ONLY');
-        return { material, stripping, processTime, emptyRecordOnly };
+        const mappedCandidate = await publishSampleEntry(tx, task, {
+          ...candidateProcessEntry,
+          payload: { processDefinitionId: processDefinition.id, processName: processDefinition.name, processOrigin: 'MASTER', recommendedSeconds: 10 },
+        }, actorSnapshot, 'APPEND');
+        return { material, stripping, processTime, mappedCandidate, emptyRecordOnly };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
       assert.equal(results.material.reviewStatus, 'PUBLISHED');
       assert.equal(results.stripping.reviewStatus, 'PUBLISHED');
       assert.equal(results.processTime.reviewStatus, 'APPROVED');
       assert.equal(results.processTime.entityType, 'product_time_draft');
+      assert.equal(results.mappedCandidate.entityType, 'product_time_draft');
       assert.equal(results.emptyRecordOnly.reviewStatus, 'APPROVED');
       assert.equal(results.emptyRecordOnly.entityId, null);
 

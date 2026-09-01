@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type {
   SampleDataKindDTO,
@@ -17,6 +17,9 @@ export const SAMPLE_DATA_KINDS: readonly SampleDataKindDTO[] = [
   'NOTICE',
   'CUSTOM',
 ] as const;
+
+export const SAMPLE_DRAFT_SECTION_KINDS = ['PROCESS_TIME', 'STRIPPING'] as const;
+export type SampleDraftSectionKind = (typeof SAMPLE_DRAFT_SECTION_KINDS)[number];
 
 export const SAMPLE_PHOTO_CATEGORIES: readonly SamplePhotoCategoryDTO[] = [
   'UNCLASSIFIED',
@@ -77,7 +80,21 @@ export const sampleTaskInclude = {
   },
   photos: {
     where: { deletedAt: null },
-    orderBy: [{ createdAt: 'asc' as const }, { id: 'asc' as const }],
+    orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }, { id: 'asc' as const }],
+  },
+  draftSections: {
+    orderBy: { kind: 'asc' as const },
+  },
+  activeSubmission: {
+    select: {
+      id: true,
+      revision: true,
+      status: true,
+      submittedByName: true,
+      submittedAt: true,
+      withdrawnByName: true,
+      withdrawnAt: true,
+    },
   },
 } satisfies Prisma.SampleTaskInclude;
 
@@ -134,6 +151,10 @@ export function isSampleDataKind(value: unknown): value is SampleDataKindDTO {
   return typeof value === 'string' && SAMPLE_DATA_KINDS.includes(value as SampleDataKindDTO);
 }
 
+export function isSampleDraftSectionKind(value: unknown): value is SampleDraftSectionKind {
+  return typeof value === 'string' && SAMPLE_DRAFT_SECTION_KINDS.includes(value as SampleDraftSectionKind);
+}
+
 export function isSamplePhotoCategory(value: unknown): value is SamplePhotoCategoryDTO {
   return typeof value === 'string' && SAMPLE_PHOTO_CATEGORIES.includes(value as SamplePhotoCategoryDTO);
 }
@@ -151,6 +172,186 @@ export function sanitizeSamplePayload(value: unknown): Prisma.InputJsonObject {
   const text = JSON.stringify(value);
   if (text.length > 40_000) throw new Error('SAMPLE_PAYLOAD_TOO_LARGE');
   return JSON.parse(text) as Prisma.InputJsonObject;
+}
+
+function draftRowId(value: unknown): string {
+  const rowId = cleanSampleText(value, 80);
+  if (!rowId || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(rowId)) throw new Error('INVALID_SAMPLE_DRAFT_ROW');
+  return rowId;
+}
+
+function draftPosition(value: unknown): number {
+  const position = Number(value);
+  if (!Number.isInteger(position) || position < 0 || position > 10_000) throw new Error('INVALID_SAMPLE_DRAFT_ROW');
+  return position;
+}
+
+function optionalMeasuredMilliseconds(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const milliseconds = Number(value);
+  if (!Number.isInteger(milliseconds) || milliseconds <= 0 || milliseconds > 604_800_000) {
+    throw new Error('INVALID_SAMPLE_PROCESS_TIME');
+  }
+  return milliseconds;
+}
+
+function optionalDecimalText(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  const text = typeof value === 'number' ? String(value) : cleanSampleText(value, 30);
+  if (!text || !/^\d{1,6}(?:\.\d{1,3})?$/.test(text) || Number(text) > 100_000) {
+    throw new Error('INVALID_SAMPLE_STRIPPING_VALUE');
+  }
+  return String(Number(text));
+}
+
+function sectionRows(value: unknown): unknown[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_SAMPLE_DRAFT_SECTION');
+  const rows = (value as Record<string, unknown>).rows;
+  if (!Array.isArray(rows)) throw new Error('INVALID_SAMPLE_DRAFT_SECTION');
+  if (rows.length > 50) throw new Error('SAMPLE_DRAFT_ROW_LIMIT');
+  return rows;
+}
+
+export function sanitizeSampleDraftSection(
+  kind: SampleDraftSectionKind,
+  value: unknown,
+): Prisma.InputJsonObject {
+  const rows = sectionRows(value);
+  const seen = new Set<string>();
+  if (kind === 'PROCESS_TIME') {
+    return {
+      rows: rows.map(raw => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('INVALID_SAMPLE_DRAFT_ROW');
+        const row = raw as Record<string, unknown>;
+        const rowId = draftRowId(row.rowId);
+        if (seen.has(rowId)) throw new Error('DUPLICATE_SAMPLE_DRAFT_ROW');
+        seen.add(rowId);
+        const processDefinitionId = cleanSampleText(row.processDefinitionId, 80);
+        const processName = cleanSampleText(row.processName, 120) || '';
+        const processOrigin = row.processOrigin === 'MASTER' ? 'MASTER' : row.processOrigin === 'PROPOSED' ? 'PROPOSED' : null;
+        const measuredMilliseconds = optionalMeasuredMilliseconds(row.measuredMilliseconds);
+        const hasData = Boolean(processDefinitionId || processName || measuredMilliseconds !== null);
+        const normalizedOrigin = processOrigin || (processDefinitionId ? 'MASTER' : 'PROPOSED');
+        if (hasData && normalizedOrigin === 'MASTER' && !processDefinitionId) throw new Error('INVALID_SAMPLE_PROCESS_REFERENCE');
+        if (normalizedOrigin === 'PROPOSED' && processDefinitionId) throw new Error('INVALID_SAMPLE_PROCESS_REFERENCE');
+        return {
+          rowId,
+          position: draftPosition(row.position),
+          processDefinitionId,
+          processName,
+          processOrigin: normalizedOrigin,
+          measuredMilliseconds,
+        };
+      }),
+    };
+  }
+  return {
+    rows: rows.map(raw => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('INVALID_SAMPLE_DRAFT_ROW');
+      const row = raw as Record<string, unknown>;
+      const rowId = draftRowId(row.rowId);
+      if (seen.has(rowId)) throw new Error('DUPLICATE_SAMPLE_DRAFT_ROW');
+      seen.add(rowId);
+      return {
+        rowId,
+        position: draftPosition(row.position),
+        model: cleanSampleText(row.model, 160) || '',
+        outerPeelMm: optionalDecimalText(row.outerPeelMm),
+        innerPeelMm: optionalDecimalText(row.innerPeelMm),
+        insertionLengthMm: optionalDecimalText(row.insertionLengthMm),
+      };
+    }),
+  };
+}
+
+export function sanitizeSampleDraftUiState(value: unknown): Prisma.InputJsonObject {
+  if (value === null || value === undefined) return {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_SAMPLE_DRAFT_UI_STATE');
+  const text = JSON.stringify(value);
+  if (text.length > 10_000) throw new Error('SAMPLE_DRAFT_UI_STATE_TOO_LARGE');
+  return JSON.parse(text) as Prisma.InputJsonObject;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  return `{${Object.keys(value as Record<string, unknown>).sort().map(key => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
+}
+
+export function sampleRequestHash(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex');
+}
+
+export function sampleDraftSectionHasData(value: Prisma.JsonValue | Prisma.InputJsonValue): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const rows = (value as Record<string, unknown>).rows;
+  if (!Array.isArray(rows)) return false;
+  return rows.some(raw => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+    const row = raw as Record<string, unknown>;
+    return Object.entries(row).some(([key, item]) => !['rowId', 'position', 'processOrigin'].includes(key) && item !== null && item !== '');
+  });
+}
+
+export function sampleDraftSectionHasUnsubmittedChange(section: {
+  payload: Prisma.JsonValue | Prisma.InputJsonValue;
+  revision: number;
+  lastSubmittedRevision: number;
+}): boolean {
+  return section.revision > section.lastSubmittedRevision
+    && (section.lastSubmittedRevision > 0 || sampleDraftSectionHasData(section.payload));
+}
+
+export function serializeSampleDraftSection(section: {
+  id: string;
+  taskId: string;
+  kind: string;
+  schemaVersion: number;
+  revision: number;
+  lastSubmittedRevision: number;
+  payload: Prisma.JsonValue;
+  uiState: Prisma.JsonValue | null;
+  updatedByName: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: section.id,
+    taskId: section.taskId,
+    kind: section.kind as SampleDraftSectionKind,
+    schemaVersion: section.schemaVersion,
+    revision: section.revision,
+    lastSubmittedRevision: section.lastSubmittedRevision,
+    payload: jsonRecord(section.payload),
+    uiState: section.uiState ? jsonRecord(section.uiState) : {},
+    updatedBy: section.updatedByName,
+    createdAt: section.createdAt.toISOString(),
+    updatedAt: section.updatedAt.toISOString(),
+  };
+}
+
+export function serializeSampleSubmission(submission: {
+  id: string;
+  taskId: string;
+  revision: number;
+  status: string;
+  submittedByName: string | null;
+  submittedAt: Date;
+  withdrawnByName: string | null;
+  withdrawnAt: Date | null;
+  withdrawalReason: string | null;
+}) {
+  return {
+    id: submission.id,
+    taskId: submission.taskId,
+    revision: submission.revision,
+    status: submission.status,
+    submittedBy: submission.submittedByName,
+    submittedAt: submission.submittedAt.toISOString(),
+    withdrawnBy: submission.withdrawnByName,
+    withdrawnAt: submission.withdrawnAt?.toISOString() || null,
+    withdrawalReason: submission.withdrawalReason,
+  };
 }
 
 function jsonRecord(value: Prisma.JsonValue): Record<string, unknown> {
@@ -182,7 +383,7 @@ export async function refreshSampleTaskDataStatus(
   tx: Prisma.TransactionClient,
   taskId: string,
 ): Promise<SampleDataStatusDTO> {
-  const [entries, photos] = await Promise.all([
+  const [entries, photos, draftSections] = await Promise.all([
     tx.sampleDataEntry.findMany({
       where: { taskId, deletedAt: null },
       select: { reviewStatus: true, publishedEntityType: true },
@@ -191,19 +392,24 @@ export async function refreshSampleTaskDataStatus(
       where: { taskId, deletedAt: null },
       select: { reviewStatus: true },
     }),
+    tx.sampleDraftSection.findMany({ where: { taskId }, select: { payload: true, revision: true, lastSubmittedRevision: true } }),
   ]);
-  const dataStatus = deriveSampleDataStatus(entries, photos);
+  let dataStatus = deriveSampleDataStatus(entries, photos);
+  const hasUnsavedSectionData = draftSections.some(sampleDraftSectionHasUnsubmittedChange);
+  if (!['PENDING_REVIEW', 'NEEDS_CHANGES'].includes(dataStatus) && hasUnsavedSectionData) dataStatus = 'COLLECTING';
   await tx.sampleTask.update({ where: { id: taskId }, data: { dataStatus } });
   return dataStatus;
 }
 
 export function sampleTaskStatusAfterCapture(status: string): SampleTaskStatusDTO {
-  if (status === 'COMPLETED' || status === 'CANCELLED') return status as SampleTaskStatusDTO;
+  if (status === 'SUBMITTED' || status === 'COMPLETED' || status === 'CANCELLED') return status as SampleTaskStatusDTO;
   return 'IN_PROGRESS';
 }
 
 export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
-  const dataStatus = deriveSampleDataStatus(task.entries, task.photos);
+  let dataStatus = deriveSampleDataStatus(task.entries, task.photos);
+  const hasUnsavedSectionData = task.draftSections.some(sampleDraftSectionHasUnsubmittedChange);
+  if (!['PENDING_REVIEW', 'NEEDS_CHANGES'].includes(dataStatus) && hasUnsavedSectionData) dataStatus = 'COLLECTING';
   const activeRecords = [...task.entries, ...task.photos];
   return {
     id: task.id,
@@ -225,6 +431,19 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     dataStatus,
     planRemark: task.planRemark,
     version: task.version,
+    submissionRevision: task.submissionRevision,
+    activeSubmissionId: task.activeSubmissionId,
+    lastEditedKind: task.lastEditedKind as SampleDraftSectionKind | null,
+    lastEditedRowId: task.lastEditedRowId,
+    activeSubmission: task.activeSubmission ? {
+      id: task.activeSubmission.id,
+      revision: task.activeSubmission.revision,
+      status: task.activeSubmission.status,
+      submittedBy: task.activeSubmission.submittedByName,
+      submittedAt: task.activeSubmission.submittedAt.toISOString(),
+      withdrawnBy: task.activeSubmission.withdrawnByName,
+      withdrawnAt: task.activeSubmission.withdrawnAt?.toISOString() || null,
+    } : null,
     startedAt: task.startedAt?.toISOString() || null,
     submittedAt: task.submittedAt?.toISOString() || null,
     completedAt: task.completedAt?.toISOString() || null,
@@ -241,6 +460,7 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
       team: assignment.employee.team,
       position: assignment.employee.position,
     })),
+    sections: task.draftSections.map(serializeSampleDraftSection),
     entries: task.entries.map(entry => ({
       id: entry.id,
       taskId: entry.taskId,
@@ -248,6 +468,7 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
       label: entry.label,
       payload: jsonRecord(entry.payload),
       clientMutationId: entry.clientMutationId,
+      submissionRevision: entry.submissionRevision,
       reviewStatus: entry.reviewStatus as SampleReviewStatusDTO,
       publishMode: entry.publishMode as SamplePublishModeDTO | null,
       reviewComment: entry.reviewComment,
@@ -274,6 +495,9 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
       mimeType: photo.mimeType,
       size: photo.size,
       captureSource: photo.captureSource,
+      sourceOriginalName: photo.sourceOriginalName,
+      sortOrder: photo.sortOrder,
+      submissionRevision: photo.submissionRevision,
       reviewStatus: photo.reviewStatus as SampleReviewStatusDTO,
       reviewComment: photo.reviewComment,
       uploadedBy: photo.uploadedByName,
