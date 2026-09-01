@@ -34,6 +34,7 @@ import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { subscribeProductionDataInvalidations } from '@/lib/production-data-client-sync';
 import { productTimeConfigurationRoute, type ProductTimeRouteScope } from '@/lib/workflow-routes';
 import { canManageWipWarehouse } from '@/lib/wip-access';
+import { selectPrimaryWipMovedOutTarget } from '@/lib/wip-navigation';
 import type {
   CurrentUserDTO,
   InternalQualityRiskSeverity,
@@ -393,6 +394,31 @@ type ProductionOrder = {
   wipContinuation?: ProductionPlanningWipContinuationDTO | null;
   wipContinuations?: ProductionPlanningWipContinuationDTO[];
   wipMovedOutContinuations?: ProductionPlanningWipContinuationDTO[];
+  wipMovedOutSummary?: {
+    movedOutQuantity: number;
+    outstandingWipQuantity: number;
+    unscheduledWipQuantity: number;
+    visibleScheduledQuantity: number;
+    visibleCompletedQuantity: number;
+    visibleRemainingQuantity: number;
+    nativeTargetQuantity: number | null;
+    nativeCompletedQuantity: number | null;
+    nativeRemainingQuantity: number | null;
+    fullyMovedOut: boolean;
+    allocationIds: string[];
+    lotIds: string[];
+    targetWeeks: Array<{
+      targetWeekStartDate: string;
+      targetWeekEndDate: string;
+      allocationIds: string[];
+      scheduledQuantity: number;
+      completedQuantity: number;
+      remainingQuantity: number;
+      plannedStandardMilliseconds: number;
+      completedStandardMilliseconds: number;
+      remainingStandardMilliseconds: number;
+    }>;
+  } | null;
   arrangements: ProductionArrangement[];
 };
 
@@ -454,13 +480,22 @@ type ProductionSummary = {
     missingOrders: number;
   };
   navigation?: {
-    current: { weekStartDate: string; weekEndDate: string; count: number };
-    next: { weekStartDate: string; weekEndDate: string; count: number };
-    afterNext: { weekStartDate: string; weekEndDate: string; count: number };
+    current: ProductionWeekNavigationItem;
+    next: ProductionWeekNavigationItem;
+    afterNext: ProductionWeekNavigationItem;
     carryoverCount: number;
     olderCarryoverCount: number;
-    history: Array<{ weekStartDate: string; weekEndDate: string; count: number }>;
+    history: ProductionWeekNavigationItem[];
   } | null;
+};
+
+type ProductionWeekNavigationItem = {
+  weekStartDate: string;
+  weekEndDate: string;
+  count: number;
+  normalBatchCount?: number;
+  wipTaskCount?: number;
+  totalExecutionCount?: number;
 };
 
 type BoardPayload = {
@@ -917,6 +952,18 @@ function wipReportDate(continuation: ProductionPlanningWipContinuationDTO): stri
   return today;
 }
 
+function movedOutSourceNativeReportLimit(order: ProductionOrder): number | null {
+  if (order.wipContinuation || !order.wipMovedOutSummary) return null;
+  const value = order.wipMovedOutSummary.nativeRemainingQuantity;
+  return value === null || value === undefined ? null : Math.max(0, value);
+}
+
+function isFullyMovedOutProductionSource(order: ProductionOrder): boolean {
+  if (order.wipContinuation) return false;
+  if (order.wipMovedOutSummary) return order.wipMovedOutSummary.fullyMovedOut;
+  return Boolean(order.wipMovedOutContinuations?.length);
+}
+
 function durationText(milliseconds: number): string {
   if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '未设置标准工时';
   const minutes = milliseconds / 60_000;
@@ -1264,6 +1311,7 @@ export default function ProductionExecutionCenter({
     ?? summary?.navigation?.carryoverCount;
   const [refreshToken, setRefreshToken] = useState(0);
   const productionRequestInFlightRef = useRef(false);
+  const productionRefreshPendingRef = useRef(false);
   const autoRefreshFailureCountRef = useRef(0);
   const nextAutoRefreshAtRef = useRef(0);
   useEffect(() => {
@@ -1360,7 +1408,10 @@ export default function ProductionExecutionCenter({
   useEffect(() => { boardRef.current = board; }, [board]);
 
   useEffect(() => subscribeProductionDataInvalidations(() => {
-    if (productionRequestInFlightRef.current) return;
+    if (productionRequestInFlightRef.current) {
+      productionRefreshPendingRef.current = true;
+      return;
+    }
     productionBoardCache.clear();
     reconciledScopeKeysRef.current.clear();
     setRefreshToken(value => value + 1);
@@ -1545,6 +1596,12 @@ export default function ProductionExecutionCenter({
         if (requestId !== requestRef.current) return;
         productionRequestInFlightRef.current = false;
         setLoading(false);
+        if (productionRefreshPendingRef.current) {
+          productionRefreshPendingRef.current = false;
+          productionBoardCache.clear();
+          reconciledScopeKeysRef.current.clear();
+          setRefreshToken(value => value + 1);
+        }
       });
     return () => controller.abort();
   }, [activeBoardCacheKey, advanced, debouncedKeyword, quick, refreshToken, scope, stateReady, targetWipAllocationId, targetWorkOrderId, view, weekStart]);
@@ -1886,7 +1943,7 @@ export default function ProductionExecutionCenter({
     withNextProcess: summary?.dispatchMetrics.withNextProcess || 0,
     dueSoon: summary?.dispatchMetrics.dueSoon || 0,
     completed: summary?.dispatchMetrics.completed || 0,
-    percentage: summary?.wipPlanMetrics?.percentage ?? summary?.planTotals.percentage ?? null,
+    percentage: summary?.wipPlanMetrics?.percentage ?? null,
   }), [summary]);
   const initialBoardLoading = loading && !board;
 
@@ -2240,6 +2297,7 @@ export default function ProductionExecutionCenter({
             taskVersion: task.version,
             planVersion: task.planVersion,
             completedQty: task.completedQty,
+            remainingQty: task.remainingQty,
             assignmentVersions: task.assignments.map(assignment => ({
               assignmentId: assignment.id,
               version: assignment.version,
@@ -2392,18 +2450,45 @@ export default function ProductionExecutionCenter({
       if (completionRequestRef.current !== requestId) return;
       const context = body.data as ProcessCompletionContext;
       const continuationStep = order.wipContinuation?.steps.find(item => item.stepId === step.id);
-      const effectiveReportableQty = continuationStep
-        ? Math.min(context.reportableQty, continuationStep.remainingQty)
-        : context.reportableQty;
-      const effectiveContext = continuationStep
-        ? {
+      const nativeSourceLimit = movedOutSourceNativeReportLimit(order);
+      const selectedQuantityLimit = continuationStep
+        ? Math.max(0, continuationStep.remainingQty)
+        : context.step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+          ? null
+          : nativeSourceLimit;
+      const effectiveReportableQty = selectedQuantityLimit === null
+        ? context.reportableQty
+        : Math.min(context.reportableQty, selectedQuantityLimit);
+      const effectiveReportableUnitQty = selectedQuantityLimit === null
+        ? context.reportableUnitQty
+        : Math.min(
+            context.reportableUnitQty,
+            selectedQuantityLimit * Math.max(1, context.step.unitsPerProduct),
+          );
+      const effectiveContext = selectedQuantityLimit === null
+        ? context
+        : {
             ...context,
             reportableQty: effectiveReportableQty,
-            routeSteps: context.routeSteps.map(item => item.id === step.id
-              ? { ...item, reportableQty: Math.min(item.reportableQty, continuationStep.remainingQty) }
-              : item),
-          }
-        : context;
+            reportableUnitQty: effectiveReportableUnitQty,
+            routeSteps: context.routeSteps.map(item => {
+              const continuationLimit = order.wipContinuation?.steps.find(candidate => candidate.stepId === item.id)?.remainingQty;
+              const itemQuantityLimit = continuationLimit !== undefined
+                ? Math.max(0, continuationLimit)
+                : item.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+                  ? null
+                  : nativeSourceLimit;
+              if (itemQuantityLimit === null) return item;
+              return {
+                ...item,
+                reportableQty: Math.min(item.reportableQty, itemQuantityLimit),
+                reportableUnitQty: Math.min(
+                  item.reportableUnitQty,
+                  itemQuantityLimit * Math.max(1, item.unitsPerProduct),
+                ),
+              };
+            }),
+          };
       const previousEmployeeIds = previousForm?.employeeIds.filter(id => (
         context.employees.some(employee => employee.id === id)
       )) || [];
@@ -2438,6 +2523,10 @@ export default function ProductionExecutionCenter({
   }
 
   async function openProcessCompletion(order: ProductionOrder): Promise<void> {
+    if (isFullyMovedOutProductionSource(order)) {
+      setToast('该来源订单的剩余任务已全部转入半成品仓，不能从原订单普通报工；请进入目标周紫色续作行执行');
+      return;
+    }
     const route = order.processRoute;
     const continuationStepId = order.wipContinuation?.steps.find(step => step.remainingQty > 0)?.stepId;
     const step = (continuationStepId ? route?.steps.find(item => item.id === continuationStepId) : null)
@@ -2453,6 +2542,10 @@ export default function ProductionExecutionCenter({
 
   async function saveProcessCompletion(): Promise<void> {
     if (!completionOrder || !completionContext || !completionForm) return;
+    if (isFullyMovedOutProductionSource(completionOrder)) {
+      setCompletionError('该来源订单的剩余任务已全部转入半成品仓，不能从原订单普通报工；请关闭后进入目标周紫色续作行');
+      return;
+    }
     const actionReporting = completionContext.step.reportQuantityBasis === 'action';
     const processedText = completionForm.processedQty.trim();
     const defectText = completionForm.defectQty.trim();
@@ -2472,6 +2565,21 @@ export default function ProductionExecutionCenter({
     const reportedDefectUnitQty = actionReporting ? Number(reportedDefectUnitText) : defectQty;
     const reportedGoodUnitQty = reportedUnitQty - reportedDefectUnitQty;
     const supplement = completionContext.step.supplementObligation;
+    const nativeSourceLimit = completionContext.step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+      ? null
+      : movedOutSourceNativeReportLimit(completionOrder);
+    if (nativeSourceLimit !== null && processedQty > nativeSourceLimit) {
+      setCompletionError(`该来源订单普通报工最多 ${formatProductionQuantity(nativeSourceLimit)} 件；已转出的部分必须从紫色半成品续作行报工`);
+      return;
+    }
+    if (
+      actionReporting
+      && nativeSourceLimit !== null
+      && reportedGoodUnitQty > nativeSourceLimit * Math.max(1, completionContext.step.unitsPerProduct)
+    ) {
+      setCompletionError(`该来源订单合格动作最多 ${formatProductionQuantity(nativeSourceLimit * Math.max(1, completionContext.step.unitsPerProduct))} ${completionContext.step.reportUnitLabel}；已转出的部分必须从紫色半成品续作行报工`);
+      return;
+    }
     if (!Number.isSafeInteger(processedQty) || processedQty < 0 || processedQty > completionContext.reportableQty) {
       setCompletionError(`本次报工不能超过该工序剩余可报数量 ${formatProductionQuantity(completionContext.reportableQty)}`);
       return;
@@ -2602,6 +2710,10 @@ export default function ProductionExecutionCenter({
   }
 
   function openNextStep(order: ProductionOrder, displayStage: StageKey): void {
+    if (isFullyMovedOutProductionSource(order)) {
+      setToast('该来源订单只保留原订单与已报工事实，不能恢复生产、重新开工或普通报工；请进入目标周紫色续作行');
+      return;
+    }
     if (board?.readOnly) {
       setToast('历史周仅供查看，不能继续流转工单');
       return;
@@ -2968,7 +3080,7 @@ export default function ProductionExecutionCenter({
               >
                 <option value="" disabled>选择历史 / 指定周</option>
                 {scope === 'history' && weekStart && !(summary?.navigation?.history ?? []).some(item => item.weekStartDate === weekStart) && <option value={weekStart}>{customFutureWeek ? '指定未来周' : '指定周'} · {dateText(summary?.weekStartDate || weekStart)} - {dateText(summary?.weekEndDate || weekStart)}</option>}
-                {(summary?.navigation?.history ?? []).map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)} · {item.count} 批</option>)}
+                {(summary?.navigation?.history ?? []).map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)} · {item.normalBatchCount ?? Math.max(0, item.count - (item.wipTaskCount || 0))} 批{item.wipTaskCount ? ` + ${item.wipTaskCount} 项半成品` : ''}</option>)}
               </select>
             </label>
             <button
@@ -2976,11 +3088,11 @@ export default function ProductionExecutionCenter({
               type="button"
               aria-pressed={scope === 'current'}
               title={scope === 'current' && summary?.executionCountBreakdown
-                ? `本周计划批次 ${summary.navigation?.current.count ?? '暂不可用'}；本周执行工单 ${summary.executionCountBreakdown.nativeCurrent}；遗留执行 ${summary.executionCountBreakdown.carryover}；半成品续作 ${summary.executionCountBreakdown.wipContinuation}；执行合计 ${summary.executionCountBreakdown.total}`
+                ? `本周正常计划批次 ${summary.navigation?.current.normalBatchCount ?? summary.navigation?.current.count ?? '暂不可用'}；本周执行工单 ${summary.executionCountBreakdown.nativeCurrent}；遗留执行 ${summary.executionCountBreakdown.carryover}；半成品续作 ${summary.executionCountBreakdown.wipContinuation}；执行合计 ${summary.executionCountBreakdown.total}`
                 : '本周计划批次与生产执行范围'}
               onClick={() => changeWeekScope('current')}
             >
-              <span>本周计划 <b>{summary?.navigation?.current?.count ?? '—'}</b></span>
+              <span>本周正常 <b>{summary?.navigation?.current?.normalBatchCount ?? summary?.navigation?.current?.count ?? '—'}</b></span>
               {scope === 'current' && summary?.executionCountBreakdown
                 ? <i
                     aria-label={`本周执行 ${summary.executionCountBreakdown.nativeCurrent}，遗留执行 ${summary.executionCountBreakdown.carryover}，半成品续作 ${summary.executionCountBreakdown.wipContinuation}，合计 ${summary.executionCountBreakdown.total}`}
@@ -2988,8 +3100,8 @@ export default function ProductionExecutionCenter({
                   >执行{summary.executionCountBreakdown.nativeCurrent}+遗留{summary.executionCountBreakdown.carryover}+半成品{summary.executionCountBreakdown.wipContinuation}={summary.executionCountBreakdown.total}</i>
                 : Boolean(displayedCurrentCarryoverCount) && <em>+ 遗留 {displayedCurrentCarryoverCount}</em>}
             </button>
-            <button className={scope === 'next' ? 'active' : ''} type="button" aria-pressed={scope === 'next'} onClick={() => changeWeekScope('next')}>下周 <b>{summary?.navigation?.next?.count ?? '—'}</b></button>
-            <button className={scope === 'afterNext' ? 'active' : ''} type="button" aria-pressed={scope === 'afterNext'} onClick={() => changeWeekScope('afterNext')}>下下周 <b>{summary?.navigation?.afterNext?.count ?? '—'}</b></button>
+            <button className={`${scope === 'next' ? 'active ' : ''}production-week-count-tab`.trim()} type="button" aria-pressed={scope === 'next'} title={summary?.navigation?.next ? `正常计划 ${summary.navigation.next.normalBatchCount ?? summary.navigation.next.count} 批；半成品续作 ${summary.navigation.next.wipTaskCount || 0} 项；执行合计 ${summary.navigation.next.totalExecutionCount ?? summary.navigation.next.count}` : '下周生产执行范围'} onClick={() => changeWeekScope('next')}><span>下周正常 <b>{summary?.navigation?.next?.normalBatchCount ?? summary?.navigation?.next?.count ?? '—'}</b></span>{Boolean(summary?.navigation?.next?.wipTaskCount) && <i className="wip-count">+半成品 {summary?.navigation?.next?.wipTaskCount} · 合计 {summary?.navigation?.next?.totalExecutionCount ?? summary?.navigation?.next?.count}</i>}</button>
+            <button className={`${scope === 'afterNext' ? 'active ' : ''}production-week-count-tab`.trim()} type="button" aria-pressed={scope === 'afterNext'} title={summary?.navigation?.afterNext ? `正常计划 ${summary.navigation.afterNext.normalBatchCount ?? summary.navigation.afterNext.count} 批；半成品续作 ${summary.navigation.afterNext.wipTaskCount || 0} 项；执行合计 ${summary.navigation.afterNext.totalExecutionCount ?? summary.navigation.afterNext.count}` : '下下周生产执行范围'} onClick={() => changeWeekScope('afterNext')}><span>下下周正常 <b>{summary?.navigation?.afterNext?.normalBatchCount ?? summary?.navigation?.afterNext?.count ?? '—'}</b></span>{Boolean(summary?.navigation?.afterNext?.wipTaskCount) && <i className="wip-count">+半成品 {summary?.navigation?.afterNext?.wipTaskCount} · 合计 {summary?.navigation?.afterNext?.totalExecutionCount ?? summary?.navigation?.afterNext?.count}</i>}</button>
           </nav>
           <div className="production-dispatch-command-actions">
             {canSelectProduction && <button
@@ -3052,7 +3164,7 @@ export default function ProductionExecutionCenter({
           <button type="button" className={dispatchPreset === 'next_process' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('next_process')}><span><ArrowRight size={18} aria-hidden="true" />有后续工序</span><strong>{summary ? dispatchMetric.withNextProcess : '—'}</strong><small>工艺路线存在下一道工序</small></button>
           <button type="button" className={dispatchPreset === 'due_soon' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('due_soon')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{summary ? dispatchMetric.dueSoon : '—'}</strong><small>客户交期在未来 0-2 天</small></button>
           <button type="button" className={dispatchPreset === 'completed' ? 'active completed' : 'completed'} onClick={() => applyDispatchPreset('completed')}><span><CheckCircle2 size={18} aria-hidden="true" />已完成</span><strong>{summary ? dispatchMetric.completed : '—'}</strong><small>当前周完成归档</small></button>
-          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />{scope === 'current' ? '本周动态计划达成率' : '动态计划达成率'}</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>{summary?.wipPlanMetrics ? `有效计划 ${(summary.wipPlanMetrics.effectivePlannedMilliseconds / 3_600_000).toFixed(1)} 小时 · 完成 ${(summary.wipPlanMetrics.completedMilliseconds / 3_600_000).toFixed(1)} 小时 · 仓内未排 ${summary.wipPlanMetrics.unscheduledWipQuantity} 件不计入` : `${scope === 'current' ? '本周完成' : '完成订单'} ${summary?.planTotals.completedOrders ?? '—'} / ${scope === 'current' ? '本周计划' : '总订单'} ${summary?.planTotals.totalOrders ?? '—'}`}</small></div>
+          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />{scope === 'current' ? '本周动态有效计划达成率' : '动态有效计划达成率'}</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>{summary?.wipPlanMetrics ? `按有效标准工时，不等同整单完工率 · 有效计划 ${(summary.wipPlanMetrics.effectivePlannedMilliseconds / 3_600_000).toFixed(1)} 小时 · 完成 ${(summary.wipPlanMetrics.completedMilliseconds / 3_600_000).toFixed(1)} 小时 · 转仓剩余工序从来源周分母移出 · 仓内未排 ${summary.wipPlanMetrics.unscheduledWipQuantity} 件不计入` : '有效计划工时正在加载，暂不使用整单完工率替代'}</small></div>
         </section>
 
         <section className="production-dispatch-toolbar" aria-label="生产调度筛选">
@@ -3347,13 +3459,57 @@ function ProductionDispatchRow({
   const route = order.processRoute;
   const wipContinuation = order.wipContinuation || null;
   const isWipContinuation = Boolean(wipContinuation);
-  const movedOutContinuation = !isWipContinuation ? order.wipMovedOutContinuations?.[0] || null : null;
-  const isMovedOutSource = Boolean(movedOutContinuation);
+  const isWipHistoricalContinuation = wipContinuation?.status === 'SUPERSEDED';
+  const movedOutContinuations = !isWipContinuation ? order.wipMovedOutContinuations || [] : [];
+  const movedOutSummary = !isWipContinuation ? order.wipMovedOutSummary || null : null;
+  const movedOutContinuation = movedOutContinuations[0] || null;
+  const movedOutTargets = movedOutSummary?.targetWeeks.length
+    ? [...movedOutSummary.targetWeeks].sort((left, right) => (
+        left.targetWeekStartDate.localeCompare(right.targetWeekStartDate)
+        || left.allocationIds[0]?.localeCompare(right.allocationIds[0] || '')
+        || 0
+      ))
+    : movedOutContinuation ? [{
+    targetWeekStartDate: movedOutContinuation.targetWeekStartDate,
+    targetWeekEndDate: movedOutContinuation.targetWeekEndDate,
+    allocationIds: [movedOutContinuation.allocationId],
+    scheduledQuantity: movedOutContinuation.quantity,
+    completedQuantity: movedOutContinuation.completedQty,
+    remainingQuantity: movedOutContinuation.remainingQty,
+    plannedStandardMilliseconds: movedOutContinuation.plannedStandardMilliseconds,
+    completedStandardMilliseconds: movedOutContinuation.completedStandardMilliseconds,
+    remainingStandardMilliseconds: movedOutContinuation.remainingStandardMilliseconds,
+  }] : [];
+  const primaryMovedOutTarget = selectPrimaryWipMovedOutTarget(movedOutTargets);
+  const primaryMovedOutTargetHasRemaining = Boolean(primaryMovedOutTarget && primaryMovedOutTarget.remainingQuantity > 0);
+  const primaryMovedOutAllocationId = primaryMovedOutTarget
+    ? movedOutContinuations.find(continuation => (
+        continuation.targetWeekStartDate === primaryMovedOutTarget.targetWeekStartDate
+        && (!primaryMovedOutTargetHasRemaining || continuation.remainingQty > 0)
+      ))?.allocationId || primaryMovedOutTarget.allocationIds[0] || ''
+    : '';
+  const isMovedOutSource = Boolean(movedOutSummary || movedOutContinuation);
+  const isFullyMovedOutSource = isFullyMovedOutProductionSource(order);
+  const scheduledMovedOutTargetText = movedOutTargets.map(target => (
+    `${target.targetWeekStartDate.slice(5)} ${target.remainingQuantity.toLocaleString()} 件`
+  )).join('；');
+  const movedOutTargetText = [
+    scheduledMovedOutTargetText,
+    (movedOutSummary?.unscheduledWipQuantity || 0) > 0
+      ? `仓内待排 ${movedOutSummary!.unscheduledWipQuantity.toLocaleString()} 件`
+      : '',
+  ].filter(Boolean).join('；');
   const wipRemainingSteps = wipContinuation?.steps.filter(step => step.remainingQty > 0) || [];
   const wipTargetStartsInFuture = Boolean(
     wipContinuation && todayShanghaiDateKey() < wipContinuation.targetWeekStartDate,
   );
   const targetQuantity = dispatchTargetQuantity(order);
+  const displayedTargetQuantity = isMovedOutSource
+    && !isFullyMovedOutSource
+    && movedOutSummary?.nativeRemainingQuantity !== null
+    && movedOutSummary?.nativeRemainingQuantity !== undefined
+    ? movedOutSummary.nativeRemainingQuantity
+    : targetQuantity;
   const laborProgress = order.standardLaborProgress;
   const laborPercentage = laborProgress.percentage;
   const progressPercentage = Math.max(0, Math.min(laborPercentage ?? 0, 100));
@@ -3401,12 +3557,14 @@ function ProductionDispatchRow({
   const visibleArrangements = arrangements.slice(0, 2);
   const activeArrangements = arrangements.filter(arrangement => arrangement.status !== 'completed' && arrangement.status !== 'carried_over');
   const continuableArrangement = arrangements.find(arrangement => arrangement.continuable);
-  const canCreateArrangement = !isWipContinuation && !isMovedOutSource && !order.productionControl?.pausedAt && !readOnly && canScheduleProduction && displayStage !== 'completed'
+  const canCreateArrangement = !isWipContinuation && !isFullyMovedOutSource && !order.productionControl?.pausedAt && !readOnly && canScheduleProduction && displayStage !== 'completed'
     && (Boolean(continuableArrangement) || activeArrangements.length === 0);
   const unitLabel = route?.currentStep?.unitLabel || route?.steps[0]?.unitLabel || '件';
   const routeReadiness = processRouteExecutionReadiness(route?.steps || []);
   const routeNeedsMaintenance = !route || route.status === 'draft' || !routeReadiness.ready;
-  const primaryText = wipTargetStartsInFuture && wipContinuation
+  const primaryText = isWipHistoricalContinuation
+    ? '查看记录'
+    : wipTargetStartsInFuture && wipContinuation
     ? `${wipContinuation.targetWeekStartDate.slice(5)} 起可报工`
     : readOnly
     ? '查看记录'
@@ -3421,6 +3579,10 @@ function ProductionDispatchRow({
             : '下一步';
 
   function runPrimaryAction(): void {
+    if (isWipHistoricalContinuation) {
+      openDetail(order);
+      return;
+    }
     const action = resolveProductionPrimaryAction({
       readOnly,
       aggregateCompleted: lifecycle.aggregateCompleted,
@@ -3439,26 +3601,26 @@ function ProductionDispatchRow({
     openNextStep(order, displayStage);
   }
 
-  return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${order.carryover ? 'is-carryover' : ''} ${isWipContinuation ? 'is-wip-continuation' : ''} ${highlighted ? 'is-deep-link-target' : ''} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-wip-allocation-id={wipContinuation?.allocationId || undefined} data-production-stage={displayStage} tabIndex={highlighted ? -1 : undefined}>
+  return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${order.carryover ? 'is-carryover' : ''} ${isWipContinuation ? 'is-wip-continuation' : ''} ${isWipHistoricalContinuation ? 'is-wip-history' : ''} ${isMovedOutSource ? 'is-wip-moved-out-source' : ''} ${isFullyMovedOutSource ? 'is-wip-fully-moved-out' : ''} ${highlighted ? 'is-deep-link-target' : ''} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-wip-allocation-id={wipContinuation?.allocationId || primaryMovedOutAllocationId || undefined} data-production-stage={displayStage} tabIndex={highlighted ? -1 : undefined}>
     <div className="production-list-sequence">{rowNumber}</div>
     <div className="production-dispatch-row-identity">
       <div className="production-dispatch-row-select">
-        {canSelectProduction && batchMode && !readOnly && !isWipContinuation
+        {canSelectProduction && batchMode && !readOnly && !isWipContinuation && !isFullyMovedOutSource
           ? <input type="checkbox" checked={selectedRow} aria-label={`选择 ${specText(order)}`} onChange={() => toggleSelected(order.id)} />
           : <span className="production-dispatch-stage-dot" aria-hidden="true" />}
       </div>
       <div className="production-dispatch-product">
-        <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.carryover && <em className="carryover-badge" title={`原生产周 ${order.carryover.originalWeekStartDate}，订单与资料未复制`}>{order.carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' : '上周遗留'}</em>}{isWipContinuation && <em className="wip-continuation-badge" title={`半成品批次 ${wipContinuation?.lotNo}，仅显示目标周剩余工序和工时`}>半成品续作</em>}{isMovedOutSource && <em className="wip-continuation-badge moved-out" title="本周保留已报工事实，未完成工序已转到新的目标周">剩余已转出</em>}{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
+        <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.carryover && <em className="carryover-badge" title={`原生产周 ${order.carryover.originalWeekStartDate}，订单与资料未复制`}>{order.carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' : '上周遗留'}</em>}{isWipContinuation && <em className="wip-continuation-badge" title={isWipHistoricalContinuation ? `半成品批次 ${wipContinuation?.lotNo} 在原目标周已完成的事实，未完成部分已属于新安排` : `半成品批次 ${wipContinuation?.lotNo}，仅显示目标周剩余工序和工时`}>{isWipHistoricalContinuation ? '半成品历史' : '半成品续作'}</em>}{isMovedOutSource && <em className="wip-continuation-badge moved-out" title="来源行只保留原订单和已报工事实，转出的剩余任务由目标周续作执行">{isFullyMovedOutSource ? '剩余已转出' : '部分已转出'}</em>}{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
         <button type="button" title={`${specText(order)}；进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
         <small title={`${order.productName || '品名待补充'}${order.businessCode ? ` · ${order.businessCode}` : ''}`}>{order.productName || '品名待补充'}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>
-        {wipContinuation && <span className="production-wip-continuation-meta">{wipContinuation.lotNo} · 来源周 {wipContinuation.sourceWeekStartDate.slice(5)} → 目标周 {wipContinuation.targetWeekStartDate.slice(5)} · 剩余 {wipContinuation.remainingQty.toLocaleString()} 件</span>}
-        {movedOutContinuation && <span className="production-wip-continuation-meta moved-out">本周只保留已报工事实 · 剩余任务在 {movedOutContinuation.targetWeekStartDate.slice(5)} 周</span>}
+        {wipContinuation && <span className="production-wip-continuation-meta">{wipContinuation.lotNo} · 来源周 {wipContinuation.sourceWeekStartDate.slice(5)} → 目标周 {wipContinuation.targetWeekStartDate.slice(5)} · {isWipHistoricalContinuation ? `已完成事实 ${wipContinuation.completedQty.toLocaleString()} 件` : `剩余 ${wipContinuation.remainingQty.toLocaleString()} 件`}</span>}
+        {isMovedOutSource && <span className="production-wip-continuation-meta moved-out">{isFullyMovedOutSource ? '本周只保留原订单与已报工事实' : `原单仍可执行 ${(movedOutSummary?.nativeRemainingQuantity || 0).toLocaleString()} 件`} · 已转 {movedOutSummary?.movedOutQuantity.toLocaleString() || movedOutContinuation?.quantity.toLocaleString()} 件{movedOutTargetText ? ` → ${movedOutTargetText}` : ''}</span>}
         {(order.planReleaseState === 'preparation' || order.sopStage === 'validating' || !order.documentCategoryCodes.includes('sop')) && <span className="production-dispatch-readiness-badges">
           {order.planReleaseState === 'preparation' && <em className="preparation" title="本周计划已形成工单，但尚未激活；不影响在生产执行中查看和安排">本周预备</em>}
           {order.sopStage === 'validating' && <em className="sop-validating" title={order.sopRemark || 'SOP 正在验证；状态仅提示，不阻断开工和报工'}>SOP验证中</em>}
           {!order.documentCategoryCodes.includes('sop') && <em className="sop-missing" title="尚未上传有效 SOP；订单仍显示在生产执行，现场需关注资料补充">SOP待补</em>}
         </span>}
-        <div className="production-dispatch-product-quantity"><span>数量</span><b>{targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'} {unitLabel}</b></div>
+        <div className="production-dispatch-product-quantity"><span>{isMovedOutSource && !isFullyMovedOutSource ? '原单可执行' : '数量'}</span><b>{displayedTargetQuantity > 0 ? formatProductionQuantity(displayedTargetQuantity) : isFullyMovedOutSource ? '已全部转出' : '待补充'} {displayedTargetQuantity > 0 ? unitLabel : ''}</b>{isMovedOutSource && !isFullyMovedOutSource && targetQuantity > displayedTargetQuantity && <small>原计划 {formatProductionQuantity(targetQuantity)} {unitLabel}</small>}</div>
       </div>
       <div className="production-dispatch-row-icon-actions">
         <button type="button" aria-label={`复制 ${specText(order)} 规格`} title="复制完整规格" onClick={() => void copySpecification(order)}><Copy size={14} aria-hidden="true" /></button>
@@ -3468,7 +3630,7 @@ function ProductionDispatchRow({
 
     <button className="production-dispatch-process-flow" type="button" title="进入流程中心查看完整工序进度" onClick={() => openWorkflow(order, displayStage)}>
       <span className="production-dispatch-process-flow-head">
-        <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{isWipContinuation ? '执行半成品剩余工序' : lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
+        <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{isWipContinuation ? '执行半成品剩余工序' : isMovedOutSource ? '整单工艺事实 · 转出后保留历史进度' : lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
         <em>{isWipContinuation ? `${wipContinuation?.steps.filter(step => step.remainingQty <= 0).length || 0}/${wipContinuation?.steps.length || 0}` : route ? `${route.completedStepCount}/${route.stepCount}` : '未建路线'}</em>
         <span className="production-dispatch-process-next"><ArrowRight size={13} aria-hidden="true" /><b>{nextProcess}</b><small>{upcomingSteps.length ? `${upcomingSteps.length} 道待衔接` : lifecycle.aggregateCompleted ? '生产已结束' : routeNeedsMaintenance ? '等待发布' : '末道工序'}</small></span>
       </span>
@@ -3492,28 +3654,29 @@ function ProductionDispatchRow({
 
     <div className="production-arrangement-worker-cell">
       {visibleArrangements.map(arrangement => {
-        const adjustable = !order.productionControl?.pausedAt && !readOnly && canScheduleProduction && arrangement.remainingQty > 0 && arrangement.status !== 'completed' && arrangement.status !== 'carried_over';
-        return <button className={`production-arrangement-worker-record status-${arrangement.status} ${adjustable ? 'adjustable' : ''}`.trim()} type="button" disabled={!adjustable} title={adjustable ? '点击调整未完成数量的作业人员' : '已完成或历史安排仅供查看'} onClick={() => openReassignment(order, arrangement)} key={arrangement.id}>
+        const adjustable = !isFullyMovedOutSource && !order.productionControl?.pausedAt && !readOnly && canScheduleProduction && arrangement.remainingQty > 0 && arrangement.status !== 'completed' && arrangement.status !== 'carried_over';
+        return <button className={`production-arrangement-worker-record status-${arrangement.status} ${adjustable ? 'adjustable' : ''}`.trim()} type="button" disabled={!adjustable} title={adjustable ? '点击调整未完成数量的作业人员' : isFullyMovedOutSource ? '来源订单已全部转出；原安排仅保留历史，不能重排' : '已完成或历史安排仅供查看'} onClick={() => openReassignment(order, arrangement)} key={arrangement.id}>
         <span>{arrangement.employees.slice(0, 3).map(employee => <b title={`${employee.employeeNo} · ${employee.name}`} key={employee.employeeId}>{employee.name}</b>)}{arrangement.employees.length > 3 && <em>+{arrangement.employees.length - 3}</em>}</span>
         <small>{arrangement.shiftCode === 'NIGHT' ? '夜班' : '白班'}{arrangement.remainingQty > 0 ? ` · 余 ${formatProductionQuantity(arrangement.remainingQty)}` : ' · 已完成'}{adjustable && <Pencil size={11} aria-hidden="true" />}</small>
       </button>;})}
       {!visibleArrangements.length && <span className="production-arrangement-empty">{isWipContinuation ? wipContinuation?.team?.name || '班组待安排' : '待主管安排'}</span>}
     </div>
 
-    <div className={`production-dispatch-progress ${laborWarning ? 'incomplete' : ''}`.trim()} title={laborWarning || `总标准工时 ${totalLaborText}`}>
-      <span><b>{laborPercentage === null ? '待维护' : formatProductionPercentage(laborPercentage)}</b><small>已完成 {completedLaborText}</small></span>
+    <div className={`production-dispatch-progress ${laborWarning ? 'incomplete' : ''}`.trim()} title={laborWarning || `${isMovedOutSource ? '整单累计' : '总'}标准工时 ${totalLaborText}`}>
+      <span><b>{laborPercentage === null ? '待维护' : formatProductionPercentage(laborPercentage)}</b><small>{isMovedOutSource ? '整单累计已完成' : '已完成'} {completedLaborText}</small></span>
       <i><span style={{ width: `${progressPercentage}%` }} /></i>
       <em className="production-dispatch-progress-summary">
         <span>剩余 {remainingLaborText}</span>
         <span>总计 {totalLaborText}</span>
       </em>
+      {isMovedOutSource && <small className="production-dispatch-progress-scope-note"><b>整单工时进度</b>，不等同本周动态有效计划达成率；{isFullyMovedOutSource ? '本周有效计划仅保留转仓前已完成工序，转出剩余工序在目标周核算' : `本周普通来源仅限 ${formatProductionQuantity(movedOutSummary?.nativeRemainingQuantity ?? 0)} 件，转出部分在目标周核算`}</small>}
       {laborWarning && <small className="production-dispatch-progress-warning">{laborWarning}</small>}
     </div>
 
     <div className={`production-dispatch-risk ${risk.tone}`}>
       <strong>客户 {deliveryText(order) || '待确认'}</strong><small>预计 {order.productionControl?.estimatedCompletionDate || '未设置'}</small>
       {!!order.productionControl?.adjustmentCount && <small>已调整 {order.productionControl.adjustmentCount} 次</small>}
-      {canAdjustDates && !readOnly && !isWipContinuation && !isMovedOutSource && displayStage !== 'completed' && <ProductionControlButton workOrderId={order.id} mode="adjust_date">调整</ProductionControlButton>}
+      {canAdjustDates && !readOnly && !isWipContinuation && !isFullyMovedOutSource && displayStage !== 'completed' && <ProductionControlButton workOrderId={order.id} mode="adjust_date">调整</ProductionControlButton>}
       {risk.quality
         ? <button type="button" title="查看该工单质量问题预警" onClick={() => openDetail(order, 'quality')}>{risk.label}</button>
         : risk.alert
@@ -3522,27 +3685,33 @@ function ProductionDispatchRow({
       <small>{risk.detail}</small>
     </div>
 
-    <div className="production-dispatch-note"><ProductionControlButton workOrderId={order.id} mode="note" className="production-note-button"><ProductionNoteSummary control={order.productionControl} /></ProductionControlButton></div>
+    <div className="production-dispatch-note">{isWipHistoricalContinuation
+      ? <div className="production-note-button is-readonly" title="原目标周历史事实仅供查看，不能从本行修改生产备注"><ProductionNoteSummary control={order.productionControl} /></div>
+      : <ProductionControlButton workOrderId={order.id} mode="note" className="production-note-button" wipAllocationId={wipContinuation?.allocationId} restrictExecutionActions={isFullyMovedOutSource}><ProductionNoteSummary control={order.productionControl} /></ProductionControlButton>}</div>
     <div className="production-dispatch-row-actions">
-      <>{order.productionControl?.pausedAt
-        ? <ProductionControlButton workOrderId={order.id} mode={canManageControl && !readOnly ? "resume" : "history"} className="primary">{canManageControl && !readOnly ? "恢复生产" : "查看暂停"}</ProductionControlButton>
-        : isMovedOutSource && movedOutContinuation
-          ? <Link className="primary" href={`/production?scope=history&weekStart=${encodeURIComponent(movedOutContinuation.targetWeekStartDate)}&weekEnd=${encodeURIComponent(movedOutContinuation.targetWeekEndDate)}&workOrderId=${encodeURIComponent(order.id)}&wipAllocationId=${encodeURIComponent(movedOutContinuation.allocationId)}`}>查看续作</Link>
-          : <button
+      <>{isFullyMovedOutSource
+        ? primaryMovedOutTarget
+          ? <Link className="primary" href={`/production?scope=history&weekStart=${encodeURIComponent(primaryMovedOutTarget.targetWeekStartDate)}&weekEnd=${encodeURIComponent(primaryMovedOutTarget.targetWeekEndDate)}&workOrderId=${encodeURIComponent(order.id)}&wipAllocationId=${encodeURIComponent(primaryMovedOutAllocationId)}`}>{primaryMovedOutTargetHasRemaining ? '查看续作' : '查看历史'}</Link>
+          : order.productionPlanBatchId
+            ? <Link className="primary" href={`/workspace/wip?batchId=${encodeURIComponent(order.productionPlanBatchId)}`} prefetch={false}>查看仓内待排</Link>
+            : <button className="primary" type="button" onClick={() => openDetail(order)}>查看转仓记录</button>
+        : order.productionControl?.pausedAt
+        ? <ProductionControlButton workOrderId={order.id} mode={canManageControl && !readOnly ? "resume" : "history"} className="primary" wipAllocationId={wipContinuation?.allocationId}>{canManageControl && !readOnly ? "恢复生产" : "查看暂停"}</ProductionControlButton>
+        : <button
               className="primary"
               type="button"
               disabled={saving || wipTargetStartsInFuture}
               title={wipTargetStartsInFuture ? '半成品续作已进入目标周计划，目标周开始后可扫码或在此报工' : undefined}
               onClick={runPrimaryAction}
             >{primaryText}</button>}
-      {canManageWip && !readOnly && !isWipContinuation && !isMovedOutSource && displayStage !== "completed" && order.productionPlanBatchId && order.processRoute
+      {canManageWip && !readOnly && !isWipContinuation && !isFullyMovedOutSource && displayStage !== "completed" && order.productionPlanBatchId && order.processRoute
         && <Link
           className="production-wip-transfer-action"
           href={`/workspace/wip?batchId=${encodeURIComponent(order.productionPlanBatchId)}`}
           prefetch={false}
           title="进入半成品仓预检；确认剩余数量和原因后才会正式转入"
         >转入半成品仓</Link>}
-      {canManageControl && !readOnly && !isWipContinuation && !isMovedOutSource && !order.productionControl?.pausedAt && displayStage !== "completed" && <ProductionControlButton workOrderId={order.id} mode="pause">暂停生产</ProductionControlButton>}</>
+      {canManageControl && !readOnly && !isWipContinuation && !isFullyMovedOutSource && !order.productionControl?.pausedAt && displayStage !== "completed" && <ProductionControlButton workOrderId={order.id} mode="pause">暂停生产</ProductionControlButton>}</>
     </div>
   </article>;
 }
@@ -3920,6 +4089,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   const unitLabel = stepSnapshot?.unitLabel || '件';
   const actionReporting = context?.step.reportQuantityBasis === 'action';
   const supplement = context?.step.supplementObligation || null;
+  const nativeSourceLimit = supplement ? null : movedOutSourceNativeReportLimit(order);
   const reportUnitLabel = context?.step.reportUnitLabel || '个';
   const reportedUnitQty = value && /^\d+$/.test(value.reportedUnitQty.trim()) ? Number(value.reportedUnitQty) : 0;
   const reportedDefectUnitQty = value && /^\d+$/.test(value.reportedDefectUnitQty.trim()) ? Number(value.reportedDefectUnitQty) : 0;
@@ -4075,6 +4245,11 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
 
       {context && value && <div className="process-completion-layout">
         <div className="process-completion-main">
+          {nativeSourceLimit !== null && <section className="process-completion-advance-note wip-native-source-limit" role="status">
+            <AlertTriangle size={20} aria-hidden="true" />
+            <div><strong>普通来源报工 · 仅限未转出数量</strong><small>本弹窗只登记原订单仍可执行的 {formatProductionQuantity(nativeSourceLimit)} {unitLabel}；已转入半成品仓的部分必须从目标周紫色续作行报工，不能在这里重复消耗。</small></div>
+            <span>本次上限 {formatProductionQuantity(context.reportableQty)} {unitLabel}</span>
+          </section>}
           {advanceReporting && <section className="process-completion-advance-note" role="status">
             <AlertTriangle size={20} aria-hidden="true" />
             <div><strong>自由报工 · 待前序自动核销</strong><small>本次可先登记中间或后道工序；物料数量始终保持非负，前序报工补齐后系统会按工艺顺序自动核销并流转。</small></div>
@@ -4103,7 +4278,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
               {actionReporting && <>
                 <label>
                   <span>实际动作数量</span>
-                  <div><input autoFocus inputMode="numeric" pattern="[0-9]*" min="0" step="1" value={value.reportedUnitQty} disabled={saving} onChange={event => setValue({ ...value, reportedUnitQty: event.target.value })} /><em>{reportUnitLabel}</em></div>
+                  <div><input autoFocus inputMode="numeric" pattern="[0-9]*" min="0" max={context.reportableUnitQty} step="1" value={value.reportedUnitQty} disabled={saving} onChange={event => setValue({ ...value, reportedUnitQty: event.target.value })} /><em>{reportUnitLabel}</em></div>
                 </label>
                 <label>
                   <span>动作不良</span>

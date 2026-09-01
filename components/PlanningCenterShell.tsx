@@ -72,7 +72,10 @@ import {
   planningSopStageLabels,
   planningSopTooltip,
 } from '@/lib/planning-sop';
-import { publishProductionDataInvalidation } from '@/lib/production-data-client-sync';
+import {
+  publishProductionDataInvalidation,
+  subscribeProductionDataInvalidations,
+} from '@/lib/production-data-client-sync';
 import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
@@ -659,6 +662,14 @@ export default function PlanningCenterShell({
     window.addEventListener('production-control-updated', refreshControl);
     return () => window.removeEventListener('production-control-updated', refreshControl);
   }, []);
+  useEffect(() => subscribeProductionDataInvalidations(invalidation => {
+    if (!invalidation.kind.startsWith('wip-')) return;
+    if (planRequestInFlightRef.current) {
+      planRefreshPendingRef.current = true;
+      return;
+    }
+    setRefreshToken(value => value + 1);
+  }), []);
   const [expandedOrderId, setExpandedOrderId] = useState('');
   const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
   const [travelerPrintIds, setTravelerPrintIds] = useState<string[]>([]);
@@ -2117,9 +2128,9 @@ export default function PlanningCenterShell({
         />
 
         <section className="planning-period-ribbon" aria-label="本周与下周计划状态">
-          <article className="current"><div><CalendarCheck2 aria-hidden="true" /><span><small>本周执行</small><strong>{periods ? `${periods.current.weekStartDate.slice(5)} - ${periods.current.weekEndDate.slice(5)}` : loading ? '加载中' : '未获取最新数据'}</strong></span></div><b>{planDataAvailable ? summary.activeBatchCount : '—'}<small>批已进入生产</small></b><a href="/production?scope=current">进入生产<ChevronRight size={14} /></a></article>
+          <article className="current"><div><CalendarCheck2 aria-hidden="true" /><span><small>本周执行</small><strong>{periods ? `${periods.current.weekStartDate.slice(5)} - ${periods.current.weekEndDate.slice(5)}` : loading ? '加载中' : '未获取最新数据'}</strong></span></div><b>{planDataAvailable ? summary.activeBatchCount : '—'}<small>正常批已进入生产</small>{Boolean(periods?.current.wipTaskCount) && <em className="planning-period-wip-count">+{periods?.current.wipTaskCount} 项半成品续作</em>}</b><a href="/production?scope=current">进入生产<ChevronRight size={14} /></a></article>
           <div className="planning-period-link"><span>提前准备</span><ArrowRight aria-hidden="true" /></div>
-          <article className="next"><div><CalendarClock aria-hidden="true" /><span><small>下周生产</small><strong>{periods ? `${periods.next.weekStartDate.slice(5)} - ${periods.next.weekEndDate.slice(5)}` : loading ? '加载中' : '未获取最新数据'}</strong></span></div><b>{planDataAvailable ? summary.preparationBatchCount : '—'}<small>批已进入生产</small></b><a href="/production?scope=next">进入生产<ChevronRight size={14} /></a></article>
+          <article className="next"><div><CalendarClock aria-hidden="true" /><span><small>下周生产</small><strong>{periods ? `${periods.next.weekStartDate.slice(5)} - ${periods.next.weekEndDate.slice(5)}` : loading ? '加载中' : '未获取最新数据'}</strong></span></div><b>{planDataAvailable ? summary.preparationBatchCount : '—'}<small>正常批已进入生产</small>{Boolean(periods?.next.wipTaskCount) && <em className="planning-period-wip-count">+{periods?.next.wipTaskCount} 项半成品续作</em>}</b><a href="/production?scope=next">进入生产<ChevronRight size={14} /></a></article>
           <div className="planning-readiness"><span><Warehouse size={15} />仓库异常 <b>{planDataAvailable ? summary.warehouseExceptionCount : '—'}</b></span><span><Settings2 size={15} />待工艺 <b>{planDataAvailable ? summary.processPendingCount : '—'}</b></span><span><ShieldAlert size={15} />缺工时 <b>{planDataAvailable ? summary.missingProductTimeCount : '—'}</b></span><span><FilePenLine size={15} />缺 SOP <b>{planDataAvailable ? summary.missingSopCount : '—'}</b></span></div>
         </section>
 

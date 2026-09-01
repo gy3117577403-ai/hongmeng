@@ -14,18 +14,53 @@ export type WipReportingResolution = {
   remainingAllocationQuantity: number;
 } | null;
 
+export function resolveWipNativeSourceReportLimits(input: {
+  reportableQty: number;
+  outstandingWipQuantity: number;
+  reportableUnitQty?: number | null;
+  unitsPerProduct?: number | null;
+}): {
+  nativeReportableQty: number;
+  nativeReportableUnitQty: number | null;
+} {
+  const reportableQty = Math.max(0, Math.trunc(input.reportableQty));
+  const outstandingWipQuantity = Math.max(0, Math.trunc(input.outstandingWipQuantity));
+  const nativeReportableQty = Math.max(0, reportableQty - outstandingWipQuantity);
+  if (input.reportableUnitQty === null || input.reportableUnitQty === undefined) {
+    return { nativeReportableQty, nativeReportableUnitQty: null };
+  }
+  const reportableUnitQty = Math.max(0, Math.trunc(input.reportableUnitQty));
+  const unitsPerProduct = Math.max(1, Math.trunc(input.unitsPerProduct || 1));
+  return {
+    nativeReportableQty,
+    nativeReportableUnitQty: Math.max(
+      0,
+      reportableUnitQty - outstandingWipQuantity * unitsPerProduct,
+    ),
+  };
+}
+
 export async function resolveWipReportingAllocation(
   tx: Prisma.TransactionClient,
   input: {
     workOrderId: string;
     stepId: string;
     workDate: Date;
+    /** Good product quantity eligible for a WIP completion credit. */
     processedQty: number;
+    /** Total product quantity submitted by an ordinary/source reporting form. */
+    reportedProductQty?: number;
+    /** Good action quantity for action-basis steps. */
+    reportedGoodUnitQty?: number;
     reportableQty: number;
+    reportableUnitQty?: number;
+    unitsPerProduct?: number;
     requestedAllocationId?: string | null;
   },
 ): Promise<WipReportingResolution> {
-  if (input.processedQty <= 0) return null;
+  const reportedProductQty = Math.max(0, input.reportedProductQty ?? input.processedQty);
+  const reportedGoodUnitQty = Math.max(0, input.reportedGoodUnitQty || 0);
+  if (reportedProductQty <= 0 && reportedGoodUnitQty <= 0) return null;
   const lotSteps = await tx.semiFinishedLotStep.findMany({
     where: {
       stepId: input.stepId,
@@ -94,8 +129,12 @@ export async function resolveWipReportingAllocation(
     }
   }
 
-  const nonWipReportable = Math.max(0, input.reportableQty - outstandingWipQuantity);
-  const requiredWipQuantity = Math.max(0, input.processedQty - nonWipReportable);
+  const nativeLimits = resolveWipNativeSourceReportLimits({
+    reportableQty: input.reportableQty,
+    outstandingWipQuantity,
+    reportableUnitQty: input.reportableUnitQty,
+    unitsPerProduct: input.unitsPerProduct,
+  });
   const requestedAllocationId = String(input.requestedAllocationId || '').trim();
   if (requestedAllocationId) {
     const selected = currentOptions.find(option => option.allocationId === requestedAllocationId);
@@ -113,32 +152,26 @@ export async function resolveWipReportingAllocation(
         409,
       );
     }
+    if (input.processedQty <= 0) return null;
     return { ...selected, creditQuantity: input.processedQty, remainingAllocationQuantity: selected.remaining };
   }
-  if (requiredWipQuantity <= 0) return null;
-  if (!currentOptions.length) {
+  const exceedsNativeProduct = reportedProductQty > nativeLimits.nativeReportableQty;
+  const exceedsNativeAction = nativeLimits.nativeReportableUnitQty !== null
+    && reportedGoodUnitQty > nativeLimits.nativeReportableUnitQty;
+  if (exceedsNativeProduct || exceedsNativeAction) {
+    const nativeActionText = nativeLimits.nativeReportableUnitQty === null
+      ? ''
+      : `，合格动作最多 ${nativeLimits.nativeReportableUnitQty}`;
     throw new WipWarehouseError(
-      '本次数量包含半成品仓库存，但该工序尚未排入生产日期所在周，请先由主管/组长/管理员/计划安排周次',
-      'WIP_NOT_SCHEDULED_FOR_WEEK',
+      `普通来源报工不能消耗已转入半成品仓的数量；当前来源最多可报 ${nativeLimits.nativeReportableQty} 件${nativeActionText}。半成品部分请从紫色续作行或明确选择半成品排程报工`,
+      'WIP_SOURCE_REPORT_EXCEEDS_NATIVE',
       409,
     );
   }
-  if (currentOptions.length > 1) {
-    throw new WipWarehouseError(
-      '该产品当前周存在多个半成品批次，请扫码容器码或选择半成品排程后再报工',
-      'WIP_ALLOCATION_REQUIRED',
-      409,
-    );
-  }
-  const selected = currentOptions[0];
-  if (requiredWipQuantity > selected.remaining) {
-    throw new WipWarehouseError(
-      `当前周半成品排程仅剩 ${selected.remaining} 件，本次报工数量超出计划`,
-      'WIP_REPORT_EXCEEDS_ALLOCATION',
-      409,
-    );
-  }
-  return { ...selected, creditQuantity: requiredWipQuantity, remainingAllocationQuantity: selected.remaining };
+  // A request without an allocation id is always the native/source ledger.
+  // WIP may only be consumed through an explicitly selected continuation so a
+  // stale source row can never silently claim target-week inventory.
+  return null;
 }
 
 function proportionalCredit(milliseconds: bigint, quantity: number, totalQuantity: number): bigint {

@@ -3264,6 +3264,9 @@ export type ProductionWeekNavigationItemDTO = {
   weekStartDate: string;
   weekEndDate: string;
   count: number;
+  normalBatchCount?: number;
+  wipTaskCount?: number;
+  totalExecutionCount?: number;
 };
 
 export type WorkflowWeekNavigationDTO = {

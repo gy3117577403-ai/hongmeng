@@ -1421,15 +1421,21 @@ export async function listWipWarehouse(input: {
   const selectedBatchId = cleanText(input.batchId, 80);
   const [lots, candidates, teams] = await Promise.all([
     prisma.semiFinishedLot.findMany({
-      where: keyword ? {
-        OR: [
-          { lotNo: { contains: keyword, mode: 'insensitive' } },
-          { containerCode: { contains: keyword, mode: 'insensitive' } },
-          { productionPlanBatch: { planOrder: { specification: { contains: keyword, mode: 'insensitive' } } } },
-          { productionPlanBatch: { planOrder: { productName: { contains: keyword, mode: 'insensitive' } } } },
-          { workOrder: { code: { contains: keyword, mode: 'insensitive' } } },
-        ],
-      } : undefined,
+      where: {
+        // Returning a lot to its source order is a soft-close: keep the lot,
+        // allocations and WIP events for audit, but do not surface that closed
+        // branch in the active warehouse workbench.
+        scheduleStatus: { not: SemiFinishedScheduleStatus.CANCELLED },
+        ...(keyword ? {
+          OR: [
+            { lotNo: { contains: keyword, mode: 'insensitive' } },
+            { containerCode: { contains: keyword, mode: 'insensitive' } },
+            { productionPlanBatch: { planOrder: { specification: { contains: keyword, mode: 'insensitive' } } } },
+            { productionPlanBatch: { planOrder: { productName: { contains: keyword, mode: 'insensitive' } } } },
+            { workOrder: { code: { contains: keyword, mode: 'insensitive' } } },
+          ],
+        } : {}),
+      },
       include: listLotInclude,
       orderBy: [{ scheduleStatus: 'asc' }, { enteredAt: 'desc' }],
       take: 500,
@@ -1539,6 +1545,21 @@ export type WipWeekLaborMetrics = {
   unscheduledWipQuantity: number;
 };
 
+export type WipWeekAttainmentInput = {
+  nativePlanned: bigint;
+  movedOut: bigint;
+  scheduledIn: bigint;
+  nativeCompleted: bigint;
+  reclassifiedFromNative: bigint;
+  targetWipCompleted: bigint;
+};
+
+export type WipWeekAttainment = {
+  effectivePlanned: bigint;
+  completed: bigint;
+  percentage: number | null;
+};
+
 export function calculateWipCompletedMilliseconds(input: {
   nativeCompleted: bigint;
   reclassifiedFromNative: bigint;
@@ -1550,38 +1571,117 @@ export function calculateWipCompletedMilliseconds(input: {
   return nativeRemainder + input.targetWipCompleted;
 }
 
+/**
+ * Keeps weekly attainment tied to real standard-labor facts when unfinished
+ * work is moved through the semi-finished warehouse.
+ *
+ * - the source week keeps completed labor, but removes the frozen remaining
+ *   labor snapshot from its denominator;
+ * - an unscheduled lot belongs to no target-week denominator;
+ * - a scheduled target adds only its allocation snapshot;
+ * - WIP credits are reclassified, not counted a second time.
+ */
+export function calculateWipWeekAttainment(input: WipWeekAttainmentInput): WipWeekAttainment {
+  const nativeRemainder = input.nativePlanned > input.movedOut
+    ? input.nativePlanned - input.movedOut
+    : 0n;
+  const effectivePlanned = nativeRemainder + input.scheduledIn;
+  const completed = calculateWipCompletedMilliseconds({
+    nativeCompleted: input.nativeCompleted,
+    reclassifiedFromNative: input.reclassifiedFromNative,
+    targetWipCompleted: input.targetWipCompleted,
+  });
+  if (effectivePlanned <= 0n) return { effectivePlanned, completed, percentage: null };
+  const cappedCompleted = completed > effectivePlanned ? effectivePlanned : completed;
+  return {
+    effectivePlanned,
+    completed,
+    percentage: Number((cappedCompleted * 1_000n) / effectivePlanned) / 10,
+  };
+}
+
 export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Promise<WipWeekLaborMetrics> {
   const parsed = parsePlanDate(weekStartInput);
   if (!parsed) throw new WipWarehouseError('生产周日期无效', 'WIP_WEEK_INVALID');
   const week = chinaWeekRange(parsed);
+  const selectedWeekKey = chinaDate(week.start);
+  // A carryover is a real execution scope for its target week. Reuse the
+  // original batch and work order facts, but attribute that week's planned and
+  // reported labor to the carryover target instead of locking them forever to
+  // the batch's first planned week.
+  const batches = await prisma.productionPlanBatch.findMany({
+    where: {
+      deletedAt: null,
+      workOrderId: { not: null },
+      OR: [
+        { weekStartDate: week.start },
+        {
+          carryovers: {
+            some: {
+              targetWeekStartDate: week.start,
+              status: { not: 'DISMISSED' },
+            },
+          },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      quantity: true,
+      weekStartDate: true,
+      workOrderId: true,
+      carryovers: {
+        where: { status: { not: 'DISMISSED' } },
+        select: { targetWeekStartDate: true },
+      },
+      workOrder: { select: { processRoute: { select: { steps: {
+        where: { retiredAt: null, status: { not: 'skipped' } },
+        select: {
+          timeBasis: true,
+          standardMillisecondsPerUnit: true,
+          setupMilliseconds: true,
+          unitsPerProduct: true,
+        },
+      } } } } },
+    },
+  });
+  const effectiveBatchIds = batches.map(batch => batch.id);
+  const effectiveWorkOrderIds = batches
+    .map(batch => batch.workOrderId)
+    .filter((id): id is string => Boolean(id));
   const [
-    batches,
     sourceLots,
     allocations,
     nativePools,
     sourceWipCredits,
     targetCredits,
     unscheduledLots,
+    priorNativePools,
   ] = await Promise.all([
-    prisma.productionPlanBatch.findMany({
-      where: { deletedAt: null, weekStartDate: week.start, workOrderId: { not: null } },
-      select: {
-        quantity: true,
-        workOrder: { select: { processRoute: { select: { steps: {
-          where: { retiredAt: null, status: { not: 'skipped' } },
-          select: {
-            timeBasis: true,
-            standardMillisecondsPerUnit: true,
-            setupMilliseconds: true,
-            unitsPerProduct: true,
-          },
-        } } } } },
+    effectiveBatchIds.length ? prisma.semiFinishedLot.findMany({
+      where: {
+        productionPlanBatchId: { in: effectiveBatchIds },
+        scheduleStatus: { not: SemiFinishedScheduleStatus.CANCELLED },
       },
-    }),
-    prisma.semiFinishedLot.findMany({
-      where: { sourceWeekStartDate: week.start, scheduleStatus: { not: SemiFinishedScheduleStatus.CANCELLED } },
-      select: { steps: { select: { remainingStandardMilliseconds: true } } },
-    }),
+      select: {
+        productionPlanBatchId: true,
+        sourceWeekStartDate: true,
+        enteredAt: true,
+        steps: {
+          select: {
+            remainingStandardMilliseconds: true,
+            allocationSteps: {
+              select: {
+                credits: {
+                  where: { status: 'ACTIVE' },
+                  select: { workDate: true, standardMilliseconds: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    }) : Promise.resolve([]),
     prisma.wipWeekAllocation.findMany({
       where: { targetWeekStartDate: week.start, status: { not: WipWeekAllocationStatus.CANCELLED } },
       select: {
@@ -1590,29 +1690,22 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
         completedStandardMilliseconds: true,
       },
     }),
-    prisma.processLaborPool.aggregate({
+    effectiveWorkOrderIds.length ? prisma.processLaborPool.aggregate({
       where: {
+        workOrderId: { in: effectiveWorkOrderIds },
         workDate: { gte: week.start, lte: week.end },
-        completion: {
-          is: {
-            voidedAt: null,
-            workOrder: { productionPlanBatch: { is: { weekStartDate: week.start } } },
-          },
-        },
+        completion: { is: { voidedAt: null } },
       },
       _sum: { totalStandardLaborMilliseconds: true },
-    }),
-    prisma.processWipCredit.aggregate({
+    }) : Promise.resolve({ _sum: { totalStandardLaborMilliseconds: null } }),
+    effectiveWorkOrderIds.length ? prisma.processWipCredit.aggregate({
       where: {
         status: 'ACTIVE',
         workDate: { gte: week.start, lte: week.end },
-        completion: {
-          voidedAt: null,
-          workOrder: { productionPlanBatch: { is: { weekStartDate: week.start } } },
-        },
+        completion: { voidedAt: null, workOrderId: { in: effectiveWorkOrderIds } },
       },
       _sum: { standardMilliseconds: true },
-    }),
+    }) : Promise.resolve({ _sum: { standardMilliseconds: null } }),
     prisma.processWipCredit.aggregate({
       where: {
         status: 'ACTIVE',
@@ -1627,31 +1720,86 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
         allocations: { select: { status: true, quantity: true, completedQty: true } },
       },
     }),
+    effectiveWorkOrderIds.length ? prisma.processLaborPool.groupBy({
+      by: ['workOrderId'],
+      where: {
+        workOrderId: { in: effectiveWorkOrderIds },
+        workDate: { lt: week.start },
+        completion: { is: { voidedAt: null } },
+      },
+      _sum: { totalStandardLaborMilliseconds: true },
+    }) : Promise.resolve([]),
   ]);
+  const completedBeforeByWorkOrder = new Map(priorNativePools.map(pool => [
+    pool.workOrderId,
+    pool._sum.totalStandardLaborMilliseconds || 0n,
+  ]));
   let nativePlanned = 0n;
   let missingStandardStepCount = 0;
   for (const batch of batches) {
+    let batchPlanned = 0n;
     for (const step of batch.workOrder?.processRoute?.steps || []) {
       const snapshot = timeSnapshot(step);
       if (!snapshot) {
         missingStandardStepCount += 1;
         continue;
       }
-      nativePlanned += calculateTaskStandardMilliseconds(snapshot, batch.quantity);
+      batchPlanned += calculateTaskStandardMilliseconds(snapshot, batch.quantity);
     }
+    const isCarryoverExecution = chinaDate(batch.weekStartDate) !== selectedWeekKey;
+    const completedBefore = isCarryoverExecution && batch.workOrderId
+      ? completedBeforeByWorkOrder.get(batch.workOrderId) || 0n
+      : 0n;
+    nativePlanned += batchPlanned > completedBefore ? batchPlanned - completedBefore : 0n;
   }
-  const movedOut = sourceLots.reduce((sum, lot) => (
-    sum + lot.steps.reduce((stepSum, step) => stepSum + step.remainingStandardMilliseconds, 0n)
-  ), 0n);
+  const batchById = new Map(batches.map(batch => [batch.id, batch] as const));
+  const movedOut = sourceLots.reduce((sum, lot) => {
+    const batch = batchById.get(lot.productionPlanBatchId);
+    if (!batch) return sum;
+    const enteredWeekKey = chinaDate(chinaWeekRange(lot.enteredAt).start);
+    const enteredThroughCarryover = batch.carryovers.some(carryover => (
+      chinaDate(carryover.targetWeekStartDate) === enteredWeekKey
+    ));
+    const effectiveSourceWeekKey = enteredThroughCarryover
+      ? enteredWeekKey
+      : chinaDate(lot.sourceWeekStartDate);
+    // WIP ownership starts no earlier than the real warehouse-entry week and
+    // continues through later carryover weeks. This prevents a target week
+    // from counting both the inherited native remainder and the same WIP
+    // continuation, while keeping weeks before the transfer immutable.
+    const ownershipStartWeekKey = effectiveSourceWeekKey > enteredWeekKey
+      ? effectiveSourceWeekKey
+      : enteredWeekKey;
+    if (ownershipStartWeekKey > selectedWeekKey) return sum;
+    return sum + lot.steps.reduce((stepSum, step) => {
+      // Native planned labor already subtracts labor completed before this
+      // week. Exclude only the WIP standard labor that was still owned by the
+      // lot at the start of the selected week; current-week credits remain in
+      // both the target plan and target completion numerator exactly once.
+      const creditedBeforeWeek = step.allocationSteps.reduce((allocationSum, allocationStep) => (
+        allocationSum + allocationStep.credits.reduce((creditSum, credit) => (
+          chinaDate(credit.workDate) < selectedWeekKey
+            ? creditSum + credit.standardMilliseconds
+            : creditSum
+        ), 0n)
+      ), 0n);
+      const outstandingAtWeekStart = step.remainingStandardMilliseconds > creditedBeforeWeek
+        ? step.remainingStandardMilliseconds - creditedBeforeWeek
+        : 0n;
+      return stepSum + outstandingAtWeekStart;
+    }, 0n);
+  }, 0n);
   const scheduledIn = allocations.reduce((sum, allocation) => (
     sum + (allocation.status === WipWeekAllocationStatus.SUPERSEDED
       ? allocation.completedStandardMilliseconds
       : allocation.plannedStandardMilliseconds)
   ), 0n);
-  const effectivePlanned = (nativePlanned > movedOut ? nativePlanned - movedOut : 0n) + scheduledIn;
   const nativeCompleted = nativePools._sum.totalStandardLaborMilliseconds || 0n;
   const reclassifiedFromNative = sourceWipCredits._sum.standardMilliseconds || 0n;
-  const completed = calculateWipCompletedMilliseconds({
+  const attainment = calculateWipWeekAttainment({
+    nativePlanned,
+    movedOut,
+    scheduledIn,
     nativeCompleted,
     reclassifiedFromNative,
     targetWipCompleted: targetCredits._sum.standardMilliseconds || 0n,
@@ -1666,11 +1814,9 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
     nativePlannedMilliseconds: bigintNumber(nativePlanned),
     movedOutMilliseconds: bigintNumber(movedOut),
     scheduledInMilliseconds: bigintNumber(scheduledIn),
-    effectivePlannedMilliseconds: bigintNumber(effectivePlanned),
-    completedMilliseconds: bigintNumber(completed),
-    percentage: effectivePlanned > 0n
-      ? Math.round((Number(completed * 1_000n / effectivePlanned) / 10) * 10) / 10
-      : null,
+    effectivePlannedMilliseconds: bigintNumber(attainment.effectivePlanned),
+    completedMilliseconds: bigintNumber(attainment.completed),
+    percentage: attainment.percentage,
     missingStandardStepCount,
     unscheduledWipQuantity,
   };

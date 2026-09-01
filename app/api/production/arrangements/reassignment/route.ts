@@ -23,6 +23,7 @@ function expectedTasks(value: unknown) {
       taskVersion: asNumber(row.taskVersion, -1),
       planVersion: asNumber(row.planVersion, -1),
       completedQty: asNumber(row.completedQty, -1),
+      remainingQty: asNumber(row.remainingQty, -1),
       assignmentVersions: Array.isArray(row.assignmentVersions)
         ? row.assignmentVersions.map(assignment => {
             const assignmentRow = asRecord(assignment);

@@ -263,6 +263,21 @@ main.planning-center-shell.hm-workbench-root {
   text-align: right;
 }
 
+.planning-center-shell .planning-period-ribbon .planning-period-wip-count {
+  width: fit-content;
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid #c4b5fd;
+  border-radius: 999px;
+  color: #6d28d9;
+  background: #f5f3ff;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 11px;
+  white-space: nowrap;
+}
+
 .planning-center-shell .planning-period-ribbon > article > a {
   height: 34px;
   padding: 0 9px;

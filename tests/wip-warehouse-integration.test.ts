@@ -8,6 +8,7 @@ import { loadProductionExecution, resolveProductionWeek } from '../lib/productio
 import { loadWipContinuations } from '../lib/wip-continuations';
 import {
   enterWipWarehouse,
+  listWipWarehouse,
   loadWipWeekLaborMetrics,
   previewWipAllocationUnschedule,
   previewWipEntry,
@@ -246,6 +247,18 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
     const returnedLot = await prisma.semiFinishedLot.findUniqueOrThrow({ where: { id: correctionLot.id } });
     assert.equal(returnedLot.scheduleStatus, 'CANCELLED');
     assert.equal(returnedLot.physicalStatus, 'CANCELLED');
+    const returnAuditEvent = await prisma.wipEvent.findFirst({
+      where: { lotId: correctionLot.id, eventType: 'RETURN_TO_SOURCE_ORDER' },
+    });
+    assert.ok(returnAuditEvent, 'returned WIP must retain its audit event');
+    const warehouseAfterReturn = await listWipWarehouse({ keyword: prefix, productionScope: scope });
+    assert.ok(warehouseAfterReturn.lots.some(item => item.id === lot.id));
+    assert.ok(
+      !warehouseAfterReturn.lots.some(item => item.id === correctionLot.id),
+      'cancelled WIP must be hidden from the active warehouse workbench',
+    );
+    assert.equal(warehouseAfterReturn.summary.lotCount, 1);
+    assert.equal(warehouseAfterReturn.summary.totalQuantity, 6);
     const availableAfterReturn = await previewWipEntry({ batchId: batch.id, quantity: 4, productionScope: scope });
     assert.equal(availableAfterReturn.availableQuantity, 4);
 
@@ -317,7 +330,15 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
     assert.equal(rescheduled.quantity, 4);
     assert.equal(rescheduled.plannedStandardMilliseconds, 8_000n);
 
-    const [targetContinuations, sourceContinuations, targetExecution, sourceExecution] = await Promise.all([
+    const [
+      targetContinuations,
+      sourceContinuations,
+      targetExecution,
+      sourceExecution,
+      oldTargetContinuations,
+      oldTargetHistory,
+      oldTargetExecution,
+    ] = await Promise.all([
       loadWipContinuations({ targetWeekStartDate: laterWeekStart, productionScope: scope }),
       loadWipContinuations({ sourceWeekStartDate: currentWeek.start, productionScope: scope }),
       loadProductionExecution({
@@ -327,6 +348,17 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
       }),
       loadProductionExecution({
         week: { scope: 'current', weekStart: currentWeek.start, weekEnd: currentWeek.end },
+        includeSummary: true,
+        productionScope: scope,
+      }),
+      loadWipContinuations({ targetWeekStartDate: nextWeekStart, productionScope: scope }),
+      loadWipContinuations({
+        targetWeekStartDate: nextWeekStart,
+        productionScope: scope,
+        includeSupersededHistory: true,
+      }),
+      loadProductionExecution({
+        week: { scope: 'next', weekStart: nextWeekStart, weekEnd: nextWeekEnd },
         includeSummary: true,
         productionScope: scope,
       }),
@@ -350,6 +382,29 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
     );
     assert.ok(sourceContinuations.some(item => item.allocationId === rescheduled.id && item.crossWeek));
     assert.ok(targetExecution.items.some(item => item.executionKey === `wip:${rescheduled.id}`));
+    assert.ok(
+      !oldTargetContinuations.some(item => item.allocationId === allocation.id),
+      'ordinary WIP projections must continue to exclude superseded arrangements',
+    );
+    const historicalProjection = oldTargetHistory.find(item => item.allocationId === allocation.id);
+    assert.ok(historicalProjection, 'the old target week must retain a superseded allocation with real progress');
+    assert.equal(historicalProjection.status, WipWeekAllocationStatus.SUPERSEDED);
+    assert.equal(historicalProjection.quantity, 2);
+    assert.equal(historicalProjection.completedQty, 2);
+    assert.equal(historicalProjection.remainingQty, 0);
+    assert.equal(historicalProjection.plannedStandardMilliseconds, 4_000);
+    assert.equal(historicalProjection.completedStandardMilliseconds, 4_000);
+    assert.equal(historicalProjection.remainingStandardMilliseconds, 0);
+    assert.deepEqual(historicalProjection.steps.map(step => ({
+      processName: step.processName,
+      plannedQty: step.plannedQty,
+      completedQty: step.completedQty,
+      remainingQty: step.remainingQty,
+    })), [{ processName: '剩余工序', plannedQty: 2, completedQty: 2, remainingQty: 0 }]);
+    const historicalExecutionRow = oldTargetExecution.items.find(item => item.executionKey === `wip:${allocation.id}`);
+    assert.ok(historicalExecutionRow, 'production execution must show the immutable old-week progress row');
+    assert.equal(historicalExecutionRow.wipContinuation?.status, WipWeekAllocationStatus.SUPERSEDED);
+    assert.equal(historicalExecutionRow.standardLaborProgress.percentage, 100);
     const sourceExecutionOrder = sourceExecution.items.find(item => item.id === workOrder.id);
     assert.ok(sourceExecutionOrder);
     assert.ok(sourceExecutionOrder.wipMovedOutContinuations.some(item => item.allocationId === rescheduled.id));

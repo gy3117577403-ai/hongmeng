@@ -74,7 +74,7 @@ test('production execution exposes a permission-guarded WIP transfer preview', (
   assert.match(service, /productionPlanBatch:\s*\{[\s\S]*?id:\s*true,[\s\S]*?deletedAt:\s*true/);
   assert.match(service, /productionPlanBatchId:\s*order\.productionPlanBatch\?\.deletedAt[\s\S]*?order\.productionPlanBatch\?\.id \|\| null/);
   assert.match(component, /canManageWipWarehouse\(user\)/);
-  assert.match(component, /canManageWip && !readOnly && !isWipContinuation && !isMovedOutSource && displayStage !== "completed" && order\.productionPlanBatchId && order\.processRoute/);
+  assert.match(component, /canManageWip && !readOnly && !isWipContinuation && !isFullyMovedOutSource && displayStage !== "completed" && order\.productionPlanBatchId && order\.processRoute/);
   assert.match(component, /href=\{`\/workspace\/wip\?batchId=\$\{encodeURIComponent\(order\.productionPlanBatchId\)\}`\}/);
   assert.match(component, />转入半成品仓<\/Link>/);
 });
@@ -86,10 +86,41 @@ test('production week header separates plan batches from actual current and carr
   assert.match(service, /summaryCarryoverByOrder[\s\S]*?loadProductionCarryoverMetadata/);
   assert.match(service, /nativeCurrent:\s*Math\.max\(0, summaryRootOrders\.length - summaryCarryoverByOrder\.size\)/);
   assert.match(service, /carryover:\s*summaryCarryoverByOrder\.size/);
-  assert.match(component, /本周计划 <b>/);
+  assert.match(component, /本周正常 <b>/);
+  assert.match(component, /normalBatchCount/);
+  assert.match(component, /wipTaskCount/);
+  assert.match(component, /totalExecutionCount/);
+  assert.match(component, /\+半成品/);
   assert.match(component, /执行\{summary\.executionCountBreakdown\.nativeCurrent\}\+遗留\{summary\.executionCountBreakdown\.carryover\}\+半成品\{summary\.executionCountBreakdown\.wipContinuation\}=\{summary\.executionCountBreakdown\.total\}/);
   assert.match(component, /执行合计 \$\{summary\.executionCountBreakdown\.total\}/);
   assert.match(component, /refreshSignature=\{scope === 'current'[\s\S]*?summary\?\.executionCountBreakdown\?\.total/);
+});
+
+test('production execution always refreshes and displays WIP-adjusted effective-plan attainment', () => {
+  const component = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
+  const service = readFileSync(resolve(repositoryRoot, 'lib/production-execution.ts'), 'utf8');
+
+  assert.match(service, /const \[nativeOrders, weekWipContinuations, wipPlanMetrics\] = await Promise\.all/);
+  assert.match(service, /input\.includeSummary && input\.week\.weekStart[\s\S]*?loadWipWeekLaborMetrics\(input\.week\.weekStart\)/);
+  assert.match(service, /summary:\s*\{[\s\S]*?wipPlanMetrics,[\s\S]*?executionCountBreakdown/);
+  assert.match(component, /pageParams\.set\('includeSummary', '1'\)/, 'the initial board request must include WIP metrics');
+  assert.match(component, /subscribeProductionDataInvalidations[\s\S]*?productionBoardCache\.clear\(\)[\s\S]*?setRefreshToken\(value => value \+ 1\)/, 'WIP invalidation must force the summary-bearing first page to refetch');
+  assert.match(component, /percentage:\s*summary\?\.wipPlanMetrics\?\.percentage \?\? null/);
+  assert.doesNotMatch(component, /percentage:\s*summary\?\.wipPlanMetrics\?\.percentage \?\? summary\?\.planTotals\.percentage/);
+  assert.match(component, /本周动态有效计划达成率/);
+  assert.match(component, /不等同整单完工率/);
+  assert.match(component, /暂不使用整单完工率替代/);
+});
+
+test('standalone production summary suppresses the same fully-owned WIP native target as the board', () => {
+  const service = readFileSync(resolve(repositoryRoot, 'lib/production-execution.ts'), 'utf8');
+  const summaryStart = service.indexOf('export async function summarizeProduction(');
+  const summaryEnd = service.indexOf('export async function loadProductionOrderById', summaryStart);
+  assert.ok(summaryStart >= 0 && summaryEnd > summaryStart);
+  const summaryImplementation = service.slice(summaryStart, summaryEnd);
+  assert.match(summaryImplementation, /loadedOrders\.filter\(order => !shouldSuppressNativeOrderForWipTarget\(\{/);
+  assert.match(summaryImplementation, /sourceLots:\s*sourceLotsByWorkOrder\.get\(order\.id\) \|\| \[\]/);
+  assert.match(summaryImplementation, /continuations:\s*continuationsByWorkOrder\.get\(order\.id\) \|\| \[\]/);
 });
 
 test('WIP rescheduling uses an interactive impact modal and exposes target-week result links', () => {
@@ -121,8 +152,15 @@ test('WIP continuation is projected into planning, production execution and proc
   assert.match(planningUi, /className="planning-wip-branch"/);
   assert.doesNotMatch(planningUi, /className="planning-wip-lane"/);
   assert.match(productionService, /serializeWipExecutionOrder/);
+  assert.match(productionService, /includeSupersededHistory:\s*true/);
   assert.match(productionService, /wipMovedOutContinuations/);
+  assert.match(productionService, /wipMovedOutSummary/);
   assert.match(continuationService, /canonicalWipWeekDate/);
+  assert.match(continuationService, /status:\s*WipWeekAllocationStatus\.SUPERSEDED/);
+  assert.match(productionUi, /is-wip-moved-out-source/);
+  assert.match(productionUi, /isWipHistoricalContinuation/);
+  assert.match(productionUi, /selectPrimaryWipMovedOutTarget\(movedOutTargets\)/);
+  assert.match(productionUi, /primaryMovedOutTargetHasRemaining \? '查看续作' : '查看历史'/);
   assert.match(productionUi, /data-wip-allocation-id=\{wipContinuation\?\.allocationId/);
   assert.match(productionUi, /wipAllocationId:\s*completionOrder\.wipContinuation\?\.allocationId/);
   assert.match(productionUi, /activeSteps=\{completionOrder\.wipContinuation[\s\S]*?filter\(step/);
@@ -147,6 +185,18 @@ test('WIP correction is reversible only through guarded unschedule and source-or
   assert.match(component, /撤销周安排/);
   assert.match(component, /撤销转仓并回归原订单/);
   assert.match(component, /我已确认实物退回原订单流转位置/);
+});
+
+test('cancelled WIP branches stay auditable but are absent from the active workbench', () => {
+  const service = readFileSync(resolve(repositoryRoot, 'lib/wip-warehouse.ts'), 'utf8');
+  const warehouseUi = readFileSync(resolve(repositoryRoot, 'components/WipWarehouseShell.tsx'), 'utf8');
+  const planningUi = readFileSync(resolve(repositoryRoot, 'components/PlanningCenterShell.tsx'), 'utf8');
+  const productionUi = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
+
+  assert.match(service, /scheduleStatus:\s*\{ not: SemiFinishedScheduleStatus\.CANCELLED \}/);
+  assert.match(warehouseUi, /publishProductionDataInvalidation\(\{ kind: 'wip-returned'/);
+  assert.match(planningUi, /subscribeProductionDataInvalidations[\s\S]*?invalidation\.kind\.startsWith\('wip-'\)/);
+  assert.match(productionUi, /productionRefreshPendingRef[\s\S]*?setRefreshToken\(value => value \+ 1\)/);
 });
 
 test('WIP execution rows keep a purple entity identity after generic zebra and hover rules', () => {

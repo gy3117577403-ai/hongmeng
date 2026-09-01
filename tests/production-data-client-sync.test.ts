@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { normalizeProductionDataInvalidation } from '../lib/production-data-client-sync';
 
-test('production data invalidation accepts only complete plan mutation messages', () => {
+test('production data invalidation accepts only complete plan and WIP mutation messages', () => {
   assert.deepEqual(normalizeProductionDataInvalidation({
     kind: 'plan-order-deleted',
     entityId: 'order-1',
@@ -24,6 +24,17 @@ test('production data invalidation accepts only complete plan mutation messages'
     entityId: 'batch-1',
     occurredAt: 1_723_000_000_001,
     nonce: 'nonce-material-auth-1',
+  });
+  assert.deepEqual(normalizeProductionDataInvalidation({
+    kind: 'wip-returned',
+    entityId: 'lot-1',
+    occurredAt: 1_723_000_000_002,
+    nonce: 'nonce-wip-return-1',
+  }), {
+    kind: 'wip-returned',
+    entityId: 'lot-1',
+    occurredAt: 1_723_000_000_002,
+    nonce: 'nonce-wip-return-1',
   });
   assert.equal(normalizeProductionDataInvalidation({
     kind: 'unknown',

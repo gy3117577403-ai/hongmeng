@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { productionWorkOrderScopeWhere } from '@/lib/production-execution';
 import { assertProductionScopeRead, resolveProductionEntityScope, type ProductionScopeSubject } from '@/lib/production-access-scope';
 import { canAdjustProductionDates, canManageProductionControl, ProductionControlError, productionDateKey, productionReason, serializeProductionControl } from '@/lib/production-control';
-import { lockProductionWorkOrder } from '@/lib/production-pause-guard';
+import { loadProductionWipSourceGate, lockProductionWorkOrder } from '@/lib/production-pause-guard';
 import { productionPlanningDateBoundary } from '@/lib/production-planning-date';
 
 export type ProductionControlActor = ProductionScopeSubject & { id: string; username: string; displayName?: string | null };
@@ -13,6 +13,7 @@ export type ProductionControlCommand = {
   action?: unknown; expectedVersion?: unknown; expectedPlanVersion?: unknown; requestId?: unknown;
   text?: unknown; category?: unknown; owner?: unknown; followUpAt?: unknown; expectedResumeAt?: unknown;
   reason?: unknown; dateKind?: unknown; date?: unknown; confirmation?: unknown; confirmImpact?: unknown;
+  wipAllocationId?: unknown;
 };
 
 function text(value: unknown, max = 500): string {
@@ -93,6 +94,33 @@ export async function mutateProductionControl(actor: ProductionControlActor, wor
         return root.id;
       }
       if (root.productionControlVersion !== expectedVersion) throw new ProductionControlError('备注、暂停或日期刚被其他人更新，请刷新后重试', 'PRODUCTION_CONTROL_VERSION_CONFLICT', 409);
+      if (action === 'resume') {
+        const wipSourceGate = await loadProductionWipSourceGate(tx, root);
+        if (wipSourceGate.fullyMovedOut) {
+          const wipAllocationId = text(input.wipAllocationId, 80);
+          const targetAllocation = wipAllocationId
+            ? await tx.wipWeekAllocation.findFirst({
+                where: {
+                  id: wipAllocationId,
+                  status: { in: ['ACTIVE', 'IN_PROGRESS'] },
+                  lot: {
+                    workOrderId: root.id,
+                    productionPlanBatchId: wipSourceGate.productionPlanBatchId || undefined,
+                    scheduleStatus: { not: 'CANCELLED' },
+                  },
+                },
+                select: { id: true },
+              })
+            : null;
+          if (!targetAllocation) {
+            throw new ProductionControlError(
+              '该来源订单已全部转入半成品仓，不能从原订单恢复生产；请进入目标周紫色半成品续作行操作。',
+              'PRODUCTION_WIP_SOURCE_RESUME_BLOCKED',
+              409,
+            );
+          }
+        }
+      }
       const closed = root.stage === 'completed' || root.deletedAt || root.planClearedAt;
       if (closed && action !== 'note') throw new ProductionControlError('已完成或归档工单不能暂停、恢复或改期', 'PRODUCTION_CONTROL_CLOSED', 409);
       const now = new Date();

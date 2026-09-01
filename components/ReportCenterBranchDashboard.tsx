@@ -339,7 +339,7 @@ function metricForBranch(
       { label: '达成率', value: percentText(summary?.completionBasisPoints), note: '最终工序口径' },
       { label: '统计天数', value: numberText(overview?.dailyTrend.length), note: '天' },
     ] },
-    'weekly-plan-attainment': { label: '周计划达成率', value: percentText(operationsSummary?.batchCompletionBasisPoints), description: '已完成批次 / 已开始周计划批次', tone: 'orange', stats: [
+    'weekly-plan-attainment': { label: '周计划达成率', value: percentText(operationsSummary?.batchCompletionBasisPoints), description: '已达成有效计划项 / 已开始有效计划项', tone: 'orange', stats: [
       { label: '纳入计划批次', value: numberText(operationsSummary?.plannedBatches), note: `未来周 ${numberText(operationsSummary?.futureBatches)} 批` },
       { label: '完成批次', value: numberText(operationsSummary?.completedBatches), note: '批' },
       { label: '计划数量达成', value: percentText(operationsSummary?.quantityCompletionBasisPoints), note: `${numberText(operationsSummary?.completedQuantity)} / ${numberText(operationsSummary?.plannedQuantity)}` },
@@ -735,7 +735,7 @@ export default function ReportCenterBranchDashboard({
       ];
     } else if (initialBranch === 'weekly-plan-attainment') {
       rows = [
-        ['周次', '日期范围', '排定批次', '计划批次', '未来周批次', '完成批次', '周计划达成率', '计划数量', '完成数量', '数量达成率'],
+        ['周次', '日期范围', '排定计划项', '有效计划项', '未来周计划项', '已达成计划项', '周计划达成率', '有效计划数量', '达成数量', '数量达成率'],
         ...(operations?.weeklyPlan || []).map(row => [row.label, `${row.startDate} 至 ${row.endDate}`, row.scheduledBatches, row.plannedBatches, row.futureBatches, row.completedBatches, percentText(row.batchCompletionBasisPoints), row.plannedQuantity, row.completedQuantity, percentText(row.quantityCompletionBasisPoints)]),
       ];
     } else if (initialBranch === 'attendance-attainment') {
@@ -960,7 +960,7 @@ function BottleneckTable({ report }: { report: ReportCenterOverviewDTO | null })
 
 function WeeklyPlan({ report }: { report: ReportOperationsDTO | null }) {
   const rows = report?.weeklyPlan || [];
-  return <Panel kicker="周次拆解" title={`${rangeText(report)} 周计划达成率`} action={<span>生产周口径 · 当前周提前完成立即计入</span>}><div className="report-week-grid">{rows.map(row => <article key={row.key}><header><div><small>{row.startDate.slice(5)}—{row.endDate.slice(5)}</small><h3>{row.label}</h3></div><strong>{percentText(row.batchCompletionBasisPoints)}</strong></header><dl><div><dt>计划批次</dt><dd>{row.completedBatches}<em> / {row.plannedBatches}</em></dd><i><b style={{ width: `${Math.min(100, (row.batchCompletionBasisPoints || 0) / 100)}%` }} /></i></div><div><dt>计划数量</dt><dd>{numberText(row.completedQuantity)}<em> / {numberText(row.plannedQuantity)}</em></dd><i><b style={{ width: `${Math.min(100, (row.quantityCompletionBasisPoints || 0) / 100)}%` }} /></i></div></dl>{row.isFutureWeek && row.futureBatches > 0 && <p>未来周：{row.futureBatches} 批 · {numberText(row.futureQuantity)}</p>}</article>)}</div>{!rows.length && <EmptyState icon={<CalendarRange />} title="当前周期没有周计划数据" />}</Panel>;
+  return <Panel kicker="周次拆解" title={`${rangeText(report)} 周计划达成率`} action={<span>有效计划口径 · 已完成工序保留 · 转仓剩余任务移入目标周</span>}><div className="report-week-grid">{rows.map(row => <article key={row.key}><header><div><small>{row.startDate.slice(5)}—{row.endDate.slice(5)}</small><h3>{row.label}</h3></div><strong>{percentText(row.batchCompletionBasisPoints)}</strong></header><dl><div><dt>有效计划项</dt><dd>{row.completedBatches}<em> / {row.plannedBatches}</em></dd><i><b style={{ width: `${Math.min(100, (row.batchCompletionBasisPoints || 0) / 100)}%` }} /></i></div><div><dt>有效计划数量</dt><dd>{numberText(row.completedQuantity)}<em> / {numberText(row.plannedQuantity)}</em></dd><i><b style={{ width: `${Math.min(100, (row.quantityCompletionBasisPoints || 0) / 100)}%` }} /></i></div></dl>{row.isFutureWeek && row.futureBatches > 0 && <p>未来周：{row.futureBatches} 个计划项 · {numberText(row.futureQuantity)}</p>}</article>)}</div>{!rows.length && <EmptyState icon={<CalendarRange />} title="当前周期没有周计划数据" />}</Panel>;
 }
 
 function CompletedBatchTable({ report, onPage }: { report: ReportCompletedBatchesDTO | null; onPage: (page: number) => void }) {

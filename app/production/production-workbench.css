@@ -7580,6 +7580,21 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   white-space: nowrap;
 }
 
+.hm-production-workbench .process-completion-advance-note.wip-native-source-limit {
+  border-color: #c7b7f8;
+  background: linear-gradient(135deg, #f7f3ff 0%, #fcfbff 100%);
+  color: #6d3ed1;
+}
+
+.hm-production-workbench .process-completion-advance-note.wip-native-source-limit strong,
+.hm-production-workbench .process-completion-advance-note.wip-native-source-limit small {
+  color: #6235b5;
+}
+
+.hm-production-workbench .process-completion-advance-note.wip-native-source-limit > span {
+  background: #7c4de3;
+}
+
 .hm-production-workbench .hm-module-mode-drawer {
   flex: 0 0 132px;
 }
@@ -7619,6 +7634,28 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
 .hm-production-workbench .production-dispatch-progress .production-dispatch-progress-warning {
   color: #b45309;
   font-weight: 750;
+}
+
+.hm-production-workbench .production-dispatch-progress .production-dispatch-progress-scope-note {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #6842b8;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.hm-production-workbench .production-dispatch-progress .production-dispatch-progress-scope-note > b {
+  display: inline;
+  overflow: visible;
+  color: #5b2fb4;
+  font-size: inherit;
+  font-weight: 900;
+  white-space: normal;
 }
 
 .hm-production-workbench .production-dispatch-risk {
@@ -10192,4 +10229,57 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
 
 .hm-production-workbench .production-wip-continuation-meta.moved-out {
   color: var(--hm-color-entity-wip-strong, #5b21b6);
+}
+
+/* Future-week tabs expose the same normal/WIP breakdown as the current-week
+   equation instead of hiding the WIP task inside one opaque total. */
+.hm-production-workbench .production-dispatch-week-tabs > button.production-week-count-tab {
+  min-width: 0;
+  overflow: hidden;
+  flex-direction: column;
+  gap: 0;
+  padding-inline: 3px;
+  line-height: 1;
+}
+
+.hm-production-workbench .production-week-count-tab > span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-dispatch-week-tabs > button.production-week-count-tab > i.wip-count {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0 4px;
+  color: var(--hm-color-entity-wip-strong, #5b21b6);
+  background: var(--hm-color-entity-wip-soft, #f5f3ff);
+  font-size: 8px;
+  line-height: 10px;
+  text-overflow: ellipsis;
+}
+
+/* The source order remains as an auditable fact after its remaining work has
+   moved to WIP, but it must no longer look like an ordinary executable row. */
+.hm-production-workbench .production-dispatch-row.is-wip-moved-out-source,
+.hm-production-workbench .production-dispatch-row.is-wip-moved-out-source:nth-child(even) {
+  border-left-color: var(--hm-color-entity-wip, #6d28d9);
+  background: linear-gradient(90deg, #faf8ff 0, #fff 64%);
+  box-shadow: inset 4px 0 var(--hm-color-entity-wip-border, #c4b5fd);
+}
+
+.hm-production-workbench .production-dispatch-row.is-wip-moved-out-source:hover,
+.hm-production-workbench .production-dispatch-row.is-wip-moved-out-source:focus-within {
+  background: var(--hm-color-entity-wip-soft-hover, #ede9fe);
+  box-shadow: inset 4px 0 var(--hm-color-entity-wip, #6d28d9), inset 0 0 0 1px var(--hm-color-entity-wip-border, #c4b5fd);
+}
+
+.hm-production-workbench .production-dispatch-row.is-wip-fully-moved-out .production-dispatch-stage-dot {
+  background: var(--hm-color-entity-wip, #6d28d9);
+  box-shadow: 0 0 0 3px var(--hm-color-entity-wip-border, #c4b5fd);
 }

@@ -127,7 +127,7 @@ jobs:
       - name: Semi-finished warehouse PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/material-execution-control-integration.test.ts tests/wip-warehouse-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/material-execution-control-integration.test.ts tests/wip-warehouse-integration.test.ts tests/wip-attainment-integration.test.ts tests/production-wip-source-projection-integration.test.ts
       - name: Production carryover and test-week retirement PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

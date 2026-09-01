@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { publishProductionDataInvalidation } from '@/lib/production-data-client-sync';
 import type { CurrentUserDTO } from '@/types';
 
 type Candidate = {
@@ -452,6 +453,7 @@ export default function WipWarehouseShell({
         containerCode: entryDraft.containerCode,
         idempotencyKey: newRequestKey('wip-enter-ui'),
       });
+      publishProductionDataInvalidation({ kind: 'wip-entered', entityId: entryCandidate.workOrderId });
       setEntryCandidate(null);
       setEntryPreview(null);
       setToast('已转入半成品仓；历史报工和原周已完工工时保持不变');
@@ -477,6 +479,7 @@ export default function WipWarehouseShell({
         reason: scheduleDraft.reason,
         idempotencyKey: newRequestKey('wip-schedule-ui'),
       });
+      publishProductionDataInvalidation({ kind: 'wip-scheduled', entityId: selectedLot.id });
       setToast('剩余工序与工时已计入目标周计划，来源周不再重复计算');
       setScheduleDraft(current => ({ ...current, quantity: '', week: '' }));
       await load(true);
@@ -531,6 +534,7 @@ export default function WipWarehouseShell({
         reason,
         idempotencyKey: newRequestKey('wip-reschedule-ui'),
       });
+      publishProductionDataInvalidation({ kind: 'wip-rescheduled', entityId: result.id });
       setToast('改排完成：原周只保留已完成部分，未完成工时已迁移到新目标周');
       await load(true);
       const targetWeek = data.weeks.find(week => week.startDate === rescheduleDraft.targetWeekStartDate);
@@ -608,6 +612,7 @@ export default function WipWarehouseShell({
           reason: reversalDraft.reason,
           idempotencyKey: newRequestKey('wip-unschedule-ui'),
         });
+        publishProductionDataInvalidation({ kind: 'wip-unscheduled', entityId: reversalDraft.allocation?.id || reversalDraft.lot.id });
         setToast('目标周安排已撤销；该数量已退回半成品仓待排，原订单和报工事实未改动');
       } else {
         await post({
@@ -618,6 +623,7 @@ export default function WipWarehouseShell({
           reason: reversalDraft.reason,
           idempotencyKey: newRequestKey('wip-return-order-ui'),
         });
+        publishProductionDataInvalidation({ kind: 'wip-returned', entityId: reversalDraft.lot.id });
         setToast('半成品覆盖已撤销，剩余数量已回归原订单；历史报工、数量和工时保持不变');
       }
       setReversalDraft(null);

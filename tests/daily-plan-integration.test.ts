@@ -577,6 +577,7 @@ test(
             taskVersion: contextTask.version,
             planVersion: contextTask.planVersion,
             completedQty: contextTask.completedQty,
+            remainingQty: contextTask.remainingQty,
             assignmentVersions: contextTask.assignments.map(assignment => ({
               assignmentId: assignment.id,
               version: assignment.version,

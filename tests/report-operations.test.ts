@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   allocatePlanBatchCompletionQuantities,
   cappedBasisPoints,
+  effectiveWipSourcePlanAdjustment,
+  effectiveWipTargetPlanProgress,
   nextReportMonth,
   parseReportMonth,
   reportMetricTone,
@@ -65,6 +67,115 @@ test('one work order completion is allocated once across multiple plan batches',
   assert.equal(allocations.get('first'), 60);
   assert.equal(allocations.get('later'), 40);
   assert.equal(allocations.get('other'), 12);
+});
+
+test('semi-finished transfer keeps completed source scope and yields one hundred percent', () => {
+  const adjustment = effectiveWipSourcePlanAdjustment(100, [
+    { kind: 'SEMI_FINISHED', quantity: 100 },
+  ]);
+  assert.deepEqual(adjustment, {
+    plannedQuantity: 100,
+    completedQuantityCredit: 100,
+    waitingProductionQuantity: 0,
+    semiFinishedQuantity: 100,
+  });
+
+  const current = summarizeWeeklyPlanProgress(reportMonthWeekBuckets('2026-08'), [{
+    id: 'source-batch',
+    weekStartDateKey: '2026-08-24',
+    quantity: adjustment.plannedQuantity,
+    completedQuantity: adjustment.completedQuantityCredit,
+  }], '2026-08-25').find(row => row.key === '2026-08-24');
+  assert.equal(current?.plannedBatches, 1);
+  assert.equal(current?.completedBatches, 1);
+  assert.equal(current?.plannedQuantity, 100);
+  assert.equal(current?.completedQuantity, 100);
+  assert.equal(current?.batchCompletionBasisPoints, 10_000);
+  assert.equal(current?.quantityCompletionBasisPoints, 10_000);
+});
+
+test('waiting-production transfer leaves no false completion in the source week', () => {
+  const adjustment = effectiveWipSourcePlanAdjustment(100, [
+    { kind: 'WAITING_PRODUCTION', quantity: 100 },
+  ]);
+  assert.deepEqual(adjustment, {
+    plannedQuantity: 0,
+    completedQuantityCredit: 0,
+    waitingProductionQuantity: 100,
+    semiFinishedQuantity: 0,
+  });
+});
+
+test('partial WIP transfer separates retained source work from target-week continuation', () => {
+  const adjustment = effectiveWipSourcePlanAdjustment(100, [
+    { kind: 'SEMI_FINISHED', quantity: 40 },
+    { kind: 'WAITING_PRODUCTION', quantity: 20 },
+  ]);
+  assert.equal(adjustment.plannedQuantity, 80);
+  assert.equal(adjustment.completedQuantityCredit, 40);
+
+  assert.deepEqual(effectiveWipTargetPlanProgress({
+    status: 'ACTIVE',
+    quantity: 40,
+    completedQuantity: 0,
+  }), { plannedQuantity: 40, completedQuantity: 0 });
+  assert.deepEqual(effectiveWipTargetPlanProgress({
+    status: 'SUPERSEDED',
+    quantity: 40,
+    completedQuantity: 15,
+  }), { plannedQuantity: 15, completedQuantity: 15 });
+  assert.deepEqual(effectiveWipTargetPlanProgress({
+    status: 'SUPERSEDED',
+    quantity: 40,
+    completedQuantity: 0,
+  }), { plannedQuantity: 0, completedQuantity: 0 });
+  assert.deepEqual(effectiveWipTargetPlanProgress({
+    status: 'CANCELLED',
+    quantity: 40,
+    completedQuantity: 40,
+  }), { plannedQuantity: 0, completedQuantity: 0 });
+});
+
+test('same-week WIP branch is merged into its source plan instead of counted twice', () => {
+  const inProgress = effectiveWipSourcePlanAdjustment(100, [{
+    kind: 'SEMI_FINISHED',
+    quantity: 100,
+    sameWeekPlannedQuantity: 100,
+    sameWeekCompletedQuantity: 0,
+  }]);
+  assert.equal(inProgress.plannedQuantity, 100);
+  assert.equal(inProgress.completedQuantityCredit, 0);
+
+  const current = summarizeWeeklyPlanProgress(reportMonthWeekBuckets('2026-08'), [{
+    id: 'same-week-source-and-wip',
+    weekStartDateKey: '2026-08-24',
+    quantity: inProgress.plannedQuantity,
+    completedQuantity: inProgress.completedQuantityCredit,
+  }], '2026-08-25').find(row => row.key === '2026-08-24');
+  assert.equal(current?.plannedBatches, 1, 'same-week WIP must not emit a second plan item');
+  assert.equal(current?.plannedQuantity, 100);
+  assert.equal(current?.completedBatches, 0);
+  assert.equal(current?.batchCompletionBasisPoints, 0);
+
+  const completed = effectiveWipSourcePlanAdjustment(100, [{
+    kind: 'SEMI_FINISHED',
+    quantity: 100,
+    sameWeekPlannedQuantity: 100,
+    sameWeekCompletedQuantity: 100,
+  }]);
+  assert.equal(completed.plannedQuantity, 100);
+  assert.equal(completed.completedQuantityCredit, 100);
+});
+
+test('same-week waiting-production allocation restores plan without fabricating completion', () => {
+  const adjustment = effectiveWipSourcePlanAdjustment(100, [{
+    kind: 'WAITING_PRODUCTION',
+    quantity: 100,
+    sameWeekPlannedQuantity: 100,
+    sameWeekCompletedQuantity: 0,
+  }]);
+  assert.equal(adjustment.plannedQuantity, 100);
+  assert.equal(adjustment.completedQuantityCredit, 0);
 });
 
 test('current production week counts all planned batches and credits early completion immediately', () => {

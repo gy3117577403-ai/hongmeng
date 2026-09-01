@@ -33,18 +33,19 @@ export function ProductionNoteSummary({ control }: { control?: ProductionControl
   </span>;
 }
 
-export function ProductionControlButton({ workOrderId, mode = 'note', children, className, onSaved }: {
+export function ProductionControlButton({ workOrderId, mode = 'note', children, className, onSaved, wipAllocationId, restrictExecutionActions = false }: {
   workOrderId: string; mode?: ProductionControlMode; children?: ReactNode; className?: string; onSaved?: () => void;
+  wipAllocationId?: string | null; restrictExecutionActions?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   return <><button ref={trigger} type="button" className={className || 'production-control-link'} onClick={() => setOpen(true)}>{children || labels[mode]}</button>
-    {open && <ProductionControlDialog workOrderId={workOrderId} initialMode={mode} close={() => { setOpen(false); trigger.current?.focus(); }} saved={() => {
+    {open && <ProductionControlDialog workOrderId={workOrderId} initialMode={mode} wipAllocationId={wipAllocationId} restrictExecutionActions={restrictExecutionActions} close={() => { setOpen(false); trigger.current?.focus(); }} saved={() => {
       onSaved?.(); window.dispatchEvent(new Event('production-control-updated'));
     }} />}</>;
 }
 
-function ProductionControlDialog({ workOrderId, initialMode, close, saved }: { workOrderId: string; initialMode: ProductionControlMode; close: () => void; saved: () => void }) {
+function ProductionControlDialog({ workOrderId, initialMode, wipAllocationId, restrictExecutionActions, close, saved }: { workOrderId: string; initialMode: ProductionControlMode; wipAllocationId?: string | null; restrictExecutionActions: boolean; close: () => void; saved: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [control, setControl] = useState<Control | null>(null);
   const [mode, setMode] = useState(initialMode);
@@ -80,13 +81,17 @@ function ProductionControlDialog({ workOrderId, initialMode, close, saved }: { w
       .finally(() => { if (!abort.signal.aborted) setContextLoading(false); });
     return () => abort.abort();
   }, [mode, routeId, stepId]);
-  function changeMode(next: ProductionControlMode) { if (saving) return; setMode(next); setError(''); requestId.current = null; setBody(current => ({ ...current, reason: '', confirmImpact: false })); }
+  function changeMode(next: ProductionControlMode) {
+    if (saving || (restrictExecutionActions && ['pause', 'resume', 'backfill'].includes(next))) return;
+    setMode(next); setError(''); requestId.current = null; setBody(current => ({ ...current, reason: '', confirmImpact: false }));
+  }
   async function save() {
     if (!control) return;
     setSaving(true); setError('');
     requestId.current ||= crypto.randomUUID();
     try {
       let payload: Record<string, unknown> = { ...body, action: mode, expectedVersion: control.version, expectedPlanVersion: control.planVersion, requestId: requestId.current,
+        wipAllocationId: wipAllocationId || undefined,
         followUpAt: body.followUpAt ? new Date(body.followUpAt).toISOString() : null, expectedResumeAt: body.expectedResumeAt ? new Date(body.expectedResumeAt).toISOString() : null };
       if (mode === 'backfill') {
         if (!context || !backfill.workStartedAt || !backfill.workEndedAt) throw new Error('请先选择工序并填写实际作业起止时间');
@@ -106,14 +111,17 @@ function ProductionControlDialog({ workOrderId, initialMode, close, saved }: { w
     } catch (cause) { setError(cause instanceof Error ? cause.message : '保存失败，请重试'); }
     finally { setSaving(false); }
   }
-  const canEdit = control && (mode === 'adjust_date' ? control.permissions.adjustDates : control.permissions.manage) && mode !== 'history';
+  const canEdit = control
+    && (mode === 'adjust_date' ? control.permissions.adjustDates : control.permissions.manage)
+    && mode !== 'history'
+    && !(restrictExecutionActions && ['pause', 'resume', 'backfill'].includes(mode));
   return <dialog ref={dialog} className="production-control-dialog" onCancel={event => { event.preventDefault(); if (!saving) close(); }} aria-label={labels[mode]}>
     <header><div><small>生产跟进 / {control?.code || '加载中'}</small><h2>{labels[mode]}</h2></div><button type="button" disabled={saving} onClick={close} aria-label="关闭生产控制">×</button></header>
     {control && <><nav aria-label="生产控制操作">
       <button type="button" className={mode === 'note' ? 'active' : ''} onClick={() => changeMode('note')}>问题备注</button>
-      {control.permissions.manage && <button type="button" onClick={() => changeMode(control.pausedAt ? 'resume' : 'pause')}>{control.pausedAt ? '恢复生产' : '暂停生产'}</button>}
+      {control.permissions.manage && !restrictExecutionActions && <button type="button" onClick={() => changeMode(control.pausedAt ? 'resume' : 'pause')}>{control.pausedAt ? '恢复生产' : '暂停生产'}</button>}
       {control.permissions.adjustDates && <button type="button" onClick={() => changeMode('adjust_date')}>调整交期</button>}
-      {control.pausedAt && control.permissions.manage && <button type="button" onClick={() => changeMode('backfill')}>补录暂停前工作</button>}
+      {control.pausedAt && control.permissions.manage && !restrictExecutionActions && <button type="button" onClick={() => changeMode('backfill')}>补录暂停前工作</button>}
       <button type="button" onClick={() => changeMode('history')}>历史记录</button>
     </nav><fieldset disabled={saving} className="production-control-body">
       {control.pausedAt && <p className="production-control-warning">已暂停：{control.pause?.reason} · {datetime(control.pausedAt)}。预计恢复日期不会自动复工。</p>}

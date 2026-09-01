@@ -3,7 +3,15 @@ export const PRODUCTION_DATA_INVALIDATED_EVENT = 'hongmeng:production-data-inval
 const PRODUCTION_DATA_INVALIDATED_STORAGE_KEY = 'hongmeng:production-data-invalidated:last';
 const PRODUCTION_DATA_INVALIDATED_CHANNEL = 'hongmeng-production-data-v1';
 
-export type ProductionDataInvalidationKind = 'plan-order-deleted' | 'plan-batch-deleted' | 'plan-batch-updated';
+export type ProductionDataInvalidationKind =
+  | 'plan-order-deleted'
+  | 'plan-batch-deleted'
+  | 'plan-batch-updated'
+  | 'wip-entered'
+  | 'wip-scheduled'
+  | 'wip-rescheduled'
+  | 'wip-unscheduled'
+  | 'wip-returned';
 
 export type ProductionDataInvalidation = {
   kind: ProductionDataInvalidationKind;
@@ -18,6 +26,11 @@ export function normalizeProductionDataInvalidation(value: unknown): ProductionD
   const kind = source.kind === 'plan-order-deleted'
     || source.kind === 'plan-batch-deleted'
     || source.kind === 'plan-batch-updated'
+    || source.kind === 'wip-entered'
+    || source.kind === 'wip-scheduled'
+    || source.kind === 'wip-rescheduled'
+    || source.kind === 'wip-unscheduled'
+    || source.kind === 'wip-returned'
     ? source.kind
     : null;
   const entityId = typeof source.entityId === 'string' ? source.entityId.trim() : '';

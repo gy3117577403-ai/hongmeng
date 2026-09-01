@@ -12,6 +12,8 @@
 .production-control-link { padding: 5px 8px; border: 1px solid #fed6bb; border-radius: 6px; background: #fff8f2; color: #b64d0b; cursor: pointer; font-size: 11px; }
 .production-note-button { display: block; width: 100%; height: auto; min-height: 40px; padding: 8px; text-align: left; border: 1px dashed #d9e1e9; border-radius: 7px; background: #fffdf8; color: #34475f; cursor: pointer; white-space: normal; }
 .production-note-button:hover { border-color: #f08a42; background: #fff4e9; }
+.production-note-button.is-readonly { cursor: default; }
+.production-note-button.is-readonly:hover { border-color: #d9e1e9; background: #fffdf8; }
 .production-note-summary { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; font-size: 11px; line-height: 1.45; }
 .production-note-summary > strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: 11px; white-space: normal; }
 .production-note-summary > small { color: #7b8797; font-size: 10px; white-space: normal; }

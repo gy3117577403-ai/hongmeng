@@ -23,6 +23,22 @@ export type WeeklyPlanProgressInput = {
   completedQuantity: number;
 };
 
+export type WipSourcePlanTransferInput = {
+  kind: 'WAITING_PRODUCTION' | 'SEMI_FINISHED';
+  quantity: number;
+  sameWeekPlannedQuantity?: number;
+  sameWeekCompletedQuantity?: number;
+};
+
+export type WipSourcePlanAdjustment = {
+  plannedQuantity: number;
+  completedQuantityCredit: number;
+  waitingProductionQuantity: number;
+  semiFinishedQuantity: number;
+};
+
+export type WipTargetPlanStatus = 'ACTIVE' | 'IN_PROGRESS' | 'COMPLETED' | 'SUPERSEDED' | 'CANCELLED';
+
 export type WeeklyPlanProgressRow = ReportWeekBucket & {
   isFutureWeek: boolean;
   scheduledBatches: number;
@@ -128,6 +144,109 @@ export function reportMetricTone(value: number | null | undefined): ReportMetric
 export function cappedBasisPoints(numerator: number, denominator: number): number | null {
   const ratio = basisPoints(Math.max(0, numerator), Math.max(0, denominator));
   return ratio === null ? null : Math.min(10_000, ratio);
+}
+
+/**
+ * Translate a source production batch into its effective weekly-plan scope.
+ *
+ * A waiting-production lot has no completed source-week process, so its
+ * quantity leaves the source plan entirely. A semi-finished lot preserves
+ * completed source-week work: its quantity stays in the denominator and is a
+ * completion credit for that source plan. A target allocation in the same
+ * production week is merged back into this source item: only its terminal
+ * completion is credited, so changing UI branches cannot double the week's
+ * plan quantity or manufacture a completion. Cross-week/unscheduled remainder
+ * belongs outside the source week's remaining scope.
+ */
+export function effectiveWipSourcePlanAdjustment(
+  batchQuantityInput: number,
+  transfers: readonly WipSourcePlanTransferInput[],
+): WipSourcePlanAdjustment {
+  const batchQuantity = Math.max(0, Math.trunc(batchQuantityInput || 0));
+  const normalizedTransfers = transfers.map(transfer => {
+    const quantity = Math.max(0, Math.trunc(transfer.quantity || 0));
+    const sameWeekPlannedQuantity = Math.min(
+      quantity,
+      Math.max(0, Math.trunc(transfer.sameWeekPlannedQuantity || 0)),
+    );
+    return {
+      ...transfer,
+      quantity,
+      sameWeekPlannedQuantity,
+      sameWeekCompletedQuantity: Math.min(
+        sameWeekPlannedQuantity,
+        Math.max(0, Math.trunc(transfer.sameWeekCompletedQuantity || 0)),
+      ),
+    };
+  });
+  const requestedSemiFinished = normalizedTransfers.reduce((sum, transfer) => (
+    transfer.kind === 'SEMI_FINISHED' ? sum + transfer.quantity : sum
+  ), 0);
+  const semiFinishedQuantity = Math.min(batchQuantity, requestedSemiFinished);
+  const requestedWaitingProduction = normalizedTransfers.reduce((sum, transfer) => (
+    transfer.kind === 'WAITING_PRODUCTION' ? sum + transfer.quantity : sum
+  ), 0);
+  // Preserve proven semi-finished completion first if inconsistent legacy data
+  // would otherwise make the two transfer categories exceed the batch.
+  const waitingProductionQuantity = Math.min(
+    Math.max(0, batchQuantity - semiFinishedQuantity),
+    requestedWaitingProduction,
+  );
+  const sameWeekWaitingPlanned = Math.min(
+    waitingProductionQuantity,
+    normalizedTransfers.reduce((sum, transfer) => (
+      transfer.kind === 'WAITING_PRODUCTION' ? sum + transfer.sameWeekPlannedQuantity : sum
+    ), 0),
+  );
+  const sameWeekSemiFinishedPlanned = normalizedTransfers.reduce(
+    (sum, transfer) => transfer.kind === 'SEMI_FINISHED'
+      ? sum + transfer.sameWeekPlannedQuantity
+      : sum,
+    0,
+  );
+  const sameWeekCompleted = normalizedTransfers.reduce(
+    (sum, transfer) => sum + transfer.sameWeekCompletedQuantity,
+    0,
+  );
+  const offWeekSemiFinished = Math.max(
+    0,
+    semiFinishedQuantity - Math.min(semiFinishedQuantity, sameWeekSemiFinishedPlanned),
+  );
+  return {
+    plannedQuantity: Math.max(
+      0,
+      batchQuantity - waitingProductionQuantity + sameWeekWaitingPlanned,
+    ),
+    completedQuantityCredit: Math.min(
+      batchQuantity,
+      offWeekSemiFinished + sameWeekCompleted,
+    ),
+    waitingProductionQuantity,
+    semiFinishedQuantity,
+  };
+}
+
+/**
+ * Effective target-week progress for one WIP allocation. A superseded
+ * allocation retains only work already completed in its former target week;
+ * its unfinished remainder belongs to the replacement allocation. Cancelled
+ * allocations have no effective weekly-plan scope.
+ */
+export function effectiveWipTargetPlanProgress(input: {
+  status: WipTargetPlanStatus;
+  quantity: number;
+  completedQuantity: number;
+}): { plannedQuantity: number; completedQuantity: number } {
+  const quantity = Math.max(0, Math.trunc(input.quantity || 0));
+  const completedQuantity = Math.min(
+    quantity,
+    Math.max(0, Math.trunc(input.completedQuantity || 0)),
+  );
+  if (input.status === 'CANCELLED') return { plannedQuantity: 0, completedQuantity: 0 };
+  if (input.status === 'SUPERSEDED') {
+    return { plannedQuantity: completedQuantity, completedQuantity };
+  }
+  return { plannedQuantity: quantity, completedQuantity };
 }
 
 /**

@@ -3887,14 +3887,6 @@ async function performProcessCompletion(
       'PROCESS_REPORTED_QTY_EXCEEDS_TARGET',
     );
   }
-  const wipResolution = await resolveWipReportingAllocation(tx, {
-    workOrderId: route.workOrderId,
-    stepId: current.id,
-    workDate: input.workDate,
-    processedQty: Math.max(0, input.processedQty - input.defectQty),
-    reportableQty,
-    requestedAllocationId: input.wipAllocationId,
-  });
   const reportQuantityBasis = normalizeProcessReportQuantityBasis(current.reportQuantityBasis);
   if (
     reportQuantityBasis === 'action'
@@ -3941,6 +3933,20 @@ async function performProcessCompletion(
       'PROCESS_REPORTED_UNIT_QTY_EXCEEDS_TARGET',
     );
   }
+  const wipResolution = await resolveWipReportingAllocation(tx, {
+    workOrderId: route.workOrderId,
+    stepId: current.id,
+    workDate: input.workDate,
+    processedQty: Math.max(0, input.processedQty - input.defectQty),
+    reportedProductQty: input.processedQty,
+    reportedGoodUnitQty: reportQuantityBasis === 'action'
+      ? reportQuantities.reportedGoodUnitQty
+      : undefined,
+    reportableQty,
+    reportableUnitQty: reportQuantityBasis === 'action' ? reportableUnitQty : undefined,
+    unitsPerProduct: current.unitsPerProduct,
+    requestedAllocationId: input.wipAllocationId,
+  });
   if (reportQuantityBasis === 'action') {
     try {
       assertActionFlowDoesNotExceedReportedOutput({

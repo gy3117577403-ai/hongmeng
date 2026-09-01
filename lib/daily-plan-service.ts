@@ -56,6 +56,11 @@ import {
   type DepartmentCode,
 } from '@/lib/department-access';
 import { resolveDailyPlanningActorScopeSources } from '@/lib/production-access-scope';
+import {
+  loadOutstandingWipByProcess,
+  nativeExecutableQuantity,
+  wipOwnershipKey,
+} from '@/lib/wip-native-ownership';
 
 const DEFAULT_SHIFT_CODE = 'DAY';
 const ACTIVE_ROUTE_STATUSES = new Set(['confirmed', 'in_progress', 'completed']);
@@ -775,6 +780,16 @@ export async function previewDailyPlanSuggestions(input: {
     },
     orderBy: [{ plannedCompletionDate: 'asc' }, { createdAt: 'asc' }],
   });
+  const outstandingWipByProcess = await loadOutstandingWipByProcess(
+    prisma,
+    batches.flatMap(batch => (
+      batch.workOrder?.processRoute?.steps.map(step => ({
+        workOrderId: batch.workOrder!.id,
+        productionPlanBatchId: batch.id,
+        stepId: step.id,
+      })) || []
+    )),
+  );
   const candidates: SuggestionCandidate[] = [];
   const blocked: Array<Record<string, unknown>> = [];
   for (const batch of batches) {
@@ -826,13 +841,17 @@ export async function previewDailyPlanSuggestions(input: {
         processedQty: step.processedQty,
       });
       if (availability.status === 'WAITING_UPSTREAM' && input.includeWaitingUpstream === false) continue;
-      const plannedQty = Math.max(0, batch.quantity - step.processedQty);
+      const plannedQty = nativeExecutableQuantity({
+        batchQuantity: batch.quantity,
+        processedQuantity: step.processedQty,
+        outstandingWipQuantity: outstandingWipByProcess.get(wipOwnershipKey(workOrder.id, batch.id, step.id)) || 0,
+      });
       if (plannedQty <= 0) continue;
       const score = scoreDailyPlanPriority({
         workDate,
         dueDate: batch.plannedCompletionDate || batch.planOrder.customerDueDate,
         priority: batch.planOrder.priority,
-        availableQty: availability.availableQty,
+        availableQty: Math.min(availability.availableQty, plannedQty),
         sequenceGroup: step.sequenceGroup,
       });
       const snapshot = snapshotForTask({
@@ -1160,6 +1179,14 @@ export async function createDailyProductionPlan(input: {
     assertPlanCanAppendTasks(plan.status);
     const targetPlanId = plan.id;
     let createdTaskCount = 0;
+    const outstandingWipByProcess = await loadOutstandingWipByProcess(
+      tx,
+      candidates.map(candidate => ({
+        workOrderId: candidate.workOrderId,
+        productionPlanBatchId: candidate.productionPlanBatchId,
+        stepId: candidate.stepId,
+      })),
+    );
     for (const candidate of candidates) {
       await assertProductionMayBeScheduled(tx, candidate.workOrderId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`weekly-process:${candidate.productionPlanBatchId}:${candidate.stepId}`}))`;
@@ -1177,8 +1204,17 @@ export async function createDailyProductionPlan(input: {
         where: { id: candidate.stepId },
         select: { processedQty: true },
       });
+      const effectiveBatchQuantity = Math.max(
+        0,
+        candidate.batchQuantity
+          - (outstandingWipByProcess.get(wipOwnershipKey(
+            candidate.workOrderId,
+            candidate.productionPlanBatchId,
+            candidate.stepId,
+          )) || 0),
+      );
       const remainingQuantity = summarizeWeeklyProcessAllocation({
-        batchQuantity: candidate.batchQuantity,
+        batchQuantity: effectiveBatchQuantity,
         processedQuantity: currentStep?.processedQty || candidate.processedQuantity,
         plannedQuantities: existing.map(task => task.plannedQty),
       }).remainingQuantity;
@@ -1570,7 +1606,7 @@ export async function scheduleProductionArrangements(input: {
     }
     const batchIds = [...new Set(candidates.map(candidate => candidate.productionPlanBatchId))];
     const candidateStepIds = [...new Set(candidates.map(candidate => candidate.stepId))];
-    const [activeTasks, batches, steps] = await Promise.all([
+    const [activeTasks, batches, steps, outstandingWipByProcess] = await Promise.all([
       tx.dailyProcessTask.findMany({
         where: {
           productionPlanBatchId: { in: batchIds },
@@ -1584,6 +1620,14 @@ export async function scheduleProductionArrangements(input: {
         where: { id: { in: candidateStepIds } },
         select: { id: true, inputQty: true, processedQty: true, status: true },
       }),
+      loadOutstandingWipByProcess(
+        tx,
+        candidates.map(candidate => ({
+          workOrderId: candidate.workOrderId,
+          productionPlanBatchId: candidate.productionPlanBatchId,
+          stepId: candidate.stepId,
+        })),
+      ),
     ]);
     const activeByPool = new Map(activeTasks.map(task => [`${task.productionPlanBatchId || ''}:${task.stepId}`, task] as const));
     const conflicting = candidates.find(candidate => activeByPool.has(`${candidate.productionPlanBatchId}:${candidate.stepId}`));
@@ -1604,8 +1648,22 @@ export async function scheduleProductionArrangements(input: {
       const batch = batchById.get(candidate.productionPlanBatchId);
       const step = stepById.get(candidate.stepId);
       if (!batch || !step) throw new DailyPlanServiceError('生产工序数据已变化，请刷新后重试', 'DAILY_PLAN_SOURCE_CHANGED', 409);
-      const plannedQty = Math.max(0, batch.quantity - step.processedQty);
-      if (plannedQty <= 0) continue;
+      const plannedQty = nativeExecutableQuantity({
+        batchQuantity: batch.quantity,
+        processedQuantity: step.processedQty,
+        outstandingWipQuantity: outstandingWipByProcess.get(wipOwnershipKey(
+          candidate.workOrderId,
+          candidate.productionPlanBatchId,
+          candidate.stepId,
+        )) || 0,
+      });
+      if (plannedQty <= 0) {
+        throw new DailyPlanServiceError(
+          `${candidate.workOrderCode} 的${candidate.processName}剩余数量已归属半成品仓，请刷新后从半成品续作安排`,
+          'DAILY_PLAN_WIP_OWNERSHIP_CHANGED',
+          409,
+        );
+      }
       const availability = resolveDailyTaskAvailability({
         sequenceGroup: candidate.sequenceGroup,
         inputQty: step.inputQty,
@@ -1766,27 +1824,15 @@ export async function continueProductionArrangement(input: {
         throw new DailyPlanServiceError('已完成、已续排或已取消的任务不能再次续排', 'DAILY_PLAN_STATUS_INVALID', 409);
       }
     }
-    const completions = await tx.processCompletion.findMany({
-      where: {
-        voidedAt: null,
-        OR: sources.map(source => ({
-          workOrderId: source.workOrderId,
-          stepId: source.stepId,
-          workDate: source.workDate,
-        })),
-      },
-      select: { workOrderId: true, stepId: true, workDate: true, goodQty: true },
-    });
-    const completedBySource = completions.reduce((map, completion) => {
-      const key = `${completion.workOrderId}:${completion.stepId}:${formatWorkDate(completion.workDate)}`;
-      map.set(key, (map.get(key) || 0) + completion.goodQty);
-      return map;
-    }, new Map<string, number>());
-    const remainingSources = sources.map(source => {
-      const key = `${source.workOrderId}:${source.stepId}:${formatWorkDate(source.workDate)}`;
-      const completedQty = Math.min(source.plannedQty, completedBySource.get(key) || 0);
-      return { source, completedQty, remainingQty: Math.max(0, source.plannedQty - completedQty) };
-    });
+    const [completionMap, nativeExecutablePoolByProcess] = await Promise.all([
+      loadProductionArrangementCompletionMap(tx, sources),
+      loadNativeExecutablePoolByTask(tx, sources),
+    ]);
+    const remainingSources = effectiveTaskRemainingRows({
+      tasks: sources,
+      completionMap,
+      nativeExecutablePoolByProcess,
+    }).map(({ task, completedQty, remainingQty }) => ({ source: task, completedQty, remainingQty }));
     let targetPlan = await tx.dailyProductionPlan.findUnique({
       where: { workDate_shiftCode_teamId: { workDate: targetDate, shiftCode, teamId } },
     });
@@ -1824,10 +1870,12 @@ export async function continueProductionArrangement(input: {
     for (let sourceIndex = 0; sourceIndex < remainingSources.length; sourceIndex += 1) {
       const { source, remainingQty } = remainingSources[sourceIndex];
       if (remainingQty <= 0) {
-        await tx.dailyProcessTask.update({
-          where: { id: source.id },
-          data: { status: DailyProcessTaskStatus.COMPLETED, availableQty: 0, version: { increment: 1 } },
-        });
+        if (remainingSources[sourceIndex].completedQty >= source.plannedQty) {
+          await tx.dailyProcessTask.update({
+            where: { id: source.id },
+            data: { status: DailyProcessTaskStatus.COMPLETED, availableQty: 0, version: { increment: 1 } },
+          });
+        }
         continue;
       }
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-arrangement:${source.productionPlanBatchId || source.workOrderId}:${source.stepId}`}))`;
@@ -1973,6 +2021,7 @@ type ProductionArrangementReassignmentExpectedTask = {
   taskVersion: number;
   planVersion: number;
   completedQty: number;
+  remainingQty: number;
   assignmentVersions: Array<{ assignmentId: string; version: number }>;
 };
 
@@ -2005,6 +2054,81 @@ async function loadProductionArrangementCompletionMap(
     map.set(key, (map.get(key) || 0) + completion.goodQty);
     return map;
   }, new Map<string, number>());
+}
+
+type WipGuardedProductionTask = {
+  id: string;
+  workOrderId: string;
+  productionPlanBatchId: string | null;
+  stepId: string;
+  plannedQty: number;
+  workDate: Date;
+};
+
+async function loadNativeExecutablePoolByTask(
+  client: MutationClient,
+  tasks: readonly WipGuardedProductionTask[],
+): Promise<Map<string, number>> {
+  const guardedTasks = tasks.filter((task): task is WipGuardedProductionTask & { productionPlanBatchId: string } => (
+    Boolean(task.productionPlanBatchId)
+  ));
+  if (!guardedTasks.length) return new Map();
+  const batchIds = [...new Set(guardedTasks.map(task => task.productionPlanBatchId))];
+  const stepIds = [...new Set(guardedTasks.map(task => task.stepId))];
+  const [batches, steps, outstandingWipByProcess] = await Promise.all([
+    client.productionPlanBatch.findMany({
+      where: { id: { in: batchIds }, deletedAt: null },
+      select: { id: true, quantity: true },
+    }),
+    client.workOrderProcessStep.findMany({
+      where: { id: { in: stepIds }, retiredAt: null },
+      select: { id: true, processedQty: true },
+    }),
+    loadOutstandingWipByProcess(client, guardedTasks.map(task => ({
+      workOrderId: task.workOrderId,
+      productionPlanBatchId: task.productionPlanBatchId,
+      stepId: task.stepId,
+    }))),
+  ]);
+  const batchById = new Map(batches.map(batch => [batch.id, batch] as const));
+  const stepById = new Map(steps.map(step => [step.id, step] as const));
+  const result = new Map<string, number>();
+  for (const task of guardedTasks) {
+    const batch = batchById.get(task.productionPlanBatchId);
+    const step = stepById.get(task.stepId);
+    const key = wipOwnershipKey(task.workOrderId, task.productionPlanBatchId, task.stepId);
+    if (!batch || !step) {
+      result.set(key, 0);
+      continue;
+    }
+    result.set(key, nativeExecutableQuantity({
+      batchQuantity: batch.quantity,
+      processedQuantity: step.processedQty,
+      outstandingWipQuantity: outstandingWipByProcess.get(key) || 0,
+    }));
+  }
+  return result;
+}
+
+function effectiveTaskRemainingRows<T extends WipGuardedProductionTask>(input: {
+  tasks: readonly T[];
+  completionMap: Map<string, number>;
+  nativeExecutablePoolByProcess: Map<string, number>;
+}): Array<{ task: T; completedQty: number; remainingQty: number }> {
+  const pool = new Map(input.nativeExecutablePoolByProcess);
+  return input.tasks.map(task => {
+    const completedQty = Math.min(
+      task.plannedQty,
+      input.completionMap.get(productionArrangementCompletionKey(task)) || 0,
+    );
+    const ordinaryRemainingQty = Math.max(0, task.plannedQty - completedQty);
+    if (!task.productionPlanBatchId) return { task, completedQty, remainingQty: ordinaryRemainingQty };
+    const key = wipOwnershipKey(task.workOrderId, task.productionPlanBatchId, task.stepId);
+    const availableNativeQty = Math.max(0, pool.get(key) || 0);
+    const remainingQty = Math.min(ordinaryRemainingQty, availableNativeQty);
+    pool.set(key, Math.max(0, availableNativeQty - remainingQty));
+    return { task, completedQty, remainingQty };
+  });
 }
 
 function normalizeProductionReassignmentReason(input: {
@@ -2079,12 +2203,15 @@ export async function getProductionArrangementReassignmentContext(input: {
     assertPlanAllowsAssignments(task.plan.status);
     assertTeamMutation(scope, task.plan.teamId);
   }
-  const completionMap = await loadProductionArrangementCompletionMap(prisma, tasks);
-  const taskRows = tasks.map(task => {
-    const completedQty = Math.min(
-      task.plannedQty,
-      completionMap.get(productionArrangementCompletionKey(task)) || 0,
-    );
+  const [completionMap, nativeExecutablePoolByProcess] = await Promise.all([
+    loadProductionArrangementCompletionMap(prisma, tasks),
+    loadNativeExecutablePoolByTask(prisma, tasks),
+  ]);
+  const taskRows = effectiveTaskRemainingRows({
+    tasks,
+    completionMap,
+    nativeExecutablePoolByProcess,
+  }).map(({ task, completedQty, remainingQty }) => {
     return {
       id: task.id,
       version: task.version,
@@ -2099,7 +2226,7 @@ export async function getProductionArrangementReassignmentContext(input: {
       position: task.position,
       plannedQty: task.plannedQty,
       completedQty,
-      remainingQty: Math.max(0, task.plannedQty - completedQty),
+      remainingQty,
       assignments: task.assignments.map(assignment => ({
         id: assignment.id,
         version: assignment.version,
@@ -2178,6 +2305,7 @@ export async function reassignProductionArrangementRemaining(input: {
       taskVersion: item.taskVersion,
       planVersion: item.planVersion,
       completedQty: item.completedQty,
+      remainingQty: item.remainingQty,
       assignmentVersions: [...item.assignmentVersions].sort((left, right) => left.assignmentId.localeCompare(right.assignmentId)),
     })).sort((left, right) => left.taskId.localeCompare(right.taskId)),
     reasonCode: reason.reasonCode,
@@ -2221,7 +2349,15 @@ export async function reassignProductionArrangementRemaining(input: {
     if (tasks.length !== taskIds.length) {
       throw new DailyPlanServiceError('部分生产安排已经不存在，请刷新后重试', 'DAILY_PLAN_TASK_NOT_FOUND', 404);
     }
-    const completionMap = await loadProductionArrangementCompletionMap(tx, tasks);
+    const [completionMap, nativeExecutablePoolByProcess] = await Promise.all([
+      loadProductionArrangementCompletionMap(tx, tasks),
+      loadNativeExecutablePoolByTask(tx, tasks),
+    ]);
+    const effectiveRemainingByTaskId = new Map(effectiveTaskRemainingRows({
+      tasks,
+      completionMap,
+      nativeExecutablePoolByProcess,
+    }).map(row => [row.task.id, row] as const));
     const touchedPlanVersions = new Map<string, number>();
     const beforeRows: unknown[] = [];
     const afterRows: Array<Record<string, unknown>> = [];
@@ -2261,8 +2397,16 @@ export async function reassignProductionArrangementRemaining(input: {
       if (completedQty !== nonNegativeInteger(expected.completedQty, '已完成数量')) {
         throw new DailyPlanServiceError('调整期间产生了新的报工，请重新预览剩余数量', 'DAILY_PLAN_COMPLETION_CHANGED', 409);
       }
+      const effectiveRemainingQty = effectiveRemainingByTaskId.get(task.id)?.remainingQty || 0;
+      if (effectiveRemainingQty !== nonNegativeInteger(expected.remainingQty, '可重排剩余数量')) {
+        throw new DailyPlanServiceError(
+          '半成品仓归属数量已变化，请刷新后重新预览剩余数量',
+          'DAILY_PLAN_WIP_OWNERSHIP_CHANGED',
+          409,
+        );
+      }
       const rebuild = rebuildProductionArrangementRemaining({
-        plannedQty: task.plannedQty,
+        plannedQty: completedQty + effectiveRemainingQty,
         completedQty,
         currentEmployeeIds: task.assignments.map(item => item.employeeId),
         replacementEmployeeIds: targetEmployeeIds,

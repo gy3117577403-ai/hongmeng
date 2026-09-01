@@ -31,6 +31,8 @@ import {
 import {
   allocatePlanBatchCompletionQuantities,
   cappedBasisPoints,
+  effectiveWipSourcePlanAdjustment,
+  effectiveWipTargetPlanProgress,
   parseReportMonth,
   reportRangeWeekBuckets,
   reportWeekStorageRange,
@@ -430,20 +432,69 @@ export async function GET(req: NextRequest) {
       select: {
         id: true,
         quantity: true,
+        weekStartDate: true,
         plannedCompletionDate: true,
         workOrderId: true,
       },
     }) : [];
+    const sourceAdjustmentBatchIds = [...new Set([
+      ...batches.map(batch => batch.id),
+      ...allocationBatches.map(batch => batch.id),
+    ])];
     const finalStepIds = batches.flatMap(batch => batch.workOrder?.processRoute?.steps.map(step => step.id) || []);
-    const finalCompletions = finalStepIds.length ? await prisma.processCompletion.findMany({
-      where: {
-        voidedAt: null,
-        stepId: { in: finalStepIds },
-        completedAt: { lt: cutoffAt },
-      },
-      select: { workOrderId: true, goodQty: true },
-      take: 50_000,
-    }) : [];
+    const [sourceWipLots, finalCompletions, targetWipAllocations] = await Promise.all([
+      sourceAdjustmentBatchIds.length ? prisma.semiFinishedLot.findMany({
+        where: {
+          productionPlanBatchId: { in: sourceAdjustmentBatchIds },
+          scheduleStatus: { not: 'CANCELLED' },
+          enteredAt: { lt: cutoffAt },
+        },
+        select: { id: true, productionPlanBatchId: true, kind: true, quantity: true },
+        take: 10_000,
+      }) : Promise.resolve([]),
+      finalStepIds.length ? prisma.processCompletion.findMany({
+        where: {
+          voidedAt: null,
+          stepId: { in: finalStepIds },
+          completedAt: { lt: cutoffAt },
+        },
+        select: {
+          workOrderId: true,
+          goodQty: true,
+          wipCredits: {
+            where: { status: 'ACTIVE' },
+            select: { quantity: true },
+          },
+        },
+        take: 50_000,
+      }) : Promise.resolve([]),
+      weeklyPlanWeekRange ? prisma.wipWeekAllocation.findMany({
+        where: {
+          targetWeekStartDate: weeklyPlanWeekRange,
+          scheduledAt: { lt: cutoffAt },
+          lot: { scheduleStatus: { not: 'CANCELLED' } },
+          OR: [
+            { status: { in: ['ACTIVE', 'IN_PROGRESS', 'COMPLETED'] } },
+            { status: 'SUPERSEDED', completedQty: { gt: 0 } },
+          ],
+        },
+        select: {
+          id: true,
+          targetWeekStartDate: true,
+          quantity: true,
+          completedQty: true,
+          status: true,
+          lot: {
+            select: {
+              id: true,
+              productionPlanBatchId: true,
+              productionPlanBatch: { select: { weekStartDate: true } },
+            },
+          },
+        },
+        take: 10_000,
+      }) : Promise.resolve([]),
+    ]);
 
     const employeeDayMap = new Map<string, Map<string, MutableDay>>();
     const employeeConfiguration = new Map(employees.map(employee => [employee.id, {
@@ -783,31 +834,110 @@ export async function GET(req: NextRequest) {
     }));
     const attendanceScore = summarizeFinalizedAttendance(dailyAttendance);
 
+    const effectiveTargetProgressByLotWeek = new Map<string, { plannedQuantity: number; completedQuantity: number }>();
+    for (const allocation of targetWipAllocations) {
+      const progress = effectiveWipTargetPlanProgress({
+        status: allocation.status,
+        quantity: allocation.quantity,
+        completedQuantity: allocation.completedQty,
+      });
+      const targetWeekKey = shanghaiDateKey(allocation.targetWeekStartDate);
+      const key = `${allocation.lot.id}:${targetWeekKey}`;
+      const current = effectiveTargetProgressByLotWeek.get(key) || { plannedQuantity: 0, completedQuantity: 0 };
+      current.plannedQuantity += progress.plannedQuantity;
+      current.completedQuantity += progress.completedQuantity;
+      effectiveTargetProgressByLotWeek.set(key, current);
+    }
+    const sourceBatchWeekById = new Map([
+      ...batches.map(batch => [batch.id, shanghaiDateKey(batch.weekStartDate)] as const),
+      ...allocationBatches.map(batch => [batch.id, shanghaiDateKey(batch.weekStartDate)] as const),
+    ]);
+    const sourceWipByBatch = new Map<string, Array<{
+      kind: 'WAITING_PRODUCTION' | 'SEMI_FINISHED';
+      quantity: number;
+      sameWeekPlannedQuantity: number;
+      sameWeekCompletedQuantity: number;
+    }>>();
+    for (const lot of sourceWipLots) {
+      const current = sourceWipByBatch.get(lot.productionPlanBatchId) || [];
+      const sourceWeekKey = sourceBatchWeekById.get(lot.productionPlanBatchId);
+      const sameWeekProgress = sourceWeekKey
+        ? effectiveTargetProgressByLotWeek.get(`${lot.id}:${sourceWeekKey}`)
+        : null;
+      current.push({
+        kind: lot.kind,
+        quantity: lot.quantity,
+        sameWeekPlannedQuantity: sameWeekProgress?.plannedQuantity || 0,
+        sameWeekCompletedQuantity: sameWeekProgress?.completedQuantity || 0,
+      });
+      sourceWipByBatch.set(lot.productionPlanBatchId, current);
+    }
+    const sourceAdjustment = (batchId: string, quantity: number) => effectiveWipSourcePlanAdjustment(
+      quantity,
+      sourceWipByBatch.get(batchId) || [],
+    );
+
     const completedByWorkOrder = new Map<string, number>();
     for (const completion of finalCompletions) {
+      const wipQuantity = completion.wipCredits.reduce(
+        (sum, credit) => sum + Math.max(0, credit.quantity),
+        0,
+      );
+      const nativeGoodQuantity = Math.max(0, completion.goodQty - wipQuantity);
       completedByWorkOrder.set(
         completion.workOrderId,
-        (completedByWorkOrder.get(completion.workOrderId) || 0) + Math.max(0, completion.goodQty),
+        (completedByWorkOrder.get(completion.workOrderId) || 0) + nativeGoodQuantity,
       );
     }
     const allocatedByBatch = allocatePlanBatchCompletionQuantities(
-      allocationBatches.map(batch => ({
-        id: batch.id,
-        workOrderId: batch.workOrderId,
-        quantity: batch.quantity,
-        plannedDateKey: shanghaiDateKey(batch.plannedCompletionDate),
-      })),
+      allocationBatches.map(batch => {
+        const adjustment = sourceAdjustment(batch.id, batch.quantity);
+        return {
+          id: batch.id,
+          workOrderId: batch.workOrderId,
+          quantity: adjustment.plannedQuantity,
+          plannedDateKey: shanghaiDateKey(batch.plannedCompletionDate),
+        };
+      }),
       completedByWorkOrder,
     );
     const cutoffDateKey = todayKey(cutoffAt);
-    const weeklyPlan = summarizeWeeklyPlanProgress(
-      weeklyPlanBuckets,
-      batches.map(batch => ({
+    const sourcePlanProgress = batches.flatMap(batch => {
+      const adjustment = sourceAdjustment(batch.id, batch.quantity);
+      if (adjustment.plannedQuantity <= 0) return [];
+      return [{
         id: batch.id,
         weekStartDateKey: shanghaiDateKey(batch.weekStartDate),
-        quantity: batch.quantity,
-        completedQuantity: allocatedByBatch.get(batch.id) || 0,
-      })),
+        quantity: adjustment.plannedQuantity,
+        completedQuantity: Math.min(
+          adjustment.plannedQuantity,
+          (allocatedByBatch.get(batch.id) || 0) + adjustment.completedQuantityCredit,
+        ),
+      }];
+    });
+    const targetWipProgress = targetWipAllocations.flatMap(allocation => {
+      const targetWeekStartDate = shanghaiDateKey(allocation.targetWeekStartDate);
+      const sourceWeekStartDate = shanghaiDateKey(allocation.lot.productionPlanBatch.weekStartDate);
+      // A same-week WIP allocation is another execution branch of the same
+      // weekly plan item. Its plan and terminal completion were merged into
+      // sourcePlanProgress above; emitting a second row would halve attainment.
+      if (targetWeekStartDate === sourceWeekStartDate) return [];
+      const progress = effectiveWipTargetPlanProgress({
+        status: allocation.status,
+        quantity: allocation.quantity,
+        completedQuantity: allocation.completedQty,
+      });
+      if (progress.plannedQuantity <= 0) return [];
+      return [{
+        id: `wip:${allocation.id}`,
+        weekStartDateKey: targetWeekStartDate,
+        quantity: progress.plannedQuantity,
+        completedQuantity: progress.completedQuantity,
+      }];
+    });
+    const weeklyPlan = summarizeWeeklyPlanProgress(
+      weeklyPlanBuckets,
+      [...sourcePlanProgress, ...targetWipProgress],
       cutoffDateKey,
     );
 
@@ -947,7 +1077,7 @@ export async function GET(req: NextRequest) {
         '出勤得分按实际出勤 ÷ 净应出勤计算并封顶 100%，超出部分单列；整日请假和休息日剔除基数，部分请假缩减基数，正式缺勤仍保留在出勤基数。草稿与缺失考勤不按 0 计算，但会阻止该日发布正式得分。',
         '只有已确认考勤才形成有效工时、加班、请假和正式得分；草稿只显示待处理状态。工作日当日始终显示统计中，历史工作日只有生产部应处理考勤全部确认后才纳入周期得分。',
         '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；目标达成率 = 标准工时 ÷（有效出勤 × 95% × 个人计入比例）。',
-        '周计划按生产周分组：已开始周的全部计划批次进入达成率基数，提前完成立即计入；尚未开始的整周显示为未来周，不按 0 计算。最终工序良品按同一工单的批次先后顺序一次分配，不重复计入多个批次。',
+        '周计划按生产周和当前有效执行范围分组：已开始周的普通批次与半成品续作进入达成率基数，提前完成立即计入；尚未开始的整周显示为未来周，不按 0 计算。转入半成品仓时，来源周保留已完成工序形成的达成、移出未完成工序计划，剩余工序只在有效目标周重新计入；已取消或零进度被改排的安排不计入。最终工序良品与半成品归属按同一工单一次分配，不重复计入。',
         '金额与产值尚无权威单价来源，本模块不生成推测值；待单价主数据接入后再启用。',
       ],
     };
