@@ -91,6 +91,17 @@ enum ProcessCompletionSource {
   @@map("process_completion_source")
 }
 
+enum ProcessCompletionWithdrawalRequestStatus {
+  PENDING
+  APPLIED
+  REJECTED
+  CANCELLED
+  BLOCKED
+  STALE
+
+  @@map("process_completion_withdrawal_request_status")
+}
+
 enum ProcessRouteChangeStatus {
   DRAFT
   SUBMITTED
@@ -638,6 +649,8 @@ model User {
   activatedProcessRouteChanges    ProcessRouteChange[]                   @relation("ProcessRouteChangeActivatedBy")
   processRouteChangeEvents        ProcessRouteChangeEvent[]              @relation("ProcessRouteChangeEventActor")
   processSupplementCoverages      ProcessSupplementCoverage[]            @relation("ProcessSupplementCoverageActor")
+  requestedCompletionWithdrawals  ProcessCompletionWithdrawalRequest[]   @relation("ProcessCompletionWithdrawalRequestedBy")
+  decidedCompletionWithdrawals    ProcessCompletionWithdrawalRequest[]   @relation("ProcessCompletionWithdrawalDecidedBy")
 
   @@map("users")
 }
@@ -685,105 +698,106 @@ model UserAccessGrant {
 }
 
 model WorkOrder {
-  id                       String                         @id @default(uuid())
-  code                     String                         @unique
-  businessCode             String?                        @unique @map("business_code")
-  customerName             String?                        @map("customer_name")
-  productName              String                         @map("product_name")
-  stage                    String
-  progress                 Int                            @default(0)
-  priority                 String                         @default("normal")
-  status                   String                         @default("processing")
-  plannedAt                DateTime?                      @map("planned_at")
-  remark                   String?
-  sourceOrderNo            String?                        @map("source_order_no")
-  salesperson              String?
-  orderDate                DateTime?                      @map("order_date")
-  customerLevel            String?                        @map("customer_level")
-  specification            String?
-  processName              String?                        @map("process_name")
-  uncompletedQty           String?                        @map("uncompleted_qty")
-  productionTargetQty      Int?                           @map("production_target_qty")
-  unitWorkHours            String?                        @map("unit_work_hours")
-  totalWorkHours           String?                        @map("total_work_hours")
-  drawingStatus            String?                        @map("drawing_status")
-  deliveryDay              String?                        @map("delivery_day")
-  materialStatus           String?                        @map("material_status")
-  drawingIssuedAt          DateTime?                      @map("drawing_issued_at")
-  drawingIssueNote         String?                        @map("drawing_issue_note")
-  importBatchId            String?                        @map("import_batch_id")
-  sourceSheetName          String?                        @map("source_sheet_name")
-  sourceRowNo              Int?                           @map("source_row_no")
-  planType                 String?                        @map("plan_type")
-  weekStartDate            DateTime?                      @map("week_start_date")
-  weekEndDate              DateTime?                      @map("week_end_date")
-  planActive               Boolean                        @default(true) @map("plan_active")
-  planClearedAt            DateTime?                      @map("plan_cleared_at")
-  planClearedBy            String?                        @map("plan_cleared_by")
-  libraryKey               String?                        @map("library_key")
-  drawingLibraryItemId     String?                        @map("drawing_library_item_id")
-  productionOwner          String?                        @map("production_owner")
-  workstation              String?
-  completedQty             String?                        @map("completed_qty")
-  frontendTransferredQty   Int?                           @map("frontend_transferred_qty")
-  executionVersion         Int                            @default(0) @map("execution_version")
-  parentWorkOrderId        String?                        @map("parent_work_order_id")
-  rootWorkOrderId          String?                        @map("root_work_order_id")
-  branchType               WorkOrderBranchType?           @map("branch_type")
-  branchStatus             WorkOrderBranchStatus?         @map("branch_status")
-  originCompletionId       String?                        @unique @map("origin_completion_id")
-  originStepId             String?                        @map("origin_step_id")
-  rejoinStepId             String?                        @map("rejoin_step_id")
-  branchSequence           Int?                           @map("branch_sequence")
-  startedAt                DateTime?                      @map("started_at")
-  completedAt              DateTime?                      @map("completed_at")
-  lastProgressAt           DateTime?                      @map("last_progress_at")
-  latestProgressRemark     String?                        @map("latest_progress_remark")
-  operationalNote          Json?                          @map("operational_note")
-  productionPausedAt       DateTime?                      @map("production_paused_at")
-  productionPause          Json?                          @map("production_pause")
-  productionControlVersion Int                            @default(0) @map("production_control_version")
-  estimatedCompletionAt    DateTime?                      @map("estimated_completion_at")
-  deliveryBaselineDay      String?                        @map("delivery_baseline_day")
-  planBaselineAt           DateTime?                      @map("plan_baseline_at")
-  dateBaselineSource       String                         @default("initial") @map("date_baseline_source")
-  deliveryAdjustmentCount  Int                            @default(0) @map("delivery_adjustment_count")
-  productionControlEvents  ProductionControlEvent[]
-  createdAt                DateTime                       @default(now()) @map("created_at")
-  updatedAt                DateTime                       @updatedAt @map("updated_at")
-  deletedAt                DateTime?                      @map("deleted_at")
-  resourceFiles            ResourceFile[]
-  drawingLibraryItem       DrawingLibraryItem?            @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
-  lastDrawingLibraryItems  DrawingLibraryItem[]           @relation("LastDrawingLibraryWorkOrder")
-  progressLogs             WorkOrderProgressLog[]
-  issues                   Issue[]
-  changeRequests           ChangeRequest[]
-  materialTask             WarehouseMaterialTask?
-  processRoute             WorkOrderProcessRoute?
-  abnormalTimeEvents       AbnormalTimeEvent[]
-  productionPlanBatch      ProductionPlanBatch?
-  productionPlanBatchHolds ProductionPlanBatchHold[]
-  productionCarryovers     ProductionCarryover[]
-  semiFinishedLots         SemiFinishedLot[]
-  parentWorkOrder          WorkOrder?                     @relation("WorkOrderBranchParent", fields: [parentWorkOrderId], references: [id], onDelete: SetNull)
-  branchWorkOrders         WorkOrder[]                    @relation("WorkOrderBranchParent")
-  rootWorkOrder            WorkOrder?                     @relation("WorkOrderBranchRoot", fields: [rootWorkOrderId], references: [id], onDelete: SetNull)
-  rootBranchWorkOrders     WorkOrder[]                    @relation("WorkOrderBranchRoot")
-  originCompletion         ProcessCompletion?             @relation("CompletionBranchWorkOrder", fields: [originCompletionId], references: [id], onDelete: SetNull)
-  originStep               WorkOrderProcessStep?          @relation("WorkOrderBranchOriginStep", fields: [originStepId], references: [id], onDelete: SetNull)
-  rejoinStep               WorkOrderProcessStep?          @relation("WorkOrderBranchRejoinStep", fields: [rejoinStepId], references: [id], onDelete: SetNull)
-  processCompletions       ProcessCompletion[]            @relation("CompletionWorkOrder")
-  quantityMovements        ProcessQuantityMovement[]      @relation("MovementWorkOrder")
-  branchQuantityMovements  ProcessQuantityMovement[]      @relation("MovementBranchWorkOrder")
-  processLaborPools        ProcessLaborPool[]
-  dailyProcessTasks        DailyProcessTask[]
-  dailyShipmentItems       DailyShipmentPlanItem[]
-  qrTicket                 WorkOrderQrTicket?
-  processRouteChanges      ProcessRouteChange[]
-  supplementObligations    ProcessSupplementObligation[]
-  productTimeDeployments   ProductTimeDeploymentRoute[]
-  internalQualityRiskLinks InternalQualityRiskWorkOrder[]
-  qualityRiskAlerts        WorkOrderQualityAlert[]
+  id                           String                               @id @default(uuid())
+  code                         String                               @unique
+  businessCode                 String?                              @unique @map("business_code")
+  customerName                 String?                              @map("customer_name")
+  productName                  String                               @map("product_name")
+  stage                        String
+  progress                     Int                                  @default(0)
+  priority                     String                               @default("normal")
+  status                       String                               @default("processing")
+  plannedAt                    DateTime?                            @map("planned_at")
+  remark                       String?
+  sourceOrderNo                String?                              @map("source_order_no")
+  salesperson                  String?
+  orderDate                    DateTime?                            @map("order_date")
+  customerLevel                String?                              @map("customer_level")
+  specification                String?
+  processName                  String?                              @map("process_name")
+  uncompletedQty               String?                              @map("uncompleted_qty")
+  productionTargetQty          Int?                                 @map("production_target_qty")
+  unitWorkHours                String?                              @map("unit_work_hours")
+  totalWorkHours               String?                              @map("total_work_hours")
+  drawingStatus                String?                              @map("drawing_status")
+  deliveryDay                  String?                              @map("delivery_day")
+  materialStatus               String?                              @map("material_status")
+  drawingIssuedAt              DateTime?                            @map("drawing_issued_at")
+  drawingIssueNote             String?                              @map("drawing_issue_note")
+  importBatchId                String?                              @map("import_batch_id")
+  sourceSheetName              String?                              @map("source_sheet_name")
+  sourceRowNo                  Int?                                 @map("source_row_no")
+  planType                     String?                              @map("plan_type")
+  weekStartDate                DateTime?                            @map("week_start_date")
+  weekEndDate                  DateTime?                            @map("week_end_date")
+  planActive                   Boolean                              @default(true) @map("plan_active")
+  planClearedAt                DateTime?                            @map("plan_cleared_at")
+  planClearedBy                String?                              @map("plan_cleared_by")
+  libraryKey                   String?                              @map("library_key")
+  drawingLibraryItemId         String?                              @map("drawing_library_item_id")
+  productionOwner              String?                              @map("production_owner")
+  workstation                  String?
+  completedQty                 String?                              @map("completed_qty")
+  frontendTransferredQty       Int?                                 @map("frontend_transferred_qty")
+  executionVersion             Int                                  @default(0) @map("execution_version")
+  parentWorkOrderId            String?                              @map("parent_work_order_id")
+  rootWorkOrderId              String?                              @map("root_work_order_id")
+  branchType                   WorkOrderBranchType?                 @map("branch_type")
+  branchStatus                 WorkOrderBranchStatus?               @map("branch_status")
+  originCompletionId           String?                              @unique @map("origin_completion_id")
+  originStepId                 String?                              @map("origin_step_id")
+  rejoinStepId                 String?                              @map("rejoin_step_id")
+  branchSequence               Int?                                 @map("branch_sequence")
+  startedAt                    DateTime?                            @map("started_at")
+  completedAt                  DateTime?                            @map("completed_at")
+  lastProgressAt               DateTime?                            @map("last_progress_at")
+  latestProgressRemark         String?                              @map("latest_progress_remark")
+  operationalNote              Json?                                @map("operational_note")
+  productionPausedAt           DateTime?                            @map("production_paused_at")
+  productionPause              Json?                                @map("production_pause")
+  productionControlVersion     Int                                  @default(0) @map("production_control_version")
+  estimatedCompletionAt        DateTime?                            @map("estimated_completion_at")
+  deliveryBaselineDay          String?                              @map("delivery_baseline_day")
+  planBaselineAt               DateTime?                            @map("plan_baseline_at")
+  dateBaselineSource           String                               @default("initial") @map("date_baseline_source")
+  deliveryAdjustmentCount      Int                                  @default(0) @map("delivery_adjustment_count")
+  productionControlEvents      ProductionControlEvent[]
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  deletedAt                    DateTime?                            @map("deleted_at")
+  resourceFiles                ResourceFile[]
+  drawingLibraryItem           DrawingLibraryItem?                  @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
+  lastDrawingLibraryItems      DrawingLibraryItem[]                 @relation("LastDrawingLibraryWorkOrder")
+  progressLogs                 WorkOrderProgressLog[]
+  issues                       Issue[]
+  changeRequests               ChangeRequest[]
+  materialTask                 WarehouseMaterialTask?
+  processRoute                 WorkOrderProcessRoute?
+  abnormalTimeEvents           AbnormalTimeEvent[]
+  productionPlanBatch          ProductionPlanBatch?
+  productionPlanBatchHolds     ProductionPlanBatchHold[]
+  productionCarryovers         ProductionCarryover[]
+  semiFinishedLots             SemiFinishedLot[]
+  parentWorkOrder              WorkOrder?                           @relation("WorkOrderBranchParent", fields: [parentWorkOrderId], references: [id], onDelete: SetNull)
+  branchWorkOrders             WorkOrder[]                          @relation("WorkOrderBranchParent")
+  rootWorkOrder                WorkOrder?                           @relation("WorkOrderBranchRoot", fields: [rootWorkOrderId], references: [id], onDelete: SetNull)
+  rootBranchWorkOrders         WorkOrder[]                          @relation("WorkOrderBranchRoot")
+  originCompletion             ProcessCompletion?                   @relation("CompletionBranchWorkOrder", fields: [originCompletionId], references: [id], onDelete: SetNull)
+  originStep                   WorkOrderProcessStep?                @relation("WorkOrderBranchOriginStep", fields: [originStepId], references: [id], onDelete: SetNull)
+  rejoinStep                   WorkOrderProcessStep?                @relation("WorkOrderBranchRejoinStep", fields: [rejoinStepId], references: [id], onDelete: SetNull)
+  processCompletions           ProcessCompletion[]                  @relation("CompletionWorkOrder")
+  completionWithdrawalRequests ProcessCompletionWithdrawalRequest[]
+  quantityMovements            ProcessQuantityMovement[]            @relation("MovementWorkOrder")
+  branchQuantityMovements      ProcessQuantityMovement[]            @relation("MovementBranchWorkOrder")
+  processLaborPools            ProcessLaborPool[]
+  dailyProcessTasks            DailyProcessTask[]
+  dailyShipmentItems           DailyShipmentPlanItem[]
+  qrTicket                     WorkOrderQrTicket?
+  processRouteChanges          ProcessRouteChange[]
+  supplementObligations        ProcessSupplementObligation[]
+  productTimeDeployments       ProductTimeDeploymentRoute[]
+  internalQualityRiskLinks     InternalQualityRiskWorkOrder[]
+  qualityRiskAlerts            WorkOrderQualityAlert[]
 
   @@unique([parentWorkOrderId, branchSequence])
   @@index([code])
@@ -904,36 +918,37 @@ model ProcessTemplateStep {
 }
 
 model WorkOrderProcessRoute {
-  id                        String                        @id @default(uuid())
-  workOrderId               String                        @unique @map("work_order_id")
-  templateId                String?                       @map("template_id")
-  templateName              String                        @map("template_name")
-  templateVersion           Int                           @map("template_version")
-  status                    String                        @default("draft")
-  version                   Int                           @default(0)
-  confirmedAt               DateTime?                     @map("confirmed_at")
-  confirmedById             String?                       @map("confirmed_by_id")
-  startedAt                 DateTime?                     @map("started_at")
-  completedAt               DateTime?                     @map("completed_at")
-  productTimeProfileId      String?                       @map("product_time_profile_id")
-  productTimeProfileVersion Int?                          @map("product_time_profile_version")
-  routeSource               String                        @default("process_template") @map("route_source")
-  reportingPolicy           String                        @default("free_sequence") @map("reporting_policy")
-  createdAt                 DateTime                      @default(now()) @map("created_at")
-  updatedAt                 DateTime                      @updatedAt @map("updated_at")
-  workOrder                 WorkOrder                     @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
-  template                  ProcessTemplate?              @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  productTimeProfile        ProductTimeProfile?           @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
-  confirmedBy               User?                         @relation("ProcessRouteConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
-  steps                     WorkOrderProcessStep[]
-  activities                ProcessRouteActivity[]
-  completions               ProcessCompletion[]
-  dailyProcessTasks         DailyProcessTask[]
-  qrPrints                  WorkOrderQrPrint[]
-  processRouteChanges       ProcessRouteChange[]
-  supplementObligations     ProcessSupplementObligation[]
-  productTimeDeployments    ProductTimeDeploymentRoute[]
-  semiFinishedLots          SemiFinishedLot[]
+  id                           String                               @id @default(uuid())
+  workOrderId                  String                               @unique @map("work_order_id")
+  templateId                   String?                              @map("template_id")
+  templateName                 String                               @map("template_name")
+  templateVersion              Int                                  @map("template_version")
+  status                       String                               @default("draft")
+  version                      Int                                  @default(0)
+  confirmedAt                  DateTime?                            @map("confirmed_at")
+  confirmedById                String?                              @map("confirmed_by_id")
+  startedAt                    DateTime?                            @map("started_at")
+  completedAt                  DateTime?                            @map("completed_at")
+  productTimeProfileId         String?                              @map("product_time_profile_id")
+  productTimeProfileVersion    Int?                                 @map("product_time_profile_version")
+  routeSource                  String                               @default("process_template") @map("route_source")
+  reportingPolicy              String                               @default("free_sequence") @map("reporting_policy")
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  workOrder                    WorkOrder                            @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  template                     ProcessTemplate?                     @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  productTimeProfile           ProductTimeProfile?                  @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  confirmedBy                  User?                                @relation("ProcessRouteConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  steps                        WorkOrderProcessStep[]
+  activities                   ProcessRouteActivity[]
+  completions                  ProcessCompletion[]
+  completionWithdrawalRequests ProcessCompletionWithdrawalRequest[]
+  dailyProcessTasks            DailyProcessTask[]
+  qrPrints                     WorkOrderQrPrint[]
+  processRouteChanges          ProcessRouteChange[]
+  supplementObligations        ProcessSupplementObligation[]
+  productTimeDeployments       ProductTimeDeploymentRoute[]
+  semiFinishedLots             SemiFinishedLot[]
 
   @@index([status])
   @@index([templateId])
@@ -943,67 +958,68 @@ model WorkOrderProcessRoute {
 }
 
 model WorkOrderProcessStep {
-  id                           String                        @id @default(uuid())
-  routeId                      String                        @map("route_id")
-  processDefinitionId          String?                       @map("process_definition_id")
-  processCode                  String                        @map("process_code")
-  processName                  String                        @map("process_name")
-  stageGroup                   String                        @map("stage_group")
+  id                           String                               @id @default(uuid())
+  routeId                      String                               @map("route_id")
+  processDefinitionId          String?                              @map("process_definition_id")
+  processCode                  String                               @map("process_code")
+  processName                  String                               @map("process_name")
+  stageGroup                   String                               @map("stage_group")
   position                     Int
-  sequenceGroup                Int                           @default(1) @map("sequence_group")
-  standardTimeId               String?                       @map("standard_time_id")
-  standardVersion              Int?                          @map("standard_version")
-  productTimeProfileId         String?                       @map("product_time_profile_id")
-  productTimeEntryId           String?                       @map("product_time_entry_id")
-  productTimeProfileVersion    Int?                          @map("product_time_profile_version")
-  productTimeDeploymentRouteId String?                       @map("product_time_deployment_route_id")
-  standardSource               String                        @default("legacy") @map("standard_source")
-  timeBasis                    String?                       @map("time_basis")
-  unitLabel                    String?                       @map("unit_label")
-  standardMillisecondsPerUnit  Int?                          @map("standard_milliseconds_per_unit")
-  setupMilliseconds            Int                           @default(0) @map("setup_milliseconds")
-  unitsPerProduct              Int                           @default(1) @map("units_per_product")
-  reportQuantityBasis          String                        @default("product") @map("report_quantity_basis")
-  reportUnitLabel              String                        @default("件") @map("report_unit_label")
-  countsForEfficiency          Boolean                       @default(true) @map("counts_for_efficiency")
-  isCritical                   Boolean                       @default(false) @map("is_critical")
-  executionMode                ProcessStepExecutionMode      @default(NORMAL) @map("execution_mode")
-  changeSource                 ProcessRouteChangeStepSource  @default(EXISTING) @map("change_source")
-  inputQty                     Int                           @default(0) @map("input_qty")
-  processedQty                 Int                           @default(0) @map("processed_qty")
-  goodOutputQty                Int                           @default(0) @map("good_output_qty")
-  defectOutputQty              Int                           @default(0) @map("defect_output_qty")
-  releasedGoodQty              Int                           @default(0) @map("released_good_qty")
-  quantityVersion              Int                           @default(0) @map("quantity_version")
-  status                       String                        @default("pending")
-  startedAt                    DateTime?                     @map("started_at")
-  completedAt                  DateTime?                     @map("completed_at")
-  completedById                String?                       @map("completed_by_id")
-  retiredAt                    DateTime?                     @map("retired_at")
+  sequenceGroup                Int                                  @default(1) @map("sequence_group")
+  standardTimeId               String?                              @map("standard_time_id")
+  standardVersion              Int?                                 @map("standard_version")
+  productTimeProfileId         String?                              @map("product_time_profile_id")
+  productTimeEntryId           String?                              @map("product_time_entry_id")
+  productTimeProfileVersion    Int?                                 @map("product_time_profile_version")
+  productTimeDeploymentRouteId String?                              @map("product_time_deployment_route_id")
+  standardSource               String                               @default("legacy") @map("standard_source")
+  timeBasis                    String?                              @map("time_basis")
+  unitLabel                    String?                              @map("unit_label")
+  standardMillisecondsPerUnit  Int?                                 @map("standard_milliseconds_per_unit")
+  setupMilliseconds            Int                                  @default(0) @map("setup_milliseconds")
+  unitsPerProduct              Int                                  @default(1) @map("units_per_product")
+  reportQuantityBasis          String                               @default("product") @map("report_quantity_basis")
+  reportUnitLabel              String                               @default("件") @map("report_unit_label")
+  countsForEfficiency          Boolean                              @default(true) @map("counts_for_efficiency")
+  isCritical                   Boolean                              @default(false) @map("is_critical")
+  executionMode                ProcessStepExecutionMode             @default(NORMAL) @map("execution_mode")
+  changeSource                 ProcessRouteChangeStepSource         @default(EXISTING) @map("change_source")
+  inputQty                     Int                                  @default(0) @map("input_qty")
+  processedQty                 Int                                  @default(0) @map("processed_qty")
+  goodOutputQty                Int                                  @default(0) @map("good_output_qty")
+  defectOutputQty              Int                                  @default(0) @map("defect_output_qty")
+  releasedGoodQty              Int                                  @default(0) @map("released_good_qty")
+  quantityVersion              Int                                  @default(0) @map("quantity_version")
+  status                       String                               @default("pending")
+  startedAt                    DateTime?                            @map("started_at")
+  completedAt                  DateTime?                            @map("completed_at")
+  completedById                String?                              @map("completed_by_id")
+  retiredAt                    DateTime?                            @map("retired_at")
   remark                       String?
-  createdAt                    DateTime                      @default(now()) @map("created_at")
-  updatedAt                    DateTime                      @updatedAt @map("updated_at")
-  route                        WorkOrderProcessRoute         @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  processDefinition            ProcessDefinition?            @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
-  standardTime                 ProcessTimeStandard?          @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
-  productTimeProfile           ProductTimeProfile?           @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
-  productTimeEntry             ProductProcessTimeEntry?      @relation(fields: [productTimeEntryId], references: [id], onDelete: SetNull)
-  productTimeDeploymentRoute   ProductTimeDeploymentRoute?   @relation(fields: [productTimeDeploymentRouteId], references: [id], onDelete: SetNull)
-  completedBy                  User?                         @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  route                        WorkOrderProcessRoute                @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  processDefinition            ProcessDefinition?                   @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
+  standardTime                 ProcessTimeStandard?                 @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
+  productTimeProfile           ProductTimeProfile?                  @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  productTimeEntry             ProductProcessTimeEntry?             @relation(fields: [productTimeEntryId], references: [id], onDelete: SetNull)
+  productTimeDeploymentRoute   ProductTimeDeploymentRoute?          @relation(fields: [productTimeDeploymentRouteId], references: [id], onDelete: SetNull)
+  completedBy                  User?                                @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
   activities                   ProcessRouteActivity[]
   executions                   ProcessExecution[]
   abnormalTimeEvents           AbnormalTimeEvent[]
   completions                  ProcessCompletion[]
-  sourceQuantityMovements      ProcessQuantityMovement[]     @relation("MovementSourceStep")
-  targetQuantityMovements      ProcessQuantityMovement[]     @relation("MovementTargetStep")
+  completionWithdrawalRequests ProcessCompletionWithdrawalRequest[]
+  sourceQuantityMovements      ProcessQuantityMovement[]            @relation("MovementSourceStep")
+  targetQuantityMovements      ProcessQuantityMovement[]            @relation("MovementTargetStep")
   processLaborPools            ProcessLaborPool[]
   dailyProcessTasks            DailyProcessTask[]
   weeklyWorkerPresets          WeeklyProcessWorkerPreset[]
-  originatedBranchWorkOrders   WorkOrder[]                   @relation("WorkOrderBranchOriginStep")
-  rejoiningBranchWorkOrders    WorkOrder[]                   @relation("WorkOrderBranchRejoinStep")
-  supplementObligation         ProcessSupplementObligation?  @relation("ProcessSupplementDisplayStep")
-  targetedRouteChangeDiffs     ProcessRouteChangeDiff[]      @relation("ProcessRouteChangeTargetStep")
-  insertedBeforeObligations    ProcessSupplementObligation[] @relation("ProcessSupplementInsertBeforeStep")
+  originatedBranchWorkOrders   WorkOrder[]                          @relation("WorkOrderBranchOriginStep")
+  rejoiningBranchWorkOrders    WorkOrder[]                          @relation("WorkOrderBranchRejoinStep")
+  supplementObligation         ProcessSupplementObligation?         @relation("ProcessSupplementDisplayStep")
+  targetedRouteChangeDiffs     ProcessRouteChangeDiff[]             @relation("ProcessRouteChangeTargetStep")
+  insertedBeforeObligations    ProcessSupplementObligation[]        @relation("ProcessSupplementInsertBeforeStep")
   actionConsumptions           ProcessActionConsumption[]
   semiFinishedLotSteps         SemiFinishedLotStep[]
 
@@ -1183,58 +1199,59 @@ model WorkOrderQrPrintItem {
 }
 
 model Employee {
-  id                               String                            @id @default(uuid())
-  employeeNo                       String                            @unique @map("employee_no")
+  id                               String                               @id @default(uuid())
+  employeeNo                       String                               @unique @map("employee_no")
   name                             String
   department                       String?
-  departmentId                     String?                           @map("department_id")
+  departmentId                     String?                              @map("department_id")
   position                         String?
   team                             String?
-  hireDate                         DateTime?                         @map("hire_date") @db.Date
-  mobile                           String?                           @unique
-  wecomUserId                      String?                           @unique @map("wecom_user_id")
-  notificationEnabled              Boolean                           @default(true) @map("notification_enabled")
-  isActive                         Boolean                           @default(true) @map("is_active")
-  attendanceEnabled                Boolean                           @default(true) @map("attendance_enabled")
-  attainmentEligible               Boolean                           @default(true) @map("attainment_eligible")
-  attainmentFactorBasisPoints      Int                               @default(10000) @map("attainment_factor_basis_points")
-  attainmentStream                 String                            @default("batch") @map("attainment_stream")
-  resignedAt                       DateTime?                         @map("resigned_at") @db.Date
-  resignationReason                String?                           @map("resignation_reason")
-  resignationNote                  String?                           @map("resignation_note")
-  createdAt                        DateTime                          @default(now()) @map("created_at")
-  updatedAt                        DateTime                          @updatedAt @map("updated_at")
+  hireDate                         DateTime?                            @map("hire_date") @db.Date
+  mobile                           String?                              @unique
+  wecomUserId                      String?                              @unique @map("wecom_user_id")
+  notificationEnabled              Boolean                              @default(true) @map("notification_enabled")
+  isActive                         Boolean                              @default(true) @map("is_active")
+  attendanceEnabled                Boolean                              @default(true) @map("attendance_enabled")
+  attainmentEligible               Boolean                              @default(true) @map("attainment_eligible")
+  attainmentFactorBasisPoints      Int                                  @default(10000) @map("attainment_factor_basis_points")
+  attainmentStream                 String                               @default("batch") @map("attainment_stream")
+  resignedAt                       DateTime?                            @map("resigned_at") @db.Date
+  resignationReason                String?                              @map("resignation_reason")
+  resignationNote                  String?                              @map("resignation_note")
+  createdAt                        DateTime                             @default(now()) @map("created_at")
+  updatedAt                        DateTime                             @updatedAt @map("updated_at")
   executions                       ProcessExecution[]
   attendanceRecords                AttendanceRecord[]
   abnormalTimeAllocations          AbnormalTimeAllocation[]
-  reportedAbnormalTimeEvents       AbnormalTimeEvent[]               @relation("AbnormalTimeEventReportedByEmployee")
+  reportedAbnormalTimeEvents       AbnormalTimeEvent[]                  @relation("AbnormalTimeEventReportedByEmployee")
   laborClaims                      ProcessLaborClaim[]
   completionParticipants           ProcessCompletionParticipant[]
   user                             User?
-  departmentRef                    Department?                       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
-  requestedRecruitmentDemands      RecruitmentDemand[]               @relation("RecruitmentDemandRequester")
-  coordinatedRecruitmentDemands    RecruitmentDemand[]               @relation("RecruitmentDemandCoordinator")
-  recruitmentInterviews            RecruitmentInterview[]            @relation("RecruitmentInterviewInterviewer")
-  recruitmentCandidate             RecruitmentCandidate?             @relation("RecruitmentCandidateEmployee")
-  skillCertifications              EmployeeSkillCertification[]      @relation("SkillCertificationEmployee")
-  skillCertificationsAssessed      EmployeeSkillCertification[]      @relation("SkillCertificationAssessor")
-  skillCertificationsReviewed      EmployeeSkillCertification[]      @relation("SkillCertificationReviewer")
-  skillAssessments                 SkillAssessment[]                 @relation("SkillAssessmentEmployee")
-  skillAssessmentsAsAssessor       SkillAssessment[]                 @relation("SkillAssessmentAssessor")
-  skillAssessmentsAsReviewer       SkillAssessment[]                 @relation("SkillAssessmentReviewer")
+  departmentRef                    Department?                          @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  requestedRecruitmentDemands      RecruitmentDemand[]                  @relation("RecruitmentDemandRequester")
+  coordinatedRecruitmentDemands    RecruitmentDemand[]                  @relation("RecruitmentDemandCoordinator")
+  recruitmentInterviews            RecruitmentInterview[]               @relation("RecruitmentInterviewInterviewer")
+  recruitmentCandidate             RecruitmentCandidate?                @relation("RecruitmentCandidateEmployee")
+  skillCertifications              EmployeeSkillCertification[]         @relation("SkillCertificationEmployee")
+  skillCertificationsAssessed      EmployeeSkillCertification[]         @relation("SkillCertificationAssessor")
+  skillCertificationsReviewed      EmployeeSkillCertification[]         @relation("SkillCertificationReviewer")
+  skillAssessments                 SkillAssessment[]                    @relation("SkillAssessmentEmployee")
+  skillAssessmentsAsAssessor       SkillAssessment[]                    @relation("SkillAssessmentAssessor")
+  skillAssessmentsAsReviewer       SkillAssessment[]                    @relation("SkillAssessmentReviewer")
   productionPlanningMemberships    ProductionPlanningMembership[]
   dailyTaskAssignments             DailyTaskAssignment[]
   dailyCapacityOverrides           DailyCapacityOverride[]
   dailyCrossTeamRequests           DailyCrossTeamRequest[]
   numberReorderItems               EmployeeNumberReorderItem[]
   weeklyProcessWorkerPresetMembers WeeklyProcessWorkerPresetMember[]
-  assignedIssues                   Issue[]                           @relation("IssueEmployeeAssignee")
-  issuesToVerify                   Issue[]                           @relation("IssueVerifierEmployee")
+  assignedIssues                   Issue[]                              @relation("IssueEmployeeAssignee")
+  issuesToVerify                   Issue[]                              @relation("IssueVerifierEmployee")
   issueCollaborations              IssueCollaborator[]
   employmentEvents                 EmployeeEmploymentEvent[]
   fieldReportPinCredential         EmployeeFieldReportPinCredential?
   fieldReportPinSessions           FieldReportPinSession[]
-  principalProcessCompletions      ProcessCompletion[]               @relation("ProcessCompletionPrincipalEmployee")
+  principalProcessCompletions      ProcessCompletion[]                  @relation("ProcessCompletionPrincipalEmployee")
+  requestedCompletionWithdrawals   ProcessCompletionWithdrawalRequest[] @relation("ProcessCompletionWithdrawalRequestedByEmployee")
   sampleTaskAssignments            SampleTaskAssignee[]
   trainingParticipations           TrainingParticipant[]
 
@@ -2134,75 +2151,76 @@ model ProcessExecution {
 }
 
 model ProcessCompletion {
-  id                           String                          @id @default(uuid())
-  workOrderId                  String                          @map("work_order_id")
-  routeId                      String                          @map("route_id")
-  stepId                       String                          @map("step_id")
-  workDate                     DateTime                        @map("work_date") @db.Date
-  completedAt                  DateTime                        @default(now()) @map("completed_at")
-  workStartedAt                DateTime?                       @map("work_started_at")
-  workEndedAt                  DateTime?                       @map("work_ended_at")
+  id                           String                               @id @default(uuid())
+  workOrderId                  String                               @map("work_order_id")
+  routeId                      String                               @map("route_id")
+  stepId                       String                               @map("step_id")
+  workDate                     DateTime                             @map("work_date") @db.Date
+  completedAt                  DateTime                             @default(now()) @map("completed_at")
+  workStartedAt                DateTime?                            @map("work_started_at")
+  workEndedAt                  DateTime?                            @map("work_ended_at")
   team                         String?
   workstation                  String?
   remark                       String?
-  processedQty                 Int                             @map("processed_qty")
-  goodQty                      Int                             @map("good_qty")
-  defectQty                    Int                             @map("defect_qty")
-  reportedUnitQty              Int                             @default(0) @map("reported_unit_qty")
-  reportedGoodUnitQty          Int                             @default(0) @map("reported_good_unit_qty")
-  reportedDefectUnitQty        Int                             @default(0) @map("reported_defect_unit_qty")
-  reportQuantityBasis          String                          @default("product") @map("report_quantity_basis")
-  reportUnitLabel              String                          @default("件") @map("report_unit_label")
-  reportMode                   ProcessCompletionReportMode     @default(SEQUENTIAL) @map("report_mode")
-  reportSource                 ProcessCompletionSource         @default(DESKTOP) @map("report_source")
-  coverageStatus               ProcessCompletionCoverageStatus @default(COVERED) @map("coverage_status")
-  coveredQty                   Int                             @default(0) @map("covered_qty")
-  coveredGoodQty               Int                             @default(0) @map("covered_good_qty")
-  coveredDefectQty             Int                             @default(0) @map("covered_defect_qty")
-  coverageUpdatedAt            DateTime?                       @map("coverage_updated_at")
-  autoAssignLabor              Boolean                         @default(false) @map("auto_assign_labor")
-  defectDisposition            ProcessDefectDisposition?       @map("defect_disposition")
-  routeVersion                 Int                             @map("route_version")
-  idempotencyKey               String                          @unique @map("idempotency_key")
-  standardTimeId               String?                         @map("standard_time_id")
-  standardVersion              Int?                            @map("standard_version")
-  productTimeProfileId         String?                         @map("product_time_profile_id")
-  productTimeEntryId           String?                         @map("product_time_entry_id")
-  productTimeProfileVersion    Int?                            @map("product_time_profile_version")
-  standardSource               String                          @map("standard_source")
-  timeBasis                    String?                         @map("time_basis")
-  unitLabel                    String?                         @map("unit_label")
-  standardMillisecondsPerUnit  Int?                            @map("standard_milliseconds_per_unit")
-  setupMilliseconds            Int                             @default(0) @map("setup_milliseconds")
-  unitsPerProduct              Int                             @default(1) @map("units_per_product")
-  countsForEfficiency          Boolean                         @default(true) @map("counts_for_efficiency")
-  createdById                  String?                         @map("created_by_id")
-  principalEmployeeId          String?                         @map("principal_employee_id")
-  fieldReportTerminalId        String?                         @map("field_report_terminal_id")
-  pinCredentialVersion         Int?                            @map("pin_credential_version")
-  supplementObligationId       String?                         @map("supplement_obligation_id")
-  createdAt                    DateTime                        @default(now()) @map("created_at")
-  updatedAt                    DateTime                        @updatedAt @map("updated_at")
-  voidedAt                     DateTime?                       @map("voided_at")
-  voidedById                   String?                         @map("voided_by_id")
-  voidReason                   String?                         @map("void_reason")
-  workOrder                    WorkOrder                       @relation("CompletionWorkOrder", fields: [workOrderId], references: [id], onDelete: Restrict)
-  route                        WorkOrderProcessRoute           @relation(fields: [routeId], references: [id], onDelete: Restrict)
-  step                         WorkOrderProcessStep            @relation(fields: [stepId], references: [id], onDelete: Restrict)
-  createdBy                    User?                           @relation("ProcessCompletionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  voidedBy                     User?                           @relation("ProcessCompletionVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
-  principalEmployee            Employee?                       @relation("ProcessCompletionPrincipalEmployee", fields: [principalEmployeeId], references: [id], onDelete: Restrict)
-  fieldReportTerminal          FieldReportTerminal?            @relation("ProcessCompletionFieldReportTerminal", fields: [fieldReportTerminalId], references: [id], onDelete: Restrict)
+  processedQty                 Int                                  @map("processed_qty")
+  goodQty                      Int                                  @map("good_qty")
+  defectQty                    Int                                  @map("defect_qty")
+  reportedUnitQty              Int                                  @default(0) @map("reported_unit_qty")
+  reportedGoodUnitQty          Int                                  @default(0) @map("reported_good_unit_qty")
+  reportedDefectUnitQty        Int                                  @default(0) @map("reported_defect_unit_qty")
+  reportQuantityBasis          String                               @default("product") @map("report_quantity_basis")
+  reportUnitLabel              String                               @default("件") @map("report_unit_label")
+  reportMode                   ProcessCompletionReportMode          @default(SEQUENTIAL) @map("report_mode")
+  reportSource                 ProcessCompletionSource              @default(DESKTOP) @map("report_source")
+  coverageStatus               ProcessCompletionCoverageStatus      @default(COVERED) @map("coverage_status")
+  coveredQty                   Int                                  @default(0) @map("covered_qty")
+  coveredGoodQty               Int                                  @default(0) @map("covered_good_qty")
+  coveredDefectQty             Int                                  @default(0) @map("covered_defect_qty")
+  coverageUpdatedAt            DateTime?                            @map("coverage_updated_at")
+  autoAssignLabor              Boolean                              @default(false) @map("auto_assign_labor")
+  defectDisposition            ProcessDefectDisposition?            @map("defect_disposition")
+  routeVersion                 Int                                  @map("route_version")
+  idempotencyKey               String                               @unique @map("idempotency_key")
+  standardTimeId               String?                              @map("standard_time_id")
+  standardVersion              Int?                                 @map("standard_version")
+  productTimeProfileId         String?                              @map("product_time_profile_id")
+  productTimeEntryId           String?                              @map("product_time_entry_id")
+  productTimeProfileVersion    Int?                                 @map("product_time_profile_version")
+  standardSource               String                               @map("standard_source")
+  timeBasis                    String?                              @map("time_basis")
+  unitLabel                    String?                              @map("unit_label")
+  standardMillisecondsPerUnit  Int?                                 @map("standard_milliseconds_per_unit")
+  setupMilliseconds            Int                                  @default(0) @map("setup_milliseconds")
+  unitsPerProduct              Int                                  @default(1) @map("units_per_product")
+  countsForEfficiency          Boolean                              @default(true) @map("counts_for_efficiency")
+  createdById                  String?                              @map("created_by_id")
+  principalEmployeeId          String?                              @map("principal_employee_id")
+  fieldReportTerminalId        String?                              @map("field_report_terminal_id")
+  pinCredentialVersion         Int?                                 @map("pin_credential_version")
+  supplementObligationId       String?                              @map("supplement_obligation_id")
+  createdAt                    DateTime                             @default(now()) @map("created_at")
+  updatedAt                    DateTime                             @updatedAt @map("updated_at")
+  voidedAt                     DateTime?                            @map("voided_at")
+  voidedById                   String?                              @map("voided_by_id")
+  voidReason                   String?                              @map("void_reason")
+  workOrder                    WorkOrder                            @relation("CompletionWorkOrder", fields: [workOrderId], references: [id], onDelete: Restrict)
+  route                        WorkOrderProcessRoute                @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  step                         WorkOrderProcessStep                 @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  createdBy                    User?                                @relation("ProcessCompletionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy                     User?                                @relation("ProcessCompletionVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  principalEmployee            Employee?                            @relation("ProcessCompletionPrincipalEmployee", fields: [principalEmployeeId], references: [id], onDelete: Restrict)
+  fieldReportTerminal          FieldReportTerminal?                 @relation("ProcessCompletionFieldReportTerminal", fields: [fieldReportTerminalId], references: [id], onDelete: Restrict)
   movements                    ProcessQuantityMovement[]
   laborPool                    ProcessLaborPool?
-  branchWorkOrder              WorkOrder?                      @relation("CompletionBranchWorkOrder")
+  branchWorkOrder              WorkOrder?                           @relation("CompletionBranchWorkOrder")
   participants                 ProcessCompletionParticipant[]
-  coverageAllocations          ProcessCompletionCoverage[]     @relation("CoveredProcessCompletion")
-  triggeredCoverageAllocations ProcessCompletionCoverage[]     @relation("CoverageTriggerCompletion")
-  supplementObligation         ProcessSupplementObligation?    @relation(fields: [supplementObligationId], references: [id], onDelete: Restrict)
+  coverageAllocations          ProcessCompletionCoverage[]          @relation("CoveredProcessCompletion")
+  triggeredCoverageAllocations ProcessCompletionCoverage[]          @relation("CoverageTriggerCompletion")
+  supplementObligation         ProcessSupplementObligation?         @relation(fields: [supplementObligationId], references: [id], onDelete: Restrict)
   wipCredits                   ProcessWipCredit[]
-  sourcedActionConsumptions    ProcessActionConsumption[]      @relation("ActionConsumptionSource")
-  consumedActionAllocations    ProcessActionConsumption[]      @relation("ActionConsumptionConsumer")
+  sourcedActionConsumptions    ProcessActionConsumption[]           @relation("ActionConsumptionSource")
+  consumedActionAllocations    ProcessActionConsumption[]           @relation("ActionConsumptionConsumer")
+  withdrawalRequests           ProcessCompletionWithdrawalRequest[]
 
   @@index([workOrderId, workDate])
   @@index([routeId, completedAt])
@@ -2215,6 +2233,49 @@ model ProcessCompletion {
   @@index([fieldReportTerminalId])
   @@index([supplementObligationId, voidedAt])
   @@map("process_completions")
+}
+
+model ProcessCompletionWithdrawalRequest {
+  id                       String                                   @id @default(uuid())
+  completionId             String                                   @map("completion_id")
+  routeId                  String                                   @map("route_id")
+  workOrderId              String                                   @map("work_order_id")
+  stepId                   String                                   @map("step_id")
+  requesterUserId          String                                   @map("requester_user_id")
+  requesterEmployeeId      String?                                  @map("requester_employee_id")
+  category                 String                                   @default("REPORTING_ERROR")
+  reason                   String?
+  status                   ProcessCompletionWithdrawalRequestStatus @default(PENDING)
+  requestedRouteVersion    Int                                      @map("requested_route_version")
+  preview                  Json
+  version                  Int                                      @default(0)
+  requestIdempotencyKey    String                                   @unique @map("request_idempotency_key")
+  resolutionIdempotencyKey String?                                  @unique @map("resolution_idempotency_key")
+  decidedById              String?                                  @map("decided_by_id")
+  decidedAt                DateTime?                                @map("decided_at")
+  decisionNote             String?                                  @map("decision_note")
+  cancelledAt              DateTime?                                @map("cancelled_at")
+  executedAt               DateTime?                                @map("executed_at")
+  resultCode               String?                                  @map("result_code")
+  resultDetail             Json?                                    @map("result_detail")
+  createdAt                DateTime                                 @default(now()) @map("created_at")
+  updatedAt                DateTime                                 @updatedAt @map("updated_at")
+  completion               ProcessCompletion                        @relation(fields: [completionId], references: [id], onDelete: Restrict)
+  route                    WorkOrderProcessRoute                    @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  workOrder                WorkOrder                                @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  step                     WorkOrderProcessStep                     @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  requesterUser            User                                     @relation("ProcessCompletionWithdrawalRequestedBy", fields: [requesterUserId], references: [id], onDelete: Restrict)
+  requesterEmployee        Employee?                                @relation("ProcessCompletionWithdrawalRequestedByEmployee", fields: [requesterEmployeeId], references: [id], onDelete: SetNull)
+  decidedBy                User?                                    @relation("ProcessCompletionWithdrawalDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([completionId, status])
+  @@index([requesterUserId, status, createdAt])
+  @@index([requesterEmployeeId, status, createdAt])
+  @@index([routeId, status, createdAt])
+  @@index([workOrderId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([decidedById])
+  @@map("process_completion_withdrawal_requests")
 }
 
 model ProcessActionConsumption {

@@ -538,6 +538,24 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
     };
   }
 
+  if (/^\/api\/process-management\/completion-withdrawal-requests\/[^/]+\/decision$/.test(path)) {
+    return {
+      prefix: '/api/process-management/completion-withdrawal-requests/:requestId/decision',
+      anyOf: ['PRODUCTION'],
+      action: 'EXECUTE_WORKFLOW',
+      productionMinimumScope: 'WORKSHOP',
+    };
+  }
+
+  if (/^\/api\/process-management\/completion-withdrawal-requests(?:\/[^/]+)?$/.test(path)) {
+    return {
+      prefix: '/api/process-management/completion-withdrawal-requests',
+      anyOf: ['PRODUCTION'],
+      action: 'UPDATE',
+      productionMinimumScope: 'WORKSHOP',
+    };
+  }
+
   if (/^\/api\/process-management\/routes\/[^/]+\/completions\/[^/]+\/correct-standard$/.test(path)) {
     return {
       prefix: '/api/process-management/routes/:id/completions/:completionId/correct-standard',

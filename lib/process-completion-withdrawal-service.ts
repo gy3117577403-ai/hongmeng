@@ -4,10 +4,10 @@ import {
   ProcessLaborClaimStatus,
   ProcessLaborPoolStatus,
   ProcessCompletionCoverageStatus,
+  ProcessCompletionWithdrawalRequestStatus,
   ProcessMovementType,
 } from '@prisma/client';
 import { dateKeyFromDatabase } from '@/lib/attendance';
-import { issueCode } from '@/lib/issues';
 import { prisma } from '@/lib/prisma';
 import { syncProductTimeRouteFromPublishedProductTime } from '@/lib/process-routing';
 import { syncUnfinishedDailyTasksFromPublishedProductTime } from '@/lib/product-time-task-sync';
@@ -17,6 +17,10 @@ import {
   voidProcessActionConsumptionsForCompletion,
 } from '@/lib/process-action-consumption';
 import { processSupplementActualRequiredQty } from '@/lib/process-supplement-coverage';
+import {
+  createSystemNotification,
+  eligibleUserIdsForCapability,
+} from '@/lib/system-notifications';
 import { voidWipCreditsForCompletion } from '@/lib/wip-reporting';
 
 export class ProcessCompletionWithdrawalError extends Error {
@@ -96,6 +100,89 @@ export type WithdrawProcessCompletionResult = {
   preview: ProcessCompletionWithdrawalPreview;
   issue: { id: string; code: string } | null;
 };
+
+export type ProcessCompletionWithdrawalRequestDto = {
+  id: string;
+  status: ProcessCompletionWithdrawalRequestStatus;
+  version: number;
+  category: CompletionCorrectionCategory;
+  reason: string | null;
+  requestedRouteVersion: number;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  cancelledAt: string | null;
+  executedAt: string | null;
+  resultCode: string | null;
+  resultDetail: Prisma.JsonValue | null;
+  routeId: string;
+  completionId: string;
+  requester: {
+    userId: string;
+    employeeId: string | null;
+    employeeNo: string | null;
+    name: string;
+  };
+  workOrder: {
+    id: string;
+    code: string;
+    businessCode: string | null;
+    specification: string | null;
+  };
+  route: {
+    id: string;
+    version: number;
+    status: string;
+  };
+  step: {
+    id: string;
+    processName: string;
+    sequenceGroup: number;
+  };
+  completion: {
+    id: string;
+    processedQty: number;
+    goodQty: number;
+    defectQty: number;
+    reportedUnitQty: number;
+    reportQuantityBasis: string;
+    reportUnitLabel: string;
+    completedAt: string;
+    voidedAt: string | null;
+  };
+};
+
+export type ProcessCompletionWithdrawalRequestDecisionResult = {
+  status: 'APPLIED' | 'REJECTED' | 'BLOCKED' | 'STALE';
+  request: ProcessCompletionWithdrawalRequestDto;
+  withdrawal: WithdrawProcessCompletionResult | null;
+};
+
+const withdrawalRequestInclude = Prisma.validator<Prisma.ProcessCompletionWithdrawalRequestInclude>()({
+  requesterUser: { select: { id: true, displayName: true, username: true } },
+  requesterEmployee: { select: { id: true, employeeNo: true, name: true } },
+  workOrder: { select: { id: true, code: true, businessCode: true, specification: true } },
+  route: { select: { id: true, version: true, status: true } },
+  step: { select: { id: true, processName: true, sequenceGroup: true } },
+  completion: {
+    select: {
+      id: true,
+      processedQty: true,
+      goodQty: true,
+      defectQty: true,
+      reportedUnitQty: true,
+      reportQuantityBasis: true,
+      reportUnitLabel: true,
+      completedAt: true,
+      voidedAt: true,
+    },
+  },
+});
+
+type WithdrawalRequestRecord = Prisma.ProcessCompletionWithdrawalRequestGetPayload<{
+  include: typeof withdrawalRequestInclude;
+}>;
 
 const withdrawalStateInclude = Prisma.validator<Prisma.ProcessCompletionInclude>()({
   step: {
@@ -236,6 +323,69 @@ type WithdrawalRollbackPlan = {
 
 function text(value: unknown, max: number): string {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
+}
+
+function parseExpectedRequestVersion(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new ProcessCompletionWithdrawalError(
+      '撤回申请版本不正确，请刷新后重试',
+      400,
+      'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_VERSION_INVALID',
+    );
+  }
+  return parsed;
+}
+
+function parseWithdrawalRequestStatus(value: unknown): ProcessCompletionWithdrawalRequestStatus | null {
+  if (typeof value !== 'string' || !value.trim() || value === 'ALL') return null;
+  const status = value.trim().toUpperCase();
+  if (Object.values(ProcessCompletionWithdrawalRequestStatus).includes(
+    status as ProcessCompletionWithdrawalRequestStatus,
+  )) return status as ProcessCompletionWithdrawalRequestStatus;
+  throw new ProcessCompletionWithdrawalError(
+    '撤回申请状态筛选不正确',
+    400,
+    'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_STATUS_INVALID',
+  );
+}
+
+export function serializeProcessCompletionWithdrawalRequest(
+  request: WithdrawalRequestRecord,
+): ProcessCompletionWithdrawalRequestDto {
+  const employee = request.requesterEmployee;
+  return {
+    id: request.id,
+    status: request.status,
+    version: request.version,
+    category: request.category === 'PROCESS_EXCEPTION' ? 'PROCESS_EXCEPTION' : 'REPORTING_ERROR',
+    reason: request.reason,
+    requestedRouteVersion: request.requestedRouteVersion,
+    createdAt: request.createdAt.toISOString(),
+    updatedAt: request.updatedAt.toISOString(),
+    decidedAt: request.decidedAt?.toISOString() || null,
+    decisionNote: request.decisionNote,
+    cancelledAt: request.cancelledAt?.toISOString() || null,
+    executedAt: request.executedAt?.toISOString() || null,
+    resultCode: request.resultCode,
+    resultDetail: request.resultDetail,
+    routeId: request.routeId,
+    completionId: request.completionId,
+    requester: {
+      userId: request.requesterUserId,
+      employeeId: employee?.id || request.requesterEmployeeId,
+      employeeNo: employee?.employeeNo || null,
+      name: employee?.name || request.requesterUser.displayName || request.requesterUser.username,
+    },
+    workOrder: request.workOrder,
+    route: request.route,
+    step: request.step,
+    completion: {
+      ...request.completion,
+      completedAt: request.completion.completedAt.toISOString(),
+      voidedAt: request.completion.voidedAt?.toISOString() || null,
+    },
+  };
 }
 
 function parseExpectedRouteVersion(value: unknown): number {
@@ -777,148 +927,530 @@ export async function previewProcessCompletionWithdrawal(
   return previewFromState(state, releaseMovements, triggeredCoverages);
 }
 
-async function createBlockedIssue(
+async function withdrawalReviewerUserIds(
   tx: Prisma.TransactionClient,
-  input: {
-    state: WithdrawalState;
-    preview: ProcessCompletionWithdrawalPreview;
-    category: CompletionCorrectionCategory;
-    reason: string;
-    userId: string;
-  },
-) {
-  const primary = input.preview.blockers[0];
-  const fingerprint = `process-completion-correction:${input.state.id}:${primary?.code || 'blocked'}`;
-  const sourceRoute = `/workspace/workflows?${new URLSearchParams({
-    entityType: 'production',
-    workOrderId: input.state.workOrderId,
-    stepId: input.state.stepId,
-  }).toString()}`;
-  const titlePrefix = input.category === 'REPORTING_ERROR' ? '报工错误' : '流程异常';
-  let issue = await tx.issue.findUnique({ where: { sourceFingerprint: fingerprint } });
-  if (!issue) {
-    issue = await tx.issue.create({
-      data: {
-        title: `${titlePrefix}：${input.state.route.workOrder.specification || input.state.route.workOrder.code} · ${input.state.step.processName}`,
-        type: 'production',
-        priority: 'high',
-        status: 'pending',
-        description: `${input.reason}\n自动撤回被阻止：${input.preview.blockers.map(item => item.message).join('；')}`,
-        sourceType: input.category === 'REPORTING_ERROR'
-          ? 'process_reporting_error'
-          : 'process_flow_exception',
-        sourceId: input.state.id,
-        sourceCode: input.state.route.workOrder.specification || input.state.route.workOrder.code,
-        sourceRoute,
-        sourceAlertCode: primary?.code || 'PROCESS_COMPLETION_WITHDRAWAL_BLOCKED',
-        sourceFingerprint: fingerprint,
-        workOrderId: input.state.workOrderId,
-        reporterId: input.userId,
+  workOrderId: string,
+  requesterUserId: string,
+): Promise<string[]> {
+  const candidateIds = await eligibleUserIdsForCapability(
+    tx,
+    'PRODUCTION',
+    'UPDATE',
+    { excludeUserIds: [requesterUserId] },
+  );
+  if (!candidateIds.length) return [];
+  const now = new Date();
+  const [workOrder, candidates] = await Promise.all([
+    tx.workOrder.findUnique({
+      where: { id: workOrderId },
+      select: {
+        dailyProcessTasks: {
+          where: { status: { not: DailyProcessTaskStatus.CANCELLED } },
+          select: {
+            plan: {
+              select: {
+                team: { select: { id: true, code: true, name: true, legacyTeamName: true } },
+              },
+            },
+          },
+        },
       },
-    });
-    await tx.issueActivity.create({
-      data: {
-        issueId: issue.id,
-        action: 'create_from_process_correction',
-        content: '完工撤回触发安全阻断，已转入问题闭环',
-        actorId: input.userId,
-        detail: { completionId: input.state.id, blockers: input.preview.blockers },
+    }),
+    tx.user.findMany({
+      where: { id: { in: candidateIds } },
+      select: {
+        id: true,
+        laborRole: true,
+        accessGrants: {
+          where: {
+            isActive: true,
+            effectiveFrom: { lte: now },
+            OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+          },
+          select: {
+            profile: true,
+            scopeKey: true,
+            department: { select: { code: true } },
+          },
+        },
+        employee: {
+          select: {
+            productionPlanningMemberships: {
+              where: {
+                isActive: true,
+                effectiveFrom: { lte: now },
+                OR: [{ effectiveTo: null }, { effectiveTo: { gte: now } }],
+              },
+              select: { role: true, teamId: true },
+            },
+          },
+        },
       },
-    });
-  } else if (issue.deletedAt) {
-    issue = await tx.issue.update({
-      where: { id: issue.id },
-      data: { deletedAt: null, status: 'pending', reporterId: input.userId },
-    });
-  }
-  return issue;
+    }),
+  ]);
+  const allowedTeamKeys = new Set(
+    (workOrder?.dailyProcessTasks || []).flatMap(task => {
+      const team = task.plan.team;
+      return [team.id, team.code, team.name, team.legacyTeamName]
+        .filter((value): value is string => Boolean(value))
+        .map(value => value.toLocaleLowerCase('zh-CN'));
+    }),
+  );
+  return candidates.filter(candidate => {
+    if (candidate.laborRole === 'ADMIN') return true;
+    const memberships = candidate.employee?.productionPlanningMemberships || [];
+    if (memberships.some(item => item.role === 'WORKSHOP_SUPERVISOR')) return true;
+    if (candidate.accessGrants.some(grant => (
+      grant.profile === 'ADMIN_GLOBAL'
+      || grant.profile === 'WORKSHOP_SUPERVISOR'
+      || grant.profile === 'PRODUCTION_COLLABORATOR'
+      || (grant.profile === 'DEPARTMENT_FULL' && grant.department?.code === 'PRODUCTION')
+    ))) return true;
+    const teamKeys = [
+      ...candidate.accessGrants
+        .map(grant => grant.scopeKey)
+        .filter(scopeKey => scopeKey.toUpperCase().startsWith('TEAM:'))
+        .map(scopeKey => scopeKey.slice(scopeKey.indexOf(':') + 1)),
+      ...memberships
+        .filter(item => item.role === 'TEAM_LEADER')
+        .map(item => item.teamId)
+        .filter((teamId): teamId is string => Boolean(teamId)),
+    ];
+    return teamKeys.some(key => allowedTeamKeys.has(key.toLocaleLowerCase('zh-CN')));
+  }).map(candidate => candidate.id);
 }
 
-export async function requestProcessCompletionCorrection(input: {
+async function completeWithdrawalApprovalNotifications(
+  tx: Prisma.TransactionClient,
+  requestId: string,
+  reason: string,
+  completedAt: Date,
+): Promise<void> {
+  await tx.systemNotificationRecipient.updateMany({
+    where: {
+      completedAt: null,
+      notification: {
+        sourceType: 'process_completion_withdrawal_request',
+        sourceId: requestId,
+      },
+    },
+    data: {
+      completedAt,
+      completionKind: 'SOURCE_RESOLVED',
+      completionReason: reason.slice(0, 500),
+    },
+  });
+}
+
+async function notifyWithdrawalRequester(
+  tx: Prisma.TransactionClient,
+  input: {
+    request: Pick<WithdrawalRequestRecord, 'id' | 'requesterUserId' | 'completionId' | 'workOrder' | 'step'>;
+    status: ProcessCompletionWithdrawalRequestStatus;
+    version: number;
+    actorId: string;
+    note?: string | null;
+  },
+): Promise<void> {
+  const labels: Partial<Record<ProcessCompletionWithdrawalRequestStatus, string>> = {
+    APPLIED: '已批准并完成冲销',
+    REJECTED: '已驳回',
+    BLOCKED: '审批复核后被安全校验阻止',
+    STALE: '因报工或路线已变化而失效',
+    CANCELLED: '已取消',
+  };
+  const label = labels[input.status];
+  if (!label) return;
+  const ticket = await tx.workOrderQrTicket.findUnique({
+    where: { workOrderId: input.request.workOrder.id },
+    select: { publicCode: true, status: true },
+  });
+  await createSystemNotification(tx, {
+    eventType: `PROCESS_COMPLETION_WITHDRAWAL_REQUEST_${input.status}`,
+    dedupeKey: `process-completion-withdrawal-request:${input.request.id}:${input.status}:v${input.version}`,
+    category: 'SYSTEM',
+    priority: input.status === ProcessCompletionWithdrawalRequestStatus.BLOCKED ? 'HIGH' : 'NORMAL',
+    title: `报工撤回申请${label}`,
+    body: `${input.request.workOrder.specification || input.request.workOrder.code} · ${input.request.step.processName}${input.note ? `；${input.note}` : ''}`,
+    targetRoute: ticket && ticket.status === 'ACTIVE'
+      ? `/field-report/${encodeURIComponent(ticket.publicCode)}`
+      : '/home',
+    sourceType: 'process_completion_withdrawal_request',
+    sourceId: input.request.id,
+    actorId: input.actorId,
+    metadata: {
+      requestId: input.request.id,
+      completionId: input.request.completionId,
+      status: input.status,
+      version: input.version,
+    },
+    recipientUserIds: [input.request.requesterUserId],
+  });
+}
+
+export async function createProcessCompletionWithdrawalRequest(input: {
   routeId: string;
   completionId: string;
-  reason: unknown;
+  expectedRouteVersion: unknown;
+  category?: unknown;
+  reason?: unknown;
   idempotencyKey: unknown;
   userId: string;
+  employeeId: string;
   actor: string;
-}): Promise<{ issue: { id: string; code: string }; completionId: string }> {
+}): Promise<ProcessCompletionWithdrawalRequestDto> {
   const routeId = text(input.routeId, 80);
   const completionId = text(input.completionId, 80);
-  const reason = text(input.reason, 500);
+  const employeeId = text(input.employeeId, 80);
+  const reason = text(input.reason, 500) || null;
+  const category = parseCategory(input.category ?? 'REPORTING_ERROR');
   const idempotencyKey = parseIdempotencyKey(input.idempotencyKey);
-  if (!routeId || !completionId) {
+  const expectedRouteVersion = parseExpectedRouteVersion(input.expectedRouteVersion);
+  if (!routeId || !completionId || !employeeId) {
     throw new ProcessCompletionWithdrawalError(
-      '缺少路线或报工记录标识',
+      '缺少路线、报工记录或员工标识',
       400,
-      'PROCESS_COMPLETION_CORRECTION_TARGET_REQUIRED',
+      'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_TARGET_REQUIRED',
     );
   }
-  const reasonText = reason || '未填写现场说明';
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await prisma.$transaction(async tx => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`process-completion-withdrawal:${completionId}`}))`;
+        const duplicate = await tx.processCompletionWithdrawalRequest.findUnique({
+          where: { requestIdempotencyKey: idempotencyKey },
+          include: withdrawalRequestInclude,
+        });
+        if (duplicate) {
+          if (
+            duplicate.routeId !== routeId
+            || duplicate.completionId !== completionId
+            || duplicate.requesterUserId !== input.userId
+            || duplicate.requesterEmployeeId !== employeeId
+          ) {
+            throw new ProcessCompletionWithdrawalError(
+              '请求标识已用于其他撤回申请',
+              409,
+              'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_IDEMPOTENCY_CONFLICT',
+            );
+          }
+          return serializeProcessCompletionWithdrawalRequest(duplicate);
+        }
+
+        const { state, releaseMovements, triggeredCoverages } = await loadState(tx, routeId, completionId);
+        if (state.voidedAt) {
+          throw new ProcessCompletionWithdrawalError(
+            '该报工记录已经撤回，请刷新后核对',
+            409,
+            'PROCESS_COMPLETION_ALREADY_WITHDRAWN',
+          );
+        }
+        const employeeParticipates = (
+          state.principalEmployeeId === employeeId
+          || state.createdById === input.userId
+          || state.participants.some(participant => participant.employeeId === employeeId)
+          || (state.laborPool?.claims || []).some(claim => claim.employeeId === employeeId)
+        );
+        if (!employeeParticipates) {
+          throw new ProcessCompletionWithdrawalError(
+            '只能为本人主报或本人参与的报工提交撤回申请',
+            403,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_EMPLOYEE_FORBIDDEN',
+          );
+        }
+        if (state.route.version !== expectedRouteVersion) {
+          throw new ProcessCompletionWithdrawalError(
+            '工艺路线已更新，请刷新影响预览后重试',
+            409,
+            'PROCESS_ROUTE_VERSION_CONFLICT',
+          );
+        }
+        const active = await tx.processCompletionWithdrawalRequest.findFirst({
+          where: { completionId, status: ProcessCompletionWithdrawalRequestStatus.PENDING },
+          include: withdrawalRequestInclude,
+        });
+        if (active) {
+          throw new ProcessCompletionWithdrawalError(
+            active.requesterUserId === input.userId
+              ? '该报工已有待审批撤回申请，请勿重复提交'
+              : '该报工已有其他待审批撤回申请，请主管先处理',
+            409,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_ALREADY_PENDING',
+          );
+        }
+
+        const preview = previewFromState(state, releaseMovements, triggeredCoverages);
+        const created = await tx.processCompletionWithdrawalRequest.create({
+          data: {
+            completionId,
+            routeId,
+            workOrderId: state.workOrderId,
+            stepId: state.stepId,
+            requesterUserId: input.userId,
+            requesterEmployeeId: employeeId,
+            category,
+            reason,
+            requestedRouteVersion: state.route.version,
+            preview: preview as unknown as Prisma.InputJsonValue,
+            requestIdempotencyKey: idempotencyKey,
+          },
+          include: withdrawalRequestInclude,
+        });
+        await tx.processRouteActivity.create({
+          data: {
+            routeId,
+            stepId: state.stepId,
+            action: 'request_process_completion_withdrawal',
+            content: `${text(input.actor, 120) || '现场员工'}申请撤回${state.step.processName}报工`,
+            actorId: input.userId,
+            detail: {
+              requestId: created.id,
+              completionId,
+              requestedRouteVersion: state.route.version,
+              category,
+              reason,
+              idempotencyKey,
+              canWithdrawAtRequest: preview.canWithdraw,
+              blockers: preview.blockers,
+            },
+          },
+        });
+        await tx.operationLog.create({
+          data: {
+            userId: input.userId,
+            action: 'request_process_completion_withdrawal',
+            targetType: 'process_completion_withdrawal_request',
+            targetId: created.id,
+            detail: {
+              routeId,
+              workOrderId: state.workOrderId,
+              stepId: state.stepId,
+              completionId,
+              category,
+              reason,
+              idempotencyKey,
+              requestedRouteVersion: state.route.version,
+            },
+          },
+        });
+        const reviewerUserIds = await withdrawalReviewerUserIds(
+          tx,
+          state.workOrderId,
+          input.userId,
+        );
+        await createSystemNotification(tx, {
+          eventType: 'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_PENDING',
+          dedupeKey: `process-completion-withdrawal-request:${created.id}:PENDING:v${created.version}`,
+          category: 'APPROVAL',
+          priority: preview.canWithdraw ? 'NORMAL' : 'HIGH',
+          title: `待审批报工撤回：${state.route.workOrder.specification || state.route.workOrder.code} · ${state.step.processName}`,
+          body: reason || '员工未填写撤回说明；请按当前路线重新预览后审批。',
+          targetRoute: `/workspace/workflows?withdrawalRequestId=${encodeURIComponent(created.id)}`,
+          sourceType: 'process_completion_withdrawal_request',
+          sourceId: created.id,
+          actorId: input.userId,
+          metadata: {
+            requestId: created.id,
+            completionId,
+            routeId,
+            requestedRouteVersion: state.route.version,
+            canWithdrawAtRequest: preview.canWithdraw,
+          },
+          recipientUserIds: reviewerUserIds,
+        });
+        return serializeProcessCompletionWithdrawalRequest(created);
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5_000,
+        timeout: 15_000,
+      });
+    } catch (error) {
+      if (
+        attempt === 0
+        && error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === 'P2034'
+      ) continue;
+      throw error;
+    }
+  }
+  throw new ProcessCompletionWithdrawalError(
+    '撤回申请发生并发冲突，请刷新后重试',
+    409,
+    'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_CONFLICT',
+  );
+}
+
+export async function listProcessCompletionWithdrawalRequests(input: {
+  status?: unknown;
+  take?: unknown;
+  cursor?: unknown;
+  routeId?: unknown;
+  completionId?: unknown;
+  requesterUserId?: string;
+  workOrderWhere?: Prisma.WorkOrderWhereInput;
+} = {}): Promise<{ items: ProcessCompletionWithdrawalRequestDto[]; nextCursor: string | null }> {
+  const status = parseWithdrawalRequestStatus(input.status);
+  const parsedTake = Number(input.take);
+  const take = Number.isSafeInteger(parsedTake) && parsedTake > 0
+    ? Math.min(parsedTake, 100)
+    : 50;
+  const cursor = text(input.cursor, 80) || null;
+  const routeId = text(input.routeId, 80) || null;
+  const completionId = text(input.completionId, 80) || null;
+  const records = await prisma.processCompletionWithdrawalRequest.findMany({
+    where: {
+      ...(status ? { status } : {}),
+      ...(routeId ? { routeId } : {}),
+      ...(completionId ? { completionId } : {}),
+      ...(input.requesterUserId ? { requesterUserId: input.requesterUserId } : {}),
+      ...(input.workOrderWhere ? { workOrder: input.workOrderWhere } : {}),
+    },
+    include: withdrawalRequestInclude,
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    take: take + 1,
+  });
+  const hasMore = records.length > take;
+  const page = hasMore ? records.slice(0, take) : records;
+  return {
+    items: page.map(serializeProcessCompletionWithdrawalRequest),
+    nextCursor: hasMore ? page[page.length - 1]?.id || null : null,
+  };
+}
+
+export async function getProcessCompletionWithdrawalRequest(input: {
+  requestId: string;
+  requesterUserId?: string;
+  workOrderWhere?: Prisma.WorkOrderWhereInput;
+}): Promise<{
+  request: ProcessCompletionWithdrawalRequestDto;
+  currentPreview: ProcessCompletionWithdrawalPreview | null;
+}> {
+  const requestId = text(input.requestId, 80);
+  if (!requestId) {
+    throw new ProcessCompletionWithdrawalError(
+      '缺少撤回申请标识',
+      400,
+      'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_ID_REQUIRED',
+    );
+  }
+  const request = await prisma.processCompletionWithdrawalRequest.findFirst({
+    where: {
+      id: requestId,
+      ...(input.requesterUserId ? { requesterUserId: input.requesterUserId } : {}),
+      ...(input.workOrderWhere ? { workOrder: input.workOrderWhere } : {}),
+    },
+    include: withdrawalRequestInclude,
+  });
+  if (!request) {
+    throw new ProcessCompletionWithdrawalError(
+      '撤回申请不存在或无权查看',
+      404,
+      'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_NOT_FOUND',
+    );
+  }
+  const currentPreview = request.completion.voidedAt
+    ? null
+    : await previewProcessCompletionWithdrawal(request.routeId, request.completionId);
+  return { request: serializeProcessCompletionWithdrawalRequest(request), currentPreview };
+}
+
+export async function cancelProcessCompletionWithdrawalRequest(input: {
+  requestId: string;
+  routeId: string;
+  completionId: string;
+  expectedVersion: unknown;
+  idempotencyKey: unknown;
+  userId: string;
+  employeeId: string;
+}): Promise<ProcessCompletionWithdrawalRequestDto> {
+  const requestId = text(input.requestId, 80);
+  const expectedVersion = parseExpectedRequestVersion(input.expectedVersion);
+  const idempotencyKey = parseIdempotencyKey(input.idempotencyKey);
+  if (!requestId) {
+    throw new ProcessCompletionWithdrawalError(
+      '缺少撤回申请标识',
+      400,
+      'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_ID_REQUIRED',
+    );
+  }
   return prisma.$transaction(async tx => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`process-completion-correction:${completionId}`}))`;
-    const { state } = await loadState(tx, routeId, completionId);
-    if (state.voidedAt) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`process-completion-withdrawal-request:${requestId}`}))`;
+    const request = await tx.processCompletionWithdrawalRequest.findUnique({
+      where: { id: requestId },
+      include: withdrawalRequestInclude,
+    });
+    if (
+      !request
+      || request.requesterUserId !== input.userId
+      || request.requesterEmployeeId !== input.employeeId
+      || request.routeId !== input.routeId
+      || request.completionId !== input.completionId
+    ) {
       throw new ProcessCompletionWithdrawalError(
-        '该报工记录已经撤回，请刷新后核对',
-        409,
-        'PROCESS_COMPLETION_ALREADY_WITHDRAWN',
+        '撤回申请不存在或只能由申请人取消',
+        404,
+        'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_NOT_FOUND',
       );
     }
-    const fingerprint = `field-process-completion-correction:${completionId}`;
-    const sourceRoute = `/workspace/workflows?${new URLSearchParams({
-      entityType: 'production',
-      workOrderId: state.workOrderId,
-      stepId: state.stepId,
-    }).toString()}`;
-    let issue = await tx.issue.findUnique({ where: { sourceFingerprint: fingerprint } });
-    if (!issue) {
-      issue = await tx.issue.create({
-        data: {
-          title: `报工数量待核对：${state.route.workOrder.specification || state.route.workOrder.code} · ${state.step.processName}`,
-          type: 'production',
-          priority: 'high',
-          status: 'pending',
-          description: `现场员工报告该笔报工可能有误。\n报工数量：${completionQuantityDescription(state)}\n现场说明：${reasonText}`,
-          sourceType: 'process_reporting_error',
-          sourceId: state.id,
-          sourceCode: state.route.workOrder.specification || state.route.workOrder.code,
-          sourceRoute,
-          sourceAlertCode: 'FIELD_REPORT_CORRECTION_REQUEST',
-          sourceFingerprint: fingerprint,
-          workOrderId: state.workOrderId,
-          reporterId: input.userId,
-        },
-      });
-      await tx.issueActivity.create({
-        data: {
-          issueId: issue.id,
-          action: 'create_from_field_report_correction',
-          content: `${text(input.actor, 120) || '现场员工'}申请核对报工数量：${reasonText}`.slice(0, 500),
-          actorId: input.userId,
-          detail: { completionId, routeId, idempotencyKey, reason },
-        },
-      });
-    } else if (issue.deletedAt || issue.status === 'closed') {
-      issue = await tx.issue.update({
-        where: { id: issue.id },
-        data: {
-          deletedAt: null,
-          status: 'pending',
-          reporterId: input.userId,
-          description: `现场员工再次报告该笔报工可能有误。\n报工数量：${completionQuantityDescription(state)}\n现场说明：${reasonText}`,
-        },
-      });
+    if (
+      request.status === ProcessCompletionWithdrawalRequestStatus.CANCELLED
+      && request.resolutionIdempotencyKey === idempotencyKey
+    ) return serializeProcessCompletionWithdrawalRequest(request);
+    if (request.status !== ProcessCompletionWithdrawalRequestStatus.PENDING) {
+      throw new ProcessCompletionWithdrawalError(
+        '该撤回申请已处理，不能再取消',
+        409,
+        'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_NOT_PENDING',
+      );
+    }
+    if (request.version !== expectedVersion) {
+      throw new ProcessCompletionWithdrawalError(
+        '撤回申请已变化，请刷新后重试',
+        409,
+        'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_VERSION_CONFLICT',
+      );
+    }
+    const now = new Date();
+    const updated = await tx.processCompletionWithdrawalRequest.updateMany({
+      where: { id: requestId, status: ProcessCompletionWithdrawalRequestStatus.PENDING, version: expectedVersion },
+      data: {
+        status: ProcessCompletionWithdrawalRequestStatus.CANCELLED,
+        version: { increment: 1 },
+        resolutionIdempotencyKey: idempotencyKey,
+        cancelledAt: now,
+        resultCode: 'CANCELLED_BY_REQUESTER',
+      },
+    });
+    if (updated.count !== 1) {
+      throw new ProcessCompletionWithdrawalError(
+        '撤回申请已变化，请刷新后重试',
+        409,
+        'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_VERSION_CONFLICT',
+      );
     }
     await tx.operationLog.create({
       data: {
         userId: input.userId,
-        action: 'request_process_completion_correction',
-        targetType: 'process_completion',
-        targetId: completionId,
-        detail: { routeId, issueId: issue.id, idempotencyKey, reason },
+        action: 'cancel_process_completion_withdrawal_request',
+        targetType: 'process_completion_withdrawal_request',
+        targetId: requestId,
+        detail: { completionId: request.completionId, routeId: request.routeId, idempotencyKey },
       },
     });
-    return { issue: { id: issue.id, code: issueCode(issue.sequence) }, completionId };
+    await completeWithdrawalApprovalNotifications(tx, requestId, '申请人已取消撤回申请', now);
+    const saved = await tx.processCompletionWithdrawalRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      include: withdrawalRequestInclude,
+    });
+    await notifyWithdrawalRequester(tx, {
+      request: saved,
+      status: ProcessCompletionWithdrawalRequestStatus.CANCELLED,
+      version: saved.version,
+      actorId: input.userId,
+    });
+    return serializeProcessCompletionWithdrawalRequest(saved);
   }, {
     isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     maxWait: 5_000,
@@ -1433,6 +1965,439 @@ async function applyWithdrawal(
   return nextRouteVersion;
 }
 
+function withdrawalResultFromResolvedRequest(
+  request: WithdrawalRequestRecord,
+): WithdrawProcessCompletionResult | null {
+  if (request.status !== ProcessCompletionWithdrawalRequestStatus.APPLIED) return null;
+  if (!request.resultDetail || typeof request.resultDetail !== 'object' || Array.isArray(request.resultDetail)) {
+    return null;
+  }
+  const detail = request.resultDetail as Record<string, unknown>;
+  const routeVersion = Number(detail.routeVersion);
+  const preview = detail.preview as ProcessCompletionWithdrawalPreview | undefined;
+  if (!Number.isSafeInteger(routeVersion) || !preview || typeof preview !== 'object') return null;
+  return {
+    status: 'WITHDRAWN',
+    completionId: request.completionId,
+    routeVersion,
+    preview,
+    issue: null,
+  };
+}
+
+export async function decideProcessCompletionWithdrawalRequest(input: {
+  requestId: string;
+  action: unknown;
+  expectedVersion: unknown;
+  expectedRouteVersion?: unknown;
+  idempotencyKey: unknown;
+  note?: unknown;
+  userId: string;
+  actor: string;
+  workOrderWhere: Prisma.WorkOrderWhereInput;
+}): Promise<ProcessCompletionWithdrawalRequestDecisionResult> {
+  const requestId = text(input.requestId, 80);
+  const action = input.action === 'APPROVE' || input.action === 'REJECT' ? input.action : null;
+  const expectedVersion = parseExpectedRequestVersion(input.expectedVersion);
+  const expectedRouteVersion = action === 'APPROVE'
+    ? parseExpectedRouteVersion(input.expectedRouteVersion)
+    : null;
+  const idempotencyKey = parseIdempotencyKey(input.idempotencyKey);
+  const note = text(input.note, 500) || null;
+  if (!requestId) {
+    throw new ProcessCompletionWithdrawalError(
+      '缺少撤回申请标识',
+      400,
+      'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_ID_REQUIRED',
+    );
+  }
+  if (!action) {
+    throw new ProcessCompletionWithdrawalError(
+      '审批动作必须为 APPROVE 或 REJECT',
+      400,
+      'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_ACTION_INVALID',
+    );
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await prisma.$transaction(async tx => {
+        const initial = await tx.processCompletionWithdrawalRequest.findUnique({
+          where: { id: requestId },
+          select: { completionId: true },
+        });
+        if (!initial) {
+          throw new ProcessCompletionWithdrawalError(
+            '撤回申请不存在',
+            404,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_NOT_FOUND',
+          );
+        }
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`process-completion-withdrawal:${initial.completionId}`}))`;
+        const request = await tx.processCompletionWithdrawalRequest.findUnique({
+          where: { id: requestId },
+          include: withdrawalRequestInclude,
+        });
+        if (!request) {
+          throw new ProcessCompletionWithdrawalError(
+            '撤回申请不存在',
+            404,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_NOT_FOUND',
+          );
+        }
+        const workOrderInScope = await tx.workOrder.findFirst({
+          where: { id: request.workOrderId, deletedAt: null, ...input.workOrderWhere },
+          select: { id: true },
+        });
+        if (!workOrderInScope) {
+          throw new ProcessCompletionWithdrawalError(
+            '该撤回申请不在当前账号的生产数据范围内',
+            403,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_SCOPE_FORBIDDEN',
+          );
+        }
+
+        if (request.resolutionIdempotencyKey === idempotencyKey) {
+          const replayMatches = (
+            action === 'REJECT'
+              ? request.status === ProcessCompletionWithdrawalRequestStatus.REJECTED
+              : new Set<ProcessCompletionWithdrawalRequestStatus>([
+                  ProcessCompletionWithdrawalRequestStatus.APPLIED,
+                  ProcessCompletionWithdrawalRequestStatus.BLOCKED,
+                  ProcessCompletionWithdrawalRequestStatus.STALE,
+                ]).has(request.status)
+          );
+          if (!replayMatches) {
+            throw new ProcessCompletionWithdrawalError(
+              '请求标识已用于不同的申请处理动作',
+              409,
+              'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_IDEMPOTENCY_CONFLICT',
+            );
+          }
+          return {
+            status: request.status as ProcessCompletionWithdrawalRequestDecisionResult['status'],
+            request: serializeProcessCompletionWithdrawalRequest(request),
+            withdrawal: withdrawalResultFromResolvedRequest(request),
+          };
+        }
+        const duplicateResolution = await tx.processCompletionWithdrawalRequest.findUnique({
+          where: { resolutionIdempotencyKey: idempotencyKey },
+          select: { id: true },
+        });
+        if (duplicateResolution) {
+          throw new ProcessCompletionWithdrawalError(
+            '请求标识已用于其他撤回申请处理',
+            409,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_IDEMPOTENCY_CONFLICT',
+          );
+        }
+        if (request.status !== ProcessCompletionWithdrawalRequestStatus.PENDING) {
+          throw new ProcessCompletionWithdrawalError(
+            '该撤回申请已处理，请刷新后核对',
+            409,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_NOT_PENDING',
+          );
+        }
+        if (request.version !== expectedVersion) {
+          throw new ProcessCompletionWithdrawalError(
+            '撤回申请已变化，请刷新后重试',
+            409,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_VERSION_CONFLICT',
+          );
+        }
+
+        const now = new Date();
+        if (action === 'REJECT') {
+          const rejected = await tx.processCompletionWithdrawalRequest.updateMany({
+            where: { id: requestId, status: ProcessCompletionWithdrawalRequestStatus.PENDING, version: expectedVersion },
+            data: {
+              status: ProcessCompletionWithdrawalRequestStatus.REJECTED,
+              version: { increment: 1 },
+              resolutionIdempotencyKey: idempotencyKey,
+              decidedById: input.userId,
+              decidedAt: now,
+              decisionNote: note,
+              resultCode: 'REJECTED_BY_REVIEWER',
+            },
+          });
+          if (rejected.count !== 1) {
+            throw new ProcessCompletionWithdrawalError(
+              '撤回申请已变化，请刷新后重试',
+              409,
+              'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_VERSION_CONFLICT',
+            );
+          }
+          await tx.operationLog.create({
+            data: {
+              userId: input.userId,
+              action: 'reject_process_completion_withdrawal_request',
+              targetType: 'process_completion_withdrawal_request',
+              targetId: requestId,
+              detail: {
+                completionId: request.completionId,
+                routeId: request.routeId,
+                note,
+                idempotencyKey,
+              },
+            },
+          });
+          await completeWithdrawalApprovalNotifications(tx, requestId, '撤回申请已驳回', now);
+          const saved = await tx.processCompletionWithdrawalRequest.findUniqueOrThrow({
+            where: { id: requestId },
+            include: withdrawalRequestInclude,
+          });
+          await notifyWithdrawalRequester(tx, {
+            request: saved,
+            status: ProcessCompletionWithdrawalRequestStatus.REJECTED,
+            version: saved.version,
+            actorId: input.userId,
+            note,
+          });
+          return {
+            status: 'REJECTED',
+            request: serializeProcessCompletionWithdrawalRequest(saved),
+            withdrawal: null,
+          };
+        }
+
+        const loaded = await loadState(tx, request.routeId, request.completionId);
+        const currentPreview = previewFromState(
+          loaded.state,
+          loaded.releaseMovements,
+          loaded.triggeredCoverages,
+        );
+        const staleCode = loaded.state.voidedAt
+          ? 'PROCESS_COMPLETION_ALREADY_WITHDRAWN'
+          : (
+              loaded.state.route.version !== expectedRouteVersion
+              || loaded.state.route.version !== request.requestedRouteVersion
+            )
+            ? 'PROCESS_ROUTE_VERSION_CONFLICT'
+            : null;
+        if (staleCode) {
+          const stale = await tx.processCompletionWithdrawalRequest.updateMany({
+            where: { id: requestId, status: ProcessCompletionWithdrawalRequestStatus.PENDING, version: expectedVersion },
+            data: {
+              status: ProcessCompletionWithdrawalRequestStatus.STALE,
+              version: { increment: 1 },
+              resolutionIdempotencyKey: idempotencyKey,
+              decidedById: input.userId,
+              decidedAt: now,
+              decisionNote: note,
+              resultCode: staleCode,
+              resultDetail: {
+                requestedRouteVersion: request.requestedRouteVersion,
+                expectedRouteVersion,
+                currentRouteVersion: loaded.state.route.version,
+                preview: currentPreview as unknown as Prisma.InputJsonValue,
+              },
+            },
+          });
+          if (stale.count !== 1) {
+            throw new ProcessCompletionWithdrawalError(
+              '撤回申请已变化，请刷新后重试',
+              409,
+              'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_VERSION_CONFLICT',
+            );
+          }
+          await tx.operationLog.create({
+            data: {
+              userId: input.userId,
+              action: 'stale_process_completion_withdrawal_request',
+              targetType: 'process_completion_withdrawal_request',
+              targetId: requestId,
+              detail: {
+                completionId: request.completionId,
+                routeId: request.routeId,
+                requestedRouteVersion: request.requestedRouteVersion,
+                expectedRouteVersion,
+                currentRouteVersion: loaded.state.route.version,
+                resultCode: staleCode,
+                idempotencyKey,
+              },
+            },
+          });
+          await completeWithdrawalApprovalNotifications(tx, requestId, '撤回申请已失效', now);
+          const saved = await tx.processCompletionWithdrawalRequest.findUniqueOrThrow({
+            where: { id: requestId },
+            include: withdrawalRequestInclude,
+          });
+          await notifyWithdrawalRequester(tx, {
+            request: saved,
+            status: ProcessCompletionWithdrawalRequestStatus.STALE,
+            version: saved.version,
+            actorId: input.userId,
+            note,
+          });
+          return {
+            status: 'STALE',
+            request: serializeProcessCompletionWithdrawalRequest(saved),
+            withdrawal: null,
+          };
+        }
+
+        if (!currentPreview.canWithdraw) {
+          const blocked = await tx.processCompletionWithdrawalRequest.updateMany({
+            where: { id: requestId, status: ProcessCompletionWithdrawalRequestStatus.PENDING, version: expectedVersion },
+            data: {
+              status: ProcessCompletionWithdrawalRequestStatus.BLOCKED,
+              version: { increment: 1 },
+              resolutionIdempotencyKey: idempotencyKey,
+              decidedById: input.userId,
+              decidedAt: now,
+              decisionNote: note,
+              resultCode: currentPreview.blockers[0]?.code || 'PROCESS_COMPLETION_WITHDRAWAL_BLOCKED',
+              resultDetail: {
+                blockers: currentPreview.blockers,
+                preview: currentPreview as unknown as Prisma.InputJsonValue,
+              },
+            },
+          });
+          if (blocked.count !== 1) {
+            throw new ProcessCompletionWithdrawalError(
+              '撤回申请已变化，请刷新后重试',
+              409,
+              'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_VERSION_CONFLICT',
+            );
+          }
+          await tx.operationLog.create({
+            data: {
+              userId: input.userId,
+              action: 'block_process_completion_withdrawal_request',
+              targetType: 'process_completion_withdrawal_request',
+              targetId: requestId,
+              detail: {
+                completionId: request.completionId,
+                routeId: request.routeId,
+                blockers: currentPreview.blockers,
+                note,
+                idempotencyKey,
+              },
+            },
+          });
+          await completeWithdrawalApprovalNotifications(tx, requestId, '撤回申请被安全校验阻止', now);
+          const saved = await tx.processCompletionWithdrawalRequest.findUniqueOrThrow({
+            where: { id: requestId },
+            include: withdrawalRequestInclude,
+          });
+          await notifyWithdrawalRequester(tx, {
+            request: saved,
+            status: ProcessCompletionWithdrawalRequestStatus.BLOCKED,
+            version: saved.version,
+            actorId: input.userId,
+            note: currentPreview.blockers.map(item => item.message).join('；'),
+          });
+          return {
+            status: 'BLOCKED',
+            request: serializeProcessCompletionWithdrawalRequest(saved),
+            withdrawal: null,
+          };
+        }
+
+        const category = request.category === 'PROCESS_EXCEPTION' ? 'PROCESS_EXCEPTION' : 'REPORTING_ERROR';
+        const reason = [
+          automaticWithdrawalAuditReason(category, loaded.state, currentPreview),
+          ...(request.reason ? [`员工说明：${request.reason}`] : []),
+          ...(note ? [`审批备注：${note}`] : []),
+        ].join('；').slice(0, 500);
+        const withdrawalIdempotencyKey = `withdrawal-request:${request.id}`.slice(0, 120);
+        const routeVersion = await applyWithdrawal(tx, {
+          state: loaded.state,
+          releaseMovements: loaded.releaseMovements,
+          triggeredCoverages: loaded.triggeredCoverages,
+          preview: currentPreview,
+          reason,
+          category,
+          idempotencyKey: withdrawalIdempotencyKey,
+          userId: input.userId,
+          actor: text(input.actor, 120) || input.userId,
+        });
+        const applied = await tx.processCompletionWithdrawalRequest.updateMany({
+          where: { id: requestId, status: ProcessCompletionWithdrawalRequestStatus.PENDING, version: expectedVersion },
+          data: {
+            status: ProcessCompletionWithdrawalRequestStatus.APPLIED,
+            version: { increment: 1 },
+            resolutionIdempotencyKey: idempotencyKey,
+            decidedById: input.userId,
+            decidedAt: now,
+            decisionNote: note,
+            executedAt: now,
+            resultCode: 'WITHDRAWAL_APPLIED',
+            resultDetail: {
+              routeVersion,
+              withdrawalIdempotencyKey,
+              preview: currentPreview as unknown as Prisma.InputJsonValue,
+            },
+          },
+        });
+        if (applied.count !== 1) {
+          throw new ProcessCompletionWithdrawalError(
+            '撤回申请已变化，数量与工时冲销已安全回滚，请刷新后重试',
+            409,
+            'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_VERSION_CONFLICT',
+          );
+        }
+        await tx.operationLog.create({
+          data: {
+            userId: input.userId,
+            action: 'approve_process_completion_withdrawal_request',
+            targetType: 'process_completion_withdrawal_request',
+            targetId: requestId,
+            detail: {
+              completionId: request.completionId,
+              routeId: request.routeId,
+              routeVersion,
+              note,
+              idempotencyKey,
+              withdrawalIdempotencyKey,
+            },
+          },
+        });
+        await completeWithdrawalApprovalNotifications(tx, requestId, '撤回申请已批准并完成冲销', now);
+        const saved = await tx.processCompletionWithdrawalRequest.findUniqueOrThrow({
+          where: { id: requestId },
+          include: withdrawalRequestInclude,
+        });
+        await notifyWithdrawalRequester(tx, {
+          request: saved,
+          status: ProcessCompletionWithdrawalRequestStatus.APPLIED,
+          version: saved.version,
+          actorId: input.userId,
+          note,
+        });
+        const withdrawal: WithdrawProcessCompletionResult = {
+          status: 'WITHDRAWN',
+          completionId: request.completionId,
+          routeVersion,
+          preview: currentPreview,
+          issue: null,
+        };
+        return {
+          status: 'APPLIED',
+          request: serializeProcessCompletionWithdrawalRequest(saved),
+          withdrawal,
+        };
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5_000,
+        timeout: 20_000,
+      });
+    } catch (error) {
+      if (
+        attempt === 0
+        && error instanceof Prisma.PrismaClientKnownRequestError
+        && error.code === 'P2034'
+      ) continue;
+      throw error;
+    }
+  }
+  throw new ProcessCompletionWithdrawalError(
+    '撤回审批发生并发冲突，请刷新后重试',
+    409,
+    'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_CONFLICT',
+  );
+}
+
 function storedResult(
   detail: Prisma.JsonValue | null,
 ): { completionId: string; routeVersion: number } | null {
@@ -1481,12 +2446,6 @@ export async function withdrawProcessCompletion(
           }
           const loaded = await loadState(tx, routeId, completionId);
           if (duplicate.action === 'block_process_completion_withdrawal') {
-            const detail = duplicate.detail && typeof duplicate.detail === 'object' && !Array.isArray(duplicate.detail)
-              ? duplicate.detail as Record<string, unknown>
-              : {};
-            const issue = typeof detail.issueId === 'string'
-              ? await tx.issue.findUnique({ where: { id: detail.issueId } })
-              : null;
             return {
               status: 'BLOCKED' as const,
               completionId,
@@ -1496,7 +2455,7 @@ export async function withdrawProcessCompletion(
                 loaded.releaseMovements,
                 loaded.triggeredCoverages,
               ),
-              issue: issue ? { id: issue.id, code: issueCode(issue.sequence) } : null,
+              issue: null,
             };
           }
           return {
@@ -1531,13 +2490,6 @@ export async function withdrawProcessCompletion(
           ...(submittedReason ? [`现场说明：${submittedReason}`] : []),
         ].join('；').slice(0, 500);
         if (!preview.canWithdraw) {
-          const issue = await createBlockedIssue(tx, {
-            state,
-            preview,
-            category,
-            reason,
-            userId: command.userId,
-          });
           await tx.operationLog.create({
             data: {
               userId: command.userId,
@@ -1548,7 +2500,6 @@ export async function withdrawProcessCompletion(
                 category,
                 reason,
                 blockers: preview.blockers,
-                issueId: issue.id,
                 idempotencyKey,
               },
             },
@@ -1558,7 +2509,7 @@ export async function withdrawProcessCompletion(
               routeId,
               stepId: state.stepId,
               action: 'block_process_completion_withdrawal',
-              content: '完工撤回被下游影响阻止，已转入问题闭环',
+              content: '完工撤回被安全校验阻止，未修改数量或工时',
               actorId: command.userId,
               detail: {
                 idempotencyKey,
@@ -1567,7 +2518,6 @@ export async function withdrawProcessCompletion(
                 category,
                 reason,
                 blockers: preview.blockers,
-                issueId: issue.id,
               },
             },
           });
@@ -1576,7 +2526,7 @@ export async function withdrawProcessCompletion(
             completionId,
             routeVersion: state.route.version,
             preview,
-            issue: { id: issue.id, code: issueCode(issue.sequence) },
+            issue: null,
           };
         }
         const routeVersion = await applyWithdrawal(tx, {

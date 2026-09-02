@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   attendanceEmployeeAllowed,
+  departedAttendanceCorrectionError,
   effectiveAttendanceWorkforceScope,
   resolveAttendanceAccessBoundary,
 } from '@/lib/attendance-access';
@@ -22,14 +23,15 @@ import {
 } from '@/lib/attendance';
 import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
 import { attendanceCalendarDayLabel, resolveAttendanceCalendarDay } from '@/lib/attendance-calendar';
-import { cleanProcessText } from '@/lib/process-time';
+import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
+import { hasCapability } from '@/lib/department-access';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import {
   attendanceEmployeeWhere,
   attendanceRecordScopeWhere,
   employeeHiredBeforeWhere,
-  isEmployeeHiredOnDate,
+  isEmployeeEmployedOnDate,
   normalizeEmployeeDepartment,
   parseAttendanceWorkforceScope,
   type AttendanceWorkforceScope,
@@ -42,6 +44,27 @@ const include = {
   employee: true,
   confirmedBy: { select: { id: true, username: true, displayName: true } },
 } satisfies Prisma.AttendanceRecordInclude;
+
+type AttendanceAuditRecord = Prisma.AttendanceRecordGetPayload<{ include: typeof include }>;
+
+function attendanceAuditSnapshot(record: AttendanceAuditRecord) {
+  return {
+    status: record.status,
+    attendanceType: record.attendanceType,
+    plannedMilliseconds: record.plannedMilliseconds,
+    leaveMilliseconds: record.leaveMilliseconds,
+    actualMilliseconds: record.actualMilliseconds,
+    overtimeMilliseconds: record.overtimeMilliseconds,
+    segments: record.segments,
+    remark: record.remark,
+    attainmentEligibleSnapshot: record.attainmentEligibleSnapshot,
+    attainmentFactorBasisPointsSnapshot: record.attainmentFactorBasisPointsSnapshot,
+    attainmentStreamSnapshot: record.attainmentStreamSnapshot,
+    confirmedById: record.confirmedById,
+    confirmedAt: record.confirmedAt?.toISOString() || null,
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -62,21 +85,36 @@ export async function GET(req: NextRequest) {
     const boundary = await resolveAttendanceAccessBoundary(user);
     const scope = effectiveAttendanceWorkforceScope(boundary, parsedScope);
     if (employeeId && !attendanceEmployeeAllowed(boundary, employeeId)) {
-      return NextResponse.json({ ok: false, error: '只能查看本人负责范围内的员工考勤' }, { status: 403 });
+      const historicalRecords = await prisma.attendanceRecord.findMany({
+        where: {
+          employeeId,
+          workDate: { gte: start, lt: end },
+          AND: [
+            attendanceRecordScopeWhere(scope),
+            boundary.historicalRecordWhere,
+          ],
+        },
+        include: { employee: true },
+      });
+      if (!historicalRecords.some(record => isEmployeeEmployedOnDate(
+        record.employee,
+        dateKeyFromDatabase(record.workDate),
+      ))) {
+        return NextResponse.json({ ok: false, error: '只能查看本人当前或历史负责范围内的员工考勤' }, { status: 403 });
+      }
     }
     const employeeBoundaryWhere = boundary.employeeIds === null
       ? {}
       : { id: { in: boundary.employeeIds } };
-    const recordBoundaryWhere = boundary.employeeIds === null
-      ? {}
-      : { employeeId: { in: boundary.employeeIds } };
     const [records, employees, productionCount, otherCount, allCount, calendarOverrides] = await Promise.all([
       prisma.attendanceRecord.findMany({
         where: {
           workDate: { gte: start, lt: end },
           ...(employeeId ? { employeeId } : {}),
-          ...recordBoundaryWhere,
-          ...attendanceRecordScopeWhere(scope),
+          AND: [
+            attendanceRecordScopeWhere(scope),
+            boundary.historicalRecordWhere,
+          ],
         },
         include,
         orderBy: [{ workDate: 'desc' }, { employee: { employeeNo: 'asc' } }],
@@ -98,7 +136,7 @@ export async function GET(req: NextRequest) {
         select: { workDate: true, dayType: true, label: true, remark: true },
       }),
     ]);
-    const effectiveRecords = records.filter(item => isEmployeeHiredOnDate(item.employee, dateKeyFromDatabase(item.workDate)));
+    const effectiveRecords = records.filter(item => isEmployeeEmployedOnDate(item.employee, dateKeyFromDatabase(item.workDate)));
     const calendarOverrideByDate = new Map(calendarOverrides.map(item => [dateKeyFromDatabase(item.workDate), item]));
     const resolveDay = (dateKey: string) => {
       const override = calendarOverrideByDate.get(dateKey);
@@ -110,6 +148,9 @@ export async function GET(req: NextRequest) {
     };
     const reportingRecords = effectiveRecords.filter(item => resolveDay(dateKeyFromDatabase(item.workDate)).isWorkday);
     const confirmed = reportingRecords.filter(item => item.status === 'confirmed');
+    const rosterById = new Map(employees.map(employee => [employee.id, employee]));
+    effectiveRecords.forEach(record => rosterById.set(record.employeeId, record.employee));
+    const roster = [...rosterById.values()].sort((left, right) => left.employeeNo.localeCompare(right.employeeNo, 'zh-CN'));
     const selectedCalendarDay = resolveDay(range.date);
     return NextResponse.json({
       ok: true,
@@ -128,9 +169,10 @@ export async function GET(req: NextRequest) {
       },
       rangeStart: range.start.toISOString(),
       rangeEnd: range.end.toISOString(),
+      employees: roster.map(serializeEmployee),
       records: effectiveRecords.map(serializeAttendanceRecord),
       summary: {
-        enabledEmployeeCount: employees.length,
+        enabledEmployeeCount: roster.length,
         recordCount: reportingRecords.length,
         confirmedCount: confirmed.length,
         draftCount: reportingRecords.length - confirmed.length,
@@ -154,18 +196,37 @@ export async function POST(req: NextRequest) {
     if (!employeeId) return NextResponse.json({ ok: false, error: '请选择员工' }, { status: 400 });
     const workDate = parseWorkDate(body.workDate);
     await requireAttendanceWorkday(workDate.key);
-    const boundary = await resolveAttendanceAccessBoundary(user);
-    if (!attendanceEmployeeAllowed(boundary, employeeId)) {
-      return NextResponse.json({ ok: false, error: '只能登记本人负责范围内的员工考勤' }, { status: 403 });
-    }
     const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
-    if (employee && !employee.isActive) {
-      return NextResponse.json({ ok: false, error: '离职员工不能新增或修改考勤记录' }, { status: 409 });
-    }
     if (!employee) return NextResponse.json({ ok: false, error: '员工档案不存在' }, { status: 404 });
-    if (!employee.attendanceEnabled) return NextResponse.json({ ok: false, error: '该员工未启用考勤' }, { status: 400 });
-    if (!isEmployeeHiredOnDate(employee, workDate.key)) {
-      return NextResponse.json({ ok: false, error: `该员工入职日期为 ${employee.hireDate?.toISOString().slice(0, 10)}，不能登记入职前考勤` }, { status: 409 });
+    if (!isEmployeeEmployedOnDate(employee, workDate.key)) {
+      const boundaryLabel = employee.hireDate && workDate.key < employee.hireDate.toISOString().slice(0, 10)
+        ? `入职日期 ${employee.hireDate.toISOString().slice(0, 10)}`
+        : `离职日期 ${employee.resignedAt?.toISOString().slice(0, 10) || '未设置'}`;
+      return NextResponse.json({ ok: false, error: `考勤日期不在该员工的在职区间内（${boundaryLabel}）` }, { status: 409 });
+    }
+    const boundary = await resolveAttendanceAccessBoundary(user);
+    const existing = await prisma.attendanceRecord.findUnique({
+      where: { employeeId_workDate: { employeeId, workDate: workDate.value } },
+      include,
+    });
+    const historicalCorrection = !employee.isActive;
+    const correctionReason = cleanProcessText(body.correctionReason, 500);
+    if (historicalCorrection) {
+      const correctionError = departedAttendanceCorrectionError({
+        hasHrUpdate: hasCapability(user.access, 'HR', 'UPDATE'),
+        existingRecord: Boolean(existing),
+        correctionReason,
+      });
+      if (correctionError) {
+        return NextResponse.json({ ok: false, error: correctionError.error }, { status: correctionError.status });
+      }
+    } else {
+      if (!attendanceEmployeeAllowed(boundary, employeeId)) {
+        return NextResponse.json({ ok: false, error: '只能登记本人负责范围内的员工考勤' }, { status: 403 });
+      }
+      if (!employee.attendanceEnabled) {
+        return NextResponse.json({ ok: false, error: '该员工未启用考勤' }, { status: 400 });
+      }
     }
     const requestedAttendanceType = parseAttendanceType(body.attendanceType);
     const requestedSegments = body.segments === undefined
@@ -187,7 +248,7 @@ export async function POST(req: NextRequest) {
     const attainmentEligible = attainmentEligibleFromConfiguration(attainmentFactorBasisPoints, attainmentStream);
     const confirm = body.confirm === true;
     const now = new Date();
-    const record = await prisma.attendanceRecord.upsert({
+    const upsertArgs = {
       where: { employeeId_workDate: { employeeId, workDate: workDate.value } },
       create: {
         employeeId,
@@ -224,14 +285,37 @@ export async function POST(req: NextRequest) {
         confirmedAt: confirm ? now : null,
       },
       include,
-    });
-    await logOp({
-      userId: user.id,
-      action: confirm ? 'confirm_attendance_record' : 'save_attendance_record',
-      targetType: 'attendance_record',
-      targetId: record.id,
-      detail: { employeeId, workDate: workDate.key, attendanceType, attainmentFactorBasisPoints, attainmentStream },
-    });
+    } satisfies Prisma.AttendanceRecordUpsertArgs;
+    const record = historicalCorrection
+      ? await prisma.$transaction(async tx => {
+        const corrected = await tx.attendanceRecord.upsert(upsertArgs);
+        await tx.operationLog.create({
+          data: {
+            userId: user.id,
+            action: 'correct_departed_employee_attendance',
+            targetType: 'attendance_record',
+            targetId: corrected.id,
+            detail: {
+              employeeId,
+              workDate: workDate.key,
+              correctionReason,
+              before: attendanceAuditSnapshot(existing!),
+              after: attendanceAuditSnapshot(corrected),
+            },
+          },
+        });
+        return corrected;
+      })
+      : await prisma.attendanceRecord.upsert(upsertArgs);
+    if (!historicalCorrection) {
+      await logOp({
+        userId: user.id,
+        action: confirm ? 'confirm_attendance_record' : 'save_attendance_record',
+        targetType: 'attendance_record',
+        targetId: record.id,
+        detail: { employeeId, workDate: workDate.key, attendanceType, attainmentFactorBasisPoints, attainmentStream },
+      });
+    }
     return NextResponse.json({ ok: true, record: serializeAttendanceRecord(record) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

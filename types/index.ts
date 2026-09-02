@@ -3295,6 +3295,104 @@ export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'cl
 export type WorkflowEntityType = 'issue' | 'change' | 'production';
 export type WorkflowWeekScope = 'history' | 'current' | 'next' | 'afterNext';
 
+export type CompletionWithdrawalRequestStatus =
+  | 'PENDING'
+  | 'APPLIED'
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'BLOCKED'
+  | 'STALE';
+
+export type CompletionWithdrawalRequestDTO = {
+  id: string;
+  status: CompletionWithdrawalRequestStatus;
+  version: number;
+  category: 'REPORTING_ERROR' | 'PROCESS_EXCEPTION';
+  reason: string | null;
+  requestedRouteVersion: number;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  cancelledAt: string | null;
+  executedAt: string | null;
+  resultCode: string | null;
+  resultDetail: unknown;
+  routeId: string;
+  completionId: string;
+  requester: {
+    userId: string;
+    employeeId: string | null;
+    employeeNo: string | null;
+    name: string;
+  };
+  workOrder: {
+    id: string;
+    code: string;
+    businessCode: string | null;
+    specification: string | null;
+  };
+  route: {
+    id: string;
+    version: number;
+    status: ProcessRouteStatus;
+  };
+  step: {
+    id: string;
+    processName: string;
+    sequenceGroup: number;
+  };
+  completion: {
+    id: string;
+    processedQty: number;
+    goodQty: number;
+    defectQty: number;
+    reportedUnitQty: number;
+    reportQuantityBasis: ProcessReportQuantityBasis;
+    reportUnitLabel: string;
+    completedAt: string;
+    voidedAt: string | null;
+  };
+};
+
+export type CompletionWithdrawalPreviewDTO = {
+  routeId: string;
+  routeVersion: number;
+  completion: {
+    id: string;
+    stepId: string;
+    processName: string;
+    workDate: string;
+    completedAt: string;
+    processedQty: number;
+    goodQty: number;
+    defectQty: number;
+    coveredQty: number;
+    pendingCoverageQty: number;
+    voidedAt: string | null;
+  };
+  canWithdraw: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  impact: {
+    processedQty: number;
+    goodQty: number;
+    reportedUnitQty: number;
+    reportedGoodUnitQty: number;
+    reportQuantityBasis: ProcessReportQuantityBasis;
+    reportUnitLabel: string;
+    releaseReductionQty: number;
+    affectedTargetStepCount: number;
+    downstreamPendingCompletionCount: number;
+    downstreamPendingQty: number;
+    laborPoolId: string | null;
+    laborClaimCount: number;
+    laborClaimedQty: number;
+    employeeNames: string[];
+    workOrderCompletedReductionQty: number;
+    frontendTransferReductionQty: number;
+  };
+};
+
 export type ProductionWeekNavigationItemDTO = {
   weekStartDate: string;
   weekEndDate: string;

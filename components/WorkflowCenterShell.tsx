@@ -32,6 +32,8 @@ import { ProcessRouteChangeInbox } from '@/components/process-route-changes/Proc
 import { selectWorkflowItem } from '@/lib/workflow-item-selection';
 import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import type {
+  CompletionWithdrawalPreviewDTO,
+  CompletionWithdrawalRequestDTO,
   CurrentUserDTO,
   WorkflowEntityType,
   WorkflowItemDTO,
@@ -66,24 +68,7 @@ type WorkflowDeepLink = {
   returnKey: string;
 };
 type WorkflowCompletionRecord = NonNullable<WorkflowStepDTO['completionRecords']>[number];
-type WithdrawalPreview = {
-  routeVersion: number;
-  canWithdraw: boolean;
-  blockers: Array<{ code: string; message: string }>;
-  impact: {
-    processedQty: number;
-    goodQty: number;
-    reportedUnitQty: number;
-    reportedGoodUnitQty: number;
-    reportQuantityBasis: 'product' | 'action';
-    reportUnitLabel: string;
-    releaseReductionQty: number;
-    affectedTargetStepCount: number;
-    laborClaimCount: number;
-    laborClaimedQty: number;
-    employeeNames: string[];
-  };
-};
+type WithdrawalPreview = CompletionWithdrawalPreviewDTO;
 
 const emptySummary: WorkflowSummaryDTO = {
   total: 0, waiting: 0, processing: 0, verifying: 0, closed: 0, overdue: 0, issue: 0, change: 0, production: 0,
@@ -98,6 +83,14 @@ const emptyNavigation: WorkflowWeekNavigationDTO = {
 const entityLabels: Record<WorkflowEntityType, string> = { issue: '问题', change: '变更', production: '生产' };
 const statusLabels: Record<WorkflowProcessStatus, string> = { waiting: '待推进', processing: '处理中', verifying: '待验证', closed: '已完成' };
 const priorityLabels = { urgent: '紧急', high: '高', normal: '一般' } as const;
+const withdrawalRequestStatusLabels: Record<CompletionWithdrawalRequestDTO['status'], string> = {
+  PENDING: '待审批',
+  APPLIED: '已执行',
+  REJECTED: '已驳回',
+  CANCELLED: '已取消',
+  BLOCKED: '业务阻断',
+  STALE: '申请失效',
+};
 const entityIcons = { issue: ShieldCheck, change: GitPullRequestArrow, production: LayoutDashboard };
 const weekScopeLabels: Record<WorkflowWeekScope, string> = {
   history: '历史周', current: '本周', next: '下周', afterNext: '下下周',
@@ -159,6 +152,8 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) {
+  const canCorrectProduction = user.access.capabilities.includes('PRODUCTION:UPDATE')
+    || user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
   const [keyword, setKeyword] = useState('');
   const [filters, setFilters] = useState<Filters>({ entityType: 'all', status: 'all', overdue: false, weekScope: 'current' });
   const [items, setItems] = useState<WorkflowItemDTO[]>([]);
@@ -179,6 +174,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   });
   const [deepLinkReady, setDeepLinkReady] = useState(false);
   const [initialProcessRouteChangeId, setInitialProcessRouteChangeId] = useState('');
+  const [initialWithdrawalRequestId, setInitialWithdrawalRequestId] = useState('');
+  const withdrawalDeepLinkHandledRef = useRef('');
   const [routeActionPending, setRouteActionPending] = useState(false);
   const [routeActionMessage, setRouteActionMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [historyRepairOpen, setHistoryRepairOpen] = useState(false);
@@ -189,6 +186,17 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const [withdrawalPreview, setWithdrawalPreview] = useState<WithdrawalPreview | null>(null);
   const [withdrawalLoading, setWithdrawalLoading] = useState(false);
   const [withdrawalCategory, setWithdrawalCategory] = useState<'REPORTING_ERROR' | 'PROCESS_EXCEPTION'>('REPORTING_ERROR');
+  const [withdrawalRequests, setWithdrawalRequests] = useState<CompletionWithdrawalRequestDTO[]>([]);
+  const [withdrawalExceptions, setWithdrawalExceptions] = useState<CompletionWithdrawalRequestDTO[]>([]);
+  const [withdrawalQueueView, setWithdrawalQueueView] = useState<'PENDING' | 'EXCEPTION'>('PENDING');
+  const [withdrawalQueueLoading, setWithdrawalQueueLoading] = useState(false);
+  const [withdrawalQueueError, setWithdrawalQueueError] = useState('');
+  const [withdrawalApprovalTarget, setWithdrawalApprovalTarget] = useState<CompletionWithdrawalRequestDTO | null>(null);
+  const [withdrawalApprovalPreview, setWithdrawalApprovalPreview] = useState<WithdrawalPreview | null>(null);
+  const [withdrawalApprovalLoading, setWithdrawalApprovalLoading] = useState(false);
+  const [withdrawalApprovalError, setWithdrawalApprovalError] = useState('');
+  const [withdrawalDecisionAction, setWithdrawalDecisionAction] = useState<'APPROVE' | 'REJECT' | null>(null);
+  const [withdrawalDecisionNote, setWithdrawalDecisionNote] = useState('');
   const [correctionTarget, setCorrectionTarget] = useState<{
     step: WorkflowStepDTO;
     completion: WorkflowCompletionRecord;
@@ -221,6 +229,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       returnKey: params.get('returnKey') || '',
     };
     setInitialProcessRouteChangeId(String(params.get('processRouteChangeId') || '').trim());
+    setInitialWithdrawalRequestId(String(params.get('withdrawalRequestId') || '').trim());
     if (next.batchId) selectedIdRef.current = `production-plan:${next.batchId}`;
     if (requestedKeyword) setKeyword(requestedKeyword);
     if (requestedWeekStart) setHistoryWeekStart(requestedWeekStart);
@@ -267,11 +276,85 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     }
   }, [deepLink.batchId, deepLink.workOrderId, filters, historyWeekStart, keyword]);
 
+  const loadWithdrawalRequests = useCallback(async (): Promise<void> => {
+    if (!canCorrectProduction) {
+      setWithdrawalRequests([]);
+      setWithdrawalExceptions([]);
+      setWithdrawalQueueError('');
+      return;
+    }
+    setWithdrawalQueueLoading(true);
+    setWithdrawalQueueError('');
+    try {
+      const [pendingResult, blockedResult, staleResult] = await Promise.all([
+        jsonRequest<{
+          ok: boolean;
+          data: { items: CompletionWithdrawalRequestDTO[]; nextCursor: string | null };
+        }>('/api/process-management/completion-withdrawal-requests?status=PENDING&take=50'),
+        jsonRequest<{
+          ok: boolean;
+          data: { items: CompletionWithdrawalRequestDTO[]; nextCursor: string | null };
+        }>('/api/process-management/completion-withdrawal-requests?status=BLOCKED&take=25'),
+        jsonRequest<{
+          ok: boolean;
+          data: { items: CompletionWithdrawalRequestDTO[]; nextCursor: string | null };
+        }>('/api/process-management/completion-withdrawal-requests?status=STALE&take=25'),
+      ]);
+      setWithdrawalRequests(pendingResult.data.items);
+      setWithdrawalExceptions([...blockedResult.data.items, ...staleResult.data.items].sort((first, second) => (
+        new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()
+      )));
+    } catch (queueError) {
+      setWithdrawalQueueError(queueError instanceof Error ? queueError.message : '撤回审批队列加载失败');
+    } finally {
+      setWithdrawalQueueLoading(false);
+    }
+  }, [canCorrectProduction]);
+
   useEffect(() => {
     if (!deepLinkReady) return;
     const timer = window.setTimeout(() => { void load(); }, keyword ? 260 : 0);
     return () => window.clearTimeout(timer);
   }, [deepLinkReady, keyword, load]);
+
+  useEffect(() => {
+    if (!deepLinkReady || !canCorrectProduction) return;
+    void loadWithdrawalRequests();
+  }, [canCorrectProduction, deepLinkReady, loadWithdrawalRequests]);
+
+  useEffect(() => {
+    if (
+      !deepLinkReady
+      || !canCorrectProduction
+      || !initialWithdrawalRequestId
+      || withdrawalDeepLinkHandledRef.current === initialWithdrawalRequestId
+    ) return;
+    withdrawalDeepLinkHandledRef.current = initialWithdrawalRequestId;
+    setWithdrawalApprovalLoading(true);
+    setWithdrawalApprovalError('');
+    void jsonRequest<{
+      ok: boolean;
+      data: {
+        request: CompletionWithdrawalRequestDTO;
+        currentPreview: WithdrawalPreview | null;
+      };
+    }>(`/api/process-management/completion-withdrawal-requests/${encodeURIComponent(initialWithdrawalRequestId)}`)
+      .then(result => {
+        setWithdrawalApprovalTarget(result.data.request);
+        setWithdrawalApprovalPreview(result.data.currentPreview);
+        setWithdrawalDecisionNote('');
+        if (result.data.request.status === 'BLOCKED' || result.data.request.status === 'STALE') {
+          setWithdrawalQueueView('EXCEPTION');
+        }
+      })
+      .catch(detailError => {
+        setRouteActionMessage({
+          tone: 'error',
+          text: detailError instanceof Error ? detailError.message : '撤回申请详情加载失败',
+        });
+      })
+      .finally(() => setWithdrawalApprovalLoading(false));
+  }, [canCorrectProduction, deepLinkReady, initialWithdrawalRequestId]);
 
   useEffect(() => {
     if (!deepLinkReady) return;
@@ -365,10 +448,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       || selected.steps[0]
       || null;
   }, [selected, selectedCurrentStep, selectedProcessStepKey]);
-  const canCorrectProduction = user.access.capabilities.includes('PRODUCTION:UPDATE')
-    || user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
   const canReviewProcessChanges = user.access.capabilities.includes('PROCESS:UPDATE')
     || user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
+  const visibleWithdrawalQueue = withdrawalQueueView === 'PENDING'
+    ? withdrawalRequests
+    : withdrawalExceptions;
   const activityVersions = useMemo(() => {
     if (!selected) return { current: [], historical: [] };
     const repairIndex = selected.activities.findIndex(item => item.action === 'repair_historical_product_time_route');
@@ -512,7 +596,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     try {
       const result = await jsonRequest<{
         ok: boolean;
-        data: { status: 'WITHDRAWN' | 'BLOCKED'; issue: { code: string } | null };
+        data: { status: 'WITHDRAWN' | 'BLOCKED' };
       }>(
         `/api/process-management/routes/${encodeURIComponent(selected.processRouteId)}/completions/${encodeURIComponent(withdrawalTarget.completion.id)}/withdraw`,
         {
@@ -531,7 +615,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
         ? { tone: 'success', text: '完工已撤回，生产执行、日计划和员工工时已同步冲销' }
         : {
             tone: 'error',
-            text: `自动撤回已安全阻止，已创建流程异常 ${result.data.issue?.code || ''}`.trim(),
+            text: '本次撤回已被安全阻止并记录为撤回异常；原报工未改动，也未创建问题单',
           });
       await load();
     } catch (actionError) {
@@ -540,6 +624,77 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
         text: actionError instanceof Error ? actionError.message : '完工撤回失败',
       });
     } finally {
+      setRouteActionPending(false);
+    }
+  }
+
+  async function openWithdrawalApproval(request: CompletionWithdrawalRequestDTO): Promise<void> {
+    if (!canCorrectProduction || withdrawalApprovalLoading || routeActionPending) return;
+    setWithdrawalApprovalTarget(request);
+    setWithdrawalApprovalPreview(null);
+    setWithdrawalDecisionNote('');
+    setWithdrawalDecisionAction(null);
+    setWithdrawalApprovalError('');
+    setWithdrawalApprovalLoading(true);
+    try {
+      const result = await jsonRequest<{
+        ok: boolean;
+        data: {
+          request: CompletionWithdrawalRequestDTO;
+          currentPreview: WithdrawalPreview | null;
+        };
+      }>(`/api/process-management/completion-withdrawal-requests/${encodeURIComponent(request.id)}`);
+      setWithdrawalApprovalTarget(result.data.request);
+      setWithdrawalApprovalPreview(result.data.currentPreview);
+    } catch (detailError) {
+      setWithdrawalApprovalError(detailError instanceof Error ? detailError.message : '撤回申请详情加载失败');
+    } finally {
+      setWithdrawalApprovalLoading(false);
+    }
+  }
+
+  async function submitWithdrawalDecision(action: 'APPROVE' | 'REJECT'): Promise<void> {
+    if (!withdrawalApprovalTarget || withdrawalApprovalTarget.status !== 'PENDING' || withdrawalDecisionAction || routeActionPending) return;
+    setWithdrawalDecisionAction(action);
+    setWithdrawalApprovalError('');
+    setRouteActionPending(true);
+    setRouteActionMessage(null);
+    try {
+      const result = await jsonRequest<{
+        ok: boolean;
+        data: {
+          status: 'APPLIED' | 'REJECTED' | 'BLOCKED' | 'STALE';
+          request: CompletionWithdrawalRequestDTO;
+          withdrawal?: { status: 'WITHDRAWN' } | null;
+        };
+      }>(`/api/process-management/completion-withdrawal-requests/${encodeURIComponent(withdrawalApprovalTarget.id)}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          expectedVersion: withdrawalApprovalTarget.version,
+          expectedRouteVersion: withdrawalApprovalPreview?.routeVersion ?? withdrawalApprovalTarget.route.version,
+          idempotencyKey: globalThis.crypto?.randomUUID?.() || `withdrawal-decision-${Date.now()}`,
+          ...(withdrawalDecisionNote.trim() ? { note: withdrawalDecisionNote.trim() } : {}),
+        }),
+      });
+      const messages: Record<typeof result.data.status, { tone: 'success' | 'error'; text: string }> = {
+        APPLIED: { tone: 'success', text: '撤回申请已批准，数量、生产流转和员工工时已在同一事务中完成冲销' },
+        REJECTED: { tone: 'success', text: '撤回申请已驳回，原报工与工时保持不变' },
+        BLOCKED: { tone: 'error', text: '审批复核发现业务阻断，已记录为撤回异常；原报工未改动，也未创建问题单' },
+        STALE: { tone: 'error', text: '申请所依据的报工或路线已变化，已标记失效；请员工核对后重新申请' },
+      };
+      setWithdrawalApprovalTarget(null);
+      setWithdrawalApprovalPreview(null);
+      setRouteActionMessage(messages[result.data.status]);
+      if (result.data.status === 'BLOCKED' || result.data.status === 'STALE') {
+        setWithdrawalQueueView('EXCEPTION');
+      }
+      await Promise.all([load(), loadWithdrawalRequests()]);
+    } catch (decisionError) {
+      setWithdrawalApprovalError(decisionError instanceof Error ? decisionError.message : '撤回申请审批失败');
+    } finally {
+      setWithdrawalDecisionAction(null);
       setRouteActionPending(false);
     }
   }
@@ -745,8 +900,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             {canReviewProcessChanges && <ProcessRouteChangeInbox initialChangeId={initialProcessRouteChangeId} />}
             {deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回生产执行</a>}
             {deepLink.fromPlanning && !deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回计划中心</a>}
-            <button type="button" disabled={loading} onClick={() => { void load(); }}>
-              <RefreshCw size={14} className={loading ? 'spin' : ''} />刷新
+            <button type="button" disabled={loading || withdrawalQueueLoading} onClick={() => { void Promise.all([load(), loadWithdrawalRequests()]); }}>
+              <RefreshCw size={14} className={loading || withdrawalQueueLoading ? 'spin' : ''} />刷新
             </button>
             <details className="workflow-create-menu">
               <summary><GitPullRequestArrow size={14} />新建事项<ChevronDown size={13} /></summary>
@@ -765,6 +920,24 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
           ] as const).map(([label, count, status]) => <button key={status} type="button" className={filters.status === status ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, status }))}><span>{label}</span><strong>{count}</strong></button>)}
           <button type="button" className={`danger ${filters.overdue ? 'active' : ''}`} onClick={() => setFilters(current => ({ ...current, overdue: !current.overdue }))}><span>已逾期</span><strong>{summary.overdue}</strong></button>
         </section>
+
+        {canCorrectProduction && <section className="workflow-withdrawal-queue" aria-label="报工撤回审批与异常">
+          <header>
+            <span><Undo2 size={15} /><strong>报工撤回</strong><small>{withdrawalRequests.length} 笔待审批 · {withdrawalExceptions.length} 笔异常</small></span>
+            <nav aria-label="撤回队列视图"><button className={withdrawalQueueView === 'PENDING' ? 'active' : ''} type="button" onClick={() => setWithdrawalQueueView('PENDING')}>待审批 {withdrawalRequests.length}</button><button className={withdrawalQueueView === 'EXCEPTION' ? 'active' : ''} type="button" onClick={() => setWithdrawalQueueView('EXCEPTION')}>撤回异常 {withdrawalExceptions.length}</button></nav>
+            <button type="button" disabled={withdrawalQueueLoading} onClick={() => { void loadWithdrawalRequests(); }}><RefreshCw className={withdrawalQueueLoading ? 'spin' : ''} size={13} />刷新审批</button>
+          </header>
+          <div className="hm-scroll-region" tabIndex={0}>
+            {withdrawalQueueLoading && !visibleWithdrawalQueue.length && <p><Loader2 className="spin" size={14} />正在读取专用撤回申请...</p>}
+            {!withdrawalQueueLoading && withdrawalQueueError && <p className="error"><AlertTriangle size={14} />{withdrawalQueueError}<button type="button" onClick={() => { void loadWithdrawalRequests(); }}>重试</button></p>}
+            {!withdrawalQueueLoading && !withdrawalQueueError && !visibleWithdrawalQueue.length && <p className="empty"><CheckCircle2 size={14} />{withdrawalQueueView === 'PENDING' ? '当前没有待审批的撤回申请' : '当前没有撤回异常'}</p>}
+            {visibleWithdrawalQueue.map(request => <button type="button" key={request.id} disabled={routeActionPending} onClick={() => { void openWithdrawalApproval(request); }}>
+              <span><strong>{request.workOrder.businessCode || request.workOrder.code}</strong><small>{request.step.processName} · {request.requester.name}{request.status !== 'PENDING' ? ` · ${withdrawalRequestStatusLabels[request.status]}` : ''}</small></span>
+              <span><b>{request.completion.reportQuantityBasis === 'action' ? `${request.completion.reportedUnitQty.toLocaleString()} ${request.completion.reportUnitLabel}` : request.completion.processedQty.toLocaleString()}</b><small>{formatDate(request.createdAt)}</small></span>
+              <ChevronRight size={14} />
+            </button>)}
+          </div>
+        </section>}
 
         <WeekReconciliationBar
           className="workflow-week-reconciliation"
@@ -943,7 +1116,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                       </article>)}
                       {!selectedProcessStep.completionRecords?.length && <div className="workflow-completion-record-empty"><CircleDot size={18} /><span>该工序暂无有效完工记录</span></div>}
                     </div>
-                    {!canCorrectProduction && <p className="workflow-process-inspector-permission">完工纠错仅由生产主管或管理员执行，其他人员可在问题中心提交报工错误。</p>}
+                    {!canCorrectProduction && <p className="workflow-process-inspector-permission">完工纠错仅由生产组长、主管或管理员执行；员工请从本人报工明细发起专用撤回申请。</p>}
                   </section>}
                   {selected.processRouteId && selected.routeVersion !== null && selected.routeVersion !== undefined && <ProcessRouteChangeReviewPanel
                     routeId={selected.processRouteId}
@@ -1009,6 +1182,45 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
         </div>
       </div>
 
+      {withdrawalApprovalTarget && <div className="workflow-correction-backdrop" role="presentation" onMouseDown={event => {
+        if (event.currentTarget === event.target && !routeActionPending && !withdrawalApprovalLoading) setWithdrawalApprovalTarget(null);
+      }}>
+        <section className="workflow-correction-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-withdrawal-approval-title">
+          <header>
+            <div><small>{withdrawalApprovalTarget.status === 'PENDING' ? '员工申请 · 专用撤回审批' : '撤回异常 · 专用审计记录'}</small><h2 id="workflow-withdrawal-approval-title">{withdrawalApprovalTarget.status === 'PENDING' ? '审批' : '查看'} {withdrawalApprovalTarget.step.processName} 报工撤回</h2></div>
+            <button type="button" disabled={routeActionPending || withdrawalApprovalLoading} aria-label="关闭撤回审批" onClick={() => setWithdrawalApprovalTarget(null)}><X size={18} /></button>
+          </header>
+          <div className="workflow-withdrawal-request-summary">
+            <span><small>工单</small><strong>{withdrawalApprovalTarget.workOrder.businessCode || withdrawalApprovalTarget.workOrder.code}</strong></span>
+            <span><small>申请人</small><strong>{withdrawalApprovalTarget.requester.name}{withdrawalApprovalTarget.requester.employeeNo ? ` · ${withdrawalApprovalTarget.requester.employeeNo}` : ''}</strong></span>
+            <span><small>本次报工</small><strong>{withdrawalApprovalTarget.completion.reportQuantityBasis === 'action' ? `${withdrawalApprovalTarget.completion.reportedUnitQty.toLocaleString()} ${withdrawalApprovalTarget.completion.reportUnitLabel}` : withdrawalApprovalTarget.completion.processedQty.toLocaleString()}</strong></span>
+            <span><small>申请时间</small><strong>{formatDate(withdrawalApprovalTarget.createdAt)}</strong></span>
+          </div>
+          {withdrawalApprovalTarget.reason && <p className="workflow-withdrawal-request-reason"><strong>员工说明</strong><span>{withdrawalApprovalTarget.reason}</span></p>}
+          {withdrawalApprovalTarget.status !== 'PENDING' && <p className="workflow-withdrawal-request-reason"><strong>{withdrawalRequestStatusLabels[withdrawalApprovalTarget.status]}</strong><span>{withdrawalApprovalTarget.decisionNote || (withdrawalApprovalTarget.status === 'BLOCKED' ? '审批复核发现业务阻断，原报工与工时均未改动。' : '报工或路线状态已变化，本申请不再执行撤回。')}</span></p>}
+          {withdrawalApprovalLoading ? <div className="workflow-correction-loading"><Loader2 className="spin" /><span>正在按当前路线复核数量、工时与后序影响...</span></div> : withdrawalApprovalError ? <p className="workflow-withdrawal-approval-error" role="alert"><AlertTriangle size={15} />{withdrawalApprovalError}</p> : withdrawalApprovalPreview ? <>
+            <div className={`workflow-withdrawal-impact ${withdrawalApprovalPreview.canWithdraw ? 'safe' : 'blocked'}`}>
+              {withdrawalApprovalPreview.canWithdraw ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
+              <span><strong>{withdrawalApprovalPreview.canWithdraw ? '当前校验可安全撤回' : '当前校验存在业务阻断'}</strong><small>{withdrawalApprovalPreview.canWithdraw ? '批准后将在同一事务内撤回并冲销，不要求先撤回后序报工。' : '仍可批准并交由后端原子复核；若阻断仍存在，申请将记为撤回异常，不会创建问题单。'}</small></span>
+            </div>
+            {!!withdrawalApprovalPreview.blockers.length && <ul className="workflow-withdrawal-blockers">{withdrawalApprovalPreview.blockers.map(blocker => <li key={blocker.code}><AlertTriangle size={14} /><span>{blocker.message}</span></li>)}</ul>}
+            <div className="workflow-correction-facts">
+              <span><small>报工/核销量</small><strong>{withdrawalApprovalPreview.impact.processedQty.toLocaleString()}</strong></span>
+              <span><small>影响下道</small><strong>{withdrawalApprovalPreview.impact.affectedTargetStepCount} 道</strong></span>
+              <span><small>自动记工</small><strong>{withdrawalApprovalPreview.impact.laborClaimedQty.toLocaleString()}</strong></span>
+              <span><small>涉及员工</small><strong>{withdrawalApprovalPreview.impact.employeeNames.length} 人</strong></span>
+            </div>
+          </> : <p className="workflow-withdrawal-approval-error" role="status"><AlertTriangle size={15} />该报工当前已不可撤回；批准后服务端会以失效结果闭环，不会重复冲销。</p>}
+          {withdrawalApprovalTarget.status === 'PENDING' && <label><span>审批备注（选填）</span><textarea maxLength={500} rows={3} disabled={routeActionPending || withdrawalApprovalLoading} value={withdrawalDecisionNote} placeholder="可不填写；如需驳回说明或补充核对结果，可在此记录" onChange={event => setWithdrawalDecisionNote(event.target.value)} /></label>}
+          <p className="workflow-correction-note">批准、驳回、撤回冲销及撤回异常均写入专用审计链；不会自动生成或关闭问题中心事项。</p>
+          <footer>
+            <button type="button" disabled={routeActionPending || withdrawalApprovalLoading} onClick={() => setWithdrawalApprovalTarget(null)}>{withdrawalApprovalTarget.status === 'PENDING' ? '暂不处理' : '关闭'}</button>
+            {withdrawalApprovalTarget.status === 'PENDING' && <><button className="danger-outline" type="button" disabled={routeActionPending || withdrawalApprovalLoading || Boolean(withdrawalApprovalError)} onClick={() => { void submitWithdrawalDecision('REJECT'); }}>{withdrawalDecisionAction === 'REJECT' ? <Loader2 className="spin" size={15} /> : <X size={15} />}驳回申请</button>
+            <button className="primary" type="button" disabled={routeActionPending || withdrawalApprovalLoading || Boolean(withdrawalApprovalError)} onClick={() => { void submitWithdrawalDecision('APPROVE'); }}>{withdrawalDecisionAction === 'APPROVE' ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}批准并执行撤回</button></>}
+          </footer>
+        </section>
+      </div>}
+
       {withdrawalTarget && <div className="workflow-correction-backdrop" role="presentation" onMouseDown={event => {
         if (event.currentTarget === event.target && !routeActionPending) setWithdrawalTarget(null);
       }}>
@@ -1021,7 +1233,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             <div className={`workflow-withdrawal-impact ${withdrawalPreview.canWithdraw ? 'safe' : 'blocked'}`}>
               {withdrawalPreview.canWithdraw ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
               <span>
-                <strong>{withdrawalPreview.canWithdraw ? '可直接撤回并同步冲销' : '检测到下游影响，将转为流程异常'}</strong>
+                <strong>{withdrawalPreview.canWithdraw ? '可直接撤回并同步冲销' : '检测到业务阻断，将记录撤回异常'}</strong>
                 <small>{withdrawalPreview.impact.reportQuantityBasis === 'action' ? `撤回动作报工 ${withdrawalPreview.impact.reportedUnitQty} ${withdrawalPreview.impact.reportUnitLabel}，` : ''}撤回已核销 {withdrawalPreview.impact.processedQty}，回收转序 {withdrawalPreview.impact.releaseReductionQty}，冲销自动记工 {withdrawalPreview.impact.laborClaimCount} 笔</small>
               </span>
             </div>
@@ -1041,7 +1253,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             <button type="button" disabled={routeActionPending} onClick={() => setWithdrawalTarget(null)}>取消</button>
             <button className={withdrawalPreview?.canWithdraw ? 'danger' : 'primary'} type="button" disabled={withdrawalLoading || !withdrawalPreview || routeActionPending} onClick={() => { void submitCompletionWithdrawal(); }}>
               {routeActionPending ? <Loader2 className="spin" size={15} /> : withdrawalPreview?.canWithdraw ? <Undo2 size={15} /> : <AlertTriangle size={15} />}
-              {withdrawalPreview?.canWithdraw ? '确认撤回并同步冲销' : '建立流程异常'}
+              {withdrawalPreview?.canWithdraw ? '确认撤回并同步冲销' : '记录撤回异常'}
             </button>
           </footer>
         </section>

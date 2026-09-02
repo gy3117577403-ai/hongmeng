@@ -9,7 +9,7 @@
 - 上线地址：https://qdowqencjyph.sealoshzh.site
 - 部署平台：Sealos
 - 发布源：`ghcr.io/gy3117577403-ai/hongmeng`
-- Sealos 拉取源：`ghcr.nju.edu.cn/gy3117577403-ai/hongmeng:<release-tag>`
+- Sealos 拉取源：`ghcr.dockerproxy.net/gy3117577403-ai/hongmeng:<release-tag>`
 - 数据库：Sealos PostgreSQL
 - 文件存储：Sealos Object Storage
 - 数据模式：账号登录；生产员工使用员工编号和临时密码扫码报工，保留员工身份追溯
@@ -65,7 +65,7 @@ docker compose up --build
 ghcr.io/gy3117577403-ai/hongmeng:<release-tag>
 ```
 
-Sealos App Deploy 端口填 `3000`，镜像填写 `ghcr.nju.edu.cn/gy3117577403-ai/hongmeng:<release-tag>`。发布工作流会等待国内代理可见，并验证代理摘要与 GHCR 完全一致后才通过。Sealos 镜像输入框长度不足以容纳国内代理加完整 digest，因此只能使用已经通过摘要一致性门禁的不可变版本标签，禁止使用 `latest`。
+Sealos App Deploy 端口填 `3000`，镜像填写 `ghcr.dockerproxy.net/gy3117577403-ai/hongmeng:<release-tag>`。发布工作流会等待国内代理可见，并验证代理摘要与 GHCR 完全一致后才通过。Sealos 镜像输入框长度不足以容纳国内代理加完整 digest，因此只能使用已经通过摘要一致性门禁的不可变版本标签，禁止使用 `latest`。
 
 生产环境的 `APP_BASE_URL` 必须是唯一、完整的公网 Origin，例如 `https://qdowqencjyph.sealoshzh.site`；不要填写路径，也不要写成 `http://https://...`。容器启动时会在迁移前校验该值并对错误配置快速失败。
 

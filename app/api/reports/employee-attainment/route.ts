@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { employeeAttainmentScope } from '@/lib/employee-attainment-access';
-import { abnormalTimeScopedEmployeeIds } from '@/lib/abnormal-time-access';
+import { resolveAttendanceAccessBoundary } from '@/lib/attendance-access';
 import {
   basisPoints,
   dateKeyFromDatabase,
@@ -24,7 +24,7 @@ import { ReportDateRangeError, reportRangeDateKeys, reportRangeQuery } from '@/l
 import {
   attendanceRecordScopeWhere,
   employeeHiredBeforeWhere,
-  isEmployeeHiredOnDate,
+  isEmployeeEmployedOnDate,
   isProductionWorkforceEmployee,
   productionEmployeeWhere,
 } from '@/lib/production-workforce';
@@ -199,6 +199,9 @@ export async function GET(req: NextRequest) {
     const actor = await requireUser();
     const { period, date, start, end } = reportRangeQuery(req.nextUrl.searchParams);
     const requestedEmployeeId = String(req.nextUrl.searchParams.get('employeeId') || '').trim();
+    const startDate = parseWorkDate(start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
+    const endDate = parseWorkDate(end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
+    const dateKeys = reportRangeDateKeys(start, end);
     let scopedEmployeeIds: string[] | null = null;
     const accessScope = employeeAttainmentScope(actor);
     if (accessScope === 'SELF') {
@@ -208,7 +211,23 @@ export async function GET(req: NextRequest) {
       }
       scopedEmployeeIds = [actorEmployee.id];
     } else if (accessScope === 'TEAM') {
-      scopedEmployeeIds = await abnormalTimeScopedEmployeeIds(actor) ?? [];
+      const attendanceBoundary = await resolveAttendanceAccessBoundary(actor);
+      const historicalRecords = await prisma.attendanceRecord.findMany({
+        where: {
+          workDate: { gte: startDate, lt: endDate },
+          AND: [
+            attendanceRecordScopeWhere('PRODUCTION'),
+            attendanceBoundary.historicalRecordWhere,
+          ],
+        },
+        include: { employee: true },
+      });
+      scopedEmployeeIds = [...new Set([
+        ...(attendanceBoundary.employeeIds || []),
+        ...historicalRecords
+          .filter(record => isEmployeeEmployedOnDate(record.employee, dateKeyFromDatabase(record.workDate)))
+          .map(record => record.employeeId),
+      ])];
     }
     if (
       requestedEmployeeId
@@ -219,14 +238,6 @@ export async function GET(req: NextRequest) {
     }
     const employeeIdConstraint = requestedEmployeeId
       || (scopedEmployeeIds ? { in: scopedEmployeeIds } : undefined);
-    const startDate = parseWorkDate(start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
-    const endDate = parseWorkDate(end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
-    const dateKeys = reportRangeDateKeys(start, end);
-    const productionAttendanceWhere = {
-      status: 'confirmed',
-      workDate: { gte: startDate, lt: endDate },
-      ...attendanceRecordScopeWhere('PRODUCTION'),
-    };
     const productionAttendanceRangeWhere = {
       workDate: { gte: startDate, lt: endDate },
       ...attendanceRecordScopeWhere('PRODUCTION'),
@@ -309,7 +320,7 @@ export async function GET(req: NextRequest) {
           ...(employeeIdConstraint ? { id: employeeIdConstraint } : {}),
           OR: [
             productionEmployeeWhere(),
-            { attendanceRecords: { some: productionAttendanceWhere } },
+            { attendanceRecords: { some: productionAttendanceRangeWhere } },
           ],
         },
         orderBy: [{ employeeNo: 'asc' }],
@@ -402,7 +413,7 @@ export async function GET(req: NextRequest) {
     for (const attendance of attendanceRecords) {
       if (!productionEmployeeIds.has(attendance.employeeId)) continue;
       const attendanceDateKey = dateKeyFromDatabase(attendance.workDate);
-      if (!isEmployeeHiredOnDate(employeeById.get(attendance.employeeId), attendanceDateKey)) continue;
+      if (!isEmployeeEmployedOnDate(employeeById.get(attendance.employeeId), attendanceDateKey)) continue;
       const row = groups.get(attendance.employeeId);
       if (!row) continue;
       activityEmployeeIds.add(attendance.employeeId);
@@ -438,7 +449,7 @@ export async function GET(req: NextRequest) {
     for (const override of capacityOverrides) {
       if (!productionEmployeeIds.has(override.employeeId)) continue;
       const overrideDateKey = dateKeyFromDatabase(override.plan.workDate);
-      if (!isEmployeeHiredOnDate(employeeById.get(override.employeeId), overrideDateKey)) continue;
+      if (!isEmployeeEmployedOnDate(employeeById.get(override.employeeId), overrideDateKey)) continue;
       const daily = dailyFor(override.employeeId, overrideDateKey);
       daily.scheduledOverrideMilliseconds = Math.max(0, override.regularMilliseconds);
       daily.plannedOvertimeMilliseconds = Math.max(0, override.overtimeMilliseconds);
@@ -446,7 +457,7 @@ export async function GET(req: NextRequest) {
     for (const allocation of abnormalAllocations) {
       if (!productionEmployeeIds.has(allocation.employeeId)) continue;
       const allocationDateKey = dateKeyFromDatabase(allocation.workDate);
-      if (!isEmployeeHiredOnDate(employeeById.get(allocation.employeeId), allocationDateKey)) continue;
+      if (!isEmployeeEmployedOnDate(employeeById.get(allocation.employeeId), allocationDateKey)) continue;
       const row = groups.get(allocation.employeeId);
       if (row) {
         const approvedDuration = allocation.event.approvedDurationMilliseconds
@@ -462,7 +473,7 @@ export async function GET(req: NextRequest) {
     for (const execution of executions) {
       if (!productionEmployeeIds.has(execution.employeeId)) continue;
       const executionDateKey = shanghaiDateKey(execution.endedAt);
-      if (!isEmployeeHiredOnDate(employeeById.get(execution.employeeId), executionDateKey)) continue;
+      if (!isEmployeeEmployedOnDate(employeeById.get(execution.employeeId), executionDateKey)) continue;
       const workOrder = execution.step.route.workOrder;
       const detail: ProcessExecutionDTO = {
         id: execution.id,
@@ -516,7 +527,7 @@ export async function GET(req: NextRequest) {
     for (const claim of laborClaims) {
       if (!productionEmployeeIds.has(claim.employeeId)) continue;
       const claimDateKey = dateKeyFromDatabase(claim.workDate);
-      if (!isEmployeeHiredOnDate(employeeById.get(claim.employeeId), claimDateKey)) continue;
+      if (!isEmployeeEmployedOnDate(employeeById.get(claim.employeeId), claimDateKey)) continue;
       const standardLaborMilliseconds = safeLaborMilliseconds(claim.standardLaborMilliseconds);
       const row = groups.get(claim.employeeId) || emptyRow(claim.employee);
       activityEmployeeIds.add(claim.employeeId);
@@ -571,7 +582,7 @@ export async function GET(req: NextRequest) {
     }
     for (const row of groups.values()) {
       const days = dailyGroups.get(row.employee.id) || new Map<string, DailyAttainment>();
-      const employedDateKeys = dateKeys.filter(dateKey => isEmployeeHiredOnDate(row.employee, dateKey));
+      const employedDateKeys = dateKeys.filter(dateKey => isEmployeeEmployedOnDate(row.employee, dateKey));
       const dailyInputs = employedDateKeys.map(dateKey => {
         const existing = days.get(dateKey);
         if (existing) return existing;

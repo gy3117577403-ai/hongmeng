@@ -36,7 +36,11 @@ import {
   type ProcessRouteStepChangeNotice,
 } from '@/lib/process-route-change-contract';
 import type { FieldReportTicketView } from '@/lib/work-order-qr-service';
-import type { AbnormalTimeCategory } from '@/types';
+import type {
+  AbnormalTimeCategory,
+  CompletionWithdrawalPreviewDTO,
+  CompletionWithdrawalRequestDTO,
+} from '@/types';
 
 export type FieldReportIdentityDTO = {
   id: string;
@@ -109,17 +113,9 @@ type CompletionCorrectionPreview = {
     processedQty: number;
     completedAt: string;
   };
-  preview?: {
-    canWithdraw: boolean;
-    blockers: Array<{ code: string; message: string }>;
-    impact: {
-      processedQty: number;
-      downstreamPendingCompletionCount: number;
-      downstreamPendingQty: number;
-      laborClaimCount: number;
-      employeeNames: string[];
-    };
-  };
+  preview?: CompletionWithdrawalPreviewDTO;
+  requests: CompletionWithdrawalRequestDTO[];
+  activeRequest: CompletionWithdrawalRequestDTO | null;
 };
 
 type CompletionCorrectionState = {
@@ -232,6 +228,17 @@ function dateTimeText(value: string): string {
     minute: '2-digit',
     hour12: false,
   }).format(date).replace(/\//g, '-');
+}
+
+function withdrawalRequestStatusText(status: CompletionWithdrawalRequestDTO['status']): string {
+  return {
+    PENDING: '待审批',
+    APPLIED: '已批准并撤回',
+    REJECTED: '已驳回',
+    CANCELLED: '已取消',
+    BLOCKED: '撤回异常',
+    STALE: '已失效',
+  }[status];
 }
 
 function completionWorkerNames(completion: {
@@ -665,26 +672,16 @@ export default function FieldReportMobile({
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || '纠错提交失败');
       const result = body.data as {
-        status?: 'WITHDRAWN' | 'BLOCKED' | 'REQUESTED';
-        issue?: { code?: string } | null;
-        preview?: CompletionCorrectionPreview['preview'];
+        status: 'REQUESTED';
+        request: CompletionWithdrawalRequestDTO;
       };
-      const status = result.status || (correction.data?.ownership === 'SELF' ? 'WITHDRAWN' : 'REQUESTED');
-      const downstreamPendingQty = Number(result.preview?.impact.downstreamPendingQty || 0);
       setCorrection(null);
       setSheetOpen(false);
       setForm(null);
-      setSuccess(status === 'WITHDRAWN'
-        ? {
-            title: '本次误报已安全撤回',
-            detail: downstreamPendingQty > 0
-              ? `下道员工原报工与工时均已保留，其中 ${quantity(downstreamPendingQty)} ${payload.ticket.workOrder.unitLabel}已恢复为待前序覆盖。`
-              : '本次数量、本人对应工时和后续转序影响已同步冲销。',
-          }
-        : {
-            title: status === 'BLOCKED' ? '已转交主管核对' : '纠错申请已提交',
-            detail: `${result.issue?.code ? `问题单 ${result.issue.code} 已创建，` : ''}系统保留原记录，主管处理前不会改动他人的报工和工时。`,
-          });
+      setSuccess({
+        title: result.status === 'REQUESTED' ? '撤回申请已提交' : '申请已受理',
+        detail: '申请已进入流程中心的专用撤回审批；审批完成前，原数量、工时和流转记录保持不变。',
+      });
       await load(undefined, true);
     } catch (reason) {
       setCorrection(current => current
@@ -692,6 +689,41 @@ export default function FieldReportMobile({
             ...current,
             saving: false,
             error: reason instanceof Error ? reason.message : '纠错提交失败',
+          }
+        : current);
+    }
+  }
+
+  async function cancelCorrectionRequest(): Promise<void> {
+    const activeRequest = correction?.data?.activeRequest;
+    if (!correction || !activeRequest || correction.loading || correction.saving) return;
+    setCorrection({ ...correction, saving: true, error: '' });
+    try {
+      const response = await fetch(
+        `/api/field-report/tickets/${encodeURIComponent(code)}/completions/${encodeURIComponent(correction.completion.id)}/correction`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            requestId: activeRequest.id,
+            expectedVersion: activeRequest.version,
+            idempotencyKey: newIdempotencyKey().replace(/^qr-/, 'qrc-cancel-'),
+          }),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '撤回申请取消失败');
+      setCorrection(null);
+      setSuccess({
+        title: '撤回申请已取消',
+        detail: '原报工记录没有发生变更；如仍需纠错，可重新发起撤回申请。',
+      });
+    } catch (reason) {
+      setCorrection(current => current
+        ? {
+            ...current,
+            saving: false,
+            error: reason instanceof Error ? reason.message : '撤回申请取消失败',
           }
         : current);
     }
@@ -929,18 +961,19 @@ export default function FieldReportMobile({
 
     {correction && <div className="field-report-correction-backdrop" role="presentation">
       <section className="field-report-correction-dialog" role="dialog" aria-modal="true" aria-labelledby="field-report-correction-title">
-        <header><span><small>报工纠错</small><strong id="field-report-correction-title">{correction.data?.ownership === 'SELF' ? '撤回我的误报' : '报告数量有误'}</strong></span><button type="button" disabled={correction.saving} aria-label="关闭纠错窗口" onClick={() => setCorrection(null)}><X size={21} /></button></header>
+        <header><span><small>专用撤回审批</small><strong id="field-report-correction-title">申请撤回误报</strong></span><button type="button" disabled={correction.saving} aria-label="关闭纠错窗口" onClick={() => setCorrection(null)}><X size={21} /></button></header>
         <div>
           <section className="field-report-correction-record"><History size={21} /><span><strong>{correction.data?.completion?.processName || payload.context?.step.processName} · {correction.completion.reportQuantityBasis === 'action' ? <>{quantity(correction.completion.reportedUnitQty)} {correction.completion.reportUnitLabel} · {quantity(correction.completion.processedQty)} {ticket.workOrder.unitLabel}</> : <>{quantity(correction.completion.processedQty)} {ticket.workOrder.unitLabel}</>}</strong><small>{completionWorkerNames(correction.completion)} · {dateTimeText(correction.completion.completedAt)}</small></span></section>
-          {correction.loading ? <p className="field-report-correction-loading"><LoaderCircle className="spin" size={20} />正在核对数量、工时和后序影响...</p> : correction.data?.ownership === 'SELF' ? <section className={`field-report-correction-impact ${correction.data.preview?.canWithdraw ? 'safe' : 'blocked'}`}><strong>{correction.data.preview?.canWithdraw ? '可以安全撤回' : '需要主管处理'}</strong><p>{correction.data.preview?.canWithdraw
+          {correction.loading ? <p className="field-report-correction-loading"><LoaderCircle className="spin" size={20} />正在核对数量、工时和后序影响...</p> : correction.data?.activeRequest ? <section className="field-report-correction-impact pending"><strong>已有待审批的撤回申请</strong><p>流程中心审批前不会改动原数量、工时和后续流转；请勿重复提交。申请时间：{dateTimeText(correction.data.activeRequest.createdAt)}</p></section> : <section className={`field-report-correction-impact ${correction.data?.preview?.canWithdraw ? 'safe' : 'blocked'}`}><strong>{correction.data?.preview?.canWithdraw ? '提交后由主管审批执行' : '检测到撤回阻断，仍可提交主管复核'}</strong><p>{correction.data?.preview?.canWithdraw
             ? correction.data.preview.impact.downstreamPendingQty > 0
-              ? `撤回后，下道报工保留，${quantity(correction.data.preview.impact.downstreamPendingQty)} ${ticket.workOrder.unitLabel}恢复为待前序覆盖；下道员工工时不撤销。`
-              : `将冲销本笔数量和对应的 ${correction.data.preview.impact.laborClaimCount} 笔工时领取。`
-            : correction.data.preview?.blockers.map(blocker => blocker.message).join('；') || '系统会创建问题单，由主管核对。'}</p></section> : <section className="field-report-correction-impact blocked"><strong>不会直接改动他人的报工</strong><p>提交后创建高优先级纠错单，保留原数量、人员和工时证据，由主管核对处理。</p></section>}
+              ? `审批通过后，下道报工保留，${quantity(correction.data.preview.impact.downstreamPendingQty)} ${ticket.workOrder.unitLabel}恢复为待前序覆盖；下道员工工时不撤销。`
+              : `审批通过后，将冲销本笔数量和对应的 ${correction.data.preview.impact.laborClaimCount} 笔工时领取。`
+            : `${correction.data?.preview?.blockers.map(blocker => blocker.message).join('；') || '当前无法自动撤回'}。主管审批时会再次复核；仍被阻断时记入撤回异常，不会转入问题中心。`}</p></section>}
+          {!correction.loading && !correction.data?.activeRequest && correction.data?.requests?.[0] && <section className="field-report-correction-impact previous"><strong>上次申请：{withdrawalRequestStatusText(correction.data.requests[0].status)}</strong><p>{correction.data.requests[0].decisionNote || `处理时间：${dateTimeText(correction.data.requests[0].updatedAt)}`}</p></section>}
           <label><span>错误说明 / 正确数量（选填）</span><textarea rows={4} maxLength={500} disabled={correction.loading || correction.saving} value={correction.reason} placeholder="可不填写；如需说明，可写正确数量或误报情况" onChange={event => setCorrection({ ...correction, reason: event.target.value, error: '' })} /></label>
           {correction.error && <p className="field-report-form-error" role="alert">{correction.error}</p>}
         </div>
-        <footer><span>所有纠错都会保留操作日志，不会静默改账。</span><button type="button" disabled={correction.loading || correction.saving} onClick={() => void submitCorrection()}>{correction.saving ? <><LoaderCircle className="spin" size={18} />正在提交...</> : correction.data?.ownership === 'SELF' ? <><RotateCcw size={18} />确认撤回误报</> : <><AlertTriangle size={18} />提交主管核对</>}</button></footer>
+        <footer><span>申请、审批、冲销或异常结果都会保留操作日志。</span>{correction.data?.activeRequest ? <button type="button" disabled={correction.loading || correction.saving} onClick={() => void cancelCorrectionRequest()}>{correction.saving ? <><LoaderCircle className="spin" size={18} />正在取消...</> : <><X size={18} />取消待审批申请</>}</button> : <button type="button" disabled={correction.loading || correction.saving || !correction.data?.canRequestCorrection} onClick={() => void submitCorrection()}>{correction.saving ? <><LoaderCircle className="spin" size={18} />正在提交...</> : <><RotateCcw size={18} />提交撤回申请</>}</button>}</footer>
       </section>
     </div>}
 
@@ -1006,7 +1039,7 @@ export default function FieldReportMobile({
                 <b>{completion.reportQuantityBasis === 'action'
                   ? <>{quantity(completion.reportedUnitQty)} <small>{completion.reportUnitLabel}</small><em>{quantity(completion.processedQty)} {ticket.workOrder.unitLabel}</em></>
                   : <>{quantity(completion.processedQty)} <small>{ticket.workOrder.unitLabel}</small></>}</b>
-                <button type="button" disabled={saving} onClick={() => void openCorrection(completion)}><RotateCcw size={15} />{selfQrReport ? '撤回我的误报' : '报告数量有误'}</button>
+                <button type="button" disabled={saving} onClick={() => void openCorrection(completion)}><RotateCcw size={15} />{selfQrReport ? '申请撤回误报' : '报告数量有误'}</button>
               </article>;
             })}</div>
             {!payload.context.recentCompletions.length && <p>该工序还没有报工记录。</p>}

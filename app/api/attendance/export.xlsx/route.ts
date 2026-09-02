@@ -13,7 +13,7 @@ import {
   attendanceEmployeeWhere,
   attendanceRecordScopeWhere,
   employeeHiredBeforeWhere,
-  isEmployeeHiredOnDate,
+  isEmployeeEmployedOnDate,
   parseAttendanceWorkforceScope,
   type AttendanceWorkforceScope,
 } from '@/lib/production-workforce';
@@ -41,41 +41,53 @@ export async function GET(req: NextRequest) {
     const requestedEmployeeIds = rawEmployeeIds
       ? parseAttendanceEmployeeIds(rawEmployeeIds.split(',').filter(Boolean))
       : [];
-    if (boundary.employeeIds !== null && requestedEmployeeIds.some(id => !boundary.employeeIds!.includes(id))) {
-      return NextResponse.json({ ok: false, error: '导出范围包含无权查看的员工' }, { status: 403 });
-    }
     const startDate = parseWorkDate(range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const endDate = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
-    const employeeWhere = {
+    const currentEmployeeWhere = {
       ...attendanceEmployeeWhere(scope),
-      AND: [employeeHiredBeforeWhere(endDate)],
-      ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
-      ...(requestedEmployeeIds.length ? { id: { in: requestedEmployeeIds } } : {}),
+      AND: [
+        employeeHiredBeforeWhere(endDate),
+        ...(boundary.employeeIds === null ? [] : [{ id: { in: boundary.employeeIds } }]),
+        ...(requestedEmployeeIds.length ? [{ id: { in: requestedEmployeeIds } }] : []),
+      ],
     };
-    const employees = await prisma.employee.findMany({
-      where: employeeWhere,
-      orderBy: [{ team: 'asc' }, { employeeNo: 'asc' }],
-    });
-    if (requestedEmployeeIds.length && employees.length !== requestedEmployeeIds.length) {
-      return NextResponse.json({ ok: false, error: '部分员工已不在当前考勤范围，请刷新后重试' }, { status: 409 });
-    }
-    const employeeIds = employees.map(employee => employee.id);
-    const [records, calendarOverrides] = await Promise.all([employeeIds.length ? prisma.attendanceRecord.findMany({
-      where: {
-        employeeId: { in: employeeIds },
-        workDate: { gte: startDate, lt: endDate },
-        ...attendanceRecordScopeWhere(scope),
-      },
-      orderBy: [{ workDate: 'asc' }, { employee: { employeeNo: 'asc' } }],
-    }) : Promise.resolve([]), prisma.attendanceCalendarDay.findMany({
-      where: { workDate: { gte: startDate, lt: endDate } },
-      select: { workDate: true, dayType: true, label: true, remark: true },
-    })]);
-    const employeeById = new Map(employees.map(employee => [employee.id, employee]));
-    const effectiveRecords = records.filter(record => isEmployeeHiredOnDate(
-      employeeById.get(record.employeeId),
+    const [currentEmployees, candidateRecords, calendarOverrides] = await Promise.all([
+      prisma.employee.findMany({
+        where: currentEmployeeWhere,
+        orderBy: [{ team: 'asc' }, { employeeNo: 'asc' }],
+      }),
+      prisma.attendanceRecord.findMany({
+        where: {
+          workDate: { gte: startDate, lt: endDate },
+          ...(requestedEmployeeIds.length ? { employeeId: { in: requestedEmployeeIds } } : {}),
+          AND: [
+            attendanceRecordScopeWhere(scope),
+            boundary.historicalRecordWhere,
+          ],
+        },
+        include: { employee: true },
+        orderBy: [{ workDate: 'asc' }, { employee: { employeeNo: 'asc' } }],
+      }),
+      prisma.attendanceCalendarDay.findMany({
+        where: { workDate: { gte: startDate, lt: endDate } },
+        select: { workDate: true, dayType: true, label: true, remark: true },
+      }),
+    ]);
+    const effectiveRecords = candidateRecords.filter(record => isEmployeeEmployedOnDate(
+      record.employee,
       dateKeyFromDatabase(record.workDate),
     ));
+    const employeeById = new Map(currentEmployees.map(employee => [employee.id, employee]));
+    effectiveRecords.forEach(record => employeeById.set(record.employeeId, record.employee));
+    if (requestedEmployeeIds.length && requestedEmployeeIds.some(id => !employeeById.has(id))) {
+      return NextResponse.json({ ok: false, error: '部分员工不在当前或该周期的历史考勤权限范围' }, { status: 409 });
+    }
+    const employees = [...employeeById.values()].sort((left, right) => {
+      const teamOrder = String(left.team || '').localeCompare(String(right.team || ''), 'zh-CN');
+      return teamOrder || left.employeeNo.localeCompare(right.employeeNo, 'zh-CN');
+    });
+    const latestSnapshotByEmployeeId = new Map<string, typeof effectiveRecords[number]>();
+    effectiveRecords.forEach(record => latestSnapshotByEmployeeId.set(record.employeeId, record));
     const endInclusive = new Date(range.end.getTime() - 1);
     const rangeEndKey = endInclusive.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
     const rangeStartKey = range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
@@ -90,7 +102,9 @@ export async function GET(req: NextRequest) {
       } : null);
       return { dateKey, effectiveDayType: day.effectiveDayType, label: day.label, isWorkday: day.isWorkday };
     });
-    const departmentLabels = [...new Set(employees.map(employee => employee.department || '').filter(Boolean))];
+    const departmentLabels = [...new Set(employees.map(employee => (
+      latestSnapshotByEmployeeId.get(employee.id)?.departmentSnapshot || employee.department || ''
+    )).filter(Boolean))];
     const periodName = range.period === 'week' ? '周度' : range.period === 'month' ? '月度' : '自定义周期';
     const workbook = await createAttendanceWorkbook({
       startDate: rangeStartKey,
@@ -102,15 +116,19 @@ export async function GET(req: NextRequest) {
       generatedAt: new Intl.DateTimeFormat('zh-CN', {
         timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
       }).format(new Date()).replaceAll('/', '-'),
-      employees: employees.map(employee => ({
-        id: employee.id,
-        employeeNo: employee.employeeNo,
-        name: employee.name,
-        department: employee.department,
-        team: employee.team,
-        position: employee.position,
-        hireDate: employee.hireDate?.toISOString().slice(0, 10) || null,
-      })),
+      employees: employees.map(employee => {
+        const snapshot = latestSnapshotByEmployeeId.get(employee.id);
+        return {
+          id: employee.id,
+          employeeNo: employee.employeeNo,
+          name: employee.name,
+          department: snapshot?.departmentSnapshot || employee.department,
+          team: snapshot?.teamSnapshot ?? employee.team,
+          position: snapshot?.positionSnapshot ?? employee.position,
+          hireDate: employee.hireDate?.toISOString().slice(0, 10) || null,
+          resignedAt: employee.resignedAt?.toISOString().slice(0, 10) || null,
+        };
+      }),
       records: effectiveRecords.map(record => ({
         employeeId: record.employeeId,
         dateKey: dateKeyFromDatabase(record.workDate),

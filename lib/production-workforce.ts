@@ -80,6 +80,45 @@ export function employeeHiredBeforeWhere(rangeEndExclusive: Date): Prisma.Employ
   };
 }
 
+/**
+ * Employee roster predicate for a single historical business date.
+ * `resignedAt` is the first date the employee is no longer employed, so the
+ * effective interval is [hireDate, resignedAt). Null hire dates retain the
+ * existing backward-compatible behavior and are handled as a data-quality
+ * concern by callers rather than silently discarding historical facts.
+ */
+export function employeeEmployedOnDateWhere(workDate: Date): Prisma.EmployeeWhereInput {
+  return {
+    AND: [
+      employeeHiredOnOrBeforeWhere(workDate),
+      {
+        OR: [
+          { resignedAt: null },
+          { resignedAt: { gt: workDate } },
+        ],
+      },
+    ],
+  };
+}
+
+/** Return employees whose current employment interval overlaps [start, end). */
+export function employeeEmploymentOverlapsWhere(
+  rangeStartInclusive: Date,
+  rangeEndExclusive: Date,
+): Prisma.EmployeeWhereInput {
+  return {
+    AND: [
+      employeeHiredBeforeWhere(rangeEndExclusive),
+      {
+        OR: [
+          { resignedAt: null },
+          { resignedAt: { gt: rangeStartInclusive } },
+        ],
+      },
+    ],
+  };
+}
+
 export function isEmployeeHiredOnDate(
   employee: EmployeeHireDateShape | null | undefined,
   workDateKey: string,

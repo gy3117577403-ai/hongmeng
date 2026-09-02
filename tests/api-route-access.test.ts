@@ -541,6 +541,9 @@ test('team leaders can invoke workshop-wide operations but not unopened Planning
     ['/api/abnormal-time-events/event-1/quality', 'POST'],
     ['/api/abnormal-time-events/event-1/resolve', 'POST'],
     ['/api/process-management/routes/route-1/completions/completion-1/withdraw', 'POST'],
+    ['/api/process-management/completion-withdrawal-requests', 'GET'],
+    ['/api/process-management/completion-withdrawal-requests/request-1', 'GET'],
+    ['/api/process-management/completion-withdrawal-requests/request-1/decision', 'POST'],
     ['/api/resource-files/file-1/delete', 'POST'],
     ['/api/daily-shipments', 'POST'],
     ['/api/work-order-qr/prints', 'POST'],
@@ -650,9 +653,13 @@ test('production bulk operations require workshop scope without restricting owni
   });
 
   assert.equal(canAccessApiRoute(workshop, '/api/process-management/routes/r1/completions/c1/withdraw', 'POST'), true);
+  assert.equal(canAccessApiRoute(workshop, '/api/process-management/completion-withdrawal-requests', 'GET'), true);
+  assert.equal(canAccessApiRoute(workshop, '/api/process-management/completion-withdrawal-requests/r1/decision', 'POST'), true);
   assert.equal(canAccessApiRoute(workshop, '/api/resource-files/f1/delete', 'POST'), true);
   assert.equal(canAccessApiRoute(workshop, '/api/daily-plans/organization', 'GET'), true);
   assert.equal(canAccessApiRoute(process, '/api/process-management/routes/r1/completions/c1/withdraw', 'POST'), true);
+  assert.equal(canAccessApiRoute(process, '/api/process-management/completion-withdrawal-requests', 'GET'), false);
+  assert.equal(canAccessApiRoute(process, '/api/process-management/completion-withdrawal-requests/r1/decision', 'POST'), false);
   assert.equal(canAccessApiRoute(engineering, '/api/resource-files/f1/delete', 'POST'), true);
   assert.equal(canAccessApiRoute(engineering, '/api/work-orders', 'GET'), true);
   assert.equal(canAccessApiRoute(engineering, '/api/work-orders/w1', 'PATCH'), false);

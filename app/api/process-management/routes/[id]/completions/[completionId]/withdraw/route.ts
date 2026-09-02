@@ -8,10 +8,16 @@ import {
 } from '@/lib/auth';
 import { hasCapability } from '@/lib/department-access';
 import {
+  processCompletionWithdrawalWorkOrderWhere,
+  resolveProcessCompletionWithdrawalScope,
+} from '@/lib/process-completion-withdrawal-access';
+import {
   previewProcessCompletionWithdrawal,
   ProcessCompletionWithdrawalError,
   withdrawProcessCompletion,
 } from '@/lib/process-completion-withdrawal-service';
+import { prisma } from '@/lib/prisma';
+import { ProductionAccessScopeError } from '@/lib/production-access-scope';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 
 export const runtime = 'nodejs';
@@ -28,17 +34,44 @@ function canWithdraw(user: Awaited<ReturnType<typeof requireUser>>): boolean {
   return hasCapability(user.access, 'PRODUCTION', 'UPDATE');
 }
 
+async function assertWithdrawalTargetAllowed(
+  user: Awaited<ReturnType<typeof requireUser>>,
+  routeId: string,
+  completionId: string,
+): Promise<void> {
+  const scope = resolveProcessCompletionWithdrawalScope(user);
+  const allowed = await prisma.processCompletion.findFirst({
+    where: {
+      id: completionId,
+      routeId,
+      workOrder: processCompletionWithdrawalWorkOrderWhere(scope),
+    },
+    select: { id: true },
+  });
+  if (!allowed) {
+    throw new ProcessCompletionWithdrawalError(
+      '该报工不在本人可管理的生产范围内',
+      403,
+      'PROCESS_COMPLETION_WITHDRAWAL_SCOPE_FORBIDDEN',
+    );
+  }
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string; completionId: string } },
 ) {
   try {
     const user = await requireUser();
-    if (!canWithdraw(user)) return forbidden('仅管理员或生产主管可预览完工撤回影响');
+    if (!canWithdraw(user)) return forbidden('仅管理员、生产主管或组长可预览完工撤回影响');
+    await assertWithdrawalTargetAllowed(user, params.id, params.completionId);
     const data = await previewProcessCompletionWithdrawal(params.id, params.completionId);
     return NextResponse.json({ ok: true, data });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof ProcessCompletionWithdrawalError) return serviceError(error);
     console.error('process completion withdrawal preview failed', error);
     return NextResponse.json({ ok: false, error: '完工撤回影响预览失败' }, { status: 500 });
@@ -59,7 +92,8 @@ export async function POST(
       );
     }
     const user = await requireUser({ write: 'production' });
-    if (!canWithdraw(user)) return forbidden('仅管理员或生产主管可执行完工撤回');
+    if (!canWithdraw(user)) return forbidden('仅管理员、生产主管或组长可执行完工撤回');
+    await assertWithdrawalTargetAllowed(user, params.id, params.completionId);
     const body = await req.json().catch(() => ({})) as {
       expectedRouteVersion?: unknown;
       category?: unknown;
@@ -78,6 +112,9 @@ export async function POST(
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof ForbiddenError) return forbidden(error.message);
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof ProcessCompletionWithdrawalError) return serviceError(error);
     console.error('process completion withdrawal failed', error);
     return NextResponse.json({ ok: false, error: '完工撤回失败' }, { status: 500 });

@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   attendanceEmployeeWhere,
   attendanceRecordScopeWhere,
+  employeeEmployedOnDateWhere,
+  employeeEmploymentOverlapsWhere,
   employeeHiredBeforeWhere,
   employeeHiredOnOrBeforeWhere,
   isEmployeeEmployedOnDate,
@@ -63,5 +65,23 @@ test('attendance effective date excludes employees from the resignation date onw
   assert.equal(isEmployeeEmployedOnDate(employee, '2026-08-12'), true);
   assert.equal(isEmployeeEmployedOnDate(employee, '2026-08-19'), true);
   assert.equal(isEmployeeEmployedOnDate(employee, '2026-08-20'), false);
+  assert.equal(isEmployeeEmployedOnDate({ hireDate: '2026-08-30', resignedAt: '2026-09-02' }, '2026-08-31'), true);
+  assert.equal(isEmployeeEmployedOnDate({ hireDate: '2026-08-30', resignedAt: '2026-09-02' }, '2026-09-01'), true);
+  assert.equal(isEmployeeEmployedOnDate({ hireDate: '2026-08-30', resignedAt: '2026-09-02' }, '2026-09-02'), false);
   assert.equal(isEmployeeEmployedOnDate({ hireDate: null, resignedAt: null }, '2026-08-01'), true);
+  const workDate = new Date('2026-08-19T00:00:00.000Z');
+  assert.deepEqual(employeeEmployedOnDateWhere(workDate), {
+    AND: [
+      { OR: [{ hireDate: null }, { hireDate: { lte: workDate } }] },
+      { OR: [{ resignedAt: null }, { resignedAt: { gt: workDate } }] },
+    ],
+  });
+  const rangeStart = new Date('2026-08-17T00:00:00.000Z');
+  const rangeEnd = new Date('2026-08-24T00:00:00.000Z');
+  assert.deepEqual(employeeEmploymentOverlapsWhere(rangeStart, rangeEnd), {
+    AND: [
+      { OR: [{ hireDate: null }, { hireDate: { lt: rangeEnd } }] },
+      { OR: [{ resignedAt: null }, { resignedAt: { gt: rangeStart } }] },
+    ],
+  });
 });

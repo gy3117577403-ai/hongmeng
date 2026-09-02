@@ -7,6 +7,10 @@ import { loadProductionClosureAuditSnapshot } from '../lib/production-closure-au
 import { completeProcessStep } from '../lib/process-completion-service';
 import { correctProcessCompletionStandard } from '../lib/process-completion-correction-service';
 import {
+  cancelProcessCompletionWithdrawalRequest,
+  createProcessCompletionWithdrawalRequest,
+  decideProcessCompletionWithdrawalRequest,
+  listProcessCompletionWithdrawalRequests,
   previewProcessCompletionWithdrawal,
   withdrawProcessCompletion,
 } from '../lib/process-completion-withdrawal-service';
@@ -237,7 +241,7 @@ test(
 );
 
 test(
-  'withdrawal creates a process issue instead of rewinding processed downstream work',
+  'blocked direct withdrawal preserves downstream work without creating an Issue',
   { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
   async () => {
     const prefix = `IT-WITHDRAW-BLOCK-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -253,7 +257,6 @@ test(
     let orderId = '';
     let routeId = '';
     let completionId = '';
-    let issueId = '';
     try {
       const order = await prisma.workOrder.create({
         data: {
@@ -350,8 +353,7 @@ test(
         actor: actor.displayName || actor.username,
       });
       assert.equal(result.status, 'BLOCKED');
-      assert.ok(result.issue);
-      issueId = result.issue?.id || '';
+      assert.equal(result.issue, null);
       const replay = await withdrawProcessCompletion({
         routeId,
         completionId,
@@ -362,15 +364,12 @@ test(
         actor: actor.displayName || actor.username,
       });
       assert.equal(replay.status, 'BLOCKED');
-      assert.equal(replay.issue?.id, issueId);
+      assert.equal(replay.issue, null);
       const unchanged = await prisma.processCompletion.findUniqueOrThrow({ where: { id: completionId } });
       assert.equal(unchanged.voidedAt, null);
       assert.equal(await prisma.processQuantityMovement.count({ where: { completionId, type: 'REVERSAL' } }), 0);
+      assert.equal(await prisma.issue.count({ where: { sourceId: completionId } }), 0);
     } finally {
-      if (issueId) {
-        await prisma.issueActivity.deleteMany({ where: { issueId } });
-        await prisma.issue.deleteMany({ where: { id: issueId } });
-      }
       if (routeId) await prisma.processRouteActivity.deleteMany({ where: { routeId } });
       if (completionId) {
         await prisma.processQuantityMovement.deleteMany({ where: { completionId } });
@@ -379,6 +378,445 @@ test(
       }
       if (orderId) await prisma.workOrder.deleteMany({ where: { id: orderId } });
       await prisma.user.deleteMany({ where: { id: actor.id } });
+    }
+  },
+);
+
+type WithdrawalRequestFixture = {
+  prefix: string;
+  orderId: string;
+  routeId: string;
+  completionId: string;
+  requesterUserId: string;
+  requesterEmployeeId: string;
+  reviewerUserId: string;
+  reviewerName: string;
+};
+
+async function createWithdrawalRequestFixture(
+  label: string,
+  options: { blocked?: boolean } = {},
+): Promise<WithdrawalRequestFixture> {
+  const prefix = `IT-WITHDRAW-REQUEST-${label}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const employee = await prisma.employee.create({
+    data: {
+      employeeNo: `${prefix}-E`,
+      name: `${prefix} employee`,
+      department: '生产部',
+      team: `${prefix}-TEAM`,
+    },
+  });
+  const requester = await prisma.user.create({
+    data: {
+      username: `${prefix}-REQUESTER`,
+      passwordHash: 'integration-test-not-a-login-hash',
+      displayName: `${prefix} requester`,
+      laborRole: 'EMPLOYEE',
+      employeeId: employee.id,
+    },
+  });
+  const reviewer = await prisma.user.create({
+    data: {
+      username: `${prefix}-ADMIN`,
+      passwordHash: 'integration-test-not-a-login-hash',
+      displayName: `${prefix} administrator`,
+      laborRole: 'ADMIN',
+    },
+  });
+  const order = await prisma.workOrder.create({
+    data: {
+      code: `${prefix}-ORDER`,
+      productName: `${prefix} product`,
+      stage: 'frontend',
+      status: 'processing',
+      uncompletedQty: '10',
+      productionTargetQty: 10,
+      completedQty: options.blocked ? '0' : '5',
+      frontendTransferredQty: options.blocked ? 0 : 5,
+      planType: 'managed_plan',
+      planActive: true,
+      processRoute: {
+        create: {
+          templateName: `${prefix} route`,
+          templateVersion: 1,
+          status: 'in_progress',
+          version: 0,
+          steps: {
+            create: [
+              {
+                processCode: `${prefix}-ONE`,
+                processName: '第一工序',
+                stageGroup: 'frontend',
+                position: 1,
+                sequenceGroup: 1,
+                standardSource: 'integration_test',
+                timeBasis: 'per_unit',
+                unitLabel: '件',
+                standardMillisecondsPerUnit: 1_000,
+                inputQty: 5,
+                processedQty: 5,
+                goodOutputQty: 5,
+                releasedGoodQty: 5,
+                status: 'completed',
+                completedAt: new Date(),
+              },
+              ...(options.blocked ? [{
+                processCode: `${prefix}-TWO`,
+                processName: '第二工序',
+                stageGroup: 'frontend',
+                position: 2,
+                sequenceGroup: 2,
+                standardSource: 'integration_test',
+                timeBasis: 'per_unit',
+                unitLabel: '件',
+                standardMillisecondsPerUnit: 1_000,
+                inputQty: 5,
+                processedQty: 1,
+                goodOutputQty: 1,
+                releasedGoodQty: 0,
+                status: 'current',
+                startedAt: new Date(),
+              }] : []),
+            ],
+          },
+        },
+      },
+    },
+    include: { processRoute: { include: { steps: { orderBy: { position: 'asc' } } } } },
+  });
+  assert.ok(order.processRoute);
+  const [sourceStep, targetStep] = order.processRoute.steps;
+  const completion = await prisma.processCompletion.create({
+    data: {
+      workOrderId: order.id,
+      routeId: order.processRoute.id,
+      stepId: sourceStep.id,
+      workDate: new Date('2026-09-02T00:00:00.000Z'),
+      processedQty: 5,
+      goodQty: 5,
+      defectQty: 0,
+      reportedUnitQty: 5,
+      reportedGoodUnitQty: 5,
+      reportedDefectUnitQty: 0,
+      reportQuantityBasis: 'product',
+      reportUnitLabel: '件',
+      coverageStatus: 'COVERED',
+      coveredQty: 5,
+      coveredGoodQty: 5,
+      coveredDefectQty: 0,
+      routeVersion: 0,
+      idempotencyKey: `${prefix}-completion`,
+      standardSource: 'integration_test',
+      timeBasis: 'per_unit',
+      unitLabel: '件',
+      standardMillisecondsPerUnit: 1_000,
+      reportSource: 'QR_MOBILE',
+      createdById: requester.id,
+      principalEmployeeId: employee.id,
+    },
+  });
+  await prisma.processQuantityMovement.create({
+    data: {
+      completionId: completion.id,
+      workOrderId: order.id,
+      sourceStepId: sourceStep.id,
+      targetStepId: targetStep?.id || null,
+      type: targetStep ? 'GOOD_TRANSFER' : 'FINISHED_GOOD',
+      quantity: 5,
+      sourceSequenceGroup: 1,
+      targetSequenceGroup: targetStep?.sequenceGroup || null,
+      idempotencyKey: `${prefix}-movement`,
+    },
+  });
+  return {
+    prefix,
+    orderId: order.id,
+    routeId: order.processRoute.id,
+    completionId: completion.id,
+    requesterUserId: requester.id,
+    requesterEmployeeId: employee.id,
+    reviewerUserId: reviewer.id,
+    reviewerName: reviewer.displayName,
+  };
+}
+
+async function cleanupWithdrawalRequestFixture(fixture: WithdrawalRequestFixture): Promise<void> {
+  const requests = await prisma.processCompletionWithdrawalRequest.findMany({
+    where: { workOrderId: fixture.orderId },
+    select: { id: true },
+  });
+  const requestIds = requests.map(item => item.id);
+  if (requestIds.length) {
+    await prisma.systemNotification.deleteMany({
+      where: { sourceType: 'process_completion_withdrawal_request', sourceId: { in: requestIds } },
+    });
+    await prisma.operationLog.deleteMany({ where: { targetId: { in: requestIds } } });
+    await prisma.processCompletionWithdrawalRequest.deleteMany({ where: { id: { in: requestIds } } });
+  }
+  await prisma.operationLog.deleteMany({ where: { targetId: fixture.completionId } });
+  await prisma.processRouteActivity.deleteMany({ where: { routeId: fixture.routeId } });
+  await prisma.processQuantityMovement.deleteMany({
+    where: { workOrderId: fixture.orderId, reversalOfId: { not: null } },
+  });
+  await prisma.processQuantityMovement.deleteMany({ where: { workOrderId: fixture.orderId } });
+  await prisma.processCompletionParticipant.deleteMany({ where: { completionId: fixture.completionId } });
+  await prisma.processCompletion.deleteMany({ where: { id: fixture.completionId } });
+  await prisma.workOrderProgressLog.deleteMany({ where: { workOrderId: fixture.orderId } });
+  await prisma.workOrder.deleteMany({ where: { id: fixture.orderId } });
+  await prisma.user.deleteMany({ where: { id: { in: [fixture.requesterUserId, fixture.reviewerUserId] } } });
+  await prisma.employee.deleteMany({ where: { id: fixture.requesterEmployeeId } });
+}
+
+test(
+  'employee withdrawal requests enforce ownership, idempotency and cancellable pending state',
+  { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
+  async () => {
+    const fixture = await createWithdrawalRequestFixture('OWNER');
+    const otherEmployee = await prisma.employee.create({
+      data: { employeeNo: `${fixture.prefix}-OTHER-E`, name: `${fixture.prefix} other employee` },
+    });
+    const otherUser = await prisma.user.create({
+      data: {
+        username: `${fixture.prefix}-OTHER`,
+        passwordHash: 'integration-test-not-a-login-hash',
+        displayName: `${fixture.prefix} other`,
+        employeeId: otherEmployee.id,
+      },
+    });
+    try {
+      const createKey = `${fixture.prefix}-request-create`;
+      const request = await createProcessCompletionWithdrawalRequest({
+        routeId: fixture.routeId,
+        completionId: fixture.completionId,
+        expectedRouteVersion: 0,
+        idempotencyKey: createKey,
+        userId: fixture.requesterUserId,
+        employeeId: fixture.requesterEmployeeId,
+        actor: 'requester',
+      });
+      assert.equal(request.status, 'PENDING');
+      const replay = await createProcessCompletionWithdrawalRequest({
+        routeId: fixture.routeId,
+        completionId: fixture.completionId,
+        expectedRouteVersion: 0,
+        idempotencyKey: createKey,
+        userId: fixture.requesterUserId,
+        employeeId: fixture.requesterEmployeeId,
+        actor: 'requester',
+      });
+      assert.equal(replay.id, request.id);
+
+      await assert.rejects(
+        () => createProcessCompletionWithdrawalRequest({
+          routeId: fixture.routeId,
+          completionId: fixture.completionId,
+          expectedRouteVersion: 0,
+          idempotencyKey: `${fixture.prefix}-other-create`,
+          userId: otherUser.id,
+          employeeId: otherEmployee.id,
+          actor: 'other',
+        }),
+        (error: unknown) => (
+          error instanceof Error
+          && (error as { code?: string }).code === 'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_EMPLOYEE_FORBIDDEN'
+        ),
+      );
+      await assert.rejects(
+        () => cancelProcessCompletionWithdrawalRequest({
+          requestId: request.id,
+          routeId: fixture.routeId,
+          completionId: fixture.completionId,
+          expectedVersion: request.version,
+          idempotencyKey: `${fixture.prefix}-other-cancel`,
+          userId: otherUser.id,
+          employeeId: otherEmployee.id,
+        }),
+        (error: unknown) => (
+          error instanceof Error
+          && (error as { code?: string }).code === 'PROCESS_COMPLETION_WITHDRAWAL_REQUEST_NOT_FOUND'
+        ),
+      );
+      const cancelKey = `${fixture.prefix}-owner-cancel`;
+      const cancelled = await cancelProcessCompletionWithdrawalRequest({
+        requestId: request.id,
+        routeId: fixture.routeId,
+        completionId: fixture.completionId,
+        expectedVersion: request.version,
+        idempotencyKey: cancelKey,
+        userId: fixture.requesterUserId,
+        employeeId: fixture.requesterEmployeeId,
+      });
+      assert.equal(cancelled.status, 'CANCELLED');
+      const cancelReplay = await cancelProcessCompletionWithdrawalRequest({
+        requestId: request.id,
+        routeId: fixture.routeId,
+        completionId: fixture.completionId,
+        expectedVersion: request.version,
+        idempotencyKey: cancelKey,
+        userId: fixture.requesterUserId,
+        employeeId: fixture.requesterEmployeeId,
+      });
+      assert.equal(cancelReplay.status, 'CANCELLED');
+      assert.equal((await prisma.processCompletion.findUniqueOrThrow({ where: { id: fixture.completionId } })).voidedAt, null);
+    } finally {
+      await prisma.user.deleteMany({ where: { id: otherUser.id } });
+      await prisma.employee.deleteMany({ where: { id: otherEmployee.id } });
+      await cleanupWithdrawalRequestFixture(fixture);
+    }
+  },
+);
+
+test(
+  'manager approval applies withdrawal and APPLIED state atomically with replay and scope filtering',
+  { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
+  async () => {
+    const fixture = await createWithdrawalRequestFixture('APPROVE');
+    try {
+      const request = await createProcessCompletionWithdrawalRequest({
+        routeId: fixture.routeId,
+        completionId: fixture.completionId,
+        expectedRouteVersion: 0,
+        idempotencyKey: `${fixture.prefix}-create`,
+        userId: fixture.requesterUserId,
+        employeeId: fixture.requesterEmployeeId,
+        actor: 'requester',
+      });
+      const hidden = await listProcessCompletionWithdrawalRequests({
+        status: 'PENDING',
+        workOrderWhere: { id: 'outside-scope' },
+      });
+      assert.equal(hidden.items.some(item => item.id === request.id), false);
+      const visible = await listProcessCompletionWithdrawalRequests({
+        status: 'PENDING',
+        workOrderWhere: { id: fixture.orderId },
+      });
+      assert.equal(visible.items.some(item => item.id === request.id), true);
+
+      const commands = ['decision-a', 'decision-b'].map(suffix => ({
+        key: `${fixture.prefix}-${suffix}`,
+        promise: decideProcessCompletionWithdrawalRequest({
+          requestId: request.id,
+          action: 'APPROVE',
+          expectedVersion: request.version,
+          expectedRouteVersion: 0,
+          idempotencyKey: `${fixture.prefix}-${suffix}`,
+          userId: fixture.reviewerUserId,
+          actor: fixture.reviewerName,
+          workOrderWhere: { id: fixture.orderId },
+        }),
+      }));
+      const settled = await Promise.allSettled(commands.map(item => item.promise));
+      const winners = settled
+        .map((result, index) => ({ result, key: commands[index].key }))
+        .filter((item): item is { result: PromiseFulfilledResult<Awaited<typeof commands[number]['promise']>>; key: string } => item.result.status === 'fulfilled');
+      assert.equal(winners.length, 1);
+      assert.equal(winners[0].result.value.status, 'APPLIED');
+      const [savedRequest, savedCompletion] = await Promise.all([
+        prisma.processCompletionWithdrawalRequest.findUniqueOrThrow({ where: { id: request.id } }),
+        prisma.processCompletion.findUniqueOrThrow({ where: { id: fixture.completionId } }),
+      ]);
+      assert.equal(savedRequest.status, 'APPLIED');
+      assert.ok(savedCompletion.voidedAt);
+      const replay = await decideProcessCompletionWithdrawalRequest({
+        requestId: request.id,
+        action: 'APPROVE',
+        expectedVersion: request.version,
+        expectedRouteVersion: 0,
+        idempotencyKey: winners[0].key,
+        userId: fixture.reviewerUserId,
+        actor: fixture.reviewerName,
+        workOrderWhere: { id: fixture.orderId },
+      });
+      assert.equal(replay.status, 'APPLIED');
+      assert.equal(replay.withdrawal?.status, 'WITHDRAWN');
+      assert.equal(await prisma.issue.count({ where: { sourceId: fixture.completionId } }), 0);
+    } finally {
+      await cleanupWithdrawalRequestFixture(fixture);
+    }
+  },
+);
+
+test(
+  'manager reject, safety blocker and stale route are terminal without Issue side effects',
+  { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
+  async () => {
+    const rejectedFixture = await createWithdrawalRequestFixture('REJECT');
+    const blockedFixture = await createWithdrawalRequestFixture('BLOCKED', { blocked: true });
+    const staleFixture = await createWithdrawalRequestFixture('STALE');
+    try {
+      const rejectedRequest = await createProcessCompletionWithdrawalRequest({
+        routeId: rejectedFixture.routeId,
+        completionId: rejectedFixture.completionId,
+        expectedRouteVersion: 0,
+        idempotencyKey: `${rejectedFixture.prefix}-create`,
+        userId: rejectedFixture.requesterUserId,
+        employeeId: rejectedFixture.requesterEmployeeId,
+        actor: 'requester',
+      });
+      const rejected = await decideProcessCompletionWithdrawalRequest({
+        requestId: rejectedRequest.id,
+        action: 'REJECT',
+        expectedVersion: rejectedRequest.version,
+        idempotencyKey: `${rejectedFixture.prefix}-reject`,
+        note: '数量无需撤回',
+        userId: rejectedFixture.reviewerUserId,
+        actor: rejectedFixture.reviewerName,
+        workOrderWhere: { id: rejectedFixture.orderId },
+      });
+      assert.equal(rejected.status, 'REJECTED');
+
+      const blockedRequest = await createProcessCompletionWithdrawalRequest({
+        routeId: blockedFixture.routeId,
+        completionId: blockedFixture.completionId,
+        expectedRouteVersion: 0,
+        idempotencyKey: `${blockedFixture.prefix}-create`,
+        userId: blockedFixture.requesterUserId,
+        employeeId: blockedFixture.requesterEmployeeId,
+        actor: 'requester',
+      });
+      const blocked = await decideProcessCompletionWithdrawalRequest({
+        requestId: blockedRequest.id,
+        action: 'APPROVE',
+        expectedVersion: blockedRequest.version,
+        expectedRouteVersion: 0,
+        idempotencyKey: `${blockedFixture.prefix}-approve`,
+        userId: blockedFixture.reviewerUserId,
+        actor: blockedFixture.reviewerName,
+        workOrderWhere: { id: blockedFixture.orderId },
+      });
+      assert.equal(blocked.status, 'BLOCKED');
+      assert.equal(await prisma.issue.count({ where: { sourceId: blockedFixture.completionId } }), 0);
+      assert.equal((await prisma.processCompletion.findUniqueOrThrow({ where: { id: blockedFixture.completionId } })).voidedAt, null);
+
+      const staleRequest = await createProcessCompletionWithdrawalRequest({
+        routeId: staleFixture.routeId,
+        completionId: staleFixture.completionId,
+        expectedRouteVersion: 0,
+        idempotencyKey: `${staleFixture.prefix}-create`,
+        userId: staleFixture.requesterUserId,
+        employeeId: staleFixture.requesterEmployeeId,
+        actor: 'requester',
+      });
+      await prisma.workOrderProcessRoute.update({
+        where: { id: staleFixture.routeId },
+        data: { version: { increment: 1 } },
+      });
+      const stale = await decideProcessCompletionWithdrawalRequest({
+        requestId: staleRequest.id,
+        action: 'APPROVE',
+        expectedVersion: staleRequest.version,
+        expectedRouteVersion: 0,
+        idempotencyKey: `${staleFixture.prefix}-approve`,
+        userId: staleFixture.reviewerUserId,
+        actor: staleFixture.reviewerName,
+        workOrderWhere: { id: staleFixture.orderId },
+      });
+      assert.equal(stale.status, 'STALE');
+      assert.equal((await prisma.processCompletion.findUniqueOrThrow({ where: { id: staleFixture.completionId } })).voidedAt, null);
+    } finally {
+      await cleanupWithdrawalRequestFixture(rejectedFixture);
+      await cleanupWithdrawalRequestFixture(blockedFixture);
+      await cleanupWithdrawalRequestFixture(staleFixture);
     }
   },
 );
