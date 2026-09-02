@@ -164,6 +164,8 @@ jobs:
         run: npx tsc --noEmit
       - name: Lint
         run: npm run lint
+      - name: Performance regression contracts
+        run: npx tsx --test tests/performance-regression-contract.test.ts tests/performance-request.test.ts tests/http-byte-range.test.ts tests/database-performance-config.test.ts
       - name: Unit tests
         run: npm run test:unit
       - uses: docker/setup-buildx-action@v3
