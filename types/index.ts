@@ -3028,6 +3028,12 @@ export type ReportOperationsDTO = {
     futureQuantity: number;
     completedQuantity: number;
     quantityCompletionBasisPoints: number | null;
+    settledPlannedBatches: number;
+    settledCompletedBatches: number;
+    settledBatchCompletionBasisPoints: number | null;
+    settledPlannedQuantity: number;
+    settledCompletedQuantity: number;
+    settledQuantityCompletionBasisPoints: number | null;
   };
   attendanceScore: {
     workforceLabel: string;
@@ -3059,6 +3065,8 @@ export type ReportOperationsDTO = {
     startDate: string;
     endDate: string;
     isFutureWeek: boolean;
+    isCurrentWeek: boolean;
+    isSettled: boolean;
     scheduledBatches: number;
     plannedBatches: number;
     futureBatches: number;

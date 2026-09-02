@@ -34,6 +34,7 @@ import {
   effectiveWipSourcePlanAdjustment,
   effectiveWipTargetPlanProgress,
   parseReportMonth,
+  reportMonthWeekBuckets,
   reportRangeWeekBuckets,
   reportWeekStorageRange,
   summarizeWeeklyPlanProgress,
@@ -264,8 +265,14 @@ export async function GET(req: NextRequest) {
     const endDate = parseWorkDate(end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const cutoffAt = new Date(Math.min(now.getTime(), end.getTime() - 1));
     const dateKeys = reportRangeDateKeys(start, end);
-    const weeklyPlanBuckets = reportRangeWeekBuckets(dateKeys);
+    const weeklyPlanBuckets = period === 'month'
+      ? reportMonthWeekBuckets((dateKeys[0] || `${month}-01`).slice(0, 7))
+      : reportRangeWeekBuckets(dateKeys);
     const weeklyPlanWeekRange = reportWeekStorageRange(weeklyPlanBuckets);
+    const weeklyPlanCutoffAt = weeklyPlanWeekRange
+      ? new Date(Math.min(now.getTime(), weeklyPlanWeekRange.lt.getTime()))
+      : cutoffAt;
+    const weeklyPlanAllocationEnd = weeklyPlanWeekRange?.lt || end;
 
     const employees = await prisma.employee.findMany({
       where: {
@@ -427,7 +434,7 @@ export async function GET(req: NextRequest) {
         deletedAt: null,
         releaseState: { not: 'cancelled' },
         workOrderId: { in: planWorkOrderIds },
-        plannedCompletionDate: { lt: end },
+        plannedCompletionDate: { lt: weeklyPlanAllocationEnd },
       },
       select: {
         id: true,
@@ -447,7 +454,7 @@ export async function GET(req: NextRequest) {
         where: {
           productionPlanBatchId: { in: sourceAdjustmentBatchIds },
           scheduleStatus: { not: 'CANCELLED' },
-          enteredAt: { lt: cutoffAt },
+          enteredAt: { lt: weeklyPlanCutoffAt },
         },
         select: { id: true, productionPlanBatchId: true, kind: true, quantity: true },
         take: 10_000,
@@ -456,7 +463,7 @@ export async function GET(req: NextRequest) {
         where: {
           voidedAt: null,
           stepId: { in: finalStepIds },
-          completedAt: { lt: cutoffAt },
+          completedAt: { lt: weeklyPlanCutoffAt },
         },
         select: {
           workOrderId: true,
@@ -471,7 +478,7 @@ export async function GET(req: NextRequest) {
       weeklyPlanWeekRange ? prisma.wipWeekAllocation.findMany({
         where: {
           targetWeekStartDate: weeklyPlanWeekRange,
-          scheduledAt: { lt: cutoffAt },
+          scheduledAt: { lt: weeklyPlanCutoffAt },
           lot: { scheduleStatus: { not: 'CANCELLED' } },
           OR: [
             { status: { in: ['ACTIVE', 'IN_PROGRESS', 'COMPLETED'] } },
@@ -901,7 +908,7 @@ export async function GET(req: NextRequest) {
       }),
       completedByWorkOrder,
     );
-    const cutoffDateKey = todayKey(cutoffAt);
+    const cutoffDateKey = todayKey(weeklyPlanCutoffAt);
     const sourcePlanProgress = batches.flatMap(batch => {
       const adjustment = sourceAdjustment(batch.id, batch.quantity);
       if (adjustment.plannedQuantity <= 0) return [];
@@ -1012,6 +1019,17 @@ export async function GET(req: NextRequest) {
       futureQuantity: 0,
       completedQuantity: 0,
     });
+    const settledPlanSummary = weeklyPlan.filter(week => week.isSettled).reduce((sum, week) => ({
+      plannedBatches: sum.plannedBatches + week.plannedBatches,
+      completedBatches: sum.completedBatches + week.completedBatches,
+      plannedQuantity: sum.plannedQuantity + week.plannedQuantity,
+      completedQuantity: sum.completedQuantity + week.completedQuantity,
+    }), {
+      plannedBatches: 0,
+      completedBatches: 0,
+      plannedQuantity: 0,
+      completedQuantity: 0,
+    });
 
     const response: ReportOperationsDTO = {
       month,
@@ -1060,6 +1078,12 @@ export async function GET(req: NextRequest) {
         ...planSummary,
         batchCompletionBasisPoints: cappedBasisPoints(planSummary.completedBatches, planSummary.plannedBatches),
         quantityCompletionBasisPoints: cappedBasisPoints(planSummary.completedQuantity, planSummary.plannedQuantity),
+        settledPlannedBatches: settledPlanSummary.plannedBatches,
+        settledCompletedBatches: settledPlanSummary.completedBatches,
+        settledBatchCompletionBasisPoints: cappedBasisPoints(settledPlanSummary.completedBatches, settledPlanSummary.plannedBatches),
+        settledPlannedQuantity: settledPlanSummary.plannedQuantity,
+        settledCompletedQuantity: settledPlanSummary.completedQuantity,
+        settledQuantityCompletionBasisPoints: cappedBasisPoints(settledPlanSummary.completedQuantity, settledPlanSummary.plannedQuantity),
       },
       attendanceScore: {
         workforceLabel: '生产部',
@@ -1074,6 +1098,7 @@ export async function GET(req: NextRequest) {
       dataNotes: [
         '出勤日历默认周一至周六为工作日、周日为周休；节假日和周休不进入应确认人数、数据覆盖率、净应工时或出勤得分。周末只有标记为临时工作日后才能进入考勤，且只以实际建档人员为范围。',
         '净应出勤 = 排班常规工时 + 已确认实际加班 - 已确认请假；实际出勤已经包含加班，不重复相加。',
+        '月度周计划按周一所在月份归属，每个生产周固定显示周一至周日；进行中的生产周显示实时进度，但不进入已结算月度达成率。',
         '出勤得分按实际出勤 ÷ 净应出勤计算并封顶 100%，超出部分单列；整日请假和休息日剔除基数，部分请假缩减基数，正式缺勤仍保留在出勤基数。草稿与缺失考勤不按 0 计算，但会阻止该日发布正式得分。',
         '只有已确认考勤才形成有效工时、加班、请假和正式得分；草稿只显示待处理状态。工作日当日始终显示统计中，历史工作日只有生产部应处理考勤全部确认后才纳入周期得分。',
         '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；目标达成率 = 标准工时 ÷（有效出勤 × 95% × 个人计入比例）。',

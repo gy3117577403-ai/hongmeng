@@ -22,22 +22,26 @@ test('report month parsing rejects invalid and out-of-range values', () => {
   assert.equal(nextReportMonth('2026-12'), '2027-01');
 });
 
-test('report month dates and week buckets cover each calendar day exactly once', () => {
+test('report month keeps attendance days natural-month scoped and owns full production weeks by Monday', () => {
   const dates = reportMonthDateKeys('2026-08');
   const weeks = reportMonthWeekBuckets('2026-08');
   assert.equal(dates.length, 31);
   assert.equal(dates[0], '2026-08-01');
   assert.equal(dates.at(-1), '2026-08-31');
-  assert.equal(weeks.length, 6);
-  assert.equal(weeks[0]?.startDate, '2026-08-01');
-  assert.equal(weeks.at(-1)?.endDate, '2026-08-31');
+  assert.equal(weeks.length, 5);
+  assert.equal(weeks[0]?.startDate, '2026-08-03');
+  assert.equal(weeks[0]?.endDate, '2026-08-09');
+  assert.equal(weeks.at(-1)?.startDate, '2026-08-31');
+  assert.equal(weeks.at(-1)?.endDate, '2026-09-06');
+  assert.equal(reportMonthWeekBuckets('2026-07').at(-1)?.startDate, '2026-07-27');
+  assert.equal(reportMonthWeekBuckets('2026-09')[0]?.startDate, '2026-09-07');
   assert.equal(reportWeekKey('2026-08-19'), '2026-08-17');
 });
 
 test('weekly plan storage range includes every timestamp on the same Shanghai production week', () => {
   const range = reportWeekStorageRange(reportMonthWeekBuckets('2026-08'));
   assert.ok(range);
-  assert.equal(range.gte.toISOString(), '2026-07-26T16:00:00.000Z');
+  assert.equal(range.gte.toISOString(), '2026-08-02T16:00:00.000Z');
   assert.equal(range.lt.toISOString(), '2026-09-06T16:00:00.000Z');
   assert.ok(new Date('2026-08-24T00:00:00.000Z') >= range.gte);
   assert.ok(new Date('2026-08-24T04:00:00.000Z') < range.lt);
@@ -192,13 +196,19 @@ test('current production week counts all planned batches and credits early compl
   ], '2026-08-25');
   const current = rows.find(row => row.key === '2026-08-24');
   const future = rows.find(row => row.key === '2026-08-31');
+  const settled = rows.find(row => row.key === '2026-08-17');
 
+  assert.equal(settled?.isSettled, true);
   assert.equal(current?.isFutureWeek, false);
+  assert.equal(current?.isCurrentWeek, true);
+  assert.equal(current?.isSettled, false);
   assert.equal(current?.plannedBatches, 28);
   assert.equal(current?.completedBatches, 1);
   assert.equal(current?.batchCompletionBasisPoints, 357);
   assert.equal(current?.futureBatches, 0);
   assert.equal(future?.isFutureWeek, true);
+  assert.equal(future?.isCurrentWeek, false);
+  assert.equal(future?.isSettled, false);
   assert.equal(future?.plannedBatches, 0);
   assert.equal(future?.completedBatches, 0);
   assert.equal(future?.futureBatches, 1);

@@ -3,10 +3,11 @@ import { ProductionControlButton, ProductionNoteSummary } from '@/components/Pro
 import { canManageProductionControl, canAdjustProductionDates, type ProductionControlView } from '@/lib/production-control';
 
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useToastBridge } from '@/components/ToastProvider';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -55,6 +56,7 @@ type ProductionFlowAction = 'start_process_route';
 type DispatchDensity = 'comfortable' | 'compact';
 type DispatchPreset = 'paused' | 'all' | 'today' | 'in_production' | 'not_started' | 'next_process' | 'due_soon' | 'exceptions' | 'completed';
 type DispatchTone = 'normal' | 'warning' | 'danger';
+type ProductionAttainmentMetric = 'batch' | 'quantity' | 'labor';
 
 type DispatchRisk = {
   label: string;
@@ -466,6 +468,9 @@ type ProductionSummary = {
     movedOutMilliseconds: number;
     scheduledInMilliseconds: number;
     effectivePlannedMilliseconds: number;
+    nativeCompletedMilliseconds: number;
+    reclassifiedFromNativeMilliseconds: number;
+    targetWipCompletedMilliseconds: number;
     completedMilliseconds: number;
     percentage: number | null;
     missingStandardStepCount: number;
@@ -1379,6 +1384,9 @@ export default function ProductionExecutionCenter({
   const [density, setDensity] = useState<DispatchDensity>('comfortable');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  const attainmentButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [attainmentOverviewOpen, setAttainmentOverviewOpen] = useState(false);
+  const [attainmentDetailMetric, setAttainmentDetailMetric] = useState<ProductionAttainmentMetric | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const insightsButtonRef = useRef<HTMLButtonElement | null>(null);
   const insightsCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -1943,8 +1951,12 @@ export default function ProductionExecutionCenter({
     withNextProcess: summary?.dispatchMetrics.withNextProcess || 0,
     dueSoon: summary?.dispatchMetrics.dueSoon || 0,
     completed: summary?.dispatchMetrics.completed || 0,
-    percentage: summary?.wipPlanMetrics?.percentage ?? null,
+    percentage: summary?.planTotals.percentage ?? null,
   }), [summary]);
+  useEffect(() => {
+    setAttainmentOverviewOpen(false);
+    setAttainmentDetailMetric(null);
+  }, [activeBoardCacheKey]);
   const initialBoardLoading = loading && !board;
 
   const dispatchPreset: DispatchPreset = quick.includes('paused') ? 'paused' : view === 'today'
@@ -3164,8 +3176,80 @@ export default function ProductionExecutionCenter({
           <button type="button" className={dispatchPreset === 'next_process' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('next_process')}><span><ArrowRight size={18} aria-hidden="true" />有后续工序</span><strong>{summary ? dispatchMetric.withNextProcess : '—'}</strong><small>工艺路线存在下一道工序</small></button>
           <button type="button" className={dispatchPreset === 'due_soon' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('due_soon')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{summary ? dispatchMetric.dueSoon : '—'}</strong><small>客户交期在未来 0-2 天</small></button>
           <button type="button" className={dispatchPreset === 'completed' ? 'active completed' : 'completed'} onClick={() => applyDispatchPreset('completed')}><span><CheckCircle2 size={18} aria-hidden="true" />已完成</span><strong>{summary ? dispatchMetric.completed : '—'}</strong><small>当前周完成归档</small></button>
-          <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />{scope === 'current' ? '本周动态有效计划达成率' : '动态有效计划达成率'}</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>{summary?.wipPlanMetrics ? `按有效标准工时，不等同整单完工率 · 有效计划 ${(summary.wipPlanMetrics.effectivePlannedMilliseconds / 3_600_000).toFixed(1)} 小时 · 完成 ${(summary.wipPlanMetrics.completedMilliseconds / 3_600_000).toFixed(1)} 小时 · 转仓剩余工序从来源周分母移出 · 仓内未排 ${summary.wipPlanMetrics.unscheduledWipQuantity} 件不计入` : '有效计划工时正在加载，暂不使用整单完工率替代'}</small></div>
+          <button
+            ref={attainmentButtonRef}
+            type="button"
+            className={`production-dispatch-metric-rate production-attainment-card ${attainmentOverviewOpen ? 'active' : ''}`.trim()}
+            aria-label="查看三种生产达成率"
+            aria-expanded={attainmentOverviewOpen}
+            onClick={() => setAttainmentOverviewOpen(value => !value)}
+          >
+            <span><BarChart3 size={18} aria-hidden="true" />周计划达成率<ChevronDown className="production-attainment-card-chevron" size={14} aria-hidden="true" /></span>
+            <strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong>
+            <small>{summary ? `已完成 ${summary.planTotals.completedOrders.toLocaleString()} / 有效计划 ${summary.planTotals.totalOrders.toLocaleString()} 项` : '周计划数据正在加载'}</small>
+          </button>
         </section>
+
+        <PortalMenu
+          open={attainmentOverviewOpen}
+          anchorRef={attainmentButtonRef}
+          align="right"
+          width={640}
+          offset={6}
+          className="production-attainment-picker-layer"
+          role="dialog"
+          ariaLabel="生产达成率总览"
+          closeOnSelect={false}
+          onClose={() => setAttainmentOverviewOpen(false)}
+        >
+          <section className="production-attainment-picker">
+            <header>
+              <div><small>{summary?.weekStartDate && summary?.weekEndDate ? `${summary.weekStartDate.slice(5)}—${summary.weekEndDate.slice(5)} · 生产周` : '当前生产范围'}</small><strong>达成率总览</strong></div>
+              <span><CheckCircle2 size={14} aria-hidden="true" />口径已拆分</span>
+              <button type="button" aria-label="关闭达成率总览" onClick={() => setAttainmentOverviewOpen(false)}><X size={17} aria-hidden="true" /></button>
+            </header>
+            <p><Info size={14} aria-hidden="true" />计划项、产品数量和标准工时是三种不同口径，不再混成一个百分比。</p>
+            <div className="production-attainment-picker-grid">
+              <button type="button" className="batch" onClick={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('batch'); }}>
+                <span><ListChecks size={18} aria-hidden="true" />周计划达成率<ChevronDown size={14} aria-hidden="true" /></span>
+                <strong>{formatProductionPercentage(summary?.planTotals.percentage ?? null)}</strong>
+                <small>{summary ? `${summary.planTotals.completedOrders.toLocaleString()} / ${summary.planTotals.totalOrders.toLocaleString()} 项` : '—'}</small>
+                <i><b style={{ width: `${Math.min(100, summary?.planTotals.percentage ?? 0)}%` }} /></i>
+                <em>查看计算明细</em>
+              </button>
+              <button type="button" className="quantity" onClick={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('quantity'); }}>
+                <span><Rows3 size={18} aria-hidden="true" />计划数量达成率<ChevronDown size={14} aria-hidden="true" /></span>
+                <strong>{formatProductionPercentage(summary?.quantityTotals.percentage ?? null)}</strong>
+                <small>{summary ? `${summary.quantityTotals.completedQty.toLocaleString()} / ${summary.quantityTotals.targetQty.toLocaleString()} 件` : '—'}</small>
+                <i><b style={{ width: `${Math.min(100, summary?.quantityTotals.percentage ?? 0)}%` }} /></i>
+                <em>查看计算明细</em>
+              </button>
+              <button type="button" className="labor" onClick={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('labor'); }}>
+                <span><Clock3 size={18} aria-hidden="true" />有效标准工时完成率<ChevronDown size={14} aria-hidden="true" /></span>
+                <strong>{formatProductionPercentage(summary?.wipPlanMetrics?.percentage ?? null)}</strong>
+                <small>{summary?.wipPlanMetrics ? `${productionHours(summary.wipPlanMetrics.completedMilliseconds)} / ${productionHours(summary.wipPlanMetrics.effectivePlannedMilliseconds)} 小时` : '—'}</small>
+                <i><b style={{ width: `${Math.min(100, summary?.wipPlanMetrics?.percentage ?? 0)}%` }} /></i>
+                <em>查看计算明细</em>
+              </button>
+            </div>
+            <footer><Info size={13} aria-hidden="true" />点击任一指标，查看公式、分子、分母和调整明细。<span>更新 {lastProductionLoadedTime}</span></footer>
+          </section>
+        </PortalMenu>
+
+        {attainmentDetailMetric && summary && <ProductionAttainmentDrawer
+          summary={summary}
+          activeMetric={attainmentDetailMetric}
+          updatedAt={lastProductionLoadedTime || '尚未同步'}
+          onMetricChange={setAttainmentDetailMetric}
+          onClose={() => {
+            setAttainmentDetailMetric(null);
+            window.requestAnimationFrame(() => attainmentButtonRef.current?.focus());
+          }}
+          onBack={() => {
+            setAttainmentDetailMetric(null);
+            setAttainmentOverviewOpen(true);
+          }}
+        />}
 
         <section className="production-dispatch-toolbar" aria-label="生产调度筛选">
           <label className="production-dispatch-search"><Search size={18} aria-hidden="true" /><input value={keyword} onChange={event => { setTargetWorkOrderId(''); setTargetWipAllocationId(''); setKeyword(event.target.value); }} placeholder="搜索客户、型号、工单或品名" /></label>
@@ -3377,6 +3461,176 @@ export default function ProductionExecutionCenter({
         save={() => void saveProcessCompletion()}
       />}
     </main>
+  );
+}
+
+function productionHours(milliseconds: number): string {
+  return (Math.max(0, milliseconds) / 3_600_000).toLocaleString('zh-CN', {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+function ProductionAttainmentDrawer({
+  summary,
+  activeMetric,
+  updatedAt,
+  onMetricChange,
+  onClose,
+  onBack,
+}: {
+  summary: ProductionSummary;
+  activeMetric: ProductionAttainmentMetric;
+  updatedAt: string;
+  onMetricChange: (metric: ProductionAttainmentMetric) => void;
+  onClose: () => void;
+  onBack: () => void;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const dialogRef = useRef<HTMLElement | null>(null);
+  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    if (!mounted) return undefined;
+    dialogRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      onClose();
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [mounted, onClose]);
+  if (!mounted) return null;
+
+  const labor = summary.wipPlanMetrics;
+  const metric = activeMetric === 'batch'
+    ? {
+        label: '周计划达成率',
+        formula: '已完成有效计划项 ÷ 本周有效计划项',
+        percentage: summary.planTotals.percentage,
+        numerator: summary.planTotals.completedOrders,
+        denominator: summary.planTotals.totalOrders,
+        unit: '项',
+      }
+    : activeMetric === 'quantity'
+      ? {
+          label: '计划数量达成率',
+          formula: '有效完成数量 ÷ 有效计划数量',
+          percentage: summary.quantityTotals.percentage,
+          numerator: summary.quantityTotals.completedQty,
+          denominator: summary.quantityTotals.targetQty,
+          unit: '件',
+        }
+      : {
+          label: '有效标准工时完成率',
+          formula: '已完成有效标准工时 ÷ 有效计划标准工时',
+          percentage: labor?.percentage ?? null,
+          numerator: labor?.completedMilliseconds ?? 0,
+          denominator: labor?.effectivePlannedMilliseconds ?? 0,
+          unit: '小时',
+        };
+  const metricValue = (value: number) => activeMetric === 'labor'
+    ? productionHours(value)
+    : value.toLocaleString('zh-CN');
+  const remaining = Math.max(0, metric.denominator - metric.numerator);
+  const scopeText = summary.weekStartDate && summary.weekEndDate
+    ? `${summary.weekStartDate} 至 ${summary.weekEndDate}`
+    : '当前页面生产范围';
+
+  return createPortal(
+    <div className="production-attainment-drawer-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
+      <aside ref={dialogRef} tabIndex={-1} className="production-attainment-drawer" role="dialog" aria-modal="true" aria-labelledby="production-attainment-detail-title">
+        <header className="production-attainment-drawer-head">
+          <button type="button" onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />三项总览</button>
+          <div><small>{scopeText} · 数据更新 {updatedAt}</small><h2 id="production-attainment-detail-title">达成率计算明细</h2></div>
+          <button type="button" aria-label="关闭达成率计算明细" onClick={onClose}><X size={20} aria-hidden="true" /></button>
+        </header>
+
+        <nav className="production-attainment-tabs" aria-label="切换达成率口径">
+          <button type="button" className={activeMetric === 'batch' ? 'active' : ''} onClick={() => onMetricChange('batch')}><ListChecks size={16} aria-hidden="true" />计划项 <strong>{formatProductionPercentage(summary.planTotals.percentage)}</strong></button>
+          <button type="button" className={activeMetric === 'quantity' ? 'active' : ''} onClick={() => onMetricChange('quantity')}><Rows3 size={16} aria-hidden="true" />数量 <strong>{formatProductionPercentage(summary.quantityTotals.percentage)}</strong></button>
+          <button type="button" className={activeMetric === 'labor' ? 'active' : ''} onClick={() => onMetricChange('labor')}><Clock3 size={16} aria-hidden="true" />工时 <strong>{formatProductionPercentage(labor?.percentage ?? null)}</strong></button>
+        </nav>
+
+        <div className="production-attainment-drawer-body">
+          <section className={`production-attainment-result ${activeMetric}`}>
+            <div><small>{metric.label}</small><strong>{formatProductionPercentage(metric.percentage)}</strong></div>
+            <i><b style={{ width: `${Math.min(100, metric.percentage ?? 0)}%` }} /></i>
+            <p><CheckCircle2 size={14} aria-hidden="true" />{summary.scope === 'history' ? '历史周按当前业务数据回算；正式归档口径以报表中心的已结算周为准。' : '当前显示为实时值；周结束后的正式结果以报表中心已结算周为准。'}</p>
+          </section>
+
+          <section className="production-attainment-formula">
+            <header><BarChart3 size={18} aria-hidden="true" /><div><small>计算方式</small><strong>{metric.formula}</strong></div></header>
+            <div>
+              <article><small>{activeMetric === 'batch' ? '已完成有效计划项' : activeMetric === 'quantity' ? '有效完成数量' : '已完成有效标准工时'}</small><strong>{metricValue(metric.numerator)} {metric.unit}</strong></article>
+              <span>÷</span>
+              <article><small>{activeMetric === 'batch' ? '本周有效计划项' : activeMetric === 'quantity' ? '有效计划数量' : '有效计划标准工时'}</small><strong>{metricValue(metric.denominator)} {metric.unit}</strong></article>
+              <span>=</span>
+              <b>{formatProductionPercentage(metric.percentage)}</b>
+            </div>
+          </section>
+
+          {activeMetric === 'batch' && <section className="production-attainment-ledger">
+            <header><ListChecks size={18} aria-hidden="true" /><div><small>计划项构成</small><strong>本周有效计划项</strong></div></header>
+            <dl>
+              <div><dt>纳入本周计划</dt><dd>{summary.planTotals.totalOrders.toLocaleString()} 项</dd></div>
+              <div><dt>已经完成归档</dt><dd className="positive">{summary.planTotals.completedOrders.toLocaleString()} 项</dd></div>
+              <div><dt>尚未完成</dt><dd>{remaining.toLocaleString()} 项</dd></div>
+              <div className="total"><dt>周计划达成率</dt><dd>{formatProductionPercentage(summary.planTotals.percentage)}</dd></div>
+            </dl>
+          </section>}
+
+          {activeMetric === 'quantity' && <section className="production-attainment-ledger">
+            <header><Rows3 size={18} aria-hidden="true" /><div><small>数量构成</small><strong>有效计划数量</strong></div></header>
+            <dl>
+              <div><dt>有效计划数量</dt><dd>{summary.quantityTotals.targetQty.toLocaleString()} 件</dd></div>
+              <div><dt>已经完成数量</dt><dd className="positive">{summary.quantityTotals.completedQty.toLocaleString()} 件</dd></div>
+              <div><dt>剩余计划数量</dt><dd>{remaining.toLocaleString()} 件</dd></div>
+              <div className="total"><dt>计划数量达成率</dt><dd>{formatProductionPercentage(summary.quantityTotals.percentage)}</dd></div>
+            </dl>
+            {summary.quantityTotals.missingOrders > 0 && <p className="production-attainment-warning"><AlertTriangle size={15} aria-hidden="true" />有 {summary.quantityTotals.missingOrders} 个计划项缺少有效数量，未静默写成 0，请先补齐数据。</p>}
+          </section>}
+
+          {activeMetric === 'labor' && <>
+            <section className="production-attainment-ledger">
+              <header><BarChart3 size={18} aria-hidden="true" /><div><small>计划工时构成</small><strong>有效计划标准工时</strong></div></header>
+              <dl>
+                <div><dt>本周原生计划标准工时</dt><dd>{productionHours(labor?.nativePlannedMilliseconds ?? 0)} 小时</dd></div>
+                <div><dt>减：转仓移出剩余工时</dt><dd className="negative">− {productionHours(labor?.movedOutMilliseconds ?? 0)} 小时</dd></div>
+                <div><dt>加：本周半成品排入工时</dt><dd className="positive">+ {productionHours(labor?.scheduledInMilliseconds ?? 0)} 小时</dd></div>
+                <div className="total"><dt>最终有效计划标准工时</dt><dd>{productionHours(labor?.effectivePlannedMilliseconds ?? 0)} 小时</dd></div>
+              </dl>
+            </section>
+            <section className="production-attainment-ledger">
+              <header><Clock3 size={18} aria-hidden="true" /><div><small>完成工时构成</small><strong>有效完成标准工时</strong></div></header>
+              <dl>
+                <div><dt>本周原生完成标准工时</dt><dd>{productionHours(labor?.nativeCompletedMilliseconds ?? 0)} 小时</dd></div>
+                <div><dt>减：转为半成品归属工时</dt><dd className="negative">− {productionHours(labor?.reclassifiedFromNativeMilliseconds ?? 0)} 小时</dd></div>
+                <div><dt>加：本周半成品完成工时</dt><dd className="positive">+ {productionHours(labor?.targetWipCompletedMilliseconds ?? 0)} 小时</dd></div>
+                <div className="total"><dt>有效完成标准工时</dt><dd>{productionHours(labor?.completedMilliseconds ?? 0)} 小时</dd></div>
+              </dl>
+            </section>
+            {(labor?.missingStandardStepCount || 0) > 0 && <p className="production-attainment-warning"><AlertTriangle size={15} aria-hidden="true" />有 {labor?.missingStandardStepCount} 道工序缺少标准工时，页面明确预警，不把缺失值伪装成 0。</p>}
+          </>}
+
+          <section className="production-attainment-balance">
+            <article><small>{activeMetric === 'labor' ? '有效完成' : '已经完成'}</small><strong>{metricValue(metric.numerator)} {metric.unit}</strong></article>
+            <article><small>{activeMetric === 'labor' ? '剩余计划' : '尚未完成'}</small><strong>{metricValue(remaining)} {metric.unit}</strong></article>
+          </section>
+
+          <section className="production-attainment-rules">
+            <header><Info size={18} aria-hidden="true" /><strong>口径说明</strong></header>
+            <ul>
+              <li>计划项、数量、工时三个指标独立计算，不能互相替代。</li>
+              <li>普通暂停仍保留在有效计划内；正式取消、跨周改排和半成品转仓通过调整记录改变归属。</li>
+              <li>仓内尚未排入生产周的半成品不进入目标周分母；当前未排数量 {(labor?.unscheduledWipQuantity ?? 0).toLocaleString()} 件。</li>
+              <li>历史周正式报表使用完整生产周和结算状态，避免一两天被当作完整周。</li>
+            </ul>
+          </section>
+        </div>
+      </aside>
+    </div>,
+    document.body,
   );
 }
 

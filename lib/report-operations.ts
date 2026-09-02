@@ -41,6 +41,8 @@ export type WipTargetPlanStatus = 'ACTIVE' | 'IN_PROGRESS' | 'COMPLETED' | 'SUPE
 
 export type WeeklyPlanProgressRow = ReportWeekBucket & {
   isFutureWeek: boolean;
+  isCurrentWeek: boolean;
+  isSettled: boolean;
   scheduledBatches: number;
   plannedBatches: number;
   futureBatches: number;
@@ -92,7 +94,18 @@ function mondayFor(dateKey: string): string {
 
 export function reportMonthWeekBuckets(month: string): ReportWeekBucket[] {
   const dateKeys = reportMonthDateKeys(month);
-  return reportRangeWeekBuckets(dateKeys);
+  return dateKeys
+    .filter(dateKey => mondayFor(dateKey) === dateKey)
+    .map((startDate, index) => {
+      const start = new Date(`${startDate}T12:00:00.000Z`);
+      const endDate = new Date(start.getTime() + (6 * DAY_MILLISECONDS)).toISOString().slice(0, 10);
+      return {
+        key: startDate,
+        label: `第 ${index + 1} 周`,
+        startDate,
+        endDate,
+      };
+    });
 }
 
 export function reportRangeWeekBuckets(dateKeys: string[]): ReportWeekBucket[] {
@@ -265,6 +278,8 @@ export function summarizeWeeklyPlanProgress(
   const rows = buckets.map(bucket => ({
     ...bucket,
     isFutureWeek: bucket.key > cutoffWeekKey,
+    isCurrentWeek: bucket.key === cutoffWeekKey,
+    isSettled: bucket.key < cutoffWeekKey,
     scheduledBatches: 0,
     plannedBatches: 0,
     futureBatches: 0,

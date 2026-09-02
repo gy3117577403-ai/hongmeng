@@ -1539,6 +1539,9 @@ export type WipWeekLaborMetrics = {
   movedOutMilliseconds: number;
   scheduledInMilliseconds: number;
   effectivePlannedMilliseconds: number;
+  nativeCompletedMilliseconds: number;
+  reclassifiedFromNativeMilliseconds: number;
+  targetWipCompletedMilliseconds: number;
   completedMilliseconds: number;
   percentage: number | null;
   missingStandardStepCount: number;
@@ -1815,6 +1818,9 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
     movedOutMilliseconds: bigintNumber(movedOut),
     scheduledInMilliseconds: bigintNumber(scheduledIn),
     effectivePlannedMilliseconds: bigintNumber(attainment.effectivePlanned),
+    nativeCompletedMilliseconds: bigintNumber(nativeCompleted),
+    reclassifiedFromNativeMilliseconds: bigintNumber(reclassifiedFromNative),
+    targetWipCompletedMilliseconds: bigintNumber(targetCredits._sum.standardMilliseconds || 0n),
     completedMilliseconds: bigintNumber(attainment.completed),
     percentage: attainment.percentage,
     missingStandardStepCount,

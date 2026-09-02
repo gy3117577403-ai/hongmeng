@@ -339,10 +339,10 @@ function metricForBranch(
       { label: '达成率', value: percentText(summary?.completionBasisPoints), note: '最终工序口径' },
       { label: '统计天数', value: numberText(overview?.dailyTrend.length), note: '天' },
     ] },
-    'weekly-plan-attainment': { label: '周计划达成率', value: percentText(operationsSummary?.batchCompletionBasisPoints), description: '已达成有效计划项 / 已开始有效计划项', tone: 'orange', stats: [
-      { label: '纳入计划批次', value: numberText(operationsSummary?.plannedBatches), note: `未来周 ${numberText(operationsSummary?.futureBatches)} 批` },
-      { label: '完成批次', value: numberText(operationsSummary?.completedBatches), note: '批' },
-      { label: '计划数量达成', value: percentText(operationsSummary?.quantityCompletionBasisPoints), note: `${numberText(operationsSummary?.completedQuantity)} / ${numberText(operationsSummary?.plannedQuantity)}` },
+    'weekly-plan-attainment': { label: '已结算周计划达成率', value: percentText(operationsSummary?.settledBatchCompletionBasisPoints), description: '完整生产周已达成计划项 / 已结算有效计划项', tone: 'orange', stats: [
+      { label: '已结算计划批次', value: numberText(operationsSummary?.settledPlannedBatches), note: `本月排定 ${numberText(operationsSummary?.scheduledBatches)} 批` },
+      { label: '已结算完成批次', value: numberText(operationsSummary?.settledCompletedBatches), note: '批' },
+      { label: '已结算数量达成', value: percentText(operationsSummary?.settledQuantityCompletionBasisPoints), note: `${numberText(operationsSummary?.settledCompletedQuantity)} / ${numberText(operationsSummary?.settledPlannedQuantity)}` },
     ] },
     'process-bottlenecks': { label: '工序待处理量', value: numberText(totalPending), unit: '件', description: '瓶颈工序口径，不计入成品总量', tone: 'red', stats: [
       { label: '涉及工序', value: numberText(overview?.processBottlenecks.length), note: '道' },
@@ -735,8 +735,8 @@ export default function ReportCenterBranchDashboard({
       ];
     } else if (initialBranch === 'weekly-plan-attainment') {
       rows = [
-        ['周次', '日期范围', '排定计划项', '有效计划项', '未来周计划项', '已达成计划项', '周计划达成率', '有效计划数量', '达成数量', '数量达成率'],
-        ...(operations?.weeklyPlan || []).map(row => [row.label, `${row.startDate} 至 ${row.endDate}`, row.scheduledBatches, row.plannedBatches, row.futureBatches, row.completedBatches, percentText(row.batchCompletionBasisPoints), row.plannedQuantity, row.completedQuantity, percentText(row.quantityCompletionBasisPoints)]),
+        ['周次', '日期范围', '结算状态', '排定计划项', '有效计划项', '未来周计划项', '已达成计划项', '周计划达成率', '有效计划数量', '达成数量', '数量达成率'],
+        ...(operations?.weeklyPlan || []).map(row => [row.label, `${row.startDate} 至 ${row.endDate}`, row.isSettled ? '已结算' : row.isCurrentWeek ? '进行中' : '未开始', row.scheduledBatches, row.plannedBatches, row.futureBatches, row.completedBatches, percentText(row.batchCompletionBasisPoints), row.plannedQuantity, row.completedQuantity, percentText(row.quantityCompletionBasisPoints)]),
       ];
     } else if (initialBranch === 'attendance-attainment') {
       rows = [
@@ -960,7 +960,7 @@ function BottleneckTable({ report }: { report: ReportCenterOverviewDTO | null })
 
 function WeeklyPlan({ report }: { report: ReportOperationsDTO | null }) {
   const rows = report?.weeklyPlan || [];
-  return <Panel kicker="周次拆解" title={`${rangeText(report)} 周计划达成率`} action={<span>有效计划口径 · 已完成工序保留 · 转仓剩余任务移入目标周</span>}><div className="report-week-grid">{rows.map(row => <article key={row.key}><header><div><small>{row.startDate.slice(5)}—{row.endDate.slice(5)}</small><h3>{row.label}</h3></div><strong>{percentText(row.batchCompletionBasisPoints)}</strong></header><dl><div><dt>有效计划项</dt><dd>{row.completedBatches}<em> / {row.plannedBatches}</em></dd><i><b style={{ width: `${Math.min(100, (row.batchCompletionBasisPoints || 0) / 100)}%` }} /></i></div><div><dt>有效计划数量</dt><dd>{numberText(row.completedQuantity)}<em> / {numberText(row.plannedQuantity)}</em></dd><i><b style={{ width: `${Math.min(100, (row.quantityCompletionBasisPoints || 0) / 100)}%` }} /></i></div></dl>{row.isFutureWeek && row.futureBatches > 0 && <p>未来周：{row.futureBatches} 个计划项 · {numberText(row.futureQuantity)}</p>}</article>)}</div>{!rows.length && <EmptyState icon={<CalendarRange />} title="当前周期没有周计划数据" />}</Panel>;
+  return <Panel kicker="完整生产周拆解" title={`${rangeText(report)} 周计划达成率`} action={<span>按周一所在月份归属 · 周一至周日完整显示 · 进行中周不进入已结算汇总</span>}><div className="report-week-grid">{rows.map(row => <article key={row.key} className={row.isCurrentWeek ? 'in-progress' : row.isFutureWeek ? 'future' : 'settled'}><header><div><small>{row.startDate.slice(5)}—{row.endDate.slice(5)}</small><h3>{row.label}<em>{row.isSettled ? '已结算' : row.isCurrentWeek ? '进行中' : '未开始'}</em></h3></div><strong>{row.isFutureWeek ? '—' : percentText(row.batchCompletionBasisPoints)}</strong></header><dl><div><dt>有效计划项</dt><dd>{row.completedBatches}<em> / {row.plannedBatches}</em></dd><i><b style={{ width: `${Math.min(100, (row.batchCompletionBasisPoints || 0) / 100)}%` }} /></i></div><div><dt>有效计划数量</dt><dd>{numberText(row.completedQuantity)}<em> / {numberText(row.plannedQuantity)}</em></dd><i><b style={{ width: `${Math.min(100, (row.quantityCompletionBasisPoints || 0) / 100)}%` }} /></i></div></dl>{row.isCurrentWeek && <p>当前生产周实时更新，周日结束后进入已结算汇总。</p>}{row.isFutureWeek && row.futureBatches > 0 && <p>未来周：{row.futureBatches} 个计划项 · {numberText(row.futureQuantity)}</p>}</article>)}</div>{!rows.length && <EmptyState icon={<CalendarRange />} title="当前月份没有以周一归属的生产周" />}</Panel>;
 }
 
 function CompletedBatchTable({ report, onPage }: { report: ReportCompletedBatchesDTO | null; onPage: (page: number) => void }) {

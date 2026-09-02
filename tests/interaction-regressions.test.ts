@@ -96,7 +96,7 @@ test('production week header separates plan batches from actual current and carr
   assert.match(component, /refreshSignature=\{scope === 'current'[\s\S]*?summary\?\.executionCountBreakdown\?\.total/);
 });
 
-test('production execution always refreshes and displays WIP-adjusted effective-plan attainment', () => {
+test('production execution defaults to weekly plan attainment and exposes separate quantity and WIP-labor calculations', () => {
   const component = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
   const service = readFileSync(resolve(repositoryRoot, 'lib/production-execution.ts'), 'utf8');
 
@@ -105,11 +105,13 @@ test('production execution always refreshes and displays WIP-adjusted effective-
   assert.match(service, /summary:\s*\{[\s\S]*?wipPlanMetrics,[\s\S]*?executionCountBreakdown/);
   assert.match(component, /pageParams\.set\('includeSummary', '1'\)/, 'the initial board request must include WIP metrics');
   assert.match(component, /subscribeProductionDataInvalidations[\s\S]*?productionBoardCache\.clear\(\)[\s\S]*?setRefreshToken\(value => value \+ 1\)/, 'WIP invalidation must force the summary-bearing first page to refetch');
-  assert.match(component, /percentage:\s*summary\?\.wipPlanMetrics\?\.percentage \?\? null/);
-  assert.doesNotMatch(component, /percentage:\s*summary\?\.wipPlanMetrics\?\.percentage \?\? summary\?\.planTotals\.percentage/);
-  assert.match(component, /本周动态有效计划达成率/);
-  assert.match(component, /不等同整单完工率/);
-  assert.match(component, /暂不使用整单完工率替代/);
+  assert.match(component, /percentage:\s*summary\?\.planTotals\.percentage \?\? null/);
+  assert.match(component, /周计划达成率/);
+  assert.match(component, /计划数量达成率/);
+  assert.match(component, /有效标准工时完成率/);
+  assert.match(component, /已完成有效标准工时 ÷ 有效计划标准工时/);
+  assert.match(component, /reclassifiedFromNativeMilliseconds/);
+  assert.match(component, /targetWipCompletedMilliseconds/);
 });
 
 test('standalone production summary suppresses the same fully-owned WIP native target as the board', () => {
