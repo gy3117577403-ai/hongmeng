@@ -54,6 +54,7 @@ export async function GET(req: NextRequest) {
     const scope = planningScope(cleanProductTimeText(req.nextUrl.searchParams.get('scope'), 20));
     const page = positiveInt(req.nextUrl.searchParams.get('page'), 1);
     const pageSize = Math.min(100, positiveInt(req.nextUrl.searchParams.get('pageSize'), 50));
+    const includeOptions = page === 1 && req.nextUrl.searchParams.get('includeOptions') !== '0';
     const naturalCurrent = chinaWeekRange(new Date());
     const nextInput = new Date(naturalCurrent.start);
     nextInput.setUTCDate(nextInput.getUTCDate() + 7);
@@ -161,17 +162,17 @@ export async function GET(req: NextRequest) {
       skip: (page - 1) * pageSize,
       take: pageSize,
       }),
-      prisma.processDefinition.findMany({
+      includeOptions ? prisma.processDefinition.findMany({
         where: { isActive: true },
         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
         select: { id: true, code: true, name: true, stageGroup: true, sortOrder: true },
-      }),
-      prisma.drawingLibraryItem.groupBy({
+      }) : Promise.resolve(null),
+      includeOptions ? prisma.drawingLibraryItem.groupBy({
         by: ['customerName'],
         where: { deletedAt: null },
         _count: { _all: true },
         orderBy: { customerName: 'asc' },
-      }),
+      }) : Promise.resolve(null),
     ]);
     markRequest(observation, 'product_page');
     const planningReferences = items.length
@@ -266,8 +267,8 @@ export async function GET(req: NextRequest) {
       ok: true,
       requestId: observation.requestId,
       items: rows,
-      definitions,
-      customers: customers.map(item => ({ customerName: item.customerName, count: item._count._all })),
+      ...(definitions ? { definitions } : {}),
+      ...(customers ? { customers: customers.map(item => ({ customerName: item.customerName, count: item._count._all })) } : {}),
       summary: {
         total,
         published: rows.filter(item => item.published).length,

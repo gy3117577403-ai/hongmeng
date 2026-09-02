@@ -536,6 +536,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const lastSuccessfulRefreshRef = useRef(0);
   const selectedIdRef = useRef('');
   const listRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
+  const optionsLoadedRef = useRef(false);
   const unsavedToastShownRef = useRef(false);
   const completedDeploymentRef = useRef('');
   const routeSensors = useSensors(
@@ -619,6 +620,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       if (planningScope === 'history') params.set('weekStartDate', historyWeekStart);
       params.set('page', String(requestedPage));
       params.set('pageSize', '50');
+      if (optionsLoadedRef.current) params.set('includeOptions', '0');
       const data = await fetchJson<ProductTimePayload>(`/api/product-time-profiles?${params.toString()}`, {
         cache: 'no-store',
         signal: request.controller.signal,
@@ -627,8 +629,9 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       });
       if (listRequestRef.current?.sequence !== request.sequence) return;
       let nextItems = data.items || [];
-      setDefinitions(data.definitions || []);
-      setCustomers(data.customers || []);
+      if (data.definitions) setDefinitions(data.definitions);
+      if (data.customers) setCustomers(data.customers);
+      if (data.definitions && data.customers) optionsLoadedRef.current = true;
       setPlanningSummary(data.planningSummary || null);
       setPeriods(data.periods);
       const urlItemId = new URLSearchParams(window.location.search).get('itemId') || '';

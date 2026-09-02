@@ -829,6 +829,8 @@ model WorkOrder {
   @@index([branchType, branchStatus])
   @@index([originStepId])
   @@index([rejoinStepId])
+  @@index([deletedAt, planActive, weekStartDate], map: "work_order_active_week_idx")
+  @@index([deletedAt, stage, priority, plannedAt], map: "work_order_dispatch_idx")
   @@map("work_orders")
 }
 
@@ -2809,6 +2811,7 @@ model DrawingLibraryItem {
   @@index([deletedAt])
   @@index([updatedAt])
   @@index([lastWorkOrderId])
+  @@index([deletedAt, updatedAt, customerName, specification], map: "drawing_library_active_updated_idx")
   @@map("drawing_library_items")
 }
 
@@ -3080,6 +3083,7 @@ model ProductionPlanOrder {
   @@index([priority])
   @@index([drawingLibraryItemId])
   @@index([deletedAt])
+  @@index([deletedAt, status, priority, customerDueDate], map: "production_plan_active_dispatch_idx")
   @@map("production_plan_orders")
 }
 
@@ -3130,6 +3134,7 @@ model ProductionPlanBatch {
   @@index([productTimeProfileId])
   @@index([materialExecutionDecisionById])
   @@index([deletedAt])
+  @@index([deletedAt, weekStartDate, releaseState], map: "production_plan_batch_active_week_idx")
   @@map("production_plan_batches")
 }
 
