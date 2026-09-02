@@ -1,8 +1,11 @@
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { cleanProductTimeText } from '@/lib/product-time';
+import {
+  ProcessDefinitionResolutionError,
+  resolveOrCreateProcessDefinition,
+} from '@/lib/process-definition-resolver';
 import type { ProcessStageGroup } from '@/types';
 
 export const runtime = 'nodejs';
@@ -32,25 +35,16 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const name = cleanProductTimeText(body.name, 60);
-    if (!name) return NextResponse.json({ ok: false, error: '请填写工序名称' }, { status: 400 });
-    const duplicate = await prisma.processDefinition.findFirst({
-      where: { name: { equals: name, mode: 'insensitive' } },
-      select: { id: true },
-    });
-    if (duplicate) return NextResponse.json({ ok: false, error: '同名工序已经存在' }, { status: 409 });
     const sortOrder = Number(body.sortOrder);
     const definition = await prisma.$transaction(async tx => {
-      const created = await tx.processDefinition.create({
-        data: {
-          code: `process-${randomUUID()}`,
-          name,
-          stageGroup: stageGroup(body.stageGroup),
-          sortOrder: Number.isInteger(sortOrder) ? sortOrder : 1000,
-          isActive: true,
-        },
-        select: { id: true, code: true, name: true, stageGroup: true, sortOrder: true },
+      const { definition: created, action } = await resolveOrCreateProcessDefinition(tx, {
+        name: body.name,
+        stageGroup: stageGroup(body.stageGroup),
+        sortOrder: Number.isInteger(sortOrder) ? sortOrder : 1000,
       });
+      if (action !== 'CREATED') {
+        throw new ProcessDefinitionResolutionError('同名工序已经存在', 'PROCESS_NAME_DUPLICATE');
+      }
       await tx.operationLog.create({
         data: {
           userId: user.id,
@@ -60,11 +54,14 @@ export async function POST(req: NextRequest) {
           detail: { processCode: created.code, processName: created.name },
         },
       });
-      return created;
-    });
+      return { id: created.id, code: created.code, name: created.name, stageGroup: created.stageGroup, sortOrder: created.sortOrder };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json({ ok: true, definition }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProcessDefinitionResolutionError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     console.error('create process definition failed', error);
     return NextResponse.json({ ok: false, error: '新增工序失败' }, { status: 500 });
   }

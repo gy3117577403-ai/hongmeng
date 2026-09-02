@@ -4,6 +4,10 @@ import { ForbiddenError, forbidden, requireUser, unauthorized, UnauthorizedError
 import { hasCapability } from '@/lib/department-access';
 import { prisma } from '@/lib/prisma';
 import {
+  ProcessDefinitionResolutionError,
+  resolveOrCreateProcessDefinition,
+} from '@/lib/process-definition-resolver';
+import {
   cleanSampleText,
   isSamplePhotoCategory,
   sampleActor,
@@ -63,9 +67,6 @@ function finiteNumber(value: unknown, min: number, max: number, integer = false)
 }
 
 const ENTRY_TEXT_FIELDS: Record<string, readonly string[]> = {
-  // The process name is authoritative master data and is populated from the
-  // selected process definition below.  It must never be free-form edited in
-  // the review request, otherwise the displayed name and stored id can drift.
   PROCESS_TIME: ['unitLabel', 'remark'],
   STRIPPING: ['model', 'outerPeelMm', 'innerPeelMm', 'insertionLengthMm', 'positionLabel', 'remark'],
   MATERIAL: ['name', 'specification', 'length', 'quantity', 'unit', 'tolerance', 'position', 'remark'],
@@ -88,16 +89,26 @@ async function sanitizeEntryEdit(
   }
 
   if (kind === 'PROCESS_TIME') {
+    const candidateName = own(patch, 'processName')
+      ? cleanSampleText(patch.processName, 60)
+      : cleanSampleText(current.processName, 60);
+    const candidateStageGroup = patch.stageGroup === 'backend' || patch.stageGroup === 'finish'
+      ? patch.stageGroup
+      : current.stageGroup === 'backend' || current.stageGroup === 'finish'
+        ? current.stageGroup
+        : 'frontend';
     if (own(patch, 'processDefinitionId')) {
       const processDefinitionId = cleanSampleText(patch.processDefinitionId, 80);
       if (!processDefinitionId) {
         next.processDefinitionId = null;
-        next.processOrigin = 'CANDIDATE';
+        next.processName = candidateName;
+        next.stageGroup = candidateStageGroup;
+        next.processOrigin = 'PROPOSED';
         next.mappedByReview = false;
       } else {
         const definition = await tx.processDefinition.findFirst({
           where: { id: processDefinitionId, isActive: true },
-          select: { id: true, name: true },
+          select: { id: true, name: true, stageGroup: true },
         });
         if (!definition) {
           throw new SamplePackageReviewError('选择的正式工序已停用或不存在', 'SAMPLE_PROCESS_NOT_FOUND', 409);
@@ -105,10 +116,16 @@ async function sanitizeEntryEdit(
         const previousName = cleanSampleText(current.processName, 120);
         next.processDefinitionId = definition.id;
         next.processName = definition.name;
+        next.stageGroup = definition.stageGroup;
         next.processOrigin = 'MASTER';
         next.mappedFromProcessName = previousName;
         next.mappedByReview = true;
       }
+    } else if (!cleanSampleText(current.processDefinitionId, 80) && own(patch, 'processName')) {
+      next.processName = candidateName;
+      next.stageGroup = candidateStageGroup;
+      next.processOrigin = 'PROPOSED';
+      next.mappedByReview = false;
     }
     if (own(patch, 'recommendedSeconds')) {
       const seconds = finiteNumber(patch.recommendedSeconds, 0.001, 604_800);
@@ -469,6 +486,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
 
       const issues: ReviewIssue[] = [];
+      const resolvedProcessPayloads = new Map<string, Prisma.JsonObject>();
+      const processCatalogChanges: Array<{ id: string; name: string; action: 'CREATED' | 'REACTIVATED' | 'REUSED' }> = [];
       for (const entry of entries) {
         if (entry.reviewStatus === 'CHANGES_REQUESTED' || entry.reviewStatus === 'VOIDED' || entry.reviewStatus === 'DRAFT') {
           issues.push({ itemType: 'entry', itemId: entry.id, title: entry.label || entry.kind, message: '记录不属于可确认状态，请先编辑或重新提交。' });
@@ -477,27 +496,76 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (entry.reviewStatus !== 'PENDING' || entry.kind !== 'PROCESS_TIME') continue;
         const payload = jsonRecord(entry.payload);
         const processDefinitionId = cleanSampleText(payload.processDefinitionId, 80);
-        if (!processDefinitionId) {
-          issues.push({ itemType: 'entry', itemId: entry.id, title: cleanSampleText(payload.processName, 120) || entry.label || '工序工时', message: '尚未选择正式工序。' });
+        const processName = cleanSampleText(payload.processName, 60);
+        if (!processDefinitionId && !processName) {
+          issues.push({ itemType: 'entry', itemId: entry.id, title: entry.label || '工序工时', message: '缺少工序名称，无法自动收录到工序库。' });
         }
         if (processSeconds(entry.payload) === null) {
-          issues.push({ itemType: 'entry', itemId: entry.id, title: cleanSampleText(payload.processName, 120) || entry.label || '工序工时', message: '缺少有效工时。' });
+          issues.push({ itemType: 'entry', itemId: entry.id, title: processName || entry.label || '工序工时', message: '缺少有效工时。' });
         }
       }
       const processIds = [...new Set(entries
         .filter(entry => entry.kind === 'PROCESS_TIME' && entry.reviewStatus === 'PENDING')
         .map(entry => cleanSampleText(jsonRecord(entry.payload).processDefinitionId, 80))
         .filter((value): value is string => Boolean(value)))];
-      if (processIds.length) {
-        const definitions = await tx.processDefinition.findMany({ where: { id: { in: processIds }, isActive: true }, select: { id: true } });
-        const activeIds = new Set(definitions.map(item => item.id));
-        for (const entry of entries) {
-          if (entry.kind !== 'PROCESS_TIME' || entry.reviewStatus !== 'PENDING') continue;
-          const payload = jsonRecord(entry.payload);
-          const processDefinitionId = cleanSampleText(payload.processDefinitionId, 80);
-          if (processDefinitionId && !activeIds.has(processDefinitionId)) {
-            issues.push({ itemType: 'entry', itemId: entry.id, title: cleanSampleText(payload.processName, 120) || entry.label || '工序工时', message: '关联的正式工序已停用或不存在。' });
+      // Active ids are resolved in one query below. A stale id may fall back
+      // to its captured name so historic submissions are not stuck.
+      const activeDefinitions = processIds.length
+        ? await tx.processDefinition.findMany({ where: { id: { in: processIds }, isActive: true } })
+        : [];
+      const activeDefinitionById = new Map(activeDefinitions.map(item => [item.id, item]));
+      const catalogLogged = new Set<string>();
+      for (const entry of entries) {
+        if (entry.kind !== 'PROCESS_TIME' || entry.reviewStatus !== 'PENDING') continue;
+        const payload = jsonRecord(entry.payload);
+        const processDefinitionId = cleanSampleText(payload.processDefinitionId, 80);
+        const processName = cleanSampleText(payload.processName, 60);
+        if ((!processDefinitionId && !processName) || processSeconds(entry.payload) === null) continue;
+        try {
+          const activeDefinition = processDefinitionId ? activeDefinitionById.get(processDefinitionId) : null;
+          const resolution = activeDefinition
+            ? { definition: activeDefinition, action: 'REUSED' as const }
+            : await resolveOrCreateProcessDefinition(tx, {
+                name: processName,
+                stageGroup: payload.stageGroup,
+              });
+          const resolvedPayload = JSON.parse(JSON.stringify({
+            ...payload,
+            processDefinitionId: resolution.definition.id,
+            processName: resolution.definition.name,
+            processOrigin: 'MASTER',
+            stageGroup: resolution.definition.stageGroup,
+            mappedByReview: true,
+            ...(processName && processName !== resolution.definition.name ? { mappedFromProcessName: processName } : {}),
+          })) as Prisma.JsonObject;
+          resolvedProcessPayloads.set(entry.id, resolvedPayload);
+          processCatalogChanges.push({ id: resolution.definition.id, name: resolution.definition.name, action: resolution.action });
+          if (resolution.action !== 'REUSED' && !catalogLogged.has(resolution.definition.id)) {
+            catalogLogged.add(resolution.definition.id);
+            await tx.operationLog.create({
+              data: {
+                userId: actor.id,
+                action: resolution.action === 'CREATED'
+                  ? 'create_process_definition_from_sample'
+                  : 'reactivate_process_definition_from_sample',
+                targetType: 'process_definition',
+                targetId: resolution.definition.id,
+                detail: {
+                  processCode: resolution.definition.code,
+                  processName: resolution.definition.name,
+                  sampleTaskId: task.id,
+                  sampleSubmissionId: submission.id,
+                  sourceEntryId: entry.id,
+                },
+              },
+            });
           }
+        } catch (error) {
+          if (error instanceof ProcessDefinitionResolutionError) {
+            issues.push({ itemType: 'entry', itemId: entry.id, title: processName || entry.label || '工序工时', message: error.message });
+            continue;
+          }
+          throw error;
         }
       }
       for (const photo of photos) {
@@ -524,11 +592,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       let publishedPhotos = 0;
       for (const entry of entries) {
         if (entry.reviewStatus !== 'PENDING') continue;
-        const publishMode = hasMeaningfulBusinessValue(entry.kind, entry.label, entry.payload) ? 'APPEND' : 'RECORD_ONLY';
-        const publication = await publishSampleEntry(tx, task, entry, actor, publishMode);
+        const resolvedProcessPayload = resolvedProcessPayloads.get(entry.id);
+        const resolvedPayload = resolvedProcessPayload || entry.payload;
+        const publishMode = hasMeaningfulBusinessValue(entry.kind, entry.label, resolvedPayload) ? 'APPEND' : 'RECORD_ONLY';
+        const publication = await publishSampleEntry(tx, task, { ...entry, payload: resolvedPayload }, actor, publishMode);
         const updated = await tx.sampleDataEntry.updateMany({
           where: { id: entry.id, taskId: task.id, version: entry.version, submissionRevision, reviewStatus: 'PENDING', deletedAt: null },
           data: {
+            ...(resolvedProcessPayload ? { payload: resolvedProcessPayload } : {}),
             reviewStatus: publication.reviewStatus,
             publishMode,
             reviewComment: comment,
@@ -628,6 +699,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             publishedEntries,
             recordedEntries,
             publishedPhotos,
+            processCatalogChanges,
             clientMutationId,
           },
         },

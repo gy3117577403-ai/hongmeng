@@ -836,6 +836,7 @@ model ProcessDefinition {
   id                      String                            @id @default(uuid())
   code                    String                            @unique
   name                    String
+  nameKey                 String?                           @unique @map("name_key")
   stageGroup              String                            @map("stage_group")
   isActive                Boolean                           @default(true) @map("is_active")
   sortOrder               Int                               @default(0) @map("sort_order")

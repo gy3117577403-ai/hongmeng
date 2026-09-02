@@ -3,6 +3,10 @@ import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  ProcessDefinitionResolutionError,
+  reserveUniqueProcessDefinitionName,
+} from '@/lib/process-definition-resolver';
+import {
   cleanProcessText,
   parseProcessTimeBasis,
   secondsToMilliseconds,
@@ -56,17 +60,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const current = existing.timeStandards.find(item => item.isCurrent) || null;
       const name = body.name === undefined ? existing.name : cleanProcessText(body.name, 60);
       if (!name) throw new Error('PROCESS_NAME_REQUIRED');
-      if (name.toLocaleLowerCase() !== existing.name.toLocaleLowerCase()) {
-        const duplicate = await tx.processDefinition.findFirst({
-          where: { id: { not: existing.id }, name: { equals: name, mode: 'insensitive' } },
-          select: { id: true },
-        });
-        if (duplicate) throw new Error('PROCESS_NAME_DUPLICATE');
-      }
+      const normalizedName = await reserveUniqueProcessDefinitionName(tx, name, existing.id);
       const updatedDefinition = await tx.processDefinition.update({
         where: { id: existing.id },
         data: {
-          name,
+          name: normalizedName.name,
+          nameKey: normalizedName.nameKey,
           stageGroup: body.stageGroup === undefined ? existing.stageGroup : stageGroup(body.stageGroup),
           isActive: body.isActive === undefined ? existing.isActive : body.isActive === true,
           sortOrder: body.sortOrder === undefined || !Number.isInteger(Number(body.sortOrder))
@@ -130,6 +129,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, definition: serializeDefinition(definition) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProcessDefinitionResolutionError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof Error) {
       if (error.message === 'PROCESS_NOT_FOUND') return NextResponse.json({ ok: false, error: '工序不存在' }, { status: 404 });
       if (error.message === 'PROCESS_NAME_REQUIRED') return NextResponse.json({ ok: false, error: '工序名称不能为空' }, { status: 400 });

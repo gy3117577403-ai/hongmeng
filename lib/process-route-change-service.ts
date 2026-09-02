@@ -34,6 +34,10 @@ import { materializeProcessActionConsumptions } from '@/lib/process-action-consu
 import { normalizeWorkDate } from '@/lib/daily-plan-domain';
 import { calculateAttainmentBasisPoints } from '@/lib/process-time';
 import { prisma } from '@/lib/prisma';
+import {
+  ProcessDefinitionResolutionError,
+  resolveOrCreateProcessDefinition,
+} from '@/lib/process-definition-resolver';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
 import {
   ProductTimeDeploymentError,
@@ -2254,17 +2258,6 @@ async function resolveInsertedDefinition(
   if (!processName) {
     throw new ProcessRouteChangeServiceError('新增工序缺少名称', 409, 'PROCESS_ROUTE_CHANGE_PROCESS_NAME_REQUIRED');
   }
-  const existing = await findUniqueActiveDefinitionByName(tx, processName);
-  if (existing) {
-    await tx.processRouteChangeDiff.update({
-      where: { id: diff.id },
-      data: {
-        processDefinitionId: existing.id,
-        afterData: json({ ...after, processCode: existing.code, processName: existing.name, stageGroup: existing.stageGroup }),
-      },
-    });
-    return existing;
-  }
   const maxSort = await tx.processDefinition.aggregate({ _max: { sortOrder: true } });
   const baseCode = `RC-${change.id.replaceAll('-', '').slice(0, 10)}-${diff.position + 1}`.toUpperCase();
   let processCode = clean(after.processCode, 80) || baseCode;
@@ -2273,15 +2266,24 @@ async function resolveInsertedDefinition(
   const target = diff.targetStepId
     ? change.route.steps.find(step => step.id === diff.targetStepId)
     : null;
-  const definition = await tx.processDefinition.create({
-    data: {
+  let definition: Awaited<ReturnType<typeof resolveOrCreateProcessDefinition>>['definition'];
+  try {
+    ({ definition } = await resolveOrCreateProcessDefinition(tx, {
       code: processCode,
       name: processName,
-      stageGroup: clean(after.stageGroup, 80) || target?.stageGroup || 'production',
-      isActive: true,
+      stageGroup: clean(after.stageGroup, 80) || target?.stageGroup || 'frontend',
       sortOrder: (maxSort._max.sortOrder || 0) + 1,
-    },
-  });
+    }));
+  } catch (error) {
+    if (error instanceof ProcessDefinitionResolutionError) {
+      throw new ProcessRouteChangeServiceError(
+        error.message,
+        error.status,
+        'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_AMBIGUOUS',
+      );
+    }
+    throw error;
+  }
   await tx.processRouteChangeDiff.update({
     where: { id: diff.id },
     data: {

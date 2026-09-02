@@ -141,8 +141,9 @@ test('P0 sample capture routes enforce submit lock, withdrawal, completion, and 
   assert.match(task, /confirmNoData/);
   assert.match(review, /processDefinitionId/);
   assert.match(review, /SAMPLE_PACKAGE_NOT_READY/);
-  assert.doesNotMatch(review, /create_process_definition_from_sample_review/);
-  assert.match(center, /请选择已有正式工序/);
+  assert.match(review, /create_process_definition_from_sample/);
+  assert.match(review, /resolveOrCreateProcessDefinition/);
+  assert.match(center, /确认时按名称自动复用或新增/);
   assert.doesNotMatch(center, /createProcessDefinition/);
   assert.match(entry, /SAMPLE_TASK_SUBMITTED/);
   assert.match(entry, /taskId_clientMutationId/);

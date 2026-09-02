@@ -20,6 +20,7 @@ test('focused process editor starts with five rows and keeps unknown names as pr
   assert.equal(payload[0].processOrigin, 'PROPOSED');
   assert.equal(payload[0].processDefinitionId, null);
   assert.equal(payload[0].measuredMilliseconds, 15_200);
+  assert.equal(payload[0].stageGroup, 'frontend');
 });
 
 test('process row validation rejects half-filled or non-positive labor time rows', () => {
@@ -67,7 +68,7 @@ test('mobile capture source exposes focused sections, server drafts, multi-photo
   assert.match(source, /Math\.min\(2, candidates\.length\)/);
   assert.match(source, /withdraw-submission/);
   assert.match(source, /withdrawMutationKey/);
-  assert.match(source, /待工艺确认/);
+  assert.match(source, /确认时自动收录/);
   assert.match(source, /还有未同步或上传失败的照片/);
 });
 

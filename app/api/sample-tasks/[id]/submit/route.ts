@@ -40,6 +40,7 @@ function processRowPayload(row: DraftRow, sectionRevision: number): Prisma.Input
     throw new Error('SAMPLE_PROCESS_ROW_INCOMPLETE');
   }
   const processOrigin = row.processOrigin === 'MASTER' ? 'MASTER' : 'PROPOSED';
+  const stageGroup = row.stageGroup === 'backend' || row.stageGroup === 'finish' ? row.stageGroup : 'frontend';
   if ((processOrigin === 'MASTER') !== Boolean(processDefinitionId)) throw new Error('SAMPLE_PROCESS_ROW_INCOMPLETE');
   return {
     rowId: text(row.rowId),
@@ -48,6 +49,7 @@ function processRowPayload(row: DraftRow, sectionRevision: number): Prisma.Input
     processDefinitionId,
     processName,
     processOrigin,
+    stageGroup,
     measuredMilliseconds,
     recommendedSeconds: measuredMilliseconds! / 1000,
     timeBasis: 'per_unit',

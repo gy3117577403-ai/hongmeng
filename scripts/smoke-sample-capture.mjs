@@ -23,7 +23,6 @@ assert.ok(['127.0.0.1', 'localhost'].includes(target.hostname), 'sample runtime 
 let cookie = '';
 const marker = `sample-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const candidateProcessName = `候选工序-${marker}`;
-const formalProcessName = `正式工序-${marker}`;
 const checks = [];
 
 function sessionCookie(response) {
@@ -83,6 +82,7 @@ function processRows(milliseconds = 12_500, firstRowId = 'process-row-1') {
       processDefinitionId: null,
       processName: candidateProcessName,
       processOrigin: 'PROPOSED',
+      stageGroup: 'backend',
       measuredMilliseconds: milliseconds,
     },
     ...Array.from({ length: 4 }, (_, index) => ({
@@ -91,6 +91,7 @@ function processRows(milliseconds = 12_500, firstRowId = 'process-row-1') {
       processDefinitionId: null,
       processName: '',
       processOrigin: 'PROPOSED',
+      stageGroup: 'frontend',
       measuredMilliseconds: null,
     })),
   ];
@@ -139,12 +140,6 @@ async function run() {
   const definitionsBefore = await request('read process library before candidate save', '/api/process-definitions');
   assert.ok(Array.isArray(definitionsBefore.body.definitions));
   assert.equal(definitionsBefore.body.definitions.some(item => item.name === candidateProcessName), false);
-  const createdDefinition = await request('create formal process for package review mapping', '/api/process-definitions', {
-    method: 'POST', expected: 201,
-    body: { name: formalProcessName, stageGroup: 'frontend', sortOrder: 1000 },
-  });
-  const formalProcessDefinition = createdDefinition.body.definition;
-  assert.ok(formalProcessDefinition?.id, 'package review requires an existing formal process definition');
 
   const cleanBaseline = await request('verify disposable sample database is empty', '/api/sample-tasks');
   assert.ok(Array.isArray(cleanBaseline.body.tasks));
@@ -303,7 +298,6 @@ async function run() {
 
   const definitionsAfterDraft = await request('candidate save does not create process master', '/api/process-definitions');
   assert.equal(definitionsAfterDraft.body.definitions.some(item => item.name === candidateProcessName), false);
-  assert.equal(definitionsAfterDraft.body.definitions.some(item => item.id === formalProcessDefinition.id), true);
 
   const firstSubmitMutation = randomUUID();
   const submitVersion = task.version;
@@ -378,45 +372,7 @@ async function run() {
   const candidateEntryForReview = task.entries.find(entry => entry.kind === 'PROCESS_TIME' && entry.label === candidateProcessName && entry.reviewStatus === 'PENDING');
   assert.ok(candidateEntryForReview?.id, 'candidate process must be pending in revision 2');
 
-  const blockedConfirmation = await request('package confirmation rejects an unmapped candidate process', `/api/sample-tasks/${task.id}/review`, {
-    method: 'POST', expected: 409,
-    body: {
-      submissionId: finalSubmit.body.submission.id,
-      submissionRevision: finalSubmit.body.submission.revision,
-      expectedTaskVersion: task.version,
-      clientMutationId: randomUUID(),
-      decision: 'CONFIRM',
-      comment: '镜像验收：未映射候选工序不得通过',
-    },
-  });
-  assert.equal(blockedConfirmation.body.code, 'SAMPLE_PACKAGE_NOT_READY');
-
-  const editedPackage = await request('map candidate to a formal process in package editor', `/api/sample-tasks/${task.id}/review`, {
-    method: 'POST',
-    body: {
-      submissionId: finalSubmit.body.submission.id,
-      submissionRevision: finalSubmit.body.submission.revision,
-      expectedTaskVersion: task.version,
-      clientMutationId: randomUUID(),
-      decision: 'EDIT',
-      comment: '镜像验收：审核页只映射已有正式工序',
-      edits: {
-        entries: [{
-          id: candidateEntryForReview.id,
-          expectedVersion: candidateEntryForReview.version,
-          label: formalProcessName,
-          payload: { processDefinitionId: formalProcessDefinition.id, recommendedSeconds: 13 },
-        }],
-        photos: [],
-      },
-    },
-  });
-  task = editedPackage.body.task;
-  const mappedCandidate = task.entries.find(entry => entry.id === candidateEntryForReview.id);
-  assert.equal(mappedCandidate?.payload?.processDefinitionId, formalProcessDefinition.id);
-  assert.equal(mappedCandidate?.payload?.processOrigin, 'MASTER');
-
-  const confirmedPackage = await request('confirm the entire submission package once', `/api/sample-tasks/${task.id}/review`, {
+  const confirmedPackage = await request('confirm package and auto-catalog its candidate process once', `/api/sample-tasks/${task.id}/review`, {
     method: 'POST',
     body: {
       submissionId: finalSubmit.body.submission.id,
@@ -424,13 +380,16 @@ async function run() {
       expectedTaskVersion: task.version,
       clientMutationId: randomUUID(),
       decision: 'CONFIRM',
-      comment: '镜像验收：整包一次确认',
+      comment: '镜像验收：整包一次确认并自动收录新工序',
     },
   });
   task = confirmedPackage.body.task;
   const reviewedEntry = task.entries.find(entry => entry.id === candidateEntryForReview.id);
   assert.equal(reviewedEntry?.publishedEntityType, 'product_time_draft');
   assert.equal(reviewedEntry?.reviewStatus, 'APPROVED');
+  assert.ok(reviewedEntry?.payload?.processDefinitionId, 'confirmed candidate must be bound to a process definition');
+  assert.equal(reviewedEntry?.payload?.processOrigin, 'MASTER');
+  assert.equal(reviewedEntry?.payload?.stageGroup, 'backend');
   assert.equal(task.status, 'COMPLETED');
   assert.equal(task.activeSubmissionId, null);
   assert.equal(task.acceptedSubmissionId, finalSubmit.body.submission.id);
@@ -440,9 +399,11 @@ async function run() {
   assert.equal(task.photos.length, 1);
   assert.equal(task.photos[0]?.reviewStatus, 'PUBLISHED');
 
-  const definitionsAfterReview = await request('package review did not create an unknown process master', '/api/process-definitions');
-  assert.equal(definitionsAfterReview.body.definitions.some(item => item.name === candidateProcessName), false);
-  assert.equal(definitionsAfterReview.body.definitions.some(item => item.id === formalProcessDefinition.id), true);
+  const definitionsAfterReview = await request('package review auto-created the unknown process master', '/api/process-definitions');
+  const autoCatalogedDefinition = definitionsAfterReview.body.definitions.find(item => item.name === candidateProcessName);
+  assert.ok(autoCatalogedDefinition?.id, 'candidate process must be added to the process library');
+  assert.equal(autoCatalogedDefinition.id, reviewedEntry.payload.processDefinitionId);
+  assert.equal(autoCatalogedDefinition.stageGroup, 'backend');
 
   const unarchived = await request('unarchive completed task without reopening review', `/api/sample-tasks/${task.id}`, {
     method: 'PATCH',

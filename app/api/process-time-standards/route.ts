@@ -4,6 +4,10 @@ import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  ProcessDefinitionResolutionError,
+  reserveUniqueProcessDefinitionName,
+} from '@/lib/process-definition-resolver';
+import {
   cleanProcessText,
   parseProcessTimeBasis,
   secondsToMilliseconds,
@@ -96,20 +100,14 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const name = cleanProcessText(body.name, 60);
-    if (!name) return NextResponse.json({ ok: false, error: '请填写工序名称' }, { status: 400 });
-    const duplicate = await prisma.processDefinition.findFirst({
-      where: { name: { equals: name, mode: 'insensitive' } },
-      select: { id: true },
-    });
-    if (duplicate) return NextResponse.json({ ok: false, error: '同名工序已经存在，请直接维护其标准工时' }, { status: 409 });
     const standard = standardInput(body);
-    const code = `process-${randomUUID()}`;
     const definition = await prisma.$transaction(async tx => {
+      const { name, nameKey } = await reserveUniqueProcessDefinitionName(tx, body.name);
       const created = await tx.processDefinition.create({
         data: {
-          code,
+          code: `process-${randomUUID()}`,
           name,
+          nameKey,
           stageGroup: stageGroup(body.stageGroup),
           isActive: true,
           sortOrder: Number.isInteger(Number(body.sortOrder)) ? Number(body.sortOrder) : 1000,
@@ -133,10 +131,14 @@ export async function POST(req: NextRequest) {
         },
       });
       return created;
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json({ ok: true, definition: serializeDefinition(definition) }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProcessDefinitionResolutionError) {
+      const message = error.code === 'PROCESS_NAME_DUPLICATE' ? '同名工序已经存在，请直接维护其标准工时' : error.message;
+      return NextResponse.json({ ok: false, error: message, code: error.code }, { status: error.status });
+    }
     if (error instanceof Error && !('code' in error)) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }

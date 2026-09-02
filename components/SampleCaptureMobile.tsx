@@ -63,7 +63,7 @@ import type {
 
 type CaptureTab = 'overview' | 'data' | 'photos' | 'records';
 type SectionKind = 'PROCESS_TIME' | 'STRIPPING';
-type ProcessOption = { id: string; name: string; code: string };
+type ProcessOption = { id: string; name: string; code: string; stageGroup?: string };
 type PhotoSource = 'CAMERA' | 'ALBUM';
 type LocalPhotoStatus = 'LOCAL' | 'UPLOADING' | 'FAILED';
 
@@ -345,7 +345,12 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
       if (stored) {
         const parsed = JSON.parse(stored) as { processRows?: ProcessDraftRow[]; strippingRows?: StrippingDraftRow[]; dirtyKinds?: SectionKind[]; activeKind?: SampleDataKindDTO; lastActiveRow?: Record<SectionKind, string> };
         nextDirty = new Set((parsed.dirtyKinds || []).filter(kind => isSectionKind(kind)));
-        if (nextDirty.has('PROCESS_TIME') && Array.isArray(parsed.processRows)) nextProcessRows = parsed.processRows.slice(0, SAMPLE_SECTION_MAX_ROWS);
+        if (nextDirty.has('PROCESS_TIME') && Array.isArray(parsed.processRows)) {
+          nextProcessRows = parsed.processRows.slice(0, SAMPLE_SECTION_MAX_ROWS).map(row => ({
+            ...row,
+            stageGroup: row.stageGroup === 'backend' || row.stageGroup === 'finish' ? row.stageGroup : 'frontend',
+          }));
+        }
         if (nextDirty.has('STRIPPING') && Array.isArray(parsed.strippingRows)) nextStrippingRows = parsed.strippingRows.slice(0, SAMPLE_SECTION_MAX_ROWS);
         if (parsed.activeKind) nextActiveKind = parsed.activeKind;
         if (parsed.lastActiveRow) nextLastActive = parsed.lastActiveRow;
@@ -534,7 +539,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
   }
 
   function chooseProcess(row: ProcessDraftRow, process: ProcessOption | null) {
-    if (process) updateProcessRow(row.rowId, { processDefinitionId: process.id, processName: process.name, source: 'OFFICIAL' });
+    if (process) updateProcessRow(row.rowId, { processDefinitionId: process.id, processName: process.name, stageGroup: process.stageGroup === 'backend' || process.stageGroup === 'finish' ? process.stageGroup : 'frontend', source: 'OFFICIAL' });
     else updateProcessRow(row.rowId, { processDefinitionId: '', processName: row.processName.trim(), source: 'PROPOSED' });
     setOpenComboboxRow('');
   }
@@ -942,7 +947,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     </section>}
 
     {tab === 'data' && activeKind === 'PROCESS_TIME' && <section className="sample-focus-content sample-process-editor">
-      <div className="sample-focus-hint"><Clock3 /><span>填写实测工时，计时口径统一为<strong>秒/件</strong>。未匹配名称只保存为候选工序。</span></div>
+      <div className="sample-focus-hint"><Clock3 /><span>填写实测工时，计时口径统一为<strong>秒/件</strong>。未匹配名称会在整包确认时自动收录到工序库。</span></div>
       <div className="sample-process-rows">
         {processRows.map((row, index) => {
           const matches = matchingProcesses(row.processName);
@@ -954,14 +959,14 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
               <input id={`process-name-${row.rowId}`} role="combobox" aria-autocomplete="list" aria-expanded={openComboboxRow === row.rowId} aria-controls={`process-options-${row.rowId}`} aria-label={`第 ${index + 1} 行工序`} disabled={readOnly} value={row.processName} placeholder="选择或输入工序"
                 onFocus={() => { setOpenComboboxRow(row.rowId); setComboboxIndex(0); setLastActiveRow(current => ({ ...current, PROCESS_TIME: row.rowId })); }}
                 onBlur={() => window.setTimeout(() => setOpenComboboxRow(current => current === row.rowId ? '' : current), 160)} onKeyDown={event => handleProcessKeyDown(event, row)}
-                onChange={event => { const name = event.target.value; const official = processes.find(process => process.name.trim().toLocaleLowerCase('zh-CN') === name.trim().toLocaleLowerCase('zh-CN')); updateProcessRow(row.rowId, { processName: name, processDefinitionId: official?.id || '', source: official ? 'OFFICIAL' : 'PROPOSED' }); setOpenComboboxRow(row.rowId); setComboboxIndex(0); }} />
+                onChange={event => { const name = event.target.value; const official = processes.find(process => process.name.trim().toLocaleLowerCase('zh-CN') === name.trim().toLocaleLowerCase('zh-CN')); updateProcessRow(row.rowId, { processName: name, processDefinitionId: official?.id || '', stageGroup: official?.stageGroup === 'backend' || official?.stageGroup === 'finish' ? official.stageGroup : row.stageGroup, source: official ? 'OFFICIAL' : 'PROPOSED' }); setOpenComboboxRow(row.rowId); setComboboxIndex(0); }} />
               <ChevronDown aria-hidden="true" />
               {openComboboxRow === row.rowId && <div className="sample-process-options" id={`process-options-${row.rowId}`} role="listbox">
                 {matches.map((process, optionIndex) => <button className={comboboxIndex === optionIndex ? 'active' : ''} type="button" role="option" aria-selected={row.processDefinitionId === process.id} key={process.id} onMouseDown={event => event.preventDefault()} onClick={() => chooseProcess(row, process)}><span>{process.name}</span><small>{process.code || '正式工序'}</small></button>)}
-                {proposed && <button className={`proposed ${comboboxIndex === matches.length ? 'active' : ''}`} type="button" role="option" aria-selected={false} onMouseDown={event => event.preventDefault()} onClick={() => chooseProcess(row, null)}><Plus /><span>将“{row.processName.trim()}”保存为候选工序</span></button>}
+                {proposed && <button className={`proposed ${comboboxIndex === matches.length ? 'active' : ''}`} type="button" role="option" aria-selected={false} onMouseDown={event => event.preventDefault()} onClick={() => chooseProcess(row, null)}><Plus /><span>确认时自动收录“{row.processName.trim()}”</span></button>}
                 {!matches.length && !proposed && <p>输入工序名称开始搜索</p>}
               </div>}
-              {proposed && <em>待工艺确认</em>}
+              {proposed && <span className="sample-process-auto-catalog"><em>确认时自动收录</em><select aria-label={`第 ${index + 1} 行工序阶段`} disabled={readOnly} value={row.stageGroup} onChange={event => updateProcessRow(row.rowId, { stageGroup: event.target.value as ProcessDraftRow['stageGroup'] })}><option value="frontend">前工序</option><option value="backend">后工序</option><option value="finish">包装/收尾</option></select></span>}
             </div>
             <label className="sample-time-input"><span className="sr-only">第 {index + 1} 行实测工时</span><input inputMode="decimal" aria-label={`第 ${index + 1} 行实测工时，秒每件`} disabled={readOnly} value={row.seconds} placeholder="0.0" onFocus={() => setLastActiveRow(current => ({ ...current, PROCESS_TIME: row.rowId }))} onChange={event => updateProcessRow(row.rowId, { seconds: event.target.value })} /><i>秒/件</i></label>
             <button className="sample-row-delete" type="button" aria-label={`删除第 ${index + 1} 行`} disabled={readOnly} onClick={() => removeProcessRow(row.rowId)}><Trash2 /></button>

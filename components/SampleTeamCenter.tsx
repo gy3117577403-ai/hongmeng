@@ -181,6 +181,7 @@ const photoCategoryLabels: Record<SamplePhotoCategoryDTO, string> = {
 
 const payloadLabels: Record<string, string> = {
   processName: '工序',
+  stageGroup: '工序阶段',
   recommendedSeconds: '建议工时',
   measurements: '实测记录',
   setupSeconds: '准备时间',
@@ -207,7 +208,7 @@ const payloadLabels: Record<string, string> = {
 };
 
 const visiblePayloadKeys: Record<SampleDataEntryDTO['kind'], readonly string[]> = {
-  PROCESS_TIME: ['processName', 'recommendedSeconds', 'measurements', 'setupSeconds', 'occurrences', 'timeBasis', 'unitLabel', 'remark'],
+  PROCESS_TIME: ['processName', 'stageGroup', 'recommendedSeconds', 'measurements', 'setupSeconds', 'occurrences', 'timeBasis', 'unitLabel', 'remark'],
   STRIPPING: ['model', 'outerPeelMm', 'innerPeelMm', 'insertionLengthMm', 'positionLabel', 'remark'],
   MATERIAL: ['name', 'specification', 'length', 'quantity', 'unit', 'tolerance', 'position', 'remark'],
   NOTICE: ['category', 'severity', 'content', 'processName', 'remark'],
@@ -248,6 +249,7 @@ function payloadValue(key: string, value: unknown) {
     }).filter(Boolean).join('、');
   }
   if (key === 'timeBasis') return value === 'per_batch' ? '按批' : '按件';
+  if (key === 'stageGroup') return value === 'backend' ? '后工序' : value === 'finish' ? '包装/收尾' : '前工序';
   if (Array.isArray(value)) return value.map(item => typeof item === 'object' ? JSON.stringify(item) : String(item)).join('、');
   if (typeof value === 'object') return JSON.stringify(value);
   if (typeof value === 'boolean') return value ? '是' : '否';
@@ -322,6 +324,7 @@ export default function SampleTeamCenter({
   const [reviewComment, setReviewComment] = useState('');
   const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const reviewIssuesRef = useRef<HTMLDivElement | null>(null);
   const reviewMutationRef = useRef<{ decision: 'CONFIRM' | 'EDIT' | 'REJECT'; key: string } | null>(null);
   const initialSelectedRef = useRef(false);
   const lastDetailTaskRef = useRef('');
@@ -549,7 +552,7 @@ export default function SampleTeamCenter({
   function openPackageDialog(next: 'EDIT' | 'REJECT') {
     if (!selected?.activeSubmission || selected.activeSubmission.status !== 'PENDING') return;
     setReviewComment('');
-    setReviewIssues([]);
+    if (next === 'REJECT') setReviewIssues([]);
     reviewMutationRef.current = null;
     if (next === 'EDIT') {
       const revision = selected.activeSubmission.revision;
@@ -591,7 +594,8 @@ export default function SampleTeamCenter({
       setMessage('当前没有可审核的提交包');
       return;
     }
-    if (decision === 'CONFIRM' && !window.confirm(`确认一次通过 ${selected.specification} 的本次全部资料？确认后任务会完成并归档。`)) return;
+    const autoCatalogCount = pendingEntries.filter(entry => entry.kind === 'PROCESS_TIME' && !String(entry.payload.processDefinitionId || '').trim() && String(entry.payload.processName || '').trim()).length;
+    if (decision === 'CONFIRM' && !window.confirm(`确认一次通过 ${selected.specification} 的本次全部资料？${autoCatalogCount ? `系统会自动处理 ${autoCatalogCount} 条未绑定工序并写入工序库。` : ''}确认后任务会完成并归档。`)) return;
     if (decision === 'REJECT' && reviewComment.trim().length < 2) {
       setMessage('整包驳回必须填写明确原因');
       return;
@@ -618,8 +622,11 @@ export default function SampleTeamCenter({
       });
       const body = await responseJson(response);
       if (!response.ok) {
-        setReviewIssues(Array.isArray(body.issues) ? body.issues as ReviewIssue[] : []);
-        throw new Error(body.error || '整包审核失败');
+        const nextIssues = Array.isArray(body.issues) ? body.issues as ReviewIssue[] : [];
+        setReviewIssues(nextIssues);
+        window.setTimeout(() => reviewIssuesRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
+        const firstIssue = nextIssues[0];
+        throw new Error(firstIssue ? `${body.error || '整包审核失败'}：${firstIssue.title}，${firstIssue.message}` : body.error || '整包审核失败');
       }
       reviewMutationRef.current = null;
       replaceTask(body.task as SampleTaskDTO);
@@ -664,6 +671,7 @@ export default function SampleTeamCenter({
   const activeSubmissionRevision = selected?.activeSubmission?.status === 'PENDING' ? selected.activeSubmission.revision : null;
   const pendingEntries = selected?.entries.filter(entry => entry.reviewStatus === 'PENDING' && entry.submissionRevision === activeSubmissionRevision) || [];
   const pendingPhotos = selected?.photos.filter(photo => photo.reviewStatus === 'PENDING' && photo.submissionRevision === activeSubmissionRevision) || [];
+  const autoCatalogEntries = pendingEntries.filter(entry => entry.kind === 'PROCESS_TIME' && !String(entry.payload.processDefinitionId || '').trim() && String(entry.payload.processName || '').trim());
   const publishedEntries = selected?.entries.filter(entry => ['APPROVED', 'PUBLISHED'].includes(entry.reviewStatus) && (mode !== 'materials' || entry.kind === 'MATERIAL')) || [];
   const publishedPhotos = selected?.photos.filter(photo => photo.reviewStatus === 'PUBLISHED') || [];
   const materialEntries = selected?.entries.filter(entry => entry.kind === 'MATERIAL') || [];
@@ -860,12 +868,13 @@ export default function SampleTeamCenter({
                     <div><ClipboardCheck size={20} /><span><small>提交版本 R{selected.activeSubmission.revision}</small><strong>{selected.specification}</strong><em>{pendingEntries.length} 条数据 · {pendingPhotos.length} 张照片</em></span></div>
                     <p>审核动作只作用于当前产品的本次提交；确认、编辑或驳回均按整包留痕。</p>
                   </header>
-                  {!!reviewIssues.length && <div className="sample-package-issues" role="alert"><AlertTriangle size={18} /><div><strong>确认前还有 {reviewIssues.length} 个阻断项</strong>{reviewIssues.map(issue => <p key={`${issue.itemType}:${issue.itemId}:${issue.message}`}><b>{issue.title}</b><span>{issue.message}</span></p>)}</div></div>}
+                  {!!reviewIssues.length && <div ref={reviewIssuesRef} className="sample-package-issues" role="alert"><AlertTriangle size={18} /><div><strong>确认前还有 {reviewIssues.length} 个阻断项</strong>{reviewIssues.map(issue => <p key={`${issue.itemType}:${issue.itemId}:${issue.message}`}><b>{issue.title}</b><span>{issue.message}</span></p>)}</div></div>}
+                  {!!autoCatalogEntries.length && <div className="sample-package-auto-catalog"><Info size={18} /><div><strong>可直接整包确认</strong><p>确认时会自动复用或新增 {autoCatalogEntries.length} 条未绑定工序，并同步回写本次记录，不需要逐条审核。</p></div></div>}
                   <div className="sample-review-workspace">
                     <section className="sample-record-panel"><header><div><FileText size={17} /><span><strong>本包采集数据</strong><small>{pendingEntries.length} 项</small></span></div></header><div className="sample-record-list">{pendingEntries.map(renderDataRecord)}{!pendingEntries.length && <div className="sample-record-empty"><strong>本包没有数据记录</strong></div>}</div></section>
                     <section className="sample-record-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>本包照片</strong><small>{pendingPhotos.length} 项</small></span></div></header><div className="sample-photo-grid sample-review-photo-grid">{pendingPhotos.map(renderPhotoRecord)}{!pendingPhotos.length && <div className="sample-record-empty"><strong>本包没有照片</strong></div>}</div></section>
                   </div>
-                  {mode === 'planning' && <footer className="sample-package-review-actions"><span><Info size={15} />确认时整包事务处理；任一阻断项都会全部回滚。</span><div><button type="button" disabled={reviewSaving} onClick={() => openPackageDialog('EDIT')}><Pencil size={15} />编辑资料</button><button className="danger" type="button" disabled={reviewSaving} onClick={() => openPackageDialog('REJECT')}><X size={15} />整包驳回</button><button className="primary" type="button" disabled={reviewSaving} onClick={() => void savePackageReview('CONFIRM')}>{reviewSaving ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}确认通过</button></div></footer>}
+                  {mode === 'planning' && <footer className="sample-package-review-actions"><span><Info size={15} />确认时整包事务处理；任一真实阻断项都会全部回滚。</span><div><button type="button" disabled={reviewSaving} onClick={() => openPackageDialog('EDIT')}><Pencil size={15} />编辑资料</button><button className="danger" type="button" disabled={reviewSaving} onClick={() => openPackageDialog('REJECT')}><X size={15} />整包驳回</button><button className="primary" type="button" disabled={reviewSaving} onClick={() => void savePackageReview('CONFIRM')}>{reviewSaving ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}{autoCatalogEntries.length ? `确认并处理 ${autoCatalogEntries.length} 条工序` : '确认通过'}</button></div></footer>}
                 </section>)}
 
                 {detailTab === 'published' && (!publishedEntries.length && !publishedPhotos.length ? <div className="sample-record-empty sample-tab-empty"><FolderKanban size={30} /><strong>本任务还没有审核处理资料</strong><p>整包确认后的留档、工时草稿、正式数据和照片会在这里集中展示。</p></div> : <div className="sample-review-workspace"><section className="sample-record-panel"><header><div><FileText size={17} /><span><strong>已处理数据</strong><small>{publishedEntries.length} 项</small></span></div></header><div className="sample-record-list">{publishedEntries.map(renderDataRecord)}{!publishedEntries.length && <div className="sample-record-empty"><strong>没有已处理数据</strong></div>}</div></section><section className="sample-record-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>已发布照片</strong><small>{publishedPhotos.length} 项</small></span></div></header><div className="sample-photo-grid sample-review-photo-grid">{publishedPhotos.map(renderPhotoRecord)}{!publishedPhotos.length && <div className="sample-record-empty"><strong>没有已发布照片</strong></div>}</div></section></div>)}
@@ -943,11 +952,12 @@ export default function SampleTeamCenter({
           <div className="sample-review-dialog-body hm-scroll-region" tabIndex={0}>
             {packageDialog === 'EDIT' ? <>
               <div className="sample-review-note"><Info size={17} /><span><strong>只修改本次提交包</strong><small>不新增或删除记录；保存后仍停留在待审核状态，再点击“确认通过”统一处理。</small></span></div>
+              {!!reviewIssues.length && <div className="sample-package-issues" role="alert"><AlertTriangle size={18} /><div><strong>需要修改的阻断项</strong>{reviewIssues.map(issue => <p key={`dialog:${issue.itemType}:${issue.itemId}:${issue.message}`}><b>{issue.title}</b><span>{issue.message}</span></p>)}</div></div>}
               <section className="sample-package-edit-section"><header><strong>采集数据</strong><small>{reviewEntryDrafts.length} 条</small></header>
                 {reviewEntryDrafts.map((entry, index) => <article className="sample-package-entry-editor" key={entry.id}>
                   <header><span>{String(index + 1).padStart(2, '0')}</span><strong>{dataKindLabels[entry.kind]}</strong></header>
                   <label><span>记录名称</span><input value={entry.label} onChange={event => updateReviewEntry(entry.id, { label: event.target.value })} /></label>
-                  {entry.kind === 'PROCESS_TIME' && <label><span>正式工序</span><select value={typeof entry.payload.processDefinitionId === 'string' ? entry.payload.processDefinitionId : ''} onChange={event => updateReviewEntryPayload(entry.id, 'processDefinitionId', event.target.value)}><option value="">请选择已有正式工序</option>{context.processes.map(process => <option key={process.id} value={process.id}>{process.name}{process.code ? ` · ${process.code}` : ''}</option>)}</select><small>这里只允许映射已有工序，不在审核页新增工序。</small></label>}
+                  {entry.kind === 'PROCESS_TIME' && <><label><span>工序处理方式</span><select value={typeof entry.payload.processDefinitionId === 'string' ? entry.payload.processDefinitionId : ''} onChange={event => updateReviewEntryPayload(entry.id, 'processDefinitionId', event.target.value)}><option value="">确认时按名称自动复用或新增</option>{context.processes.map(process => <option key={process.id} value={process.id}>{process.name}{process.code ? ` · ${process.code}` : ''}</option>)}</select><small>未选择已有工序不再阻断确认；系统会按名称去重复用或写入工序库。</small></label>{!String(entry.payload.processDefinitionId || '').trim() && <div className="sample-package-edit-grid"><label><span>新工序名称</span><input value={String(entry.payload.processName || '')} onChange={event => updateReviewEntryPayload(entry.id, 'processName', event.target.value)} /></label><label><span>工序阶段</span><select value={entry.payload.stageGroup === 'backend' || entry.payload.stageGroup === 'finish' ? String(entry.payload.stageGroup) : 'frontend'} onChange={event => updateReviewEntryPayload(entry.id, 'stageGroup', event.target.value)}><option value="frontend">前工序</option><option value="backend">后工序</option><option value="finish">包装/收尾</option></select></label></div>}</>}
                   <div className="sample-package-edit-grid">{editablePayloadKeys[entry.kind].map(key => <label className={key === 'content' || key === 'remark' ? 'wide' : ''} key={key}><span>{payloadLabels[key]}</span>{key === 'timeBasis' ? <select value={entry.payload[key] === 'per_batch' ? 'per_batch' : 'per_unit'} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)}><option value="per_unit">按件</option><option value="per_batch">按批</option></select> : key === 'content' || key === 'remark' ? <textarea value={String(entry.payload[key] ?? '')} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)} /> : <input type={['recommendedSeconds', 'setupSeconds', 'occurrences'].includes(key) ? 'number' : 'text'} min={key === 'setupSeconds' ? 0 : undefined} step={key === 'occurrences' ? 1 : 'any'} value={String(entry.payload[key] ?? '')} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)} />}</label>)}</div>
                 </article>)}
                 {!reviewEntryDrafts.length && <p className="sample-package-edit-empty">本包没有可编辑的数据记录。</p>}

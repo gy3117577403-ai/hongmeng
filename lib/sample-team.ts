@@ -255,6 +255,7 @@ export function sanitizeSampleDraftSection(
         const measuredMilliseconds = optionalMeasuredMilliseconds(row.measuredMilliseconds);
         const hasData = Boolean(processDefinitionId || processName || measuredMilliseconds !== null);
         const normalizedOrigin = processOrigin || (processDefinitionId ? 'MASTER' : 'PROPOSED');
+        const stageGroup = row.stageGroup === 'backend' || row.stageGroup === 'finish' ? row.stageGroup : 'frontend';
         if (hasData && normalizedOrigin === 'MASTER' && !processDefinitionId) throw new Error('INVALID_SAMPLE_PROCESS_REFERENCE');
         if (normalizedOrigin === 'PROPOSED' && processDefinitionId) throw new Error('INVALID_SAMPLE_PROCESS_REFERENCE');
         return {
@@ -263,6 +264,7 @@ export function sanitizeSampleDraftSection(
           processDefinitionId,
           processName,
           processOrigin: normalizedOrigin,
+          stageGroup,
           measuredMilliseconds,
         };
       }),

@@ -9,6 +9,7 @@ export type ProcessDraftRow = {
   processDefinitionId: string;
   processName: string;
   seconds: string;
+  stageGroup: 'frontend' | 'backend' | 'finish';
   source: 'OFFICIAL' | 'PROPOSED';
 };
 
@@ -44,6 +45,7 @@ export function createProcessRow(): ProcessDraftRow {
     processDefinitionId: '',
     processName: '',
     seconds: '',
+    stageGroup: 'frontend',
     source: 'PROPOSED',
   };
 }
@@ -100,6 +102,7 @@ export function hydrateProcessRows(
       processDefinitionId,
       processName: text(row.processName || row.name),
       seconds: measuredSeconds,
+      stageGroup: row.stageGroup === 'backend' || row.stageGroup === 'finish' ? row.stageGroup : 'frontend',
       source: (row.processOrigin === 'MASTER' || row.source === 'OFFICIAL' || processDefinitionId ? 'OFFICIAL' : 'PROPOSED') as ProcessDraftRow['source'],
     };
   });
@@ -198,6 +201,7 @@ export function serializeProcessRows(rows: ProcessDraftRow[]) {
     processDefinitionId: row.processDefinitionId || null,
     processName: row.processName.trim(),
     processOrigin: row.processDefinitionId ? 'MASTER' : 'PROPOSED',
+    stageGroup: row.stageGroup,
     measuredMilliseconds: Math.round(Number(row.seconds) * 1000),
   }));
 }
