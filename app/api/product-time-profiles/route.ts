@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import {
   productQuotationTimeInclude,
   serializeProductQuotationTime,
@@ -12,10 +11,14 @@ import {
   chinaDate,
   chinaWeekRange,
   parsePlanDate,
-  reconcileFutureActiveProductionPlanWeeks,
 } from '@/lib/production-planning';
 import type { ProductTimePlanningScope } from '@/types';
-import { canRunGetReconciliation } from '@/lib/get-reconciliation-access';
+import {
+  beginRequestObservation,
+  markRequest,
+  observedJson,
+  observeResponse,
+} from '@/lib/request-observability';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,20 +37,23 @@ function planningScope(value: string): ProductTimePlanningScope {
   return 'all';
 }
 
+function positiveInt(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export async function GET(req: NextRequest) {
+  const observation = beginRequestObservation();
   try {
-    const user = await requireUser();
-    if (canRunGetReconciliation(user.access, ['PROCESS'])) {
-      await prisma.$transaction(async tx => {
-        await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
-        await reconcileProductionPlanDrawingLinks(tx);
-      });
-    }
+    await requireUser();
+    markRequest(observation, 'auth');
     const keyword = cleanProductTimeText(req.nextUrl.searchParams.get('keyword'), 100);
     const customer = cleanProductTimeText(req.nextUrl.searchParams.get('customer'), 120);
     const status = cleanProductTimeText(req.nextUrl.searchParams.get('status'), 20);
     const itemId = cleanProductTimeText(req.nextUrl.searchParams.get('itemId'), 80);
     const scope = planningScope(cleanProductTimeText(req.nextUrl.searchParams.get('scope'), 20));
+    const page = positiveInt(req.nextUrl.searchParams.get('page'), 1);
+    const pageSize = Math.min(100, positiveInt(req.nextUrl.searchParams.get('pageSize'), 50));
     const naturalCurrent = chinaWeekRange(new Date());
     const nextInput = new Date(naturalCurrent.start);
     nextInput.setUTCDate(nextInput.getUTCDate() + 7);
@@ -113,10 +119,10 @@ export async function GET(req: NextRequest) {
       if (batch.totalMillisecondsSnapshot) aggregate.snapshotTotalMilliseconds += batch.totalMillisecondsSnapshot;
       planningByItem.set(drawingLibraryItemId, aggregate);
     }
+    markRequest(observation, 'planning_scope');
     const plannedItemIds = [...planningByItem.keys()];
     const scopedItemIds = itemId ? plannedItemIds.filter(id => id === itemId) : plannedItemIds;
-    const items = await prisma.drawingLibraryItem.findMany({
-      where: {
+    const itemWhere: Prisma.DrawingLibraryItemWhereInput = {
         deletedAt: null,
         ...(scope !== 'all' ? { id: { in: scopedItemIds } } : itemId ? { id: itemId } : {}),
         ...(customer ? { customerName: customer } : {}),
@@ -133,7 +139,11 @@ export async function GET(req: NextRequest) {
         ...(status === 'draft' ? { productTimeProfiles: { some: { status: 'draft' } } } : {}),
         ...(status === 'published' ? { productTimeProfiles: { some: { status: 'published' } } } : {}),
         ...(status === 'quotation_missing' ? { quotationTimes: { none: { status: 'active' } } } : {}),
-      },
+    };
+    const [total, items, definitions, customers] = await Promise.all([
+      prisma.drawingLibraryItem.count({ where: itemWhere }),
+      prisma.drawingLibraryItem.findMany({
+      where: itemWhere,
       include: {
         productTimeProfiles: {
           where: { status: { in: ['draft', 'published'] } },
@@ -148,8 +158,22 @@ export async function GET(req: NextRequest) {
         },
       },
       orderBy: [{ updatedAt: 'desc' }, { customerName: 'asc' }, { specification: 'asc' }],
-      take: 800,
-    });
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      }),
+      prisma.processDefinition.findMany({
+        where: { isActive: true },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        select: { id: true, code: true, name: true, stageGroup: true, sortOrder: true },
+      }),
+      prisma.drawingLibraryItem.groupBy({
+        by: ['customerName'],
+        where: { deletedAt: null },
+        _count: { _all: true },
+        orderBy: { customerName: 'asc' },
+      }),
+    ]);
+    markRequest(observation, 'product_page');
     const planningReferences = items.length
       ? await prisma.productionPlanOrder.findMany({
           where: {
@@ -204,6 +228,7 @@ export async function GET(req: NextRequest) {
         updatedAt: (batch?.updatedAt || order.updatedAt).toISOString(),
       });
     }
+    markRequest(observation, 'planning_reference');
     const rows = items.map(item => {
       const draft = item.productTimeProfiles.find(profile => profile.status === 'draft') || null;
       const published = item.productTimeProfiles.find(profile => profile.status === 'published') || null;
@@ -237,24 +262,14 @@ export async function GET(req: NextRequest) {
         })(),
       };
     });
-    const definitions = await prisma.processDefinition.findMany({
-      where: { isActive: true },
-      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-      select: { id: true, code: true, name: true, stageGroup: true, sortOrder: true },
-    });
-    const customers = await prisma.drawingLibraryItem.groupBy({
-      by: ['customerName'],
-      where: { deletedAt: null },
-      _count: { _all: true },
-      orderBy: { customerName: 'asc' },
-    });
-    return NextResponse.json({
+    return observedJson(observation, {
       ok: true,
+      requestId: observation.requestId,
       items: rows,
       definitions,
       customers: customers.map(item => ({ customerName: item.customerName, count: item._count._all })),
       summary: {
-        total: rows.length,
+        total,
         published: rows.filter(item => item.published).length,
         draft: rows.filter(item => item.draft).length,
         missing: rows.filter(item => !item.published && !item.draft).length,
@@ -262,7 +277,7 @@ export async function GET(req: NextRequest) {
       },
       planningScope: scope,
       planningSummary: scope === 'all' ? null : {
-        productCount: rows.length,
+        productCount: total,
         orderCount: new Set(planningBatches.map(batch => batch.planOrder.id)).size,
         batchCount: planningBatches.length,
         totalQuantity: planningBatches.reduce((sum, batch) => sum + batch.quantity, 0),
@@ -276,10 +291,26 @@ export async function GET(req: NextRequest) {
         current: { weekStartDate: chinaDate(naturalCurrent.start), weekEndDate: chinaDate(naturalCurrent.end) },
         next: { weekStartDate: chinaDate(naturalNext.start), weekEndDate: chinaDate(naturalNext.end) },
       },
+      pagination: {
+        page,
+        pageSize,
+        total,
+        hasMore: page * pageSize < total,
+      },
     });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
-    console.error('product time profiles list failed', error);
-    return NextResponse.json({ ok: false, error: '产品工时加载失败' }, { status: 500 });
+    if (error instanceof UnauthorizedError) return observeResponse(observation, unauthorized());
+    console.error('product time profiles list failed', {
+      requestId: observation.requestId,
+      code: 'PRODUCT_TIME_LIST_FAILED',
+      durationMs: Number((performance.now() - observation.startedAt).toFixed(1)),
+      error,
+    });
+    return observedJson(observation, {
+      ok: false,
+      code: 'PRODUCT_TIME_LIST_FAILED',
+      requestId: observation.requestId,
+      error: '产品工时加载失败，请稍后重试',
+    }, { status: 500 });
   }
 }

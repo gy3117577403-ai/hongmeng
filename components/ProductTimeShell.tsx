@@ -55,6 +55,7 @@ import { PdfViewer } from '@/components/PdfViewer';
 import { useToast, useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { productTimeReturnContextFromSearch, type ProductTimeReturnContext } from '@/lib/workflow-routes';
+import { ClientFetchError, fetchJson } from '@/lib/client-fetch';
 import type {
   CurrentUserDTO,
   DrawingLibraryFileDTO,
@@ -116,6 +117,8 @@ type DraftRebuildPrompt = {
 type ProductTimePayload = {
   ok: boolean;
   error?: string;
+  code?: string;
+  requestId?: string;
   items?: ProductTimeListItemDTO[];
   definitions?: ProcessDefinition[];
   customers?: CustomerOption[];
@@ -124,6 +127,12 @@ type ProductTimePayload = {
   periods?: {
     current: { weekStartDate: string; weekEndDate: string };
     next: { weekStartDate: string; weekEndDate: string };
+  };
+  pagination?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    hasMore: boolean;
   };
 };
 
@@ -452,6 +461,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [quotationDirty, setQuotationDirty] = useState(false);
   const [quotationSaving, setQuotationSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [listTotal, setListTotal] = useState(0);
+  const [listHasMore, setListHasMore] = useState(false);
+  const [listPage, setListPage] = useState(1);
+  const [loadFailure, setLoadFailure] = useState<{ message: string; requestId?: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [draftSyncing, setDraftSyncing] = useState(false);
   const [draftSyncSummary, setDraftSyncSummary] = useState<(ProductTimeDraftSyncSummary & { itemId: string }) | null>(null);
@@ -519,6 +533,9 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const deploymentCloseRef = useRef<HTMLButtonElement>(null);
   const initialSelectionRef = useRef(false);
   const lastExternalRefreshRef = useRef(0);
+  const lastSuccessfulRefreshRef = useRef(0);
+  const selectedIdRef = useRef('');
+  const listRequestRef = useRef<{ sequence: number; controller: AbortController } | null>(null);
   const unsavedToastShownRef = useRef(false);
   const completedDeploymentRef = useRef('');
   const routeSensors = useSensors(
@@ -530,6 +547,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   useToastBridge(error, setError, 'error');
 
   const hasUnsavedChanges = dirty || quotationDirty;
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   useEffect(() => {
     if (hasUnsavedChanges && !unsavedToastShownRef.current) {
@@ -577,9 +598,18 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     ? routeSequenceGroups.find(group => group.key === moveGroupKey) || null
     : null;
 
-  const load = useCallback(async (preferredItemId?: string) => {
-    setLoading(true);
+  const load = useCallback(async (preferredItemId?: string, requestedPage = 1) => {
+    const append = requestedPage > 1;
+    listRequestRef.current?.controller.abort();
+    const request = {
+      sequence: (listRequestRef.current?.sequence || 0) + 1,
+      controller: new AbortController(),
+    };
+    listRequestRef.current = request;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError('');
+    setLoadFailure(null);
     try {
       const params = new URLSearchParams();
       if (keyword.trim()) params.set('keyword', keyword.trim());
@@ -587,20 +617,31 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       if (status !== 'all') params.set('status', status);
       if (planningScope !== 'all') params.set('scope', planningScope);
       if (planningScope === 'history') params.set('weekStartDate', historyWeekStart);
-      const response = await fetch(`/api/product-time-profiles?${params.toString()}`, { cache: 'no-store' });
-      const data = await response.json().catch(() => ({})) as ProductTimePayload;
-      if (!response.ok) throw new Error(data.error || '产品工时加载失败');
+      params.set('page', String(requestedPage));
+      params.set('pageSize', '50');
+      const data = await fetchJson<ProductTimePayload>(`/api/product-time-profiles?${params.toString()}`, {
+        cache: 'no-store',
+        signal: request.controller.signal,
+        timeoutMs: 12_000,
+        retries: 1,
+      });
+      if (listRequestRef.current?.sequence !== request.sequence) return;
       let nextItems = data.items || [];
       setDefinitions(data.definitions || []);
       setCustomers(data.customers || []);
       setPlanningSummary(data.planningSummary || null);
       setPeriods(data.periods);
       const urlItemId = new URLSearchParams(window.location.search).get('itemId') || '';
-      const requested = preferredItemId || urlItemId || selectedId;
-      if (requested && !nextItems.some(item => item.id === requested)) {
-        const detailResponse = await fetch(`/api/product-time-profiles/${encodeURIComponent(requested)}`, { cache: 'no-store' });
-        const detail = await detailResponse.json().catch(() => ({})) as ProductTimeDetailPayload;
-        if (detailResponse.ok && detail.item) {
+      const requested = preferredItemId || urlItemId || selectedIdRef.current;
+      if (!append && requested && !nextItems.some(item => item.id === requested)) {
+        try {
+          const detail = await fetchJson<ProductTimeDetailPayload>(`/api/product-time-profiles/${encodeURIComponent(requested)}`, {
+            cache: 'no-store',
+            signal: request.controller.signal,
+            timeoutMs: 8_000,
+            retries: 1,
+          });
+          if (detail.item) {
           const profiles = detail.profiles || [];
           nextItems = [{
             ...detail.item,
@@ -610,18 +651,41 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             planning: null,
             planningReference: null,
           }, ...nextItems];
-        } else if (preferredItemId || urlItemId) {
-          setError(detail.error || '指定产品不存在、已删除或无权访问');
+          } else if (preferredItemId || urlItemId) {
+            setError(detail.error || '指定产品不存在、已删除或无权访问');
+          }
+        } catch (detailError) {
+          if (preferredItemId || urlItemId) {
+            setError(detailError instanceof Error ? detailError.message : '指定产品加载失败');
+          }
         }
       }
-      setItems(nextItems);
-      setSelectedId(nextItems.some(item => item.id === requested) ? requested : nextItems[0]?.id || '');
+      if (append) {
+        setItems(current => {
+          const existing = new Set(current.map(item => item.id));
+          return [...current, ...nextItems.filter(item => !existing.has(item.id))];
+        });
+      } else {
+        setItems(nextItems);
+        setSelectedId(nextItems.some(item => item.id === requested) ? requested : nextItems[0]?.id || '');
+      }
+      setListPage(data.pagination?.page || requestedPage);
+      setListTotal(data.pagination?.total ?? nextItems.length);
+      setListHasMore(data.pagination?.hasMore === true);
+      lastSuccessfulRefreshRef.current = Date.now();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '产品工时加载失败');
+      if (request.controller.signal.aborted) return;
+      const message = reason instanceof Error ? reason.message : '产品工时加载失败';
+      const requestId = reason instanceof ClientFetchError ? reason.requestId : undefined;
+      setError(requestId ? `${message}（追踪号 ${requestId}）` : message);
+      setLoadFailure({ message, requestId });
     } finally {
-      setLoading(false);
+      if (listRequestRef.current?.sequence === request.sequence) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
-  }, [customer, historyWeekStart, keyword, planningScope, selectedId, status]);
+  }, [customer, historyWeekStart, keyword, planningScope, status]);
 
   function requestDiscard(actionLabel: string, detail: string, action: () => void): void {
     if (!hasUnsavedChanges) {
@@ -684,7 +748,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       if (document.visibilityState !== 'visible') return;
       if (dirty || quotationDirty) return;
       const now = Date.now();
-      if (now - lastExternalRefreshRef.current < 1200) return;
+      if (now - lastExternalRefreshRef.current < 10_000) return;
+      if (now - lastSuccessfulRefreshRef.current < 60_000) return;
       lastExternalRefreshRef.current = now;
       void load();
     };
@@ -728,30 +793,40 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setReferenceError('');
       return;
     }
-    let cancelled = false;
+    if (!referenceOpen) {
+      setReferenceItem(null);
+      setReferenceFileId('');
+      setReferenceLoading(false);
+      setReferenceError('');
+      return;
+    }
+    const controller = new AbortController();
     setReferenceItem(null);
     setReferenceFileId('');
     setReferenceLoading(true);
     setReferenceError('');
-    fetch(`/api/drawing-library/${selectedItemId}`, { cache: 'no-store' })
-      .then(async response => {
-        const data = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; item?: DrawingLibraryItemDTO };
-        if (!response.ok || !data.item) throw new Error(data.error || '参考资料加载失败');
-        if (!cancelled) setReferenceItem(data.item);
+    fetchJson<{ ok?: boolean; error?: string; item?: DrawingLibraryItemDTO }>(`/api/drawing-library/${selectedItemId}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+      timeoutMs: 10_000,
+      retries: 1,
+    })
+      .then(data => {
+        if (!data.item) throw new Error(data.error || '参考资料加载失败');
+        setReferenceItem(data.item);
       })
       .catch(reason => {
-        if (!cancelled) {
-          setReferenceItem(null);
-          setReferenceError(reason instanceof Error ? reason.message : '参考资料加载失败');
-        }
+        if (controller.signal.aborted) return;
+        setReferenceItem(null);
+        setReferenceError(reason instanceof Error ? reason.message : '参考资料加载失败');
       })
       .finally(() => {
-        if (!cancelled) setReferenceLoading(false);
+        if (!controller.signal.aborted) setReferenceLoading(false);
       });
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [selectedItemId]);
+  }, [referenceOpen, selectedItemId]);
 
   useEffect(() => {
     if (!selectedItemId) {
@@ -896,13 +971,26 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
     let cancelled = false;
     let timer: number | undefined;
+    let failures = 0;
+    const startedAt = Date.now();
     const poll = async () => {
+      if (Date.now() - startedAt > 120_000) {
+        setDeploymentError('发布仍在后台执行，已停止自动轮询；可点击刷新进度继续查看');
+        return;
+      }
+      if (document.visibilityState !== 'visible') {
+        timer = window.setTimeout(poll, 5000);
+        return;
+      }
       try {
-        const response = await fetch(`/api/product-time-deployments/${encodeURIComponent(deploymentId)}`, { cache: 'no-store' });
-        const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
+        const data = await fetchJson<ProductTimeDeploymentApiPayload>(`/api/product-time-deployments/${encodeURIComponent(deploymentId)}`, {
+          cache: 'no-store',
+          timeoutMs: 8000,
+        });
         const next = deploymentFromPayload(data);
-        if (!response.ok || !next) throw new Error(data.error || '发布进度读取失败');
+        if (!next) throw new Error(data.error || '发布进度读取失败');
         if (cancelled) return;
+        failures = 0;
         setDeployment(next);
         setDeploymentError(next.error || '');
         if (next.status === 'pending' || next.status === 'applying') {
@@ -924,8 +1012,9 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         }
       } catch (reason) {
         if (!cancelled) {
+          failures += 1;
           setDeploymentError(reason instanceof Error ? reason.message : '发布进度读取失败');
-          timer = window.setTimeout(poll, 2000);
+          timer = window.setTimeout(poll, Math.min(10_000, 1500 * (2 ** Math.min(failures, 3))));
         }
       }
     };
@@ -1791,10 +1880,15 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         <section className="product-time-workspace" aria-label="产品工序与工时工作台">
           <aside className="product-time-products" aria-label="产品列表">
             <header>
-              <span><small>{isPlanningScope ? '计划范围' : '产品总库'}</small><strong>{items.length} 款产品</strong></span>
+              <span><small>{isPlanningScope ? '计划范围' : '产品总库'}</small><strong>{listTotal || items.length} 款产品</strong>{listTotal > items.length && <small>已加载 {items.length} 款</small>}</span>
               <Layers3 size={19} aria-hidden="true" />
             </header>
             <div className="product-time-product-list hm-scroll-region" tabIndex={0}>
+              {loadFailure && <div className="product-time-load-failure" role="alert">
+                <AlertTriangle size={18} aria-hidden="true" />
+                <span><strong>{items.length ? '未获取到最新数据，已保留当前列表' : '产品工时数据加载失败'}</strong><small>{loadFailure.message}{loadFailure.requestId ? ` · 追踪号 ${loadFailure.requestId}` : ''}</small></span>
+                <button type="button" onClick={() => void load(selectedItem?.id)}>重试</button>
+              </div>}
               {items.map(item => {
                 const profile = item.draft || item.published;
                 const active = item.id === selectedItem?.id;
@@ -1815,7 +1909,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                   <ChevronRight size={16} aria-hidden="true" />
                 </button>;
               })}
-              {!loading && !items.length && <div className="product-time-empty"><Search aria-hidden="true" /><strong>没有符合条件的产品</strong><span>调整筛选，或先在图纸资料库建立产品资料。</span></div>}
+              {listHasMore && <button className="product-time-load-more" type="button" disabled={loadingMore} onClick={() => void load(undefined, listPage + 1)}>{loadingMore ? '正在加载…' : `加载更多（剩余 ${Math.max(0, listTotal - items.length)} 款）`}</button>}
+              {!loading && !loadFailure && !items.length && <div className="product-time-empty"><Search aria-hidden="true" /><strong>没有符合条件的产品</strong><span>调整筛选，或先在图纸资料库建立产品资料。</span></div>}
             </div>
           </aside>
 

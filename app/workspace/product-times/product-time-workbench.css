@@ -361,6 +361,50 @@ html:has(.hm-product-time-workbench) {
   -webkit-line-clamp: 2;
 }
 
+.hm-product-time-workbench .product-time-load-failure {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 8px;
+  padding: 10px;
+  color: #9f2d20;
+  background: #fff5f2;
+  border: 1px solid #ffc9bd;
+  border-radius: 10px;
+}
+
+.hm-product-time-workbench .product-time-load-failure span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-product-time-workbench .product-time-load-failure small {
+  overflow-wrap: anywhere;
+}
+
+.hm-product-time-workbench .product-time-load-failure button,
+.hm-product-time-workbench .product-time-load-more {
+  border: 1px solid #f97316;
+  color: #c2410c;
+  background: #fff;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.hm-product-time-workbench .product-time-load-more {
+  width: calc(100% - 16px);
+  margin: 8px;
+}
+
+.hm-product-time-workbench .product-time-load-more:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
 .hm-product-time-workbench .product-time-product-main small {
   color: #667386;
   font-size: 11px;
