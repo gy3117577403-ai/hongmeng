@@ -82,7 +82,7 @@ function task(entries: SampleDataEntryDTO[] = []): SampleTaskDTO {
     sections: [],
     entries,
     photos: [],
-    counts: { data: entries.length, photos: 0, pendingReview: 0, changesRequested: 0, published: 0 },
+    counts: { data: entries.length, photos: 0, pendingItems: 0, pendingReview: 0, changesRequested: 0, published: 0 },
   };
 }
 
