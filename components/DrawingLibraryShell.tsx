@@ -255,6 +255,7 @@ export function DrawingLibraryShell({
   const selectedIdRef = useRef(selectedId);
   const filePanelTriggerRef = useRef<HTMLButtonElement>(null);
   const loadControllerRef = useRef<AbortController | null>(null);
+  const skipInitialServerReloadRef = useRef(true);
   const filePanelRef = useRef<HTMLElement>(null);
   const filePanelCloseRef = useRef<HTMLButtonElement>(null);
   const initialUrlAppliedRef = useRef(false);
@@ -628,6 +629,10 @@ export function DrawingLibraryShell({
   }, [loadData, pdfOverlaySession]);
 
   useEffect(() => {
+    if (skipInitialServerReloadRef.current) {
+      skipInitialServerReloadRef.current = false;
+      return;
+    }
     const timer = window.setTimeout(() => { void loadData(); }, 260);
     return () => {
       window.clearTimeout(timer);

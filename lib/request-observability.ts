@@ -26,7 +26,7 @@ export function observeResponse<T>(observation: RequestObservation, response: Ne
   timings.push(`total;dur=${Math.max(0, finishedAt - observation.startedAt).toFixed(1)}`);
   response.headers.set('X-Request-Id', observation.requestId);
   response.headers.set('Server-Timing', timings.join(', '));
-  response.headers.set('Cache-Control', 'private, no-store');
+  if (!response.headers.has('Cache-Control')) response.headers.set('Cache-Control', 'private, no-store');
   return response;
 }
 
@@ -37,4 +37,3 @@ export function observedJson<T>(
 ): NextResponse<T> {
   return observeResponse(observation, NextResponse.json(body, init));
 }
-

@@ -1142,62 +1142,29 @@ function executionParams(
   return params;
 }
 
-async function fetchCompleteProductionBoard(
+async function fetchProductionBoardPage(
   params: URLSearchParams,
   signal: AbortSignal,
+  options: { offset?: number; includeSummary?: boolean } = {},
 ): Promise<BoardPayload> {
-  const fetchPage = async (serverPage: number, offset?: number, pageSize?: number): Promise<BoardPayload> => {
-    const pageParams = new URLSearchParams(params);
-    pageParams.set('page', String(serverPage));
-    pageParams.delete('displayPage');
-    if (offset === undefined) {
-      pageParams.set('includeSummary', '1');
-      pageParams.delete('offset');
-    } else {
-      pageParams.delete('includeSummary');
-      pageParams.set('skipReconcile', '1');
-      pageParams.set('offset', String(offset));
-      if (pageSize) pageParams.set('pageSize', String(pageSize));
-    }
-    const response = await fetch(`/api/work-orders/execution?${pageParams.toString()}`, { cache: 'no-store', signal });
-    const body = await response.json().catch(() => ({}));
-    if (response.status === 401) location.href = '/login';
-    if (!response.ok) throw new Error(body.error || '生产看板加载失败');
-    return body.data as BoardPayload;
-  };
-
-  const firstPage = await fetchPage(1);
-  if (firstPage.items.length >= firstPage.pagination.total) return firstPage;
-
-  const items = [...firstPage.items];
-  const seen = new Set(items.map(item => item.id));
-  const chunkSize = 500;
-  const remainingOffsets: number[] = [];
-  for (let offset = firstPage.items.length; offset < firstPage.pagination.total; offset += chunkSize) {
-    remainingOffsets.push(offset);
+  const pageParams = new URLSearchParams(params);
+  const offset = Math.max(0, options.offset || 0);
+  pageParams.set('page', String(Math.floor(offset / 60) + 1));
+  pageParams.set('pageSize', '60');
+  pageParams.delete('displayPage');
+  if (options.includeSummary === false) {
+    pageParams.delete('includeSummary');
+    pageParams.set('skipReconcile', '1');
+    pageParams.set('offset', String(offset));
+  } else {
+    pageParams.set('includeSummary', '1');
+    pageParams.delete('offset');
   }
-  for (let index = 0; index < remainingOffsets.length; index += 3) {
-    const pageBatch = await Promise.all(remainingOffsets.slice(index, index + 3).map((offset, batchIndex) => (
-      fetchPage(index + batchIndex + 2, offset, Math.min(chunkSize, firstPage.pagination.total - offset))
-    )));
-    for (const nextPage of pageBatch) {
-      for (const item of nextPage.items) {
-        if (seen.has(item.id)) continue;
-        seen.add(item.id);
-        items.push(item);
-      }
-    }
-  }
-  return {
-    ...firstPage,
-    items,
-    pagination: {
-      page: 1,
-      pageSize: items.length,
-      total: firstPage.pagination.total,
-      totalPages: 1,
-    },
-  };
+  const response = await fetch(`/api/work-orders/execution?${pageParams.toString()}`, { cache: 'no-store', signal });
+  const body = await response.json().catch(() => ({}));
+  if (response.status === 401) location.href = '/login';
+  if (!response.ok) throw new Error(body.error || '生产看板加载失败');
+  return body.data as BoardPayload;
 }
 
 function normalizedProductionUrl(value: string): string {
@@ -1329,6 +1296,7 @@ export default function ProductionExecutionCenter({
   }, []);
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [toast, setToast] = useState('');
   useToastBridge(toast, setToast);
@@ -1404,6 +1372,7 @@ export default function ProductionExecutionCenter({
   const pendingRestoreRef = useRef<ProductionExecutionViewState | null>(null);
   const returnKeyRef = useRef('');
   const requestRef = useRef(0);
+  const loadMoreRequestRef = useRef<AbortController | null>(null);
   const processedSummaryRefreshRef = useRef(0);
   const reconciliationRefreshTokenRef = useRef(-1);
   const reconciledScopeKeysRef = useRef(new Set<string>());
@@ -1578,7 +1547,7 @@ export default function ProductionExecutionCenter({
       setLoading(true);
     }
     setLoadError('');
-    fetchCompleteProductionBoard(params, controller.signal)
+    fetchProductionBoardPage(params, controller.signal)
       .then(data => {
         if (requestId !== requestRef.current) return;
         productionBoardCache.set(cacheKey, data);
@@ -1878,12 +1847,50 @@ export default function ProductionExecutionCenter({
   const activeFilterCount = filterChips.length;
 
   const dispatchAllItems = useMemo(() => (board?.items || []).map(primaryCardView), [board]);
-  const dispatchBatchCount = Math.max(1, Math.ceil(dispatchAllItems.length / dispatchPageSize));
+  const dispatchBatchCount = Math.max(1, Math.ceil((board?.pagination.total || dispatchAllItems.length) / dispatchPageSize));
   const dispatchItems = useMemo(
     () => dispatchAllItems.slice(0, page * dispatchPageSize),
     [dispatchAllItems, dispatchPageSize, page],
   );
-  const dispatchHasMore = dispatchItems.length < dispatchAllItems.length;
+  const dispatchHasMore = dispatchItems.length < (board?.pagination.total || dispatchAllItems.length);
+
+  useEffect(() => {
+    if (!board || loading || loadingMore) return undefined;
+    if (dispatchItems.length < board.items.length) return undefined;
+    if (board.items.length >= board.pagination.total) return undefined;
+    if (page * dispatchPageSize <= board.items.length) return undefined;
+    const controller = new AbortController();
+    loadMoreRequestRef.current?.abort();
+    loadMoreRequestRef.current = controller;
+    const offset = board.items.length;
+    const cacheKey = activeBoardCacheKey;
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId, 12, targetWipAllocationId);
+    setLoadingMore(true);
+    fetchProductionBoardPage(params, controller.signal, { offset, includeSummary: false })
+      .then(nextPage => {
+        if (controller.signal.aborted || activeBoardCacheKeyRef.current !== cacheKey) return;
+        setBoardSnapshot(current => {
+          const currentBoard = cacheBoundSnapshotValue(current, cacheKey);
+          if (!currentBoard) return current;
+          const seen = new Set(currentBoard.items.map(item => item.id));
+          const merged = {
+            ...currentBoard,
+            items: [...currentBoard.items, ...nextPage.items.filter(item => !seen.has(item.id))],
+            pagination: { ...nextPage.pagination, page: 1 },
+          };
+          productionBoardCache.set(cacheKey, merged);
+          return { cacheKey, value: merged };
+        });
+      })
+      .catch(reason => {
+        if (controller.signal.aborted) return;
+        setLoadError(reason instanceof Error ? reason.message : '更多生产工单加载失败');
+      })
+      .finally(() => {
+        if (loadMoreRequestRef.current === controller) setLoadingMore(false);
+      });
+    return () => controller.abort();
+  }, [activeBoardCacheKey, advanced, board, debouncedKeyword, dispatchItems.length, dispatchPageSize, loading, loadingMore, page, quick, scope, targetWipAllocationId, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     if (page <= dispatchBatchCount) return;
@@ -3328,8 +3335,8 @@ export default function ProductionExecutionCenter({
               {!loading && board && !board.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
               {!loading && dispatchAllItems.length > 0 && <div ref={dispatchLoadMoreRef} className={`production-dispatch-load-more ${dispatchHasMore ? 'loading' : 'complete'}`} aria-live="polite">
                 {dispatchHasMore
-                  ? <><Loader2 size={14} aria-hidden="true" /><span>正在加载更多</span></>
-                  : <><CheckCircle2 size={14} aria-hidden="true" /><span>无更多数据 · 共 {dispatchAllItems.length} 单</span></>}
+                  ? <><Loader2 size={14} aria-hidden="true" /><span>{loadingMore ? '正在从服务器加载下一页' : `继续下滑加载 · 已取 ${dispatchAllItems.length}/${board?.pagination.total || dispatchAllItems.length} 单`}</span></>
+                  : <><CheckCircle2 size={14} aria-hidden="true" /><span>无更多数据 · 共 {board?.pagination.total || dispatchAllItems.length} 单</span></>}
               </div>}
             </div>
           </section>

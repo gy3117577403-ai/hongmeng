@@ -1,4 +1,3 @@
-import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -26,19 +25,6 @@ import { loadWipContinuations } from '@/lib/wip-continuations';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function keywordWhere(keyword: string): Prisma.ProductionPlanOrderWhereInput {
-  return {
-    OR: [
-      { sourceOrderNo: { contains: keyword, mode: 'insensitive' } },
-      { customerName: { contains: keyword, mode: 'insensitive' } },
-      { salesperson: { contains: keyword, mode: 'insensitive' } },
-      { productName: { contains: keyword, mode: 'insensitive' } },
-      { specification: { contains: keyword, mode: 'insensitive' } },
-      { remark: { contains: keyword, mode: 'insensitive' } },
-    ],
-  };
-}
-
 function addDays(value: Date, days: number): Date {
   const next = new Date(value);
   next.setUTCDate(next.getUTCDate() + days);
@@ -53,29 +39,25 @@ export async function GET(req: NextRequest) {
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim().slice(0, 160);
     const status = String(req.nextUrl.searchParams.get('status') || '').trim();
     const customer = String(req.nextUrl.searchParams.get('customer') || '').trim().slice(0, 120);
-    const where: Prisma.ProductionPlanOrderWhereInput = {
-      deletedAt: null,
-      ...(keyword ? keywordWhere(keyword) : {}),
-      ...(status && status !== 'all' ? { status } : {}),
-      ...(customer ? { customerName: customer } : {}),
-    };
-    const records = await prisma.productionPlanOrder.findMany({
-      where,
-      include: productionPlanOrderInclude,
-      orderBy: [{ priority: 'asc' }, { customerDueDate: 'asc' }, { createdAt: 'desc' }],
-      take: 5000,
-    });
-    const allRecords = keyword || (status && status !== 'all') || customer
-      ? await prisma.productionPlanOrder.findMany({
+    const [allRecords, allWipContinuations] = await Promise.all([
+      prisma.productionPlanOrder.findMany({
           where: { deletedAt: null },
           include: productionPlanOrderInclude,
-          orderBy: { customerDueDate: 'asc' },
+          orderBy: [{ priority: 'asc' }, { customerDueDate: 'asc' }, { createdAt: 'desc' }],
           take: 5000,
-        })
-      : records;
+      }),
+      loadWipContinuations({ take: 5000 }),
+    ]);
     const all = allRecords.map(serializeProductionPlanOrder);
+    const normalizedOrderKeyword = keyword.toLocaleLowerCase('zh-CN');
+    const visibleOrders = all.filter(order => {
+      if (status && status !== 'all' && order.status !== status) return false;
+      if (customer && order.customerName !== customer) return false;
+      if (!normalizedOrderKeyword) return true;
+      return [order.sourceOrderNo, order.customerName, order.salesperson, order.productName, order.specification, order.remark]
+        .some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(normalizedOrderKeyword));
+    });
     const batches = all.flatMap(order => order.batches);
-    const allWipContinuations = await loadWipContinuations({ take: 5000 });
     const normalizedKeyword = keyword.toLocaleLowerCase('zh-CN');
     const visibleWipContinuations = allWipContinuations.filter(item => {
       if (customer && item.customerName !== customer) return false;
@@ -288,7 +270,7 @@ export async function GET(req: NextRequest) {
     const response = NextResponse.json({
       ok: true,
       requestId,
-      orders: records.map(serializeProductionPlanOrder),
+      orders: visibleOrders,
       wipContinuations: visibleWipContinuations,
       summary,
       customers,
