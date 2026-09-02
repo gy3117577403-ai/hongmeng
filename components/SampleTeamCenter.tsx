@@ -11,6 +11,8 @@ import {
   ClipboardCheck,
   Clock3,
   Copy,
+  Download,
+  FileSpreadsheet,
   FileText,
   FolderKanban,
   Image as ImageIcon,
@@ -24,6 +26,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Upload,
   UserRound,
   X,
 } from 'lucide-react';
@@ -33,6 +36,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ModuleModeDrawer, ModuleModeTrigger, useModuleModeDrawer } from '@/components/layout/ModuleModeDrawer';
 import { writeClipboardText } from '@/lib/client-platform';
+import {
+  SAMPLE_CUSTOMER_LEVELS,
+  sampleCustomerLevelOrDefault,
+  sampleCustomerLevelStyle,
+} from '@/lib/sample-customer-levels';
 import type {
   CurrentUserDTO,
   SampleDataEntryDTO,
@@ -82,6 +90,39 @@ type PlanForm = {
   assigneeEmployeeIds: string[];
 };
 
+type SampleImportCandidate = {
+  id: string;
+  libraryKey: string;
+  customerName: string;
+  productName: string | null;
+  specification: string;
+  score?: number;
+};
+
+type SampleImportRow = {
+  rowNumber: number;
+  customerName: string;
+  productName: string;
+  specification: string;
+  customerLevelCode: string;
+  sampleQuantity: number;
+  dueDate: string;
+  libraryKey: string;
+  matchStatus: 'REUSE' | 'CREATE' | 'CONFIRM' | 'BLOCKED';
+  message: string;
+  matchedItemId: string | null;
+  candidates: SampleImportCandidate[];
+};
+
+type SampleImportPreview = {
+  fileName: string;
+  rows: SampleImportRow[];
+  summary: { total: number; reuse: number; create: number; confirm: number; blocked: number };
+};
+
+type SampleImportDecision = { mode: 'reuse'; drawingLibraryItemId: string } | { mode: 'create' };
+type SampleImportStep = 'UPLOAD' | 'PREVIEW' | 'CONFLICTS' | 'COMPLETE';
+
 type ReviewEntryDraft = {
   id: string;
   expectedVersion: number;
@@ -123,10 +164,10 @@ const emptyPlanForm: PlanForm = {
   sourceOrderNo: '',
   customerLevelCode: 'A',
   customerLevelLabel: 'A级',
-  customerLevelColor: '#C9972E',
+  customerLevelColor: SAMPLE_CUSTOMER_LEVELS[0].color,
   sampleQuantity: '',
   dueDate: '',
-  priority: '2',
+  priority: String(SAMPLE_CUSTOMER_LEVELS[0].priority),
   planRemark: '',
   assigneeEmployeeIds: [],
 };
@@ -286,6 +327,12 @@ async function responseJson(response: Response) {
   return response.json().catch(() => ({})) as Promise<Record<string, any>>;
 }
 
+function browserMutationId() {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `sample-import-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function SampleTeamCenter({
   user,
   mode,
@@ -311,6 +358,15 @@ export default function SampleTeamCenter({
   const [context, setContext] = useState<ContextPayload>({ members: [], sampleMemberCount: 0, products: [], processes: [] });
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importStep, setImportStep] = useState<SampleImportStep>('UPLOAD');
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<SampleImportPreview | null>(null);
+  const [importDecisions, setImportDecisions] = useState<Record<string, SampleImportDecision>>({});
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [importResult, setImportResult] = useState<{ createdTaskCount: number; blockedCount: number; total: number } | null>(null);
+  const [importMutationId, setImportMutationId] = useState(browserMutationId);
   const [form, setForm] = useState<PlanForm>(emptyPlanForm);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -325,6 +381,7 @@ export default function SampleTeamCenter({
   const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
   const [reviewSaving, setReviewSaving] = useState(false);
   const reviewIssuesRef = useRef<HTMLDivElement | null>(null);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
   const reviewMutationRef = useRef<{ decision: 'CONFIRM' | 'EDIT' | 'REJECT'; key: string } | null>(null);
   const initialSelectedRef = useRef(false);
   const lastDetailTaskRef = useRef('');
@@ -437,19 +494,91 @@ export default function SampleTeamCenter({
     setCreateOpen(true);
   }
 
+  function openImport() {
+    setImportOpen(true);
+    setImportStep('UPLOAD');
+    setImportFile(null);
+    setImportPreview(null);
+    setImportDecisions({});
+    setImportResult(null);
+    setImportError('');
+    setImportMutationId(browserMutationId());
+  }
+
+  async function previewImport() {
+    if (!importFile) {
+      setImportError('请先选择填写完成的 .xlsx 模板');
+      return;
+    }
+    setImportBusy(true);
+    setImportError('');
+    try {
+      const payload = new FormData();
+      payload.append('file', importFile);
+      const response = await fetch('/api/sample-tasks/import/preview', { method: 'POST', body: payload });
+      const body = await responseJson(response);
+      if (!response.ok) throw new Error(body.error || '导入预览失败');
+      setImportPreview(body as SampleImportPreview);
+      setImportStep('PREVIEW');
+    } catch (reason) {
+      setImportError(reason instanceof Error ? reason.message : '导入预览失败');
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function commitImport() {
+    if (!importPreview) return;
+    const unresolved = importPreview.rows.filter(row => row.matchStatus === 'CONFIRM' && !importDecisions[String(row.rowNumber)]);
+    if (unresolved.length) {
+      setImportError(`还有 ${unresolved.length} 行相似图纸库尚未确认`);
+      setImportStep('CONFLICTS');
+      return;
+    }
+    const acceptedRows = importPreview.rows.filter(row => row.matchStatus !== 'BLOCKED');
+    if (!acceptedRows.length) {
+      setImportError('没有可导入的计划，请修正模板后重新上传');
+      return;
+    }
+    setImportBusy(true);
+    setImportError('');
+    try {
+      const response = await fetch('/api/sample-tasks/import/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientMutationId: importMutationId,
+          fileName: importPreview.fileName,
+          rows: importPreview.rows,
+          decisions: importDecisions,
+        }),
+      });
+      const body = await responseJson(response);
+      if (!response.ok) throw new Error(body.error || '批量导入失败');
+      setImportResult({ createdTaskCount: Number(body.createdTaskCount || 0), blockedCount: Number(body.blockedCount || 0), total: Number(body.total || 0) });
+      setImportStep('COMPLETE');
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setImportError(reason instanceof Error ? reason.message : '批量导入失败');
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   function openEdit(task: SampleTaskDTO) {
+    const level = sampleCustomerLevelOrDefault(task.customerLevelCode);
     setForm({
       drawingLibraryItemId: task.drawingLibraryItemId,
       customerName: task.customerName,
       productName: task.productName || '',
       specification: task.specification,
       sourceOrderNo: task.sourceOrderNo || '',
-      customerLevelCode: task.customerLevelCode || '',
-      customerLevelLabel: task.customerLevelLabel || '',
-      customerLevelColor: task.customerLevelColor || '#C9972E',
+      customerLevelCode: level.code,
+      customerLevelLabel: level.label,
+      customerLevelColor: level.color,
       sampleQuantity: task.sampleQuantity === null ? '' : String(task.sampleQuantity),
       dueDate: task.dueDate || '',
-      priority: String(task.priority),
+      priority: String(level.priority),
       planRemark: task.planRemark || '',
       assigneeEmployeeIds: task.assignees.map(item => item.employeeId),
     });
@@ -784,6 +913,8 @@ export default function SampleTeamCenter({
           </div>
           <div className="sample-team-rule-note"><Info size={16} /><span>{mode === 'materials' ? '样品辅料与照片全部选填' : '样品任务只记录资料'}<strong>{mode === 'materials' ? '不扣库存、不生成正式领料' : '不统计产量与个人效率'}</strong></span></div>
           <div className="sample-team-command-actions">
+            {mode === 'planning' && <a className="hm-workbench-button" href="/api/sample-tasks/import/template" download><Download size={15} />下载导入模板</a>}
+            {mode === 'planning' && <button className="hm-workbench-button" type="button" onClick={openImport}><Upload size={15} />批量导入</button>}
             {mode === 'planning' && <button className="hm-workbench-button primary" type="button" onClick={openCreate}><Plus size={15} />新建样品计划</button>}
             <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>
           </div>
@@ -816,8 +947,8 @@ export default function SampleTeamCenter({
               {visibleTasks.map(task => {
                 const overdue = taskMatchesView(task, 'OVERDUE', todayKey);
                 return <button className={`sample-task-card ${selected?.id === task.id ? 'active' : ''} status-${task.status.toLowerCase()}`} aria-pressed={selected?.id === task.id} type="button" key={task.id} onClick={() => setSelectedId(task.id)}>
-                  <span className="sample-task-color" style={{ background: task.customerLevelColor || '#cbd5e1' }} />
-                  <header className="sample-task-card-head"><div><em style={{ borderColor: task.customerLevelColor || '#cbd5e1', color: task.customerLevelColor || '#64748b' }}>{taskLevelText(task)}</em><strong title={task.customerName}>{task.customerName}</strong></div><small>{task.code}</small></header>
+                  <span className="sample-task-color" style={{ background: sampleCustomerLevelOrDefault(task.customerLevelCode).color }} />
+                  <header className="sample-task-card-head"><div><em style={sampleCustomerLevelStyle(task.customerLevelCode)}>{taskLevelText(task)}</em><strong title={task.customerName}>{task.customerName}</strong></div><small>{task.code}</small></header>
                   <h3 title={task.specification}>{task.specification}</h3>
                   <p>{task.productName || '未设置品名'}</p>
                   <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{dateText(task.dueDate)}</span><span><UserRound size={12} />{task.assignees.map(item => item.name).join('、') || '未指派'}</span></div>
@@ -830,7 +961,7 @@ export default function SampleTeamCenter({
           <section className="sample-task-detail">
             {selected && <>
               <header className="sample-detail-head">
-                <div><div className="sample-detail-identity"><span style={{ background: selected.customerLevelColor || '#cbd5e1' }}>{taskLevelText(selected)}</span><small>{selected.code}</small></div><h2>{selected.specification}</h2><p>{selected.customerName} · {selected.productName || '未设置品名'}{selected.sourceOrderNo ? ` · 来源 ${selected.sourceOrderNo}` : ''}</p></div>
+                <div><div className="sample-detail-identity"><span style={sampleCustomerLevelStyle(selected.customerLevelCode)}>{taskLevelText(selected)}</span><small>{selected.code}</small></div><h2>{selected.specification}</h2><p>{selected.customerName} · {selected.productName || '未设置品名'}{selected.sourceOrderNo ? ` · 来源 ${selected.sourceOrderNo}` : ''}</p></div>
                 <div className="sample-detail-actions">
                   {!terminalTask && <button type="button" onClick={() => void openQr(selected)}><QrCode size={15} />二维码</button>}
                   {mode === 'planning' && !terminalTask && <button type="button" onClick={() => openEdit(selected)}><Pencil size={15} />编辑计划</button>}
@@ -891,6 +1022,78 @@ export default function SampleTeamCenter({
 
       {message && <div className="sample-team-toast" role="status">{message}</div>}
 
+      {importOpen && <div className="sample-modal-backdrop sample-import-backdrop" role="presentation">
+        <section className="sample-import-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-import-dialog-title">
+          <header>
+            <div><span>样品计划批量导入</span><h2 id="sample-import-dialog-title">{importStep === 'UPLOAD' ? '上传已填写模板' : importStep === 'PREVIEW' ? '核对匹配结果' : importStep === 'CONFLICTS' ? '确认相似图纸库' : '导入完成'}</h2></div>
+            <button type="button" aria-label="关闭" disabled={importBusy} onClick={() => setImportOpen(false)}><X /></button>
+          </header>
+          <ol className="sample-import-steps" aria-label="导入步骤">
+            {[['UPLOAD', '1', '上传'], ['PREVIEW', '2', '预览'], ['CONFLICTS', '3', '确认'], ['COMPLETE', '4', '完成']].map(([key, number, label]) => {
+              const order = ['UPLOAD', 'PREVIEW', 'CONFLICTS', 'COMPLETE'];
+              const activeIndex = order.indexOf(importStep);
+              const index = order.indexOf(key);
+              return <li className={index < activeIndex ? 'done' : index === activeIndex ? 'active' : ''} key={key}><span>{index < activeIndex ? <CheckCircle2 /> : number}</span><strong>{label}</strong></li>;
+            })}
+          </ol>
+          <div className="sample-import-body hm-scroll-region" tabIndex={0}>
+            {importStep === 'UPLOAD' && <section className="sample-import-upload">
+              <FileSpreadsheet />
+              <h3>选择填写完成的 Excel 模板</h3>
+              <p>只支持 .xlsx；系统先预览匹配结果，不会在上传后立即创建计划。</p>
+              <input ref={importFileRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={event => { setImportFile(event.target.files?.[0] || null); setImportError(''); }} />
+              <button type="button" onClick={() => importFileRef.current?.click()}><Upload />{importFile ? '重新选择文件' : '选择 Excel 文件'}</button>
+              {importFile && <div className="sample-import-file"><FileSpreadsheet /><span><strong>{importFile.name}</strong><small>{Math.max(1, Math.round(importFile.size / 1024))} KB</small></span><CheckCircle2 /></div>}
+              <a href="/api/sample-tasks/import/template" download><Download />还没有模板？下载简版模板</a>
+            </section>}
+
+            {importStep === 'PREVIEW' && importPreview && <>
+              <section className="sample-import-summary">
+                <div><span>总计</span><strong>{importPreview.summary.total}</strong></div>
+                <div className="reuse"><span>复用图纸库</span><strong>{importPreview.summary.reuse}</strong></div>
+                <div className="create"><span>新建图纸库</span><strong>{importPreview.summary.create}</strong></div>
+                <div className="confirm"><span>需要确认</span><strong>{importPreview.summary.confirm}</strong></div>
+                <div className="blocked"><span>阻止导入</span><strong>{importPreview.summary.blocked}</strong></div>
+              </section>
+              <div className="sample-import-rule"><Info /><span><strong>图纸库只复用产品资料，不复用旧样品任务。</strong>重复计划会直接阻止，页面不提供强制重复导入。</span></div>
+              <div className="sample-import-table-wrap">
+                <table className="sample-import-table">
+                  <thead><tr><th>行</th><th>客户 / 产品</th><th>型号 / 规格</th><th>等级</th><th>数量 / 日期</th><th>匹配结果</th></tr></thead>
+                  <tbody>{importPreview.rows.map(row => <tr key={row.rowNumber} className={`status-${row.matchStatus.toLowerCase()}`}><td>{row.rowNumber}</td><td><strong>{row.customerName || '—'}</strong><small>{row.productName || '—'}</small></td><td>{row.specification || '—'}</td><td><em style={sampleCustomerLevelStyle(row.customerLevelCode)}>{row.customerLevelCode || '—'}</em></td><td><strong>{row.sampleQuantity || '—'}</strong><small>{row.dueDate || '—'}</small></td><td><b>{row.matchStatus === 'REUSE' ? '复用' : row.matchStatus === 'CREATE' ? '新建' : row.matchStatus === 'CONFIRM' ? '待确认' : '已阻止'}</b><small>{row.message}</small></td></tr>)}</tbody>
+                </table>
+              </div>
+            </>}
+
+            {importStep === 'CONFLICTS' && importPreview && <section className="sample-import-conflicts">
+              <div className="sample-import-rule"><AlertTriangle /><span><strong>这些行只做选择，不需要审核。</strong>选择已有图纸库即复用；确认确实是新产品时才新建。</span></div>
+              {importPreview.rows.filter(row => row.matchStatus === 'CONFIRM').map(row => <article key={row.rowNumber}>
+                <header><span>Excel 第 {row.rowNumber} 行</span><strong>{row.customerName} · {row.productName}</strong><p>{row.specification}</p></header>
+                <div>{row.candidates.map(candidate => <button className={importDecisions[String(row.rowNumber)]?.mode === 'reuse' && (importDecisions[String(row.rowNumber)] as { drawingLibraryItemId?: string }).drawingLibraryItemId === candidate.id ? 'selected' : ''} type="button" key={candidate.id} onClick={() => setImportDecisions(current => ({ ...current, [String(row.rowNumber)]: { mode: 'reuse', drawingLibraryItemId: candidate.id } }))}><FolderKanban /><span><strong>{candidate.specification}</strong><small>{candidate.customerName} · {candidate.productName || '未设置品名'}</small><em>{candidate.libraryKey}</em></span><CheckCircle2 /></button>)}</div>
+                <button className={`sample-import-create-choice ${importDecisions[String(row.rowNumber)]?.mode === 'create' ? 'selected' : ''}`} type="button" onClick={() => setImportDecisions(current => ({ ...current, [String(row.rowNumber)]: { mode: 'create' } }))}><Plus />确认这是新产品，建立新的图纸库</button>
+              </article>)}
+            </section>}
+
+            {importStep === 'COMPLETE' && importResult && <section className="sample-import-complete">
+              <span><CheckCircle2 /></span><h3>样品计划导入已处理</h3><p>已创建 <strong>{importResult.createdTaskCount}</strong> 个样品计划{importResult.blockedCount ? `，另有 ${importResult.blockedCount} 行因重复或数据变化未创建` : '，没有重复数据'}。</p>
+              <div><div><span>已创建</span><strong>{importResult.createdTaskCount}</strong></div><div><span>未创建</span><strong>{importResult.blockedCount}</strong></div><div><span>总处理</span><strong>{importResult.total}</strong></div></div>
+            </section>}
+            {importError && <div className="sample-form-error"><AlertTriangle size={16} />{importError}</div>}
+          </div>
+          <footer>
+            <span>{importStep === 'UPLOAD' ? '上传只做检查，下一步才确认导入。' : importStep === 'PREVIEW' ? '红色阻止行不会创建，也不能强制跳过规则。' : importStep === 'CONFLICTS' ? '每一条相似匹配都必须明确选择。' : '任务列表已刷新，可直接继续安排。'}</span>
+            <div>
+              {importStep === 'PREVIEW' && <button type="button" disabled={importBusy} onClick={() => setImportStep('UPLOAD')}>重新上传</button>}
+              {importStep === 'CONFLICTS' && <button type="button" disabled={importBusy} onClick={() => setImportStep('PREVIEW')}>返回预览</button>}
+              {importStep === 'UPLOAD' && <button type="button" disabled={importBusy} onClick={() => setImportOpen(false)}>取消</button>}
+              {importStep === 'UPLOAD' && <button className="primary" type="button" disabled={importBusy || !importFile} onClick={() => void previewImport()}>{importBusy ? <><Loader2 className="spin" />读取中</> : '读取并预览'}</button>}
+              {importStep === 'PREVIEW' && importPreview && <button className="primary" type="button" disabled={importBusy || importPreview.summary.total === importPreview.summary.blocked} onClick={() => { if (importPreview.summary.confirm > 0) { setImportError(''); setImportStep('CONFLICTS'); } else void commitImport(); }}>{importBusy ? <><Loader2 className="spin" />导入中</> : importPreview.summary.confirm ? `确认 ${importPreview.summary.confirm} 条匹配` : '确认并导入'}</button>}
+              {importStep === 'CONFLICTS' && importPreview && <button className="primary" type="button" disabled={importBusy || importPreview.rows.some(row => row.matchStatus === 'CONFIRM' && !importDecisions[String(row.rowNumber)])} onClick={() => void commitImport()}>{importBusy ? <><Loader2 className="spin" />导入中</> : '确认并导入'}</button>}
+              {importStep === 'COMPLETE' && <button className="primary" type="button" onClick={() => setImportOpen(false)}>完成</button>}
+            </div>
+          </footer>
+        </section>
+      </div>}
+
       {(createOpen || editOpen) && <div className="sample-modal-backdrop sample-plan-backdrop" role="presentation">
         <section className="sample-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-plan-dialog-title">
           <header><div><span>{editOpen ? '编辑样品计划' : '新增样品计划'}</span><h2 id="sample-plan-dialog-title">{editOpen ? selected?.code : '建立任务与产品关联'}</h2></div><button type="button" aria-label="关闭" onClick={() => { if (!saving) { setCreateOpen(false); setEditOpen(false); } }}><X /></button></header>
@@ -915,17 +1118,22 @@ export default function SampleTeamCenter({
             </section>}
 
             <section className="sample-plan-section">
-              <div className="sample-section-title"><strong>计划信息</strong><small>客户等级只控制显示和优先顺序，不生成必填项</small></div>
-              <div className="sample-form-grid four">
-                <label><span>客户等级代码</span><input value={form.customerLevelCode} onChange={event => setForm(current => ({ ...current, customerLevelCode: event.target.value }))} placeholder="例如 A" /></label>
-                <label><span>显示名称</span><input value={form.customerLevelLabel} onChange={event => setForm(current => ({ ...current, customerLevelLabel: event.target.value }))} placeholder="例如 A级" /></label>
-                <label><span>等级颜色</span><div className="sample-color-input"><input type="color" value={form.customerLevelColor || '#C9972E'} onChange={event => setForm(current => ({ ...current, customerLevelColor: event.target.value }))} /><input value={form.customerLevelColor} onChange={event => setForm(current => ({ ...current, customerLevelColor: event.target.value }))} /></div></label>
-                <label><span>优先级 0-9</span><input type="number" min="0" max="9" value={form.priority} onChange={event => setForm(current => ({ ...current, priority: event.target.value }))} /></label>
-                <label><span>来源订单</span><input value={form.sourceOrderNo} onChange={event => setForm(current => ({ ...current, sourceOrderNo: event.target.value }))} placeholder="可留空" /></label>
-                <label><span>样品数量</span><input type="number" min="0" value={form.sampleQuantity} onChange={event => setForm(current => ({ ...current, sampleQuantity: event.target.value }))} placeholder="可留空" /></label>
+              <div className="sample-section-title"><strong>计划信息</strong><small>客户等级固定为 A红、B黄、C蓝、D绿，优先顺序由系统自动计算</small></div>
+              <fieldset className="sample-level-picker">
+                <legend>客户等级</legend>
+                {SAMPLE_CUSTOMER_LEVELS.map(level => <button
+                  className={form.customerLevelCode === level.code ? 'selected' : ''}
+                  type="button"
+                  key={level.code}
+                  style={{ color: level.color, backgroundColor: level.background, borderColor: form.customerLevelCode === level.code ? level.color : level.border }}
+                  aria-pressed={form.customerLevelCode === level.code}
+                  onClick={() => setForm(current => ({ ...current, customerLevelCode: level.code, customerLevelLabel: level.label, customerLevelColor: level.color, priority: String(level.priority) }))}
+                ><strong>{level.code}</strong><span>{level.label}</span></button>)}
+              </fieldset>
+              <div className="sample-form-grid two sample-plan-core-fields">
+                <label><span>样品数量</span><input type="number" min="1" step="1" value={form.sampleQuantity} onChange={event => setForm(current => ({ ...current, sampleQuantity: event.target.value }))} placeholder="填写样品数量" /></label>
                 <label><span>计划日期</span><input type="date" value={form.dueDate} onChange={event => setForm(current => ({ ...current, dueDate: event.target.value }))} /></label>
               </div>
-              <label className="sample-plan-remark-input"><span>计划说明</span><textarea value={form.planRemark} onChange={event => setForm(current => ({ ...current, planRemark: event.target.value }))} placeholder="可留空；只描述任务背景和交付要求" /></label>
             </section>
 
             <section className="sample-plan-section">
@@ -934,7 +1142,7 @@ export default function SampleTeamCenter({
             </section>
             {formError && <div className="sample-form-error"><AlertTriangle size={16} />{formError}</div>}
           </div>
-          <footer><span>采集数据全部选填；这里只建立任务和产品归属。</span><div><button type="button" disabled={saving} onClick={() => { setCreateOpen(false); setEditOpen(false); }}>取消</button><button className="primary" type="button" disabled={saving} onClick={() => void savePlan()}>{saving ? <><Loader2 className="spin" size={15} />保存中</> : editOpen ? '保存计划' : '创建样品任务'}</button></div></footer>
+          <footer><span>计划建立后，现场采集内容仍全部选填。</span><div><button type="button" disabled={saving} onClick={() => { setCreateOpen(false); setEditOpen(false); }}>取消</button><button className="primary" type="button" disabled={saving} onClick={() => void savePlan()}>{saving ? <><Loader2 className="spin" size={15} />保存中</> : editOpen ? '保存计划' : '创建样品任务'}</button></div></footer>
         </section>
       </div>}
 

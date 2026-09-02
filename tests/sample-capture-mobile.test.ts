@@ -70,6 +70,10 @@ test('mobile capture source exposes focused sections, server drafts, multi-photo
   assert.match(source, /withdrawMutationKey/);
   assert.match(source, /确认时自动收录/);
   assert.match(source, /还有未同步或上传失败的照片/);
+  assert.match(source, /renderInlinePhotoPanel\('PROCESS_TIME'/);
+  assert.match(source, /renderInlinePhotoPanel\('MATERIAL'/);
+  assert.match(source, /renderInlinePhotoPanel\('NOTICE'/);
+  assert.match(source, /记录 \$\{recordCount\} · 照片 \$\{photoCount\}/);
 });
 
 test('focused mobile CSS keeps primary controls tablet-safe and touchable', () => {

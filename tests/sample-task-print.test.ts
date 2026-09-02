@@ -108,7 +108,7 @@ test('print mode and return path reject unknown query values', () => {
   assert.equal(samplePrintBackHref('https://evil.example'), '/weekly-plan-center?branch=samples');
 });
 
-test('current print normalizes historic material fields and filters voided records', () => {
+test('current print keeps only material and notice sections and filters voided records', () => {
   const document = buildSamplePrintDocument(task([
     entry('PROCESS_TIME', { processName: '裁线', recommendedSeconds: 12.5 }),
     entry('STRIPPING', { model: '630', outerPeelMm: 4, innerPeelMm: 2, insertionLengthMm: 18 }),
@@ -120,28 +120,26 @@ test('current print normalizes historic material fields and filters voided recor
   assert.equal(document.captureUrl, 'https://sample.example.cn/sample-capture/opaque-qr-code');
   assert.equal(document.stateLabel, '待修改');
   assert.equal(document.pages.length, 1);
-  assert.deepEqual(document.pages[0].sections[0].rows[0].cells, ['裁线', '12.5']);
-  assert.deepEqual(document.pages[0].sections[2].rows[0].cells, ['热缩管', 'Φ8 黑色', '36', '2 根', '']);
-  assert.equal(document.pages[0].sections[2].rows.some(row => row.cells.includes('不应出现')), false);
-  assert.equal(document.pages[0].sections[0].rows.length, 5);
-  assert.equal(document.pages[0].sections[1].rows.length, 1);
-  assert.equal(document.pages[0].sections[2].rows.length, 6);
-  assert.equal(document.pages[0].sections[3].rows.length, 4);
+  assert.deepEqual(document.pages[0].sections.map(section => section.kind), ['MATERIAL', 'NOTICE']);
+  assert.deepEqual(document.pages[0].sections[0].rows[0].cells, ['热缩管', 'Φ8 黑色', '36', '2 根', '']);
+  assert.equal(document.pages[0].sections[0].rows.some(row => row.cells.includes('不应出现')), false);
+  assert.equal(document.pages[0].sections[0].rows.length, 10);
+  assert.equal(document.pages[0].sections[1].rows.length, 7);
 });
 
 test('blank mode never includes server records and excess current rows create continuation pages', () => {
-  const entries = Array.from({ length: 24 }, (_, index) => entry('PROCESS_TIME', { processName: `工序 ${index + 1}`, recommendedSeconds: index + 1 }, 'DRAFT', index + 1));
+  const entries = Array.from({ length: 25 }, (_, index) => entry('MATERIAL', { name: `辅料 ${index + 1}`, specification: `M-${index + 1}` }, 'DRAFT', index + 1));
   const current = buildSamplePrintDocument(task(entries), { mode: 'current', baseUrl: 'https://sample.example.cn' });
   const blank = buildSamplePrintDocument(task(entries), { mode: 'blank', baseUrl: 'https://sample.example.cn' });
   assert.equal(current.pages.length, 3);
-  assert.equal(current.pages[0].sections[0].rows.length, 5);
-  assert.equal(current.pages[1].sections[0].rows.length, 18);
+  assert.equal(current.pages[0].sections[0].rows.length, 10);
+  assert.equal(current.pages[1].sections[0].rows.length, 14);
   assert.equal(current.pages[2].sections[0].rows.length, 1);
   assert.equal(blank.pages.length, 1);
   assert.equal(blank.pages[0].sections.flatMap(section => section.rows).every(row => row.blank), true);
 });
 
-test('server draft sections are authoritative for process and stripping print rows', () => {
+test('print deliberately omits process-time and stripping data from the simplified sheet', () => {
   const source = task([
     entry('PROCESS_TIME', { processName: '旧工序', recommendedSeconds: 99 }),
     entry('STRIPPING', { model: '旧型号', outerPeelMm: 9 }),
@@ -161,18 +159,14 @@ test('server draft sections are authoritative for process and stripping print ro
       uiState: {}, updatedBy: '测试员', createdAt: source.createdAt, updatedAt: source.updatedAt,
     },
   ];
-  source.dataStatus = 'COLLECTING';
   const document = buildSamplePrintDocument(source, { mode: 'current', baseUrl: 'https://sample.example.cn' });
-  assert.deepEqual(document.pages[0].sections[0].rows[0].cells, ['新裁线', '12.5']);
-  assert.deepEqual(document.pages[0].sections[1].rows[0].cells, ['新型号', '4.2', '2', '18']);
-  assert.equal(document.pages[0].sections[0].rows.some(row => row.cells.includes('旧工序')), false);
-  assert.equal(document.pages[0].sections[1].rows.some(row => row.cells.includes('旧型号')), false);
-  assert.equal(document.stateLabel, '草稿');
+  assert.deepEqual(document.pages[0].sections.map(section => section.kind), ['MATERIAL', 'NOTICE']);
+  assert.equal(document.pages[0].sections.flatMap(section => section.rows).some(row => row.cells.includes('新裁线') || row.cells.includes('新型号') || row.cells.includes('旧工序') || row.cells.includes('旧型号')), false);
 });
 
 test('print sheet uses React escaping and never injects user HTML', () => {
   const hostile = task([entry('NOTICE', { category: '<img src=x onerror=alert(1)>', content: '<script>alert(1)</script>' })]);
-  hostile.planRemark = '<svg onload=alert(1)>';
+  hostile.productName = '<svg onload=alert(1)>';
   const document = buildSamplePrintDocument(hostile, { mode: 'current', baseUrl: 'https://sample.example.cn' });
   const html = renderToStaticMarkup(React.createElement(SampleTaskPrintSheet, { document, qrDataUrl: 'data:image/png;base64,AA==' }));
   assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);

@@ -33,6 +33,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeCapturedImage, prepareSamplePhotoForUpload } from '@/lib/image-client';
+import { sampleCustomerLevelStyle } from '@/lib/sample-customer-levels';
 import {
   SAMPLE_SECTION_MAX_ROWS,
   createProcessRow,
@@ -285,6 +286,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
 
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const albumInputRef = useRef<HTMLInputElement>(null);
+  const photoCategoryRef = useRef<SamplePhotoCategoryDTO>('UNCLASSIFIED');
   const objectUrlsRef = useRef<Set<string>>(new Set());
   const sectionHydrated = useRef(false);
   const genericDraftHydrated = useRef(false);
@@ -604,7 +606,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
       setActiveKind(category.kind);
       if (!isSectionKind(category.kind)) changeGenericKind(category.kind);
       setTab('data');
-    } else if (category.photo) { setPhotoCategory(category.photo); setTab('photos'); }
+    } else if (category.photo) { photoCategoryRef.current = category.photo; setPhotoCategory(category.photo); setTab('photos'); }
     window.scrollTo({ top: 0, behavior: 'smooth' });
     const resumeKind: SectionKind | null = category.kind && isSectionKind(category.kind) ? category.kind : null;
     if (resumeKind && lastActiveRow[resumeKind]) {
@@ -661,7 +663,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     for (const file of Array.from(files)) {
       try {
         const normalized = await normalizeCapturedImage(file);
-        const item: LocalPhotoDraft = { id: newMutationId(), file: normalized, objectUrl: createObjectUrl(normalized), originalName: file.name, category: photoCategory, caption: '', linkedEntryId: '', source, mutationId: newMutationId(), status: 'LOCAL', progress: 0, error: '' };
+        const item: LocalPhotoDraft = { id: newMutationId(), file: normalized, objectUrl: createObjectUrl(normalized), originalName: file.name, category: photoCategoryRef.current, caption: '', linkedEntryId: '', source, mutationId: newMutationId(), status: 'LOCAL', progress: 0, error: '' };
         setPhotoQueue(current => [...current, item]); added += 1;
       } catch { setMessage(`照片“${file.name}”处理失败，请换一张后重试`); }
     }
@@ -669,6 +671,12 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     if (cameraInputRef.current) cameraInputRef.current.value = '';
     if (albumInputRef.current) albumInputRef.current.value = '';
     if (added) setMessage(online ? `已加入 ${added} 张照片，等待上传` : `已将 ${added} 张照片安全保存在本机`);
+  }
+
+  function openPhotoPicker(category: SamplePhotoCategoryDTO, source: PhotoSource) {
+    photoCategoryRef.current = category;
+    setPhotoCategory(category);
+    window.requestAnimationFrame(() => (source === 'CAMERA' ? cameraInputRef.current : albumInputRef.current)?.click());
   }
 
   function updateLocalPhoto(id: string, patch: Partial<LocalPhotoDraft>) {
@@ -853,7 +861,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
       <button type="button" aria-label="刷新" onClick={() => void load()}><RefreshCw /></button>
     </header>
     <section className="sample-capture-terminal-identity">
-      <div><span style={{ background: task.customerLevelColor || '#64748b' }}>{task.customerLevelLabel || task.customerLevelCode || '样品'}</span><em>{task.status === 'COMPLETED' ? task.archivedAt ? '已完成 · 已归档' : '已完成 · 未归档' : '已取消'}</em></div>
+      <div><span style={sampleCustomerLevelStyle(task.customerLevelCode)}>{task.customerLevelLabel || task.customerLevelCode || '样品'}</span><em>{task.status === 'COMPLETED' ? task.archivedAt ? '已完成 · 已归档' : '已完成 · 未归档' : '已取消'}</em></div>
       <h1>{task.specification}</h1><p>{task.customerName} · {task.productName || '未设置品名'}</p>
     </section>
     <section className={`sample-capture-terminal-notice ${task.status.toLowerCase()}`}>
@@ -892,7 +900,24 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     </>}
   </footer>;
 
+  const renderInlinePhotoPanel = (category: 'PROCESS_TIME' | 'MATERIAL' | 'NOTICE', title: string) => {
+    const localPhotos = photoQueue.filter(item => item.category === category);
+    const serverPhotos = task.photos.filter(item => item.category === category);
+    const total = localPhotos.length + serverPhotos.length;
+    return <section className="sample-inline-photo-panel">
+      <header><div><span>分区照片</span><strong>{title}照片</strong></div><em>{total} 张</em></header>
+      <div className="sample-inline-photo-actions"><button type="button" disabled={readOnly || photoPreparing} onClick={() => openPhotoPicker(category, 'CAMERA')}><Camera />拍照</button><button type="button" disabled={readOnly || photoPreparing} onClick={() => openPhotoPicker(category, 'ALBUM')}><Images />从相册选择</button></div>
+      {total > 0 && <div className="sample-inline-photo-strip">
+        {[...localPhotos.map(item => ({ key: `local:${item.id}`, src: item.objectUrl, alt: item.caption || item.originalName, state: item.status === 'FAILED' ? '上传失败' : '待上传' })), ...serverPhotos.map(item => ({ key: `server:${item.id}`, src: item.contentUrl, alt: item.caption || item.originalName, state: reviewLabels[item.reviewStatus] }))].slice(0, 4).map(item => <span key={item.key}><Image unoptimized fill sizes="72px" src={item.src} alt={item.alt} /><em>{item.state}</em></span>)}
+        <button type="button" onClick={() => { photoCategoryRef.current = category; setPhotoCategory(category); setTab('photos'); }}>管理全部<ChevronRight /></button>
+      </div>}
+      {!total && <p>照片选填；加入后先保存在本机队列，上传成功后进入本分区草稿。</p>}
+    </section>;
+  };
+
   return <main className={`sample-capture-page v13485 sample-capture-focused-v2 ${tab === 'overview' ? 'overview' : ''} ${focused ? 'focused' : ''}`}>
+    <input className="sample-photo-input-hidden" ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={event => void choosePhotos(event.target.files, 'CAMERA')} />
+    <input className="sample-photo-input-hidden" ref={albumInputRef} type="file" accept="image/*" multiple onChange={event => void choosePhotos(event.target.files, 'ALBUM')} />
     {!focused && <header className="sample-capture-header">
       <Link href="/production?branch=samples" aria-label="返回样品执行"><ArrowLeft /></Link>
       <div><span>样品数据采集</span><strong>{task.code}</strong></div>
@@ -905,7 +930,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
 
     {tab === 'overview' && <>
       <section className="sample-capture-identity">
-        <div><span style={{ background: task.customerLevelColor || '#e11d48' }}>{task.customerLevelLabel || task.customerLevelCode || '未分级'}</span><em>{collectedKinds.size ? `已采集 ${collectedKinds.size} 类` : taskStatusText(task)}</em></div>
+        <div><span style={sampleCustomerLevelStyle(task.customerLevelCode)}>{task.customerLevelLabel || task.customerLevelCode || '未分级'}</span><em>{collectedKinds.size ? `已采集 ${collectedKinds.size} 类` : taskStatusText(task)}</em></div>
         <h1>{task.specification}</h1>
         <p>{task.customerName} · {task.productName || '未设置品名'}</p>
         <dl><div><dt>计划日期</dt><dd>{task.dueDate || '未设置'}</dd></div><div><dt>成员</dt><dd>{task.assignees.map(item => item.name).join('、') || '未指派'}</dd></div><div><dt>当前状态</dt><dd>{taskStatusText(task)}</dd></div></dl>
@@ -924,13 +949,16 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
       <header><div><span>选择采集内容</span><h2>按分区专注填写</h2></div><button type="button" onClick={() => setTab('records')}>查看记录 {syncedCount}<ChevronRight /></button></header>
       <div className="sample-category-grid">
         {captureCategories.map(category => {
-          const count = category.kind === 'PROCESS_TIME' ? serializeProcessRows(processRows).length
+          const recordCount = category.kind === 'PROCESS_TIME' ? serializeProcessRows(processRows).length
             : category.kind === 'STRIPPING' ? serializeStrippingRows(strippingRows).length
               : category.kind ? task.entries.filter(item => item.kind === category.kind).length
                 : task.photos.filter(item => item.category === category.photo).length + photoQueue.filter(item => item.category === category.photo).length;
+          const sectionPhotoCategory = category.kind === 'PROCESS_TIME' || category.kind === 'MATERIAL' || category.kind === 'NOTICE' ? category.kind : null;
+          const photoCount = sectionPhotoCategory ? task.photos.filter(item => item.category === sectionPhotoCategory).length + photoQueue.filter(item => item.category === sectionPhotoCategory).length : 0;
+          const count = recordCount + photoCount;
           const Icon = category.icon;
           return <button className={count ? 'collected' : ''} type="button" key={category.key} onClick={() => void openCategory(category)}>
-            <span className="sample-category-icon"><Icon /></span><span><strong>{category.title}</strong><small>{category.description}</small></span><em>{count ? `${count} 项` : '选填'}<ChevronRight /></em>
+            <span className="sample-category-icon"><Icon /></span><span><strong>{category.title}</strong><small>{category.description}</small></span><em>{sectionPhotoCategory ? `记录 ${recordCount} · 照片 ${photoCount}` : count ? `${count} 项` : '选填'}<ChevronRight /></em>
           </button>;
         })}
       </div>
@@ -975,6 +1003,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
         })}
       </div>
       <button className="sample-add-row" type="button" disabled={readOnly || processRows.length >= SAMPLE_SECTION_MAX_ROWS} onClick={addProcessRow}><Plus />添加一行</button>
+      {renderInlinePhotoPanel('PROCESS_TIME', '工序与工时')}
     </section>}
 
     {tab === 'data' && activeKind === 'STRIPPING' && <section className="sample-focus-content sample-stripping-editor">
@@ -1010,15 +1039,15 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
       </div>}
       {form.kind === 'CUSTOM' && <div className="sample-mobile-fields"><div className="two"><label><span>记录值</span><input disabled={readOnly} value={form.value} onChange={event => setForm(current => ({ ...current, value: event.target.value }))} /></label><label><span>单位</span><input disabled={readOnly} value={form.unit} onChange={event => setForm(current => ({ ...current, unit: event.target.value }))} /></label></div></div>}
       <label><span>补充备注</span><textarea disabled={readOnly} value={form.remark} onChange={event => setForm(current => ({ ...current, remark: event.target.value }))} /></label>
-      <p className="sample-field-optional-hint">可以只保存文字，也可以前往照片分区补充图片证据。</p>
+      <p className="sample-field-optional-hint">文字与照片都可选填；保存草稿后再统一提交审核。</p>
+      {form.kind === 'MATERIAL' && renderInlinePhotoPanel('MATERIAL', '辅料')}
+      {form.kind === 'NOTICE' && renderInlinePhotoPanel('NOTICE', '注意事项')}
     </section>}
 
     {tab === 'photos' && <section className="sample-photo-focus">
-      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={event => void choosePhotos(event.target.files, 'CAMERA')} />
-      <input ref={albumInputRef} type="file" accept="image/*" multiple onChange={event => void choosePhotos(event.target.files, 'ALBUM')} />
       <div className="sample-photo-actions">
-        <button className="camera" type="button" disabled={readOnly || photoPreparing} onClick={() => cameraInputRef.current?.click()}><Camera />拍照</button>
-        <button type="button" disabled={readOnly || photoPreparing} onClick={() => albumInputRef.current?.click()}><Images />从相册选择</button>
+        <button className="camera" type="button" disabled={readOnly || photoPreparing} onClick={() => openPhotoPicker(photoCategory, 'CAMERA')}><Camera />拍照</button>
+        <button type="button" disabled={readOnly || photoPreparing} onClick={() => openPhotoPicker(photoCategory, 'ALBUM')}><Images />从相册选择</button>
       </div>
       <div className="sample-photo-statuses" aria-label="照片状态统计">
         <span>本机待传 <strong>{photoQueue.filter(item => item.status === 'LOCAL').length}</strong></span>

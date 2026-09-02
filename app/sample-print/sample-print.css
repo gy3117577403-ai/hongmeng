@@ -31,39 +31,30 @@
 .sample-print-document-header figcaption { display: grid; justify-items: center; gap: .5mm; }
 .sample-print-document-header figcaption strong { font-size: 7pt; }
 .sample-print-document-header figcaption span { color: #64748b; font-size: 5.5pt; }
-.sample-print-facts { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); margin: 3mm 0 0; border-top: 1pt solid #374151; border-left: 1pt solid #374151; }
+.sample-print-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 3mm 0 0; border-top: 1pt solid #374151; border-left: 1pt solid #374151; }
 .sample-print-facts > div { min-height: 10mm; display: grid; grid-template-columns: 16mm minmax(0,1fr); align-items: stretch; border-right: 1pt solid #374151; border-bottom: 1pt solid #374151; }
-.sample-print-facts > div.wide { grid-column: span 2; }
 .sample-print-facts dt, .sample-print-facts dd { display: flex; align-items: center; box-sizing: border-box; margin: 0; padding: 1.5mm 2mm; font-size: 7pt; line-height: 1.35; }
 .sample-print-facts dt { justify-content: center; border-right: 1pt solid #374151; color: #374151; background: #f1f3f5; font-weight: 800; white-space: nowrap; }
 .sample-print-facts dd { min-width: 0; overflow-wrap: anywhere; font-weight: 650; }
-.sample-print-plan-remark { min-height: 13mm; display: grid; grid-template-columns: 17mm minmax(0,1fr); border: 1pt solid #374151; border-top: 0; }
-.sample-print-plan-remark strong { display: flex; align-items: center; justify-content: center; border-right: 1pt solid #374151; background: #f1f3f5; font-size: 7pt; }
-.sample-print-plan-remark p { min-width: 0; margin: 0; padding: 1.5mm 2mm; overflow-wrap: anywhere; font-size: 7pt; line-height: 1.45; }
-.sample-print-sections { display: grid; gap: 2mm; margin-top: 3mm; }
+.sample-print-facts > div:nth-child(2) dd,
+.sample-print-facts > div.model dd,
+.sample-print-facts > div:nth-child(4) dd { font-size: 8.5pt; font-weight: 850; }
+.sample-print-sections { display: grid; align-content: stretch; gap: 3mm; margin-top: 4mm; }
 .sample-print-section { break-inside: avoid; page-break-inside: avoid; }
 .sample-print-section h2 { margin: 0 0 1mm; padding-left: 2mm; border-left: 2.2mm solid #d85808; font-size: 8pt; line-height: 1.4; }
 .sample-print-section table { width: 100%; border-spacing: 0; border-collapse: collapse; table-layout: fixed; }
 .sample-print-section th, .sample-print-section td { box-sizing: border-box; border: .8pt solid #374151; padding: 1mm 1.5mm; overflow-wrap: anywhere; font-size: 6.7pt; line-height: 1.25; text-align: left; vertical-align: middle; }
 .sample-print-section th { height: 6mm; background: #f1f3f5; font-weight: 850; text-align: center; }
-.sample-print-section td { height: 6.5mm; }
+.sample-print-section td { height: 7.5mm; }
 .sample-print-section .sequence { width: 10mm; text-align: center; }
 .sample-print-section .review-state { width: 15mm; color: #714117; text-align: center; }
-.sample-print-process_time th:nth-child(2) { width: auto; }
-.sample-print-process_time th:nth-child(3) { width: 42mm; }
-.sample-print-stripping th:nth-child(2) { width: auto; }
-.sample-print-stripping th:nth-child(n+3):nth-child(-n+5) { width: 31mm; }
 .sample-print-material th:nth-child(2) { width: 35mm; }
 .sample-print-material th:nth-child(3) { width: auto; }
 .sample-print-material th:nth-child(4) { width: 22mm; }
 .sample-print-material th:nth-child(5) { width: 25mm; }
 .sample-print-material th:nth-child(6) { width: 28mm; }
-.sample-print-notice td { height: 9mm; }
+.sample-print-notice td { height: 13mm; }
 .sample-print-notice th:nth-child(2) { width: 34mm; }
-.sample-print-signatures { min-height: 12mm; display: grid; grid-template-columns: repeat(4,1fr); margin-top: 3mm; border: 1pt solid #374151; }
-.sample-print-signatures > div { display: grid; grid-template-columns: 20mm 1fr; border-right: 1pt solid #374151; }
-.sample-print-signatures > div:last-child { border-right: 0; }
-.sample-print-signatures span { display: flex; align-items: center; justify-content: center; border-right: 1pt solid #374151; background: #f1f3f5; font-size: 6.5pt; font-weight: 800; }
 .sample-print-paper > footer { position: absolute; right: 10mm; bottom: 4.5mm; left: 10mm; display: grid; grid-template-columns: minmax(0,1.25fr) minmax(0,1fr) auto; gap: 3mm; padding-top: 1.5mm; border-top: .6pt solid #9ca3af; color: #4b5563; font-size: 5.5pt; }
 .sample-print-paper > footer span { overflow-wrap: anywhere; }
 .sample-print-paper > footer strong { color: #111827; white-space: nowrap; }

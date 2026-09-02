@@ -8,8 +8,8 @@ import {
   parseCustomerCode,
 } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
+import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
 import {
-  cleanSampleColor,
   cleanSampleText,
   parseOptionalNonNegativeInteger,
   parseOptionalSampleDate,
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
     const assignedEmployeeIds = employeeIds(body.assigneeEmployeeIds);
     const dueDate = parseOptionalSampleDate(body.dueDate);
     const sampleQuantity = parseOptionalNonNegativeInteger(body.sampleQuantity);
-    const priority = parseOptionalNonNegativeInteger(body.priority, 9) ?? 0;
+    const customerLevel = sampleCustomerLevel(body.customerLevelCode);
 
     if (!drawingLibraryItemId && (!customerName || !specification)) {
       return NextResponse.json({ ok: false, error: '请选择现有产品，或填写客户和产品规格建立样品主档' }, { status: 400 });
@@ -106,6 +106,9 @@ export async function POST(req: NextRequest) {
     if (!drawingLibraryItemId && specification) {
       const reason = invalidSpecificationReason(specification);
       if (reason) return NextResponse.json({ ok: false, error: `产品规格格式异常：${reason}` }, { status: 400 });
+    }
+    if (!customerLevel) {
+      return NextResponse.json({ ok: false, error: '客户等级只能选择 A、B、C、D' }, { status: 400 });
     }
 
     const taskId = await prisma.$transaction(async tx => {
@@ -153,12 +156,12 @@ export async function POST(req: NextRequest) {
           customerNameSnapshot: item.customerName,
           productNameSnapshot: item.productName,
           specificationSnapshot: item.specification,
-          customerLevelCode: cleanSampleText(body.customerLevelCode, 30),
-          customerLevelLabel: cleanSampleText(body.customerLevelLabel, 60),
-          customerLevelColor: cleanSampleColor(body.customerLevelColor),
+          customerLevelCode: customerLevel.code,
+          customerLevelLabel: customerLevel.label,
+          customerLevelColor: customerLevel.color,
           sampleQuantity,
           dueDate,
-          priority,
+          priority: customerLevel.priority,
           planRemark: cleanSampleText(body.planRemark, 1000),
           createdById: actor.id,
           createdByName: actor.name,
@@ -186,7 +189,7 @@ export async function POST(req: NextRequest) {
             code: created.code,
             drawingLibraryItemId: item.id,
             assigneeCount: employees.length,
-            customerLevelCode: cleanSampleText(body.customerLevelCode, 30),
+            customerLevelCode: customerLevel.code,
           },
         },
       });

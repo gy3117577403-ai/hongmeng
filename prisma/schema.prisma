@@ -3512,6 +3512,24 @@ model SampleTask {
   @@map("sample_tasks")
 }
 
+model SampleTaskImportBatch {
+  id               String   @id @default(uuid())
+  mutationId       String   @unique @map("mutation_id")
+  requestHash      String   @map("request_hash")
+  sourceFileName   String?  @map("source_file_name")
+  rowCount         Int      @default(0) @map("row_count")
+  createdTaskCount Int      @default(0) @map("created_task_count")
+  result           Json?
+  createdById      String?  @map("created_by_id")
+  createdByName    String?  @map("created_by_name")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([createdAt])
+  @@index([createdById, createdAt])
+  @@map("sample_task_import_batches")
+}
+
 model SampleDraftSection {
   id                    String     @id @default(uuid())
   taskId                String     @map("task_id")

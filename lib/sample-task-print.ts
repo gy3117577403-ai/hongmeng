@@ -1,10 +1,10 @@
 import QRCode from 'qrcode';
 import type { SampleDataEntryDTO, SampleReviewStatusDTO, SampleTaskDTO } from '@/types';
 
-export const SAMPLE_PRINT_TEMPLATE_VERSION = 'SP-01';
+export const SAMPLE_PRINT_TEMPLATE_VERSION = 'SP-02';
 
 export type SamplePrintMode = 'blank' | 'current';
-export type SamplePrintSectionKind = 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOTICE';
+export type SamplePrintSectionKind = 'MATERIAL' | 'NOTICE';
 
 export type SamplePrintRow = {
   id: string;
@@ -40,13 +40,9 @@ export type SamplePrintDocument = {
     customerName: string;
     productName: string;
     specification: string;
-    sourceOrderNo: string;
     sampleQuantity: string;
     dueDate: string;
-    priority: string;
     customerLevel: string;
-    assignees: string;
-    planRemark: string;
     cancelled: boolean;
   };
   pages: SamplePrintPage[];
@@ -62,20 +58,16 @@ const REVIEW_STATUS_LABELS: Record<SampleReviewStatusDTO, string> = {
 };
 
 const FIRST_PAGE_CAPACITY: Record<SamplePrintSectionKind, number> = {
-  PROCESS_TIME: 5,
-  STRIPPING: 1,
-  MATERIAL: 6,
-  NOTICE: 4,
+  MATERIAL: 10,
+  NOTICE: 7,
 };
 
 const CONTINUATION_CAPACITY: Record<SamplePrintSectionKind, number> = {
-  PROCESS_TIME: 18,
-  STRIPPING: 14,
   MATERIAL: 14,
   NOTICE: 12,
 };
 
-const SECTION_ORDER: readonly SamplePrintSectionKind[] = ['PROCESS_TIME', 'STRIPPING', 'MATERIAL', 'NOTICE'];
+const SECTION_ORDER: readonly SamplePrintSectionKind[] = ['MATERIAL', 'NOTICE'];
 
 function text(value: unknown, max = 240): string {
   if (value === null || value === undefined) return '';
@@ -96,83 +88,16 @@ function firstText(payload: Record<string, unknown>, keys: readonly string[]): s
   return '';
 }
 
-function measuredSeconds(payload: Record<string, unknown>): string {
-  const direct = firstText(payload, ['recommendedSeconds', 'standardSeconds', 'seconds', 'workSeconds']);
-  if (direct) return direct;
-  const measurements = payload.measurements;
-  if (!Array.isArray(measurements)) return '';
-  for (const item of measurements) {
-    if (item && typeof item === 'object' && !Array.isArray(item)) {
-      const value = text((item as Record<string, unknown>).value);
-      if (value) return value;
-    }
-    const value = text(item);
-    if (value) return value;
-  }
-  return '';
-}
-
 function quantityWithUnit(payload: Record<string, unknown>): string {
   const quantity = firstText(payload, ['quantity', 'qty']);
   const unit = firstText(payload, ['unit', 'unitLabel']);
   return [quantity, unit].filter(Boolean).join(' ');
 }
 
-function secondsFromMilliseconds(value: unknown): string {
-  const milliseconds = Number(value);
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '';
-  return String(Math.round(milliseconds) / 1000).replace(/\.0+$/, '');
-}
-
-function draftSectionStatus(task: SampleTaskDTO): string {
-  if (task.dataStatus === 'PENDING_REVIEW') return '待审核';
-  if (task.dataStatus === 'NEEDS_CHANGES') return '待修改';
-  if (task.dataStatus === 'PARTIALLY_PUBLISHED') return '部分已发布';
-  if (task.dataStatus === 'PROCESSED') return '已处理';
-  return '草稿';
-}
-
-function rowsFromDraftSection(task: SampleTaskDTO, kind: 'PROCESS_TIME' | 'STRIPPING'): SamplePrintRow[] | null {
-  const section = task.sections.find(item => item.kind === kind);
-  if (!section) return null;
-  const rawRows = Array.isArray(section.payload.rows) ? section.payload.rows : [];
-  const status = draftSectionStatus(task);
-  return rawRows
-    .filter(row => row && typeof row === 'object' && !Array.isArray(row))
-    .map((row, index) => {
-      const payload = row as Record<string, unknown>;
-      const id = text(payload.rowId) || `section-${kind}-${index}`;
-      const cells = kind === 'PROCESS_TIME'
-        ? [firstText(payload, ['processName']), secondsFromMilliseconds(payload.measuredMilliseconds)]
-        : [
-          firstText(payload, ['model']),
-          firstText(payload, ['outerPeelMm']),
-          firstText(payload, ['innerPeelMm']),
-          firstText(payload, ['insertionLengthMm']),
-        ];
-      return { id, cells, status, blank: cells.every(cell => !cell) };
-    })
-    .filter(row => !row.blank);
-}
-
 function rowFromEntry(entry: SampleDataEntryDTO, sequence: number): SamplePrintRow {
   const payload = entry.payload || {};
   let cells: string[];
   switch (entry.kind) {
-    case 'PROCESS_TIME':
-      cells = [
-        firstText(payload, ['processName', 'name']) || text(entry.label),
-        measuredSeconds(payload),
-      ];
-      break;
-    case 'STRIPPING':
-      cells = [
-        firstText(payload, ['model', 'connectorModel']) || text(entry.label),
-        firstText(payload, ['outerPeelMm', 'outerStripMm']),
-        firstText(payload, ['innerPeelMm', 'innerStripMm']),
-        firstText(payload, ['insertionLengthMm', 'insertionMm']),
-      ];
-      break;
     case 'MATERIAL':
       cells = [
         firstText(payload, ['name', 'materialName']) || text(entry.label),
@@ -200,7 +125,7 @@ function rowFromEntry(entry: SampleDataEntryDTO, sequence: number): SamplePrintR
 }
 
 function blankRow(kind: SamplePrintSectionKind, index: number): SamplePrintRow {
-  const cellCount = kind === 'PROCESS_TIME' || kind === 'NOTICE' ? 2 : kind === 'STRIPPING' ? 4 : 5;
+  const cellCount = kind === 'NOTICE' ? 2 : 5;
   return {
     id: `blank-${kind}-${index}`,
     cells: Array.from({ length: cellCount }, () => ''),
@@ -210,18 +135,12 @@ function blankRow(kind: SamplePrintSectionKind, index: number): SamplePrintRow {
 }
 
 function sectionDefinition(kind: SamplePrintSectionKind, rows: SamplePrintRow[], startAt = 1): SamplePrintSection {
-  if (kind === 'PROCESS_TIME') return { kind, title: '一、工序与工时', columns: ['工序', '实测工时（秒/件）'], rows, startAt };
-  if (kind === 'STRIPPING') return { kind, title: '二、剥皮参数', columns: ['型号', '外剥（mm）', '内剥（mm）', '入长（mm）'], rows, startAt };
-  if (kind === 'MATERIAL') return { kind, title: '三、辅料规格', columns: ['辅料名称', '型号 / 规格', '长度', '数量 / 单位', '使用位置'], rows, startAt };
-  return { kind, title: '四、注意事项', columns: ['分类 / 等级', '注意事项内容'], rows, startAt };
+  if (kind === 'MATERIAL') return { kind, title: '一、辅料规格', columns: ['辅料名称', '型号 / 规格', '长度', '数量 / 单位', '使用位置'], rows, startAt };
+  return { kind, title: '二、注意事项', columns: ['分类 / 等级', '注意事项内容'], rows, startAt };
 }
 
 function rowsForKind(task: SampleTaskDTO, kind: SamplePrintSectionKind, mode: SamplePrintMode): SamplePrintRow[] {
   if (mode === 'blank') return [];
-  if (kind === 'PROCESS_TIME' || kind === 'STRIPPING') {
-    const sectionRows = rowsFromDraftSection(task, kind);
-    if (sectionRows !== null) return sectionRows;
-  }
   return task.entries
     .filter(entry => entry.kind === kind && entry.reviewStatus !== 'VOIDED')
     .map(rowFromEntry);
@@ -342,13 +261,9 @@ export function buildSamplePrintDocument(
       customerName: text(task.customerName),
       productName,
       specification: text(task.specification),
-      sourceOrderNo: text(task.sourceOrderNo) || '—',
       sampleQuantity: task.sampleQuantity === null ? '—' : `${task.sampleQuantity} 件/套`,
       dueDate: text(task.dueDate) || '—',
-      priority: String(task.priority),
       customerLevel: text(task.customerLevelLabel) || (text(task.customerLevelCode) ? `${text(task.customerLevelCode)}级` : '—'),
-      assignees: task.assignees.map(item => text(item.name)).filter(Boolean).join('、') || '—',
-      planRemark: text(task.planRemark, 800),
       cancelled: task.status === 'CANCELLED',
     },
     pages,

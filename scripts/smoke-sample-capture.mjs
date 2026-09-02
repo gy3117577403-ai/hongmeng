@@ -152,6 +152,7 @@ async function run() {
       customerName: `镜像验收客户-${marker}`,
       productName: '样品采集隔离验收线束',
       specification: `T25BF2-${marker}`,
+      customerLevelCode: 'A',
       sampleQuantity: 5,
       planRemark: '仅用于不可变镜像运行验收，不代表正式业务数据。',
     },

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
 import {
-  cleanSampleColor,
   cleanSampleText,
   parseOptionalNonNegativeInteger,
   parseOptionalSampleDate,
@@ -142,21 +142,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const sampleQuantity = !metadataUpdate || body.sampleQuantity === undefined
         ? existing.sampleQuantity
         : parseOptionalNonNegativeInteger(body.sampleQuantity);
-      const priority = !metadataUpdate || body.priority === undefined
-        ? existing.priority
-        : (parseOptionalNonNegativeInteger(body.priority, 9) ?? 0);
+      const customerLevel = metadataUpdate
+        ? sampleCustomerLevel(body.customerLevelCode === undefined ? existing.customerLevelCode : body.customerLevelCode)
+        : null;
+      if (metadataUpdate && !customerLevel) throw new Error('INVALID_SAMPLE_LEVEL');
       const updated = await tx.sampleTask.updateMany({
         where: { id: existing.id, version: expectedVersion },
         data: {
           status,
           ...lifecycle,
           sourceOrderNo: !metadataUpdate || body.sourceOrderNo === undefined ? existing.sourceOrderNo : cleanSampleText(body.sourceOrderNo, 120),
-          customerLevelCode: !metadataUpdate || body.customerLevelCode === undefined ? existing.customerLevelCode : cleanSampleText(body.customerLevelCode, 30),
-          customerLevelLabel: !metadataUpdate || body.customerLevelLabel === undefined ? existing.customerLevelLabel : cleanSampleText(body.customerLevelLabel, 60),
-          customerLevelColor: !metadataUpdate || body.customerLevelColor === undefined ? existing.customerLevelColor : cleanSampleColor(body.customerLevelColor),
+          customerLevelCode: metadataUpdate ? customerLevel!.code : existing.customerLevelCode,
+          customerLevelLabel: metadataUpdate ? customerLevel!.label : existing.customerLevelLabel,
+          customerLevelColor: metadataUpdate ? customerLevel!.color : existing.customerLevelColor,
           sampleQuantity,
           dueDate,
-          priority,
+          priority: metadataUpdate ? customerLevel!.priority : existing.priority,
           planRemark: !metadataUpdate || body.planRemark === undefined ? existing.planRemark : cleanSampleText(body.planRemark, 1000),
           updatedById: actor.id,
           updatedByName: actor.name,
@@ -207,6 +208,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (error.message === 'SAMPLE_TASK_HAS_UNFINISHED_DATA') return NextResponse.json({ ok: false, error: '任务仍有草稿、待审核或退回修改内容，处理完成后才能结束任务' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_CONFIRM_NO_DATA_REQUIRED') return NextResponse.json({ ok: false, error: '任务没有任何采集记录，请明确确认“无采集数据完成”' }, { status: 409 });
       if (error.message === 'INVALID_SAMPLE_DATE') return NextResponse.json({ ok: false, error: '计划完成日期格式无效' }, { status: 400 });
+      if (error.message === 'INVALID_SAMPLE_LEVEL') return NextResponse.json({ ok: false, error: '客户等级只能选择 A、B、C、D' }, { status: 400 });
       if (error.message === 'INVALID_SAMPLE_NUMBER') return NextResponse.json({ ok: false, error: '数量或优先级格式无效' }, { status: 400 });
     }
     console.error('sample task update failed', error);
