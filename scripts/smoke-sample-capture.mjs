@@ -23,6 +23,7 @@ assert.ok(['127.0.0.1', 'localhost'].includes(target.hostname), 'sample runtime 
 let cookie = '';
 const marker = `sample-${Date.now()}-${randomUUID().slice(0, 8)}`;
 const candidateProcessName = `候选工序-${marker}`;
+const formalProcessName = `正式工序-${marker}`;
 const checks = [];
 
 function sessionCookie(response) {
@@ -138,6 +139,12 @@ async function run() {
   const definitionsBefore = await request('read process library before candidate save', '/api/process-definitions');
   assert.ok(Array.isArray(definitionsBefore.body.definitions));
   assert.equal(definitionsBefore.body.definitions.some(item => item.name === candidateProcessName), false);
+  const createdDefinition = await request('create formal process for package review mapping', '/api/process-definitions', {
+    method: 'POST', expected: 201,
+    body: { name: formalProcessName, stageGroup: 'frontend', sortOrder: 1000 },
+  });
+  const formalProcessDefinition = createdDefinition.body.definition;
+  assert.ok(formalProcessDefinition?.id, 'package review requires an existing formal process definition');
 
   const cleanBaseline = await request('verify disposable sample database is empty', '/api/sample-tasks');
   assert.ok(Array.isArray(cleanBaseline.body.tasks));
@@ -236,27 +243,26 @@ async function run() {
   const photoVersion = task.version;
   const [firstPhoto, secondPhoto] = await Promise.all([
     request('upload camera photo concurrently', `/api/sample-tasks/${task.id}/photos`, {
-      method: 'POST', expected: 201,
+      method: 'POST', expected: [200, 201],
       body: photoForm({ mutationId: firstPhotoMutation, taskVersion: photoVersion, source: 'CAMERA', sortOrder: 0 }),
     }),
     request('upload album photo concurrently', `/api/sample-tasks/${task.id}/photos`, {
-      method: 'POST', expected: 201,
+      method: 'POST', expected: [200, 201],
       body: photoForm({ mutationId: secondPhotoMutation, taskVersion: photoVersion, source: 'ALBUM', sortOrder: 1 }),
     }),
   ]);
-  assert.notEqual(firstPhoto.body.photoId, secondPhoto.body.photoId);
+  assert.equal(firstPhoto.body.photoId, secondPhoto.body.photoId, 'identical photo content must resolve to one active photo');
+  assert.equal([firstPhoto, secondPhoto].filter(result => result.response.status === 201).length, 1, 'only one concurrent upload may create a photo');
+  assert.equal([firstPhoto, secondPhoto].filter(result => result.body.deduplicated === true).length, 1, 'the duplicate upload must be explicitly reported');
 
   const detailAfterPhotos = await request('reload task after concurrent photos', `/api/sample-tasks/${task.id}`);
   task = detailAfterPhotos.body.task;
-  assert.equal(task.photos.length, 2);
+  assert.equal(task.photos.length, 1);
   const savedProcessSection = task.sections.find(section => section.kind === 'PROCESS_TIME');
   assert.equal(savedProcessSection?.uiState?.lastEditedRowId, legacyProcessEntry.id);
-  const albumPhoto = task.photos.find(photo => photo.id === secondPhoto.body.photoId);
-  assert.ok(albumPhoto?.contentUrl, 'album photo must expose a content URL');
-  assert.equal(albumPhoto?.captureSource, 'ALBUM');
-  assert.equal(albumPhoto?.sortOrder, 1);
-  assert.equal(albumPhoto?.sourceOriginalName, `${marker}-相册原图-2.png`);
-  const downloadedPhoto = await request('download uploaded album photo from object storage', albumPhoto.contentUrl);
+  const storedConcurrentPhoto = task.photos.find(photo => photo.id === firstPhoto.body.photoId);
+  assert.ok(storedConcurrentPhoto?.contentUrl, 'deduplicated photo must expose one content URL');
+  const downloadedPhoto = await request('download deduplicated photo from object storage', storedConcurrentPhoto.contentUrl);
   assert.match(downloadedPhoto.response.headers.get('content-type') || '', /^image\/png\b/);
   assert.ok(Buffer.isBuffer(downloadedPhoto.body));
   assert.deepEqual([...downloadedPhoto.body.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -266,7 +272,8 @@ async function run() {
     body: photoForm({ mutationId: secondPhotoMutation, taskVersion: photoVersion, source: 'ALBUM', sortOrder: 1 }),
   });
   task = replayPhoto.body.task;
-  assert.equal(task.photos.length, 2);
+  assert.equal(replayPhoto.body.deduplicated, true);
+  assert.equal(task.photos.length, 1);
 
   const deleteTarget = task.photos.find(photo => photo.id === firstPhoto.body.photoId);
   assert.ok(deleteTarget);
@@ -279,10 +286,24 @@ async function run() {
     },
   });
   task = deleted.body.task;
+  assert.equal(task.photos.length, 0);
+
+  const replacementPhoto = await request('upload replacement album photo after soft delete', `/api/sample-tasks/${task.id}/photos`, {
+    method: 'POST', expected: 201,
+    body: photoForm({ mutationId: randomUUID(), taskVersion: task.version, source: 'ALBUM', sortOrder: 1 }),
+  });
+  task = replacementPhoto.body.task;
+  assert.equal(replacementPhoto.body.deduplicated, false);
   assert.equal(task.photos.length, 1);
+  const albumPhoto = task.photos.find(photo => photo.id === replacementPhoto.body.photoId);
+  assert.ok(albumPhoto?.contentUrl, 'replacement album photo must expose a content URL');
+  assert.equal(albumPhoto?.captureSource, 'ALBUM');
+  assert.equal(albumPhoto?.sortOrder, 1);
+  assert.equal(albumPhoto?.sourceOriginalName, `${marker}-相册原图-2.png`);
 
   const definitionsAfterDraft = await request('candidate save does not create process master', '/api/process-definitions');
   assert.equal(definitionsAfterDraft.body.definitions.some(item => item.name === candidateProcessName), false);
+  assert.equal(definitionsAfterDraft.body.definitions.some(item => item.id === formalProcessDefinition.id), true);
 
   const firstSubmitMutation = randomUUID();
   const submitVersion = task.version;
@@ -356,27 +377,92 @@ async function run() {
 
   const candidateEntryForReview = task.entries.find(entry => entry.kind === 'PROCESS_TIME' && entry.label === candidateProcessName && entry.reviewStatus === 'PENDING');
   assert.ok(candidateEntryForReview?.id, 'candidate process must be pending in revision 2');
-  const reviewedCandidate = await request('review candidate and create controlled process master', `/api/sample-tasks/${task.id}/review`, {
-    method: 'POST',
+
+  const blockedConfirmation = await request('package confirmation rejects an unmapped candidate process', `/api/sample-tasks/${task.id}/review`, {
+    method: 'POST', expected: 409,
     body: {
-      itemType: 'entry',
-      itemId: candidateEntryForReview.id,
-      expectedVersion: candidateEntryForReview.version,
+      submissionId: finalSubmit.body.submission.id,
+      submissionRevision: finalSubmit.body.submission.revision,
       expectedTaskVersion: task.version,
-      decision: 'PUBLISH',
-      publishMode: 'APPEND',
-      createProcessDefinition: true,
-      processStageGroup: 'frontend',
-      comment: '镜像验收：由工艺审核受控新增候选工序',
+      clientMutationId: randomUUID(),
+      decision: 'CONFIRM',
+      comment: '镜像验收：未映射候选工序不得通过',
     },
   });
-  task = reviewedCandidate.body.task;
+  assert.equal(blockedConfirmation.body.code, 'SAMPLE_PACKAGE_NOT_READY');
+
+  const editedPackage = await request('map candidate to a formal process in package editor', `/api/sample-tasks/${task.id}/review`, {
+    method: 'POST',
+    body: {
+      submissionId: finalSubmit.body.submission.id,
+      submissionRevision: finalSubmit.body.submission.revision,
+      expectedTaskVersion: task.version,
+      clientMutationId: randomUUID(),
+      decision: 'EDIT',
+      comment: '镜像验收：审核页只映射已有正式工序',
+      edits: {
+        entries: [{
+          id: candidateEntryForReview.id,
+          expectedVersion: candidateEntryForReview.version,
+          label: formalProcessName,
+          payload: { processDefinitionId: formalProcessDefinition.id, recommendedSeconds: 13 },
+        }],
+        photos: [],
+      },
+    },
+  });
+  task = editedPackage.body.task;
+  const mappedCandidate = task.entries.find(entry => entry.id === candidateEntryForReview.id);
+  assert.equal(mappedCandidate?.payload?.processDefinitionId, formalProcessDefinition.id);
+  assert.equal(mappedCandidate?.payload?.processOrigin, 'MASTER');
+
+  const confirmedPackage = await request('confirm the entire submission package once', `/api/sample-tasks/${task.id}/review`, {
+    method: 'POST',
+    body: {
+      submissionId: finalSubmit.body.submission.id,
+      submissionRevision: finalSubmit.body.submission.revision,
+      expectedTaskVersion: task.version,
+      clientMutationId: randomUUID(),
+      decision: 'CONFIRM',
+      comment: '镜像验收：整包一次确认',
+    },
+  });
+  task = confirmedPackage.body.task;
   const reviewedEntry = task.entries.find(entry => entry.id === candidateEntryForReview.id);
   assert.equal(reviewedEntry?.publishedEntityType, 'product_time_draft');
   assert.equal(reviewedEntry?.reviewStatus, 'APPROVED');
+  assert.equal(task.status, 'COMPLETED');
+  assert.equal(task.activeSubmissionId, null);
+  assert.equal(task.acceptedSubmissionId, finalSubmit.body.submission.id);
+  assert.equal(task.acceptedSubmission?.status, 'CONFIRMED');
+  assert.ok(task.archivedAt, 'confirmed package must archive the completed task');
+  assert.equal(task.counts.pendingReview, 0);
+  assert.equal(task.photos.length, 1);
+  assert.equal(task.photos[0]?.reviewStatus, 'PUBLISHED');
 
-  const definitionsAfterReview = await request('review-created process master is now available', '/api/process-definitions');
-  assert.equal(definitionsAfterReview.body.definitions.some(item => item.name === candidateProcessName), true);
+  const definitionsAfterReview = await request('package review did not create an unknown process master', '/api/process-definitions');
+  assert.equal(definitionsAfterReview.body.definitions.some(item => item.name === candidateProcessName), false);
+  assert.equal(definitionsAfterReview.body.definitions.some(item => item.id === formalProcessDefinition.id), true);
+
+  const unarchived = await request('unarchive completed task without reopening review', `/api/sample-tasks/${task.id}`, {
+    method: 'PATCH',
+    body: { action: 'UNARCHIVE', expectedVersion: task.version },
+  });
+  task = unarchived.body.task;
+  assert.equal(task.status, 'COMPLETED');
+  assert.equal(task.archivedAt, null);
+  assert.equal(task.acceptedSubmissionId, finalSubmit.body.submission.id);
+  assert.equal(task.acceptedSubmission?.status, 'CONFIRMED');
+  assert.equal(task.counts.pendingReview, 0);
+
+  const rearchived = await request('rearchive completed task without another review', `/api/sample-tasks/${task.id}`, {
+    method: 'PATCH',
+    body: { action: 'ARCHIVE', expectedVersion: task.version, reason: '镜像验收完成' },
+  });
+  task = rearchived.body.task;
+  assert.ok(task.archivedAt);
+  assert.equal(task.acceptedSubmissionId, finalSubmit.body.submission.id);
+  assert.equal(task.counts.pendingReview, 0);
 
   console.log(JSON.stringify({
     ok: true,
