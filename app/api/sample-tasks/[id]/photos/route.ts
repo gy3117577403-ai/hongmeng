@@ -157,7 +157,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const task = await prisma.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!task) return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
     if (task.status === 'CANCELLED' || task.status === 'COMPLETED') {
-      return NextResponse.json({ ok: false, error: '已完成或已取消任务不能继续上传，请先重新打开任务' }, { status: 409 });
+      return NextResponse.json({ ok: false, error: '已完成或已取消任务仅支持查看历史，不能新增照片' }, { status: 409 });
     }
     const error = validateFileContent(upload.name, upload.type, upload.size, body);
     if (error) return NextResponse.json({ ok: false, error }, { status: 400 });
@@ -177,11 +177,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         return NextResponse.json({ ok: false, error: '该照片上传记录已经删除，请使用新的上传编号' }, { status: 409 });
       }
       const updated = await prisma.sampleTask.findUnique({ where: { id: replay.taskId }, include: sampleTaskInclude });
-      return NextResponse.json({ ok: true, task: updated ? serializeSampleTask(updated) : null, photoId: replay.id });
+      return NextResponse.json({ ok: true, task: updated ? serializeSampleTask(updated) : null, photoId: replay.id, deduplicated: true });
     }
     if (expectedTaskVersion > task.version) return NextResponse.json({ ok: false, error: '样品任务版本无效，请刷新后重试' }, { status: 409 });
     if (task.status === 'SUBMITTED' || task.activeSubmissionId) {
       return NextResponse.json({ ok: false, error: '样品数据已经提交，请先撤回提交再上传照片' }, { status: 409 });
+    }
+    const contentDuplicate = await prisma.samplePhoto.findFirst({
+      where: { taskId: task.id, sha256, deletedAt: null },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, taskId: true },
+    });
+    if (contentDuplicate) {
+      const updated = await prisma.sampleTask.findUnique({ where: { id: contentDuplicate.taskId }, include: sampleTaskInclude });
+      return NextResponse.json({ ok: true, task: updated ? serializeSampleTask(updated) : null, photoId: contentDuplicate.id, deduplicated: true });
     }
     objectKey = `sample-tasks/${task.code}/${datePart()}/sha256-${sha256}-${crypto.randomUUID()}-${safeFilename(upload.name)}`;
     failureStage = 'object-storage';
@@ -212,6 +221,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (existing.deletedAt) throw new Error('SAMPLE_PHOTO_MUTATION_TOMBSTONED');
         return { id: existing.id, duplicate: true };
       }
+      const duplicateContent = await tx.samplePhoto.findFirst({
+        where: { taskId: fresh.id, sha256, deletedAt: null },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true },
+      });
+      if (duplicateContent) return { id: duplicateContent.id, duplicate: true };
       if (linkedEntryId) {
         const linkedEntry = await tx.sampleDataEntry.findFirst({
           where: { id: linkedEntryId, taskId: fresh.id, deletedAt: null },
@@ -270,7 +285,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const updated = photo
       ? await prisma.sampleTask.findUnique({ where: { id: photo.taskId }, include: sampleTaskInclude })
       : null;
-    return NextResponse.json({ ok: true, task: updated ? serializeSampleTask(updated) : null, photoId: photoResult.id }, { status: 201 });
+    return NextResponse.json({ ok: true, task: updated ? serializeSampleTask(updated) : null, photoId: photoResult.id, deduplicated: photoResult.duplicate }, { status: photoResult.duplicate ? 200 : 201 });
   } catch (error) {
     if (objectKey) await deleteObjectsBestEffort([objectKey]);
     if (error instanceof UnauthorizedError) return unauthorized();

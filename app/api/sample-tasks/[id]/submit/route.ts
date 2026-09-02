@@ -182,6 +182,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${params.id}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
       const replay = await tx.sampleSubmission.findUnique({
         where: { taskId_mutationId: { taskId: task.id, mutationId: clientMutationId } },
       });
@@ -190,7 +191,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         return replay.id;
       }
       if (task.version !== expectedVersion) throw new Error('SAMPLE_TASK_CONFLICT');
-      if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
       if (task.status === 'SUBMITTED' || task.activeSubmissionId) throw new Error('SAMPLE_TASK_ALREADY_SUBMITTED');
       const existingPending = await tx.sampleDataEntry.count({ where: { taskId: task.id, deletedAt: null, reviewStatus: 'PENDING' } })
         + await tx.samplePhoto.count({ where: { taskId: task.id, deletedAt: null, reviewStatus: 'PENDING' } });
@@ -227,9 +227,29 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       ]);
       if (draftEntries.length + draftPhotos.length === 0) throw new Error('SAMPLE_EMPTY_SUBMISSION');
 
+      const contentHash = sampleRequestHash({
+        taskId: task.id,
+        drawingLibraryItemId: task.drawingLibraryItemId,
+        sections: sections.map(section => ({ kind: section.kind, payload: section.payload })),
+        entries: draftEntries.map(entry => ({ kind: entry.kind, label: entry.label, payload: entry.payload })),
+        photos: draftPhotos.map(photo => ({
+          sha256: photo.sha256,
+          category: photo.category,
+          caption: photo.caption,
+          linkedEntryId: photo.linkedEntryId,
+          sortOrder: photo.sortOrder,
+        })),
+      });
+      const unchangedSubmission = await tx.sampleSubmission.findFirst({
+        where: { taskId: task.id, contentHash, status: { in: ['REJECTED', 'CONFIRMED', 'REVIEWED'] } },
+        orderBy: [{ revision: 'desc' }, { submittedAt: 'desc' }],
+        select: { id: true },
+      });
+      if (unchangedSubmission) throw new Error('SAMPLE_SUBMISSION_UNCHANGED');
+
       const now = new Date();
       const snapshot = JSON.parse(JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         task: {
           id: task.id,
           code: task.code,
@@ -273,6 +293,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           revision: nextRevision,
           mutationId: clientMutationId,
           requestHash,
+          contentHash,
           status: 'PENDING',
           snapshot,
           submittedById: actor.id,
@@ -347,6 +368,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       if (error.message === 'SAMPLE_STRIPPING_ROW_INCOMPLETE') return NextResponse.json({ ok: false, error: '剥皮参数必须填写型号和至少一个尺寸' }, { status: 400 });
       if (error.message === 'SAMPLE_PROCESS_NOT_FOUND') return NextResponse.json({ ok: false, error: '所选正式工序已停用或不存在，请重新选择' }, { status: 409 });
       if (error.message === 'SAMPLE_PENDING_WITHOUT_SUBMISSION') return NextResponse.json({ ok: false, error: '任务存在未归属提交版本的待审核数据，请联系管理员处理' }, { status: 409 });
+      if (error.message === 'SAMPLE_SUBMISSION_UNCHANGED') return NextResponse.json({ ok: false, error: '资料内容与上一次提交完全相同，请先完成实际修改，不能重复提交相同数据' }, { status: 409 });
       if (error.message === 'SAMPLE_MUTATION_CONFLICT') return NextResponse.json({ ok: false, error: '同一提交编号对应了不同请求，请刷新后重试' }, { status: 409 });
     }
     console.error('submit sample task failed', error);

@@ -4,8 +4,10 @@ import type {
   SampleDataKindDTO,
   SampleDataStatusDTO,
   SamplePhotoCategoryDTO,
+  SamplePackageDecisionDTO,
   SamplePublishModeDTO,
   SampleReviewStatusDTO,
+  SampleSubmissionStatusDTO,
   SampleTaskDTO,
   SampleTaskStatusDTO,
 } from '@/types';
@@ -94,6 +96,27 @@ export const sampleTaskInclude = {
       submittedAt: true,
       withdrawnByName: true,
       withdrawnAt: true,
+      withdrawalReason: true,
+      decision: true,
+      decisionComment: true,
+      decidedByName: true,
+      decidedAt: true,
+    },
+  },
+  acceptedSubmission: {
+    select: {
+      id: true,
+      revision: true,
+      status: true,
+      submittedByName: true,
+      submittedAt: true,
+      withdrawnByName: true,
+      withdrawnAt: true,
+      withdrawalReason: true,
+      decision: true,
+      decisionComment: true,
+      decidedByName: true,
+      decidedAt: true,
     },
   },
 } satisfies Prisma.SampleTaskInclude;
@@ -340,17 +363,25 @@ export function serializeSampleSubmission(submission: {
   withdrawnByName: string | null;
   withdrawnAt: Date | null;
   withdrawalReason: string | null;
+  decision: string | null;
+  decisionComment: string | null;
+  decidedByName: string | null;
+  decidedAt: Date | null;
 }) {
   return {
     id: submission.id,
     taskId: submission.taskId,
     revision: submission.revision,
-    status: submission.status,
+    status: submission.status as SampleSubmissionStatusDTO,
     submittedBy: submission.submittedByName,
     submittedAt: submission.submittedAt.toISOString(),
     withdrawnBy: submission.withdrawnByName,
     withdrawnAt: submission.withdrawnAt?.toISOString() || null,
     withdrawalReason: submission.withdrawalReason,
+    decision: submission.decision as SamplePackageDecisionDTO | null,
+    decisionComment: submission.decisionComment,
+    decidedBy: submission.decidedByName,
+    decidedAt: submission.decidedAt?.toISOString() || null,
   };
 }
 
@@ -433,21 +464,18 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     version: task.version,
     submissionRevision: task.submissionRevision,
     activeSubmissionId: task.activeSubmissionId,
+    acceptedSubmissionId: task.acceptedSubmissionId,
     lastEditedKind: task.lastEditedKind as SampleDraftSectionKind | null,
     lastEditedRowId: task.lastEditedRowId,
-    activeSubmission: task.activeSubmission ? {
-      id: task.activeSubmission.id,
-      revision: task.activeSubmission.revision,
-      status: task.activeSubmission.status,
-      submittedBy: task.activeSubmission.submittedByName,
-      submittedAt: task.activeSubmission.submittedAt.toISOString(),
-      withdrawnBy: task.activeSubmission.withdrawnByName,
-      withdrawnAt: task.activeSubmission.withdrawnAt?.toISOString() || null,
-    } : null,
+    activeSubmission: task.activeSubmission ? serializeSampleSubmission({ ...task.activeSubmission, taskId: task.id }) : null,
+    acceptedSubmission: task.acceptedSubmission ? serializeSampleSubmission({ ...task.acceptedSubmission, taskId: task.id }) : null,
     startedAt: task.startedAt?.toISOString() || null,
     submittedAt: task.submittedAt?.toISOString() || null,
     completedAt: task.completedAt?.toISOString() || null,
     cancelledAt: task.cancelledAt?.toISOString() || null,
+    archivedAt: task.archivedAt?.toISOString() || null,
+    archivedBy: task.archivedByName,
+    archiveReason: task.archiveReason,
     createdBy: task.createdByName,
     updatedBy: task.updatedByName,
     createdAt: task.createdAt.toISOString(),
@@ -514,7 +542,8 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     counts: {
       data: task.entries.length,
       photos: task.photos.length,
-      pendingReview: activeRecords.filter(item => item.reviewStatus === 'PENDING').length,
+      pendingItems: activeRecords.filter(item => item.reviewStatus === 'PENDING').length,
+      pendingReview: task.activeSubmission?.status === 'PENDING' ? 1 : 0,
       changesRequested: activeRecords.filter(item => item.reviewStatus === 'CHANGES_REQUESTED').length,
       published: activeRecords.filter(item => item.reviewStatus === 'PUBLISHED').length,
     },

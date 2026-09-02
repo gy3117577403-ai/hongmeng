@@ -33,13 +33,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ModuleModeDrawer, ModuleModeTrigger, useModuleModeDrawer } from '@/components/layout/ModuleModeDrawer';
 import { writeClipboardText } from '@/lib/client-platform';
-import { hasCapability } from '@/lib/department-access';
 import type {
   CurrentUserDTO,
   SampleDataEntryDTO,
   SamplePhotoCategoryDTO,
   SamplePhotoDTO,
-  SamplePublishModeDTO,
   SampleTaskDTO,
   SampleTeamSummaryDTO,
 } from '@/types';
@@ -84,16 +82,27 @@ type PlanForm = {
   assigneeEmployeeIds: string[];
 };
 
-type ReviewRequest = {
-  itemType: 'entry' | 'photo';
-  itemId: string;
+type ReviewEntryDraft = {
+  id: string;
   expectedVersion: number;
+  kind: SampleDataEntryDTO['kind'];
+  label: string;
+  payload: Record<string, unknown>;
+};
+
+type ReviewPhotoDraft = {
+  id: string;
+  expectedVersion: number;
+  category: SamplePhotoCategoryDTO;
+  caption: string;
+  originalName: string;
+};
+
+type ReviewIssue = {
+  itemType: 'entry' | 'photo' | 'submission';
+  itemId: string;
   title: string;
-  kind?: string;
-  category?: SamplePhotoCategoryDTO;
-  processName?: string;
-  processDefinitionId?: string;
-  processOrigin?: string;
+  message: string;
 };
 
 const emptySummary: SampleTeamSummaryDTO = {
@@ -197,6 +206,22 @@ const payloadLabels: Record<string, string> = {
   remark: '备注',
 };
 
+const visiblePayloadKeys: Record<SampleDataEntryDTO['kind'], readonly string[]> = {
+  PROCESS_TIME: ['processName', 'recommendedSeconds', 'measurements', 'setupSeconds', 'occurrences', 'timeBasis', 'unitLabel', 'remark'],
+  STRIPPING: ['model', 'outerPeelMm', 'innerPeelMm', 'insertionLengthMm', 'positionLabel', 'remark'],
+  MATERIAL: ['name', 'specification', 'length', 'quantity', 'unit', 'tolerance', 'position', 'remark'],
+  NOTICE: ['category', 'severity', 'content', 'processName', 'remark'],
+  CUSTOM: ['value', 'unit', 'remark'],
+};
+
+const editablePayloadKeys: Record<SampleDataEntryDTO['kind'], readonly string[]> = {
+  PROCESS_TIME: ['recommendedSeconds', 'setupSeconds', 'occurrences', 'timeBasis', 'unitLabel', 'remark'],
+  STRIPPING: ['model', 'outerPeelMm', 'innerPeelMm', 'insertionLengthMm', 'positionLabel', 'remark'],
+  MATERIAL: ['name', 'specification', 'length', 'quantity', 'unit', 'tolerance', 'position', 'remark'],
+  NOTICE: ['category', 'severity', 'content', 'processName', 'remark'],
+  CUSTOM: ['value', 'unit', 'remark'],
+};
+
 function dateText(value?: string | null) {
   if (!value) return '未设置';
   const date = new Date(`${value.slice(0, 10)}T00:00:00`);
@@ -230,9 +255,8 @@ function payloadValue(key: string, value: unknown) {
 }
 
 function payloadRows(entry: SampleDataEntryDTO) {
-  return Object.entries(entry.payload)
-    .filter(([key]) => !['processDefinitionId', 'countsForEfficiency', 'isCritical'].includes(key))
-    .map(([key, value]) => ({ key, label: payloadLabels[key] || key, value: payloadValue(key, value) }))
+  return visiblePayloadKeys[entry.kind]
+    .map(key => ({ key, label: payloadLabels[key], value: payloadValue(key, entry.payload[key]) }))
     .filter(item => item.value);
 }
 
@@ -292,14 +316,13 @@ export default function SampleTeamCenter({
   const [productSearch, setProductSearch] = useState('');
   const [qrTask, setQrTask] = useState<SampleTaskDTO | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
-  const [reviewRequest, setReviewRequest] = useState<ReviewRequest | null>(null);
-  const [reviewDecision, setReviewDecision] = useState<'PUBLISH' | 'APPROVE' | 'CHANGES_REQUESTED' | 'VOID'>('PUBLISH');
-  const [reviewMode, setReviewMode] = useState<SamplePublishModeDTO>('APPEND');
+  const [packageDialog, setPackageDialog] = useState<'EDIT' | 'REJECT' | null>(null);
+  const [reviewEntryDrafts, setReviewEntryDrafts] = useState<ReviewEntryDraft[]>([]);
+  const [reviewPhotoDrafts, setReviewPhotoDrafts] = useState<ReviewPhotoDraft[]>([]);
   const [reviewComment, setReviewComment] = useState('');
-  const [reviewCategory, setReviewCategory] = useState<SamplePhotoCategoryDTO>('UNCLASSIFIED');
-  const [reviewProcessBinding, setReviewProcessBinding] = useState('');
-  const [reviewProcessStage, setReviewProcessStage] = useState<'frontend' | 'backend' | 'finish'>('frontend');
+  const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const reviewMutationRef = useRef<{ decision: 'CONFIRM' | 'EDIT' | 'REJECT'; key: string } | null>(null);
   const initialSelectedRef = useRef(false);
   const lastDetailTaskRef = useRef('');
 
@@ -309,8 +332,6 @@ export default function SampleTeamCenter({
     [taskView, tasks, todayKey],
   );
   const selected = visibleTasks.find(task => task.id === selectedId) || visibleTasks[0] || null;
-  const canCreateReviewProcess = user.laborRole === 'ADMIN'
-    || hasCapability(user.access, 'PROCESS', 'EXECUTE_WORKFLOW');
   const activeTasks = useMemo(() => tasks.filter(task => task.status !== 'CANCELLED'), [tasks]);
   const viewCounts = useMemo(() => ({
     ALL: activeTasks.length,
@@ -478,18 +499,27 @@ export default function SampleTeamCenter({
     }
   }
 
-  async function taskAction(task: SampleTaskDTO, action: 'START' | 'COMPLETE' | 'CANCEL' | 'REOPEN') {
+  async function taskAction(task: SampleTaskDTO, action: 'START' | 'COMPLETE' | 'CANCEL' | 'ARCHIVE' | 'UNARCHIVE') {
     if (action === 'CANCEL' && !window.confirm('确认取消这个样品任务？已采集和已发布的数据会保留。')) return;
+    if (action === 'COMPLETE' && !window.confirm('确认将这个没有采集资料的任务直接完成并归档？')) return;
     try {
       const response = await fetch(`/api/sample-tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, expectedVersion: task.version }),
+        body: JSON.stringify({ action, expectedVersion: task.version, ...(action === 'COMPLETE' ? { confirmNoData: true } : {}) }),
       });
       const body = await responseJson(response);
       if (!response.ok) throw new Error(body.error || '任务操作失败');
       replaceTask(body.task as SampleTaskDTO);
-      setMessage(action === 'COMPLETE' ? '样品任务已完成' : action === 'REOPEN' ? '样品任务已重新打开' : action === 'CANCEL' ? '样品任务已取消' : '样品任务已开始');
+      setMessage(action === 'COMPLETE'
+        ? '样品任务已完成并归档'
+        : action === 'CANCEL'
+          ? '样品任务已取消，现已只读'
+          : action === 'ARCHIVE'
+            ? '样品任务已归档，审核结果保持不变'
+            : action === 'UNARCHIVE'
+              ? '已取消归档，任务仍保持完成和审核通过'
+              : '样品任务已开始');
       setRefreshToken(value => value + 1);
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : '任务操作失败');
@@ -516,73 +546,94 @@ export default function SampleTeamCenter({
     }
   }
 
-  function openReview(item: SampleDataEntryDTO | SamplePhotoDTO, itemType: 'entry' | 'photo', decision: typeof reviewDecision) {
-    const entry = itemType === 'entry' ? item as SampleDataEntryDTO : null;
-    const processName = entry?.kind === 'PROCESS_TIME' && typeof entry.payload.processName === 'string'
-      ? entry.payload.processName.trim()
-      : '';
-    const processDefinitionId = entry?.kind === 'PROCESS_TIME' && typeof entry.payload.processDefinitionId === 'string'
-      ? entry.payload.processDefinitionId
-      : '';
-    const processOrigin = entry?.kind === 'PROCESS_TIME' && typeof entry.payload.processOrigin === 'string'
-      ? entry.payload.processOrigin
-      : '';
-    const title = itemType === 'entry'
-      ? `${dataKindLabels[entry!.kind] || '样品数据'} · ${entry!.label || '未命名记录'}`
-      : `${photoCategoryLabels[(item as SamplePhotoDTO).category]} · ${(item as SamplePhotoDTO).caption || (item as SamplePhotoDTO).originalName}`;
-    setReviewRequest({
-      itemType,
-      itemId: item.id,
-      expectedVersion: item.version,
-      title,
-      kind: entry?.kind,
-      category: itemType === 'photo' ? (item as SamplePhotoDTO).category : undefined,
-      processName,
-      processDefinitionId,
-      processOrigin,
-    });
-    setReviewDecision(decision);
-    setReviewMode(decision === 'APPROVE' ? 'RECORD_ONLY' : 'APPEND');
+  function openPackageDialog(next: 'EDIT' | 'REJECT') {
+    if (!selected?.activeSubmission || selected.activeSubmission.status !== 'PENDING') return;
     setReviewComment('');
-    setReviewCategory(itemType === 'photo' ? (item as SamplePhotoDTO).category : 'UNCLASSIFIED');
-    const exactProcess = processName
-      ? context.processes.find(process => process.name.trim().toLocaleLowerCase('zh-CN') === processName.toLocaleLowerCase('zh-CN'))
-      : undefined;
-    setReviewProcessBinding(processDefinitionId || exactProcess?.id || (entry?.kind === 'PROCESS_TIME' && canCreateReviewProcess ? '__create__' : ''));
-    setReviewProcessStage('frontend');
+    setReviewIssues([]);
+    reviewMutationRef.current = null;
+    if (next === 'EDIT') {
+      const revision = selected.activeSubmission.revision;
+      setReviewEntryDrafts(selected.entries
+        .filter(entry => entry.submissionRevision === revision && entry.reviewStatus === 'PENDING')
+        .map(entry => ({ id: entry.id, expectedVersion: entry.version, kind: entry.kind, label: entry.label || '', payload: { ...entry.payload } })));
+      setReviewPhotoDrafts(selected.photos
+        .filter(photo => photo.submissionRevision === revision && photo.reviewStatus === 'PENDING')
+        .map(photo => ({ id: photo.id, expectedVersion: photo.version, category: photo.category, caption: photo.caption || '', originalName: photo.originalName })));
+    }
+    setPackageDialog(next);
   }
 
-  async function saveReview() {
-    if (!selected || !reviewRequest) return;
+  function updateReviewEntry(id: string, patch: Partial<Pick<ReviewEntryDraft, 'label' | 'payload'>>) {
+    setReviewEntryDrafts(current => current.map(entry => entry.id === id ? { ...entry, ...patch } : entry));
+  }
+
+  function updateReviewEntryPayload(id: string, key: string, value: unknown) {
+    setReviewEntryDrafts(current => current.map(entry => entry.id === id
+      ? { ...entry, payload: { ...entry.payload, [key]: value } }
+      : entry));
+  }
+
+  function updateReviewPhoto(id: string, patch: Partial<Pick<ReviewPhotoDraft, 'category' | 'caption'>>) {
+    setReviewPhotoDrafts(current => current.map(photo => photo.id === id ? { ...photo, ...patch } : photo));
+  }
+
+  function reviewMutationKey(decision: 'CONFIRM' | 'EDIT' | 'REJECT') {
+    if (reviewMutationRef.current?.decision === decision) return reviewMutationRef.current.key;
+    const key = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `sample-review-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    reviewMutationRef.current = { decision, key };
+    return key;
+  }
+
+  async function savePackageReview(decision: 'CONFIRM' | 'EDIT' | 'REJECT') {
+    if (!selected?.activeSubmission || selected.activeSubmission.status !== 'PENDING') {
+      setMessage('当前没有可审核的提交包');
+      return;
+    }
+    if (decision === 'CONFIRM' && !window.confirm(`确认一次通过 ${selected.specification} 的本次全部资料？确认后任务会完成并归档。`)) return;
+    if (decision === 'REJECT' && reviewComment.trim().length < 2) {
+      setMessage('整包驳回必须填写明确原因');
+      return;
+    }
     setReviewSaving(true);
     try {
       const response = await fetch(`/api/sample-tasks/${selected.id}/review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          itemType: reviewRequest.itemType,
-          itemId: reviewRequest.itemId,
-          expectedVersion: reviewRequest.expectedVersion,
+          submissionId: selected.activeSubmission.id,
+          submissionRevision: selected.activeSubmission.revision,
           expectedTaskVersion: selected.version,
-          decision: reviewDecision,
-          publishMode: reviewDecision === 'APPROVE' ? 'RECORD_ONLY' : reviewMode,
+          clientMutationId: reviewMutationKey(decision),
+          decision,
           comment: reviewComment,
-          category: reviewCategory,
-          processDefinitionId: reviewProcessBinding && reviewProcessBinding !== '__create__' ? reviewProcessBinding : undefined,
-          createProcessDefinition: reviewProcessBinding === '__create__',
-          processStageGroup: reviewProcessStage,
+          ...(decision === 'EDIT' ? {
+            edits: {
+              entries: reviewEntryDrafts.map(entry => ({ id: entry.id, expectedVersion: entry.expectedVersion, label: entry.label, payload: entry.payload })),
+              photos: reviewPhotoDrafts.map(photo => ({ id: photo.id, expectedVersion: photo.expectedVersion, category: photo.category, caption: photo.caption })),
+            },
+          } : {}),
         }),
       });
       const body = await responseJson(response);
-      if (!response.ok) throw new Error(body.error || '审核失败');
+      if (!response.ok) {
+        setReviewIssues(Array.isArray(body.issues) ? body.issues as ReviewIssue[] : []);
+        throw new Error(body.error || '整包审核失败');
+      }
+      reviewMutationRef.current = null;
       replaceTask(body.task as SampleTaskDTO);
-      setReviewRequest(null);
-      setMessage(reviewDecision === 'PUBLISH'
-        ? reviewRequest.kind === 'PROCESS_TIME' ? '已通过审核并同步到产品工时草稿' : '已通过审核并发布到产品资料'
-        : reviewDecision === 'APPROVE' ? '已通过审核并保留为样品记录' : reviewDecision === 'VOID' ? '记录已作废' : '已退回修改');
+      setPackageDialog(null);
+      setReviewIssues([]);
+      setReviewComment('');
+      setMessage(decision === 'CONFIRM'
+        ? '本次提交已整包确认，任务完成并归档'
+        : decision === 'REJECT'
+          ? '本次提交已整包驳回，可修改后重新提交'
+          : '审核页修改已保存，仍等待整包确认');
       setRefreshToken(value => value + 1);
     } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : '审核失败');
+      setMessage(reason instanceof Error ? reason.message : '整包审核失败');
     } finally {
       setReviewSaving(false);
     }
@@ -598,7 +649,6 @@ export default function SampleTeamCenter({
       <header><span>{dataKindLabels[entry.kind] || entry.kind}</span><strong>{entry.label || '未命名记录'}</strong><em>{reviewStatusLabels[entry.reviewStatus]}</em></header>
       {!!payloadRows(entry).length && <dl>{payloadRows(entry).map(row => <div key={row.key}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>}
       <footer><span>{entry.updatedBy || entry.createdBy || '未记录'} · {dateTimeText(entry.updatedAt)}</span>{entry.reviewComment && <p>审核意见：{entry.reviewComment}</p>}</footer>
-      {mode === 'planning' && entry.reviewStatus === 'PENDING' && <div className="sample-review-actions"><button className="primary" type="button" onClick={() => openReview(entry, 'entry', 'PUBLISH')}>{entry.kind === 'PROCESS_TIME' ? '通过并同步草稿' : '通过并发布'}</button><button type="button" onClick={() => openReview(entry, 'entry', 'APPROVE')}>通过留档</button><button type="button" onClick={() => openReview(entry, 'entry', 'CHANGES_REQUESTED')}>退回</button><button className="danger" type="button" onClick={() => openReview(entry, 'entry', 'VOID')}>作废</button></div>}
       {entry.kind === 'PROCESS_TIME' && entry.publishedEntityType === 'product_time_draft' && selected && <Link className="sample-published-link" href={`/workspace/product-times?itemId=${encodeURIComponent(selected.drawingLibraryItemId)}`} prefetch={false}><Clock3 size={13} />已同步产品工时草稿，进入影响预览后正式发布</Link>}
     </article>;
   }
@@ -607,13 +657,14 @@ export default function SampleTeamCenter({
     return <article className={`review-${photo.reviewStatus.toLowerCase()}`} key={photo.id}>
       <a href={photo.contentUrl} target="_blank" rel="noreferrer"><Image unoptimized priority={photoIndex === 0} width={220} height={132} src={photo.contentUrl} alt={photo.caption || photo.originalName} /></a>
       <div><header><strong>{photoCategoryLabels[photo.category]}</strong><em>{reviewStatusLabels[photo.reviewStatus]}</em></header><p>{photo.caption || photo.originalName}</p><small>{photo.uploadedBy || '未记录'} · {dateTimeText(photo.createdAt)}</small>{photo.reviewComment && <span>审核意见：{photo.reviewComment}</span>}</div>
-      {mode === 'planning' && photo.reviewStatus === 'PENDING' && <footer><button className="primary" type="button" onClick={() => openReview(photo, 'photo', 'PUBLISH')}>通过并发布</button><button type="button" onClick={() => openReview(photo, 'photo', 'APPROVE')}>通过留档</button><button type="button" onClick={() => openReview(photo, 'photo', 'CHANGES_REQUESTED')}>退回</button><button className="danger" type="button" onClick={() => openReview(photo, 'photo', 'VOID')}>作废</button></footer>}
     </article>;
   }
 
-  const pendingEntries = selected?.entries.filter(entry => entry.reviewStatus === 'PENDING') || [];
-  const pendingPhotos = selected?.photos.filter(photo => photo.reviewStatus === 'PENDING') || [];
-  const publishedEntries = selected?.entries.filter(entry => entry.reviewStatus === 'PUBLISHED' && (mode !== 'materials' || entry.kind === 'MATERIAL')) || [];
+  const terminalTask = selected?.status === 'COMPLETED' || selected?.status === 'CANCELLED';
+  const activeSubmissionRevision = selected?.activeSubmission?.status === 'PENDING' ? selected.activeSubmission.revision : null;
+  const pendingEntries = selected?.entries.filter(entry => entry.reviewStatus === 'PENDING' && entry.submissionRevision === activeSubmissionRevision) || [];
+  const pendingPhotos = selected?.photos.filter(photo => photo.reviewStatus === 'PENDING' && photo.submissionRevision === activeSubmissionRevision) || [];
+  const publishedEntries = selected?.entries.filter(entry => ['APPROVED', 'PUBLISHED'].includes(entry.reviewStatus) && (mode !== 'materials' || entry.kind === 'MATERIAL')) || [];
   const publishedPhotos = selected?.photos.filter(photo => photo.reviewStatus === 'PUBLISHED') || [];
   const materialEntries = selected?.entries.filter(entry => entry.kind === 'MATERIAL') || [];
   const publishedCount = publishedEntries.length + publishedPhotos.length;
@@ -632,8 +683,8 @@ export default function SampleTeamCenter({
     { key: 'OVERDUE' as const, label: '已经逾期', count: viewCounts.OVERDUE, icon: <Clock3 size={15} />, danger: true },
     { key: 'PLANNED' as const, label: '待开始', count: viewCounts.PLANNED, icon: <CircleDot size={15} /> },
     { key: 'IN_PROGRESS' as const, label: '采集中', count: viewCounts.IN_PROGRESS, icon: <Camera size={15} /> },
-    { key: 'PENDING_REVIEW' as const, label: '待审核', count: viewCounts.PENDING_REVIEW, icon: <ClipboardCheck size={15} />, unit: '项', attention: true },
-    { key: 'COMPLETED' as const, label: '已归档', count: viewCounts.COMPLETED, icon: <CheckCircle2 size={15} /> },
+    { key: 'PENDING_REVIEW' as const, label: '待整包审核', count: viewCounts.PENDING_REVIEW, icon: <ClipboardCheck size={15} />, unit: '单', attention: true },
+    { key: 'COMPLETED' as const, label: '已完成', count: viewCounts.COMPLETED, icon: <CheckCircle2 size={15} /> },
     { key: 'CANCELLED' as const, label: '已取消', count: viewCounts.CANCELLED, icon: <X size={15} />, quiet: true },
   ];
   const detailTabs: Array<{ key: DetailTab; label: string; count?: number; attention?: boolean }> = !selected ? [] : mode === 'materials' ? [
@@ -645,15 +696,15 @@ export default function SampleTeamCenter({
     { key: 'overview' as const, label: '任务概览' },
     { key: 'data' as const, label: '采集数据', count: selected.entries.length },
     { key: 'photos' as const, label: '过程照片', count: selected.photos.length },
-    { key: 'review' as const, label: '待审核', count: selected.counts.pendingReview, attention: true },
-    { key: 'published' as const, label: '已发布', count: publishedCount },
+    { key: 'review' as const, label: '整包审核', count: selected.counts.pendingReview, attention: true },
+    { key: 'published' as const, label: '已处理', count: publishedCount },
   ];
   const moduleConfig = mode === 'planning' ? {
     activeHref: '/weekly-plan-center',
     subtitle: '样品任务下达与数据审核',
     eyebrow: '计划中心 / 样品组',
     title: '样品组计划',
-    description: '下达任务、逐项审核并受控沉淀产品资料',
+    description: '下达任务、整包审核并受控沉淀产品资料',
     moduleLabel: '计划中心',
     drawerId: 'sample-planning-mode-drawer',
     massHref: '/weekly-plan-center',
@@ -748,7 +799,7 @@ export default function SampleTeamCenter({
         {error && <div className="sample-team-error"><AlertTriangle size={18} /><span>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 
         {loading && !tasks.length ? <section className="sample-team-loading"><Loader2 className="spin" size={28} /><strong>正在加载样品任务</strong></section>
-          : !tasks.length && !debouncedKeyword ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'planning' ? '从第一条样品任务开始' : mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '建立任务与产品关联后，员工即可扫码填写数据和拍照；所有采集项都可留空。' : mode === 'materials' ? '计划中心下达样品任务后，可在这里选填辅料数据与上传照片；不会扣减库存。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />资料必须逐项审核后才会进入正式产品资料</div></section>
+          : !tasks.length && !debouncedKeyword ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'planning' ? '从第一条样品任务开始' : mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '建立任务与产品关联后，员工即可扫码填写数据和拍照；所有采集项都可留空。' : mode === 'materials' ? '计划中心下达样品任务后，可在这里选填辅料数据与上传照片；不会扣减库存。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />每个产品的本次提交只做一次整包审核</div></section>
             : !tasks.length || !visibleTasks.length ? <section className="sample-filter-empty"><span className="sample-empty-icon"><Search size={30} /></span><h2>没有符合条件的样品任务</h2><p>调整搜索内容或任务状态后再查看。</p><button type="button" onClick={() => { setKeyword(''); setTaskView('ALL'); }}>清除筛选</button></section>
               : <section className="sample-team-workspace">
           <aside className="sample-task-list" aria-label="样品任务列表">
@@ -762,7 +813,7 @@ export default function SampleTeamCenter({
                   <h3 title={task.specification}>{task.specification}</h3>
                   <p>{task.productName || '未设置品名'}</p>
                   <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{dateText(task.dueDate)}</span><span><UserRound size={12} />{task.assignees.map(item => item.name).join('、') || '未指派'}</span></div>
-                  <footer><span><FileText size={12} />数据 {task.counts.data}</span><span><ImageIcon size={12} />照片 {task.counts.photos}</span>{task.counts.pendingReview > 0 && <b>待审 {task.counts.pendingReview}</b>}</footer>
+                  <footer><span><FileText size={12} />数据 {task.counts.data}</span><span><ImageIcon size={12} />照片 {task.counts.photos}</span>{task.counts.pendingReview > 0 && <b>待审 1 包</b>}{task.status === 'COMPLETED' && <span>{task.archivedAt ? '已归档' : '未归档'}</span>}</footer>
                 </button>;
               })}
             </div>
@@ -773,11 +824,11 @@ export default function SampleTeamCenter({
               <header className="sample-detail-head">
                 <div><div className="sample-detail-identity"><span style={{ background: selected.customerLevelColor || '#cbd5e1' }}>{taskLevelText(selected)}</span><small>{selected.code}</small></div><h2>{selected.specification}</h2><p>{selected.customerName} · {selected.productName || '未设置品名'}{selected.sourceOrderNo ? ` · 来源 ${selected.sourceOrderNo}` : ''}</p></div>
                 <div className="sample-detail-actions">
-                  <button type="button" onClick={() => void openQr(selected)}><QrCode size={15} />二维码</button>
-                  {mode === 'planning' && selected.status !== 'CANCELLED' && <button type="button" onClick={() => openEdit(selected)}><Pencil size={15} />编辑计划</button>}
+                  {!terminalTask && <button type="button" onClick={() => void openQr(selected)}><QrCode size={15} />二维码</button>}
+                  {mode === 'planning' && !terminalTask && <button type="button" onClick={() => openEdit(selected)}><Pencil size={15} />编辑计划</button>}
                   {mode !== 'materials' && selected.status === 'PLANNED' && <button className="primary" type="button" onClick={() => void taskAction(selected, 'START')}>开始任务</button>}
-                  {mode !== 'materials' && (selected.status === 'IN_PROGRESS' || selected.status === 'SUBMITTED') && <button className="primary" type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>完成样品</button>}
-                  {mode !== 'materials' && (selected.status === 'COMPLETED' || selected.status === 'CANCELLED') && <button type="button" onClick={() => void taskAction(selected, 'REOPEN')}>重新打开</button>}
+                  {mode !== 'materials' && selected.status === 'IN_PROGRESS' && selected.counts.data + selected.counts.photos === 0 && <button type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>无资料完成</button>}
+                  {mode === 'planning' && selected.status === 'COMPLETED' && <button type="button" onClick={() => void taskAction(selected, selected.archivedAt ? 'UNARCHIVE' : 'ARCHIVE')}>{selected.archivedAt ? '取消归档' : '归档'}</button>}
                 </div>
               </header>
 
@@ -790,22 +841,34 @@ export default function SampleTeamCenter({
                     <div><span>任务状态</span><strong>{taskStatusLabels[selected.status]}</strong><small>{dataStatusLabels[selected.dataStatus]}</small></div>
                     <div><span>计划日期</span><strong>{dateText(selected.dueDate)}</strong><small>{selected.sampleQuantity === null ? '数量未设置' : `${selected.sampleQuantity} 件/套`}</small></div>
                     <div><span>样品成员</span><strong>{selected.assignees.length || 0} 人</strong><small>{selected.assignees.map(item => item.name).join('、') || '尚未指派'}</small></div>
-                    <div><span>本次采集</span><strong>{selected.counts.data} 条 · {selected.counts.photos} 图</strong><small>待审核 {selected.counts.pendingReview} 项</small></div>
+                    <div><span>本次采集</span><strong>{selected.counts.data} 条 · {selected.counts.photos} 图</strong><small>{selected.counts.pendingReview ? `待审核 1 包 · ${selected.counts.pendingItems} 项内容` : selected.archivedAt ? '已完成并归档' : '没有待审核提交包'}</small></div>
                   </section>
+                  {terminalTask && <div className={`sample-terminal-banner ${selected.status.toLowerCase()}`}><CheckCircle2 size={18} /><span><strong>{selected.status === 'CANCELLED' ? '任务已取消，所有入口均为只读' : selected.archivedAt ? '任务已完成并归档' : '任务已完成，当前未归档'}</strong><small>{selected.status === 'CANCELLED' ? '不会再显示新增、删除、采集、上传、重新打开或审核操作。' : '归档或取消归档只改变整理状态，不会撤销审核结果，也不需要重新审核。'}</small></span></div>}
                   {selected.planRemark && <div className="sample-plan-remark"><strong>计划说明</strong><p>{selected.planRemark}</p></div>}
-                  <section className="sample-capture-callout"><div><Camera size={22} /><span><strong>{mode === 'materials' ? '补充辅料数据与样品照片' : '扫码填写数据与拍照'}</strong><small>{mode === 'materials' ? '全部选填；仅沉淀样品资料，不扣库存、不生成正式领料。' : '所有采集项均为选填；空白不判缺项，也无需说明原因。'}</small></span></div><div><Link className="primary" href={selected.captureUrl} prefetch={false}>打开采集页<ArrowRight size={15} /></Link><button type="button" onClick={() => void copyCaptureLink(selected)}><Copy size={15} />复制链接</button></div></section>
-                  {mode === 'materials' ? <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('materials')}><span><PackageCheck size={18} /></span><div><small>辅料数据</small><strong>{materialEntries.length} 条</strong><em>查看波纹管、热缩管等选填记录</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('published')}><span><FolderKanban size={18} /></span><div><small>正式产品资料</small><strong>{publishedCount} 项</strong><em>仅展示审核发布后的记录</em></div><ArrowRight size={16} /></button></div> : <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('data')}><span><FileText size={18} /></span><div><small>采集数据</small><strong>{selected.entries.length} 条</strong><em>查看记录与审核状态</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button className={selected.counts.pendingReview ? 'attention' : ''} type="button" onClick={() => setDetailTab('review')}><span><ClipboardCheck size={18} /></span><div><small>逐项审核</small><strong>{selected.counts.pendingReview} 项</strong><em>{selected.counts.pendingReview ? '需要管理员处理' : '当前没有待审核项'}</em></div><ArrowRight size={16} /></button></div>}
+                  {!terminalTask && <section className="sample-capture-callout"><div><Camera size={22} /><span><strong>{mode === 'materials' ? '补充辅料数据与样品照片' : '扫码填写数据与拍照'}</strong><small>{mode === 'materials' ? '全部选填；仅沉淀样品资料，不扣库存、不生成正式领料。' : '所有采集项均为选填；空白不判缺项，也无需说明原因。'}</small></span></div><div><Link className="primary" href={selected.captureUrl} prefetch={false}>打开采集页<ArrowRight size={15} /></Link><button type="button" onClick={() => void copyCaptureLink(selected)}><Copy size={15} />复制链接</button></div></section>}
+                  {mode === 'materials' ? <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('materials')}><span><PackageCheck size={18} /></span><div><small>辅料数据</small><strong>{materialEntries.length} 条</strong><em>查看波纹管、热缩管等选填记录</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('published')}><span><FolderKanban size={18} /></span><div><small>正式产品资料</small><strong>{publishedCount} 项</strong><em>仅展示审核发布后的记录</em></div><ArrowRight size={16} /></button></div> : <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('data')}><span><FileText size={18} /></span><div><small>采集数据</small><strong>{selected.entries.length} 条</strong><em>查看记录与审核状态</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button className={selected.counts.pendingReview ? 'attention' : ''} type="button" onClick={() => setDetailTab('review')}><span><ClipboardCheck size={18} /></span><div><small>整包审核</small><strong>{selected.counts.pendingReview ? '1 包' : '0 包'}</strong><em>{selected.counts.pendingReview ? `${selected.counts.pendingItems} 项内容一次确认` : '当前没有待审核提交包'}</em></div><ArrowRight size={16} /></button></div>}
                 </section>}
 
-                {detailTab === 'data' && <section className="sample-record-panel sample-tab-panel"><header><div><FileText size={17} /><span><strong>采集数据</strong><small>{selected.entries.length} 条记录，全部字段均可留空</small></span></div><Link href={selected.captureUrl} prefetch={false}>继续采集</Link></header><div className="sample-record-list" tabIndex={0}>{selected.entries.map(renderDataRecord)}{!selected.entries.length && <div className="sample-record-empty"><FileText size={25} /><strong>本次尚未采集数据</strong><p>这不是缺项，任务仍可提交或完成。</p></div>}</div></section>}
+                {detailTab === 'data' && <section className="sample-record-panel sample-tab-panel"><header><div><FileText size={17} /><span><strong>采集数据</strong><small>{selected.entries.length} 条记录，仅显示业务字段</small></span></div>{!terminalTask && <Link href={selected.captureUrl} prefetch={false}>继续采集</Link>}</header><div className="sample-record-list" tabIndex={0}>{selected.entries.map(renderDataRecord)}{!selected.entries.length && <div className="sample-record-empty"><FileText size={25} /><strong>本次尚未采集数据</strong><p>这不是缺项，任务仍可提交或完成。</p></div>}</div></section>}
 
-                {detailTab === 'materials' && <section className="sample-record-panel sample-tab-panel"><header><div><PackageCheck size={17} /><span><strong>样品辅料数据</strong><small>{materialEntries.length} 条记录；全部选填，不关联库存扣减</small></span></div><Link href={selected.captureUrl} prefetch={false}>补充资料</Link></header><div className="sample-record-list" tabIndex={0}>{materialEntries.map(renderDataRecord)}{!materialEntries.length && <div className="sample-record-empty"><PackageCheck size={25} /><strong>本次尚未记录辅料数据</strong><p>可按实际需要记录波纹管、热缩管、套管等，不要求填写原因。</p></div>}</div></section>}
+                {detailTab === 'materials' && <section className="sample-record-panel sample-tab-panel"><header><div><PackageCheck size={17} /><span><strong>样品辅料数据</strong><small>{materialEntries.length} 条记录；全部选填，不关联库存扣减</small></span></div>{!terminalTask && <Link href={selected.captureUrl} prefetch={false}>补充资料</Link>}</header><div className="sample-record-list" tabIndex={0}>{materialEntries.map(renderDataRecord)}{!materialEntries.length && <div className="sample-record-empty"><PackageCheck size={25} /><strong>本次尚未记录辅料数据</strong><p>可按实际需要记录波纹管、热缩管、套管等，不要求填写原因。</p></div>}</div></section>}
 
-                {detailTab === 'photos' && <section className="sample-record-panel sample-tab-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>过程与成品照片</strong><small>{selected.photos.length} 张照片</small></span></div><Link href={selected.captureUrl} prefetch={false}>继续拍照</Link></header><div className="sample-photo-grid" tabIndex={0}>{selected.photos.map(renderPhotoRecord)}{!selected.photos.length && <div className="sample-record-empty"><ImageIcon size={25} /><strong>本次尚未上传照片</strong><p>照片同样不设必选项。</p></div>}</div></section>}
+                {detailTab === 'photos' && <section className="sample-record-panel sample-tab-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>过程与成品照片</strong><small>{selected.photos.length} 张照片</small></span></div>{!terminalTask && <Link href={selected.captureUrl} prefetch={false}>继续拍照</Link>}</header><div className="sample-photo-grid" tabIndex={0}>{selected.photos.map(renderPhotoRecord)}{!selected.photos.length && <div className="sample-record-empty"><ImageIcon size={25} /><strong>本次尚未上传照片</strong><p>照片同样不设必选项。</p></div>}</div></section>}
 
-                {detailTab === 'review' && (!pendingEntries.length && !pendingPhotos.length ? <div className="sample-record-empty sample-tab-empty"><CheckCircle2 size={30} /><strong>当前没有待审核项</strong><p>员工新提交的数据或照片会集中显示在这里。</p></div> : <div className="sample-review-workspace"><section className="sample-record-panel"><header><div><FileText size={17} /><span><strong>待审核数据</strong><small>{pendingEntries.length} 项</small></span></div></header><div className="sample-record-list">{pendingEntries.map(renderDataRecord)}{!pendingEntries.length && <div className="sample-record-empty"><strong>没有待审核数据</strong></div>}</div></section><section className="sample-record-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>待审核照片</strong><small>{pendingPhotos.length} 项</small></span></div></header><div className="sample-photo-grid sample-review-photo-grid">{pendingPhotos.map(renderPhotoRecord)}{!pendingPhotos.length && <div className="sample-record-empty"><strong>没有待审核照片</strong></div>}</div></section></div>)}
+                {detailTab === 'review' && (!selected.activeSubmission || selected.activeSubmission.status !== 'PENDING' ? <div className="sample-record-empty sample-tab-empty"><CheckCircle2 size={30} /><strong>当前没有待审核提交包</strong><p>每个产品每次提交只形成一个审核包，不再逐条确认。</p></div> : <section className="sample-package-review">
+                  <header className="sample-package-review-head">
+                    <div><ClipboardCheck size={20} /><span><small>提交版本 R{selected.activeSubmission.revision}</small><strong>{selected.specification}</strong><em>{pendingEntries.length} 条数据 · {pendingPhotos.length} 张照片</em></span></div>
+                    <p>审核动作只作用于当前产品的本次提交；确认、编辑或驳回均按整包留痕。</p>
+                  </header>
+                  {!!reviewIssues.length && <div className="sample-package-issues" role="alert"><AlertTriangle size={18} /><div><strong>确认前还有 {reviewIssues.length} 个阻断项</strong>{reviewIssues.map(issue => <p key={`${issue.itemType}:${issue.itemId}:${issue.message}`}><b>{issue.title}</b><span>{issue.message}</span></p>)}</div></div>}
+                  <div className="sample-review-workspace">
+                    <section className="sample-record-panel"><header><div><FileText size={17} /><span><strong>本包采集数据</strong><small>{pendingEntries.length} 项</small></span></div></header><div className="sample-record-list">{pendingEntries.map(renderDataRecord)}{!pendingEntries.length && <div className="sample-record-empty"><strong>本包没有数据记录</strong></div>}</div></section>
+                    <section className="sample-record-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>本包照片</strong><small>{pendingPhotos.length} 项</small></span></div></header><div className="sample-photo-grid sample-review-photo-grid">{pendingPhotos.map(renderPhotoRecord)}{!pendingPhotos.length && <div className="sample-record-empty"><strong>本包没有照片</strong></div>}</div></section>
+                  </div>
+                  {mode === 'planning' && <footer className="sample-package-review-actions"><span><Info size={15} />确认时整包事务处理；任一阻断项都会全部回滚。</span><div><button type="button" disabled={reviewSaving} onClick={() => openPackageDialog('EDIT')}><Pencil size={15} />编辑资料</button><button className="danger" type="button" disabled={reviewSaving} onClick={() => openPackageDialog('REJECT')}><X size={15} />整包驳回</button><button className="primary" type="button" disabled={reviewSaving} onClick={() => void savePackageReview('CONFIRM')}>{reviewSaving ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}确认通过</button></div></footer>}
+                </section>)}
 
-                {detailTab === 'published' && (!publishedEntries.length && !publishedPhotos.length ? <div className="sample-record-empty sample-tab-empty"><FolderKanban size={30} /><strong>本任务还没有正式发布资料</strong><p>通过并发布的数据和照片会在这里集中展示。</p></div> : <div className="sample-review-workspace"><section className="sample-record-panel"><header><div><FileText size={17} /><span><strong>已发布数据</strong><small>{publishedEntries.length} 项</small></span></div></header><div className="sample-record-list">{publishedEntries.map(renderDataRecord)}{!publishedEntries.length && <div className="sample-record-empty"><strong>没有已发布数据</strong></div>}</div></section><section className="sample-record-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>已发布照片</strong><small>{publishedPhotos.length} 项</small></span></div></header><div className="sample-photo-grid sample-review-photo-grid">{publishedPhotos.map(renderPhotoRecord)}{!publishedPhotos.length && <div className="sample-record-empty"><strong>没有已发布照片</strong></div>}</div></section></div>)}
+                {detailTab === 'published' && (!publishedEntries.length && !publishedPhotos.length ? <div className="sample-record-empty sample-tab-empty"><FolderKanban size={30} /><strong>本任务还没有审核处理资料</strong><p>整包确认后的留档、工时草稿、正式数据和照片会在这里集中展示。</p></div> : <div className="sample-review-workspace"><section className="sample-record-panel"><header><div><FileText size={17} /><span><strong>已处理数据</strong><small>{publishedEntries.length} 项</small></span></div></header><div className="sample-record-list">{publishedEntries.map(renderDataRecord)}{!publishedEntries.length && <div className="sample-record-empty"><strong>没有已处理数据</strong></div>}</div></section><section className="sample-record-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>已发布照片</strong><small>{publishedPhotos.length} 项</small></span></div></header><div className="sample-photo-grid sample-review-photo-grid">{publishedPhotos.map(renderPhotoRecord)}{!publishedPhotos.length && <div className="sample-record-empty"><strong>没有已发布照片</strong></div>}</div></section></div>)}
               </div>
 
               <footer className="sample-detail-footer">
@@ -874,30 +937,32 @@ export default function SampleTeamCenter({
         </section>
       </div>}
 
-      {reviewRequest && <div className="sample-modal-backdrop" role="presentation">
-        <section className="sample-review-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-review-title">
-          <header><div><span>分项审核</span><h2 id="sample-review-title">{reviewRequest.title}</h2></div><button type="button" aria-label="关闭" onClick={() => { if (!reviewSaving) setReviewRequest(null); }}><X /></button></header>
-          <div className="sample-review-dialog-body">
-            <div className="sample-review-decisions">
-              <button className={reviewDecision === 'PUBLISH' ? 'active' : ''} type="button" onClick={() => setReviewDecision('PUBLISH')}>通过并同步</button>
-              <button className={reviewDecision === 'APPROVE' ? 'active' : ''} type="button" onClick={() => setReviewDecision('APPROVE')}>通过留档</button>
-              <button className={reviewDecision === 'CHANGES_REQUESTED' ? 'active' : ''} type="button" onClick={() => setReviewDecision('CHANGES_REQUESTED')}>退回修改</button>
-              <button className={reviewDecision === 'VOID' ? 'active danger' : 'danger'} type="button" onClick={() => setReviewDecision('VOID')}>作废记录</button>
-            </div>
-            {reviewDecision === 'PUBLISH' && reviewRequest.itemType === 'entry' && <label><span>发布方式</span><select value={reviewMode} onChange={event => setReviewMode(event.target.value as SamplePublishModeDTO)}><option value="APPEND">追加为新记录</option><option value="REPLACE_MATCHING">替换同名/同部位当前记录</option></select></label>}
-            {reviewDecision === 'PUBLISH' && reviewRequest.itemType === 'photo' && <label><span>照片分类</span><select value={reviewCategory} onChange={event => setReviewCategory(event.target.value as SamplePhotoCategoryDTO)}>{Object.entries(photoCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
-            {reviewRequest.kind === 'PROCESS_TIME' && reviewDecision === 'PUBLISH' && <>
-              <label><span>正式工序归属</span><select value={reviewProcessBinding} onChange={event => setReviewProcessBinding(event.target.value)}>
-                <option value="">请选择已有正式工序</option>
-                {context.processes.map(process => <option key={process.id} value={process.id}>{process.name}{process.code ? ` · ${process.code}` : ''}</option>)}
-                {canCreateReviewProcess && reviewRequest.processOrigin !== 'MASTER' && reviewRequest.processName && <option value="__create__">新增“{reviewRequest.processName}”为正式工序</option>}
-              </select><small>{reviewRequest.processOrigin === 'MASTER' ? '已关联正式工序；如需纠正可重新选择。' : '候选名称不会直接污染工序库，必须在这里映射或由工艺管理员受控新增。'}</small></label>
-              {reviewProcessBinding === '__create__' && <label><span>新工序所属阶段</span><select value={reviewProcessStage} onChange={event => setReviewProcessStage(event.target.value as typeof reviewProcessStage)}><option value="frontend">前段</option><option value="backend">后段</option><option value="finish">收尾</option></select></label>}
-              <div className="sample-review-note"><AlertTriangle size={17} /><span><strong>先同步到受控产品工时草稿</strong><small>仍需在产品工序与工时页面预览关联工单影响后正式发布，避免绕过现有生产安全门禁。</small></span></div>
+      {packageDialog && selected?.activeSubmission && <div className="sample-modal-backdrop" role="presentation">
+        <section className="sample-review-dialog sample-package-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-review-title">
+          <header><div><span>{packageDialog === 'EDIT' ? '审核页编辑' : '整包驳回'}</span><h2 id="sample-review-title">{selected.specification} · R{selected.activeSubmission.revision}</h2></div><button type="button" aria-label="关闭" onClick={() => { if (!reviewSaving) setPackageDialog(null); }}><X /></button></header>
+          <div className="sample-review-dialog-body hm-scroll-region" tabIndex={0}>
+            {packageDialog === 'EDIT' ? <>
+              <div className="sample-review-note"><Info size={17} /><span><strong>只修改本次提交包</strong><small>不新增或删除记录；保存后仍停留在待审核状态，再点击“确认通过”统一处理。</small></span></div>
+              <section className="sample-package-edit-section"><header><strong>采集数据</strong><small>{reviewEntryDrafts.length} 条</small></header>
+                {reviewEntryDrafts.map((entry, index) => <article className="sample-package-entry-editor" key={entry.id}>
+                  <header><span>{String(index + 1).padStart(2, '0')}</span><strong>{dataKindLabels[entry.kind]}</strong></header>
+                  <label><span>记录名称</span><input value={entry.label} onChange={event => updateReviewEntry(entry.id, { label: event.target.value })} /></label>
+                  {entry.kind === 'PROCESS_TIME' && <label><span>正式工序</span><select value={typeof entry.payload.processDefinitionId === 'string' ? entry.payload.processDefinitionId : ''} onChange={event => updateReviewEntryPayload(entry.id, 'processDefinitionId', event.target.value)}><option value="">请选择已有正式工序</option>{context.processes.map(process => <option key={process.id} value={process.id}>{process.name}{process.code ? ` · ${process.code}` : ''}</option>)}</select><small>这里只允许映射已有工序，不在审核页新增工序。</small></label>}
+                  <div className="sample-package-edit-grid">{editablePayloadKeys[entry.kind].map(key => <label className={key === 'content' || key === 'remark' ? 'wide' : ''} key={key}><span>{payloadLabels[key]}</span>{key === 'timeBasis' ? <select value={entry.payload[key] === 'per_batch' ? 'per_batch' : 'per_unit'} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)}><option value="per_unit">按件</option><option value="per_batch">按批</option></select> : key === 'content' || key === 'remark' ? <textarea value={String(entry.payload[key] ?? '')} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)} /> : <input type={['recommendedSeconds', 'setupSeconds', 'occurrences'].includes(key) ? 'number' : 'text'} min={key === 'setupSeconds' ? 0 : undefined} step={key === 'occurrences' ? 1 : 'any'} value={String(entry.payload[key] ?? '')} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)} />}</label>)}</div>
+                </article>)}
+                {!reviewEntryDrafts.length && <p className="sample-package-edit-empty">本包没有可编辑的数据记录。</p>}
+              </section>
+              <section className="sample-package-edit-section"><header><strong>照片信息</strong><small>{reviewPhotoDrafts.length} 张</small></header>
+                {reviewPhotoDrafts.map((photo, index) => <article className="sample-package-photo-editor" key={photo.id}><span>{String(index + 1).padStart(2, '0')}</span><label><span>照片分类</span><select value={photo.category} onChange={event => updateReviewPhoto(photo.id, { category: event.target.value as SamplePhotoCategoryDTO })}>{Object.entries(photoCategoryLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label><span>照片说明</span><input value={photo.caption} placeholder={photo.originalName} onChange={event => updateReviewPhoto(photo.id, { caption: event.target.value })} /></label></article>)}
+                {!reviewPhotoDrafts.length && <p className="sample-package-edit-empty">本包没有可编辑的照片。</p>}
+              </section>
+              <label><span>本次编辑说明（可留空）</span><textarea value={reviewComment} onChange={event => setReviewComment(event.target.value)} placeholder="例如：修正工序映射和照片分类" /></label>
+            </> : <>
+              <div className="sample-review-note danger"><AlertTriangle size={17} /><span><strong>将本次提交整体退回</strong><small>数据与照片会一起进入待修改状态，不会出现一部分通过、一部分驳回。</small></span></div>
+              <label><span>驳回原因（必填）</span><textarea autoFocus value={reviewComment} onChange={event => setReviewComment(event.target.value)} placeholder="请写清需要修改的问题" /></label>
             </>}
-            <label><span>{reviewDecision === 'CHANGES_REQUESTED' ? '修改意见（自由填写，可留空）' : '审核备注（可留空）'}</span><textarea value={reviewComment} onChange={event => setReviewComment(event.target.value)} placeholder="不提供固定原因选项" /></label>
           </div>
-          <footer><button type="button" disabled={reviewSaving} onClick={() => setReviewRequest(null)}>取消</button><button className={reviewDecision === 'VOID' ? 'danger' : 'primary'} type="button" disabled={reviewSaving || (reviewRequest.kind === 'PROCESS_TIME' && reviewDecision === 'PUBLISH' && !reviewProcessBinding)} onClick={() => void saveReview()}>{reviewSaving ? <><Loader2 className="spin" size={15} />处理中</> : '确认审核'}</button></footer>
+          <footer><button type="button" disabled={reviewSaving} onClick={() => setPackageDialog(null)}>取消</button><button className={packageDialog === 'REJECT' ? 'danger' : 'primary'} type="button" disabled={reviewSaving || (packageDialog === 'REJECT' && reviewComment.trim().length < 2) || (packageDialog === 'EDIT' && !reviewEntryDrafts.length && !reviewPhotoDrafts.length)} onClick={() => void savePackageReview(packageDialog)}>{reviewSaving ? <><Loader2 className="spin" size={15} />处理中</> : packageDialog === 'EDIT' ? '保存整包修改' : '确认整包驳回'}</button></footer>
         </section>
       </div>}
     </main>

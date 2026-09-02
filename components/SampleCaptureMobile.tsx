@@ -706,7 +706,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
       const body = await bodyJson(response);
       if (!response.ok) throw new Error(body.error || '照片上传失败');
       if (body.task) setTask(current => !current || (body.task as SampleTaskDTO).version >= current.version ? body.task as SampleTaskDTO : current);
-      updateLocalPhoto(item.id, { progress: 100 }); removeLocalPhoto(item.id); return true;
+      updateLocalPhoto(item.id, { progress: 100 }); removeLocalPhoto(item.id); return body.deduplicated === true ? 'deduplicated' as const : 'uploaded' as const;
     } catch (reason) {
       updateLocalPhoto(item.id, { status: 'FAILED', progress: 0, error: reason instanceof Error ? reason.message : '照片上传失败' });
       return false;
@@ -718,13 +718,20 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     const candidates = photoQueue.filter(item => (!targetId || item.id === targetId) && item.status !== 'UPLOADING');
     if (!candidates.length) return;
     setPhotoUploading(true);
-    let cursor = 0; let success = 0;
+    let cursor = 0; let success = 0; let deduplicated = 0;
     const workers = Array.from({ length: Math.min(2, candidates.length) }, async () => {
-      while (cursor < candidates.length) { const index = cursor++; if (await uploadLocalPhoto(candidates[index], (task.photos.length || 0) + index)) success += 1; }
+      while (cursor < candidates.length) {
+        const index = cursor++;
+        const result = await uploadLocalPhoto(candidates[index], (task.photos.length || 0) + index);
+        if (result) success += 1;
+        if (result === 'deduplicated') deduplicated += 1;
+      }
     });
     await Promise.all(workers); setPhotoUploading(false);
     try { await reloadTaskOnly(); } catch { /* upload response already carried the task */ }
-    setMessage(success === candidates.length ? `${success} 张照片已上传到对象存储` : `${success} 张已上传，失败项可单独重试`);
+    setMessage(success === candidates.length
+      ? deduplicated ? `${success - deduplicated} 张已上传，${deduplicated} 张重复图片已自动跳过` : `${success} 张照片已上传到对象存储`
+      : `${success - deduplicated} 张已上传，${deduplicated} 张重复已跳过，失败项可单独重试`);
   }
 
   async function savePhotoMetadata() {
@@ -834,6 +841,35 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
 
   if (loading && !task) return <main className="sample-capture-loading"><Loader2 className="spin" /><strong>正在读取样品二维码</strong><span>加载任务和已采集记录…</span></main>;
   if (!task) return <main className="sample-capture-failure"><AlertTriangle /><strong>无法打开样品任务</strong><p>{error || '二维码无效或任务不存在'}</p><button type="button" onClick={() => void load()}><RefreshCw />重新读取</button></main>;
+  if (hardClosed) return <main className="sample-capture-terminal">
+    <header className="sample-capture-header">
+      <Link href="/production?branch=samples" aria-label="返回样品执行"><ArrowLeft /></Link>
+      <div><span>样品资料历史</span><strong>{task.code}</strong></div>
+      <button type="button" aria-label="刷新" onClick={() => void load()}><RefreshCw /></button>
+    </header>
+    <section className="sample-capture-terminal-identity">
+      <div><span style={{ background: task.customerLevelColor || '#64748b' }}>{task.customerLevelLabel || task.customerLevelCode || '样品'}</span><em>{task.status === 'COMPLETED' ? task.archivedAt ? '已完成 · 已归档' : '已完成 · 未归档' : '已取消'}</em></div>
+      <h1>{task.specification}</h1><p>{task.customerName} · {task.productName || '未设置品名'}</p>
+    </section>
+    <section className={`sample-capture-terminal-notice ${task.status.toLowerCase()}`}>
+      {task.status === 'COMPLETED' ? <CheckCircle2 /> : <AlertTriangle />}
+      <span><strong>{task.status === 'COMPLETED' ? '本次资料已结束处理' : '任务已取消'}</strong><small>{task.status === 'COMPLETED' ? '这里只查看审核后的历史。归档变化不会撤销审核结果，也不需要重新审核。' : '取消是终态，不再提供新增、编辑、删除、拍照、上传、重试或重新打开操作。'}</small></span>
+    </section>
+    {photoQueue.length > 0 && <section className="sample-capture-terminal-local"><CloudOff /><span><strong>本机仍保留 {photoQueue.length} 张未同步照片</strong><small>这些照片不会上传到已结束任务，也不会被页面自动删除。</small></span></section>}
+    <section className="sample-capture-terminal-summary">
+      <div><span>采集数据</span><strong>{task.entries.length} 条</strong></div><div><span>样品照片</span><strong>{task.photos.length} 张</strong></div><div><span>审核版本</span><strong>{task.acceptedSubmission ? `R${task.acceptedSubmission.revision}` : task.submissionRevision ? `R${task.submissionRevision}` : '—'}</strong></div>
+    </section>
+    <section className="sample-capture-terminal-records">
+      <header><strong>数据记录</strong><small>只读</small></header>
+      {task.entries.map(entry => <article key={entry.id}><FileText /><div><strong>{kindLabels[entry.kind]} · {entry.label || '未命名记录'}</strong><span>{reviewLabels[entry.reviewStatus] || entry.reviewStatus}{entry.reviewComment ? ` · ${entry.reviewComment}` : ''}</span></div></article>)}
+      {!task.entries.length && <p>本次没有数据记录。</p>}
+    </section>
+    <section className="sample-capture-terminal-records photos">
+      <header><strong>照片记录</strong><small>只读</small></header>
+      <div>{task.photos.map(photo => <a href={photo.contentUrl} target="_blank" rel="noreferrer" key={photo.id}><span><Image unoptimized fill sizes="96px" src={photo.contentUrl} alt={photo.caption || photo.originalName} /></span><strong>{photoCategoryLabels[photo.category]}</strong><small>{photo.caption || photo.originalName}</small></a>)}</div>
+      {!task.photos.length && <p>本次没有照片记录。</p>}
+    </section>
+  </main>;
 
   const renderFocusHeader = (title: string, savedText?: string) => <header className="sample-capture-header sample-focus-header">
     <button type="button" aria-label="返回采集首页" onClick={() => { setOpenComboboxRow(''); setTab('overview'); }}><ArrowLeft /></button>
@@ -877,7 +913,6 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     </>}
 
     {!!pendingChanges.length && tab === 'overview' && <section className="sample-capture-guidance warning"><AlertTriangle /><span><strong>{pendingChanges.length} 项被退回修改</strong><small>退回项目已经恢复可编辑；修改并保存后可重新提交审核。</small></span></section>}
-    {hardClosed && <div className="sample-capture-readonly"><AlertTriangle />当前任务为{task.status === 'COMPLETED' ? '已完成' : '已取消'}，现有记录只读；需要继续采集请在样品执行中重新打开任务。</div>}
     {submitted && tab !== 'overview' && <div className="sample-capture-readonly submitted"><CheckCircle2 />当前版本已提交审核，页面只读；尚未发生审核时可从底部撤回。</div>}
 
     {tab === 'overview' && <section className="sample-capture-overview">

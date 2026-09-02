@@ -33,10 +33,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const label = cleanSampleText(body.label, 200);
     if (!clientMutationId) return NextResponse.json({ ok: false, error: '缺少数据保存编号，请重新保存' }, { status: 400 });
     const requestHash = sampleRequestHash({ kind, label, payload });
-    const entryId = await prisma.$transaction(async tx => {
+    const entryResult = await prisma.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${params.id}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
       const replay = await tx.sampleDataEntry.findUnique({
         where: { taskId_clientMutationId: { taskId: task.id, clientMutationId } },
         select: { id: true, kind: true, label: true, payload: true, requestHash: true, deletedAt: true },
@@ -45,11 +46,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         const replayHash = replay.requestHash || sampleRequestHash({ kind: replay.kind, label: replay.label, payload: replay.payload });
         if (replayHash !== requestHash) throw new Error('SAMPLE_ENTRY_MUTATION_CONFLICT');
         if (replay.deletedAt) throw new Error('SAMPLE_ENTRY_MUTATION_TOMBSTONED');
-        return replay.id;
+        return { id: replay.id, deduplicated: true };
       }
       if (task.version !== expectedTaskVersion) throw new Error('SAMPLE_TASK_CONFLICT');
-      if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
       if (task.status === 'SUBMITTED' || task.activeSubmissionId) throw new Error('SAMPLE_TASK_SUBMITTED');
+      const duplicate = await tx.sampleDataEntry.findFirst({
+        where: { taskId: task.id, requestHash, deletedAt: null },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true },
+      });
+      if (duplicate) return { id: duplicate.id, deduplicated: true };
       const entry = await tx.sampleDataEntry.create({
         data: {
           taskId: task.id,
@@ -87,19 +93,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           detail: { taskId: task.id, taskCode: task.code, kind, clientMutationId, requestHash },
         },
       });
-      return entry.id;
+      return { id: entry.id, deduplicated: false };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    const entry = await prisma.sampleDataEntry.findUnique({ where: { id: entryId }, select: { taskId: true } });
+    const entry = await prisma.sampleDataEntry.findUnique({ where: { id: entryResult.id }, select: { taskId: true } });
     const task = entry
       ? await prisma.sampleTask.findUnique({ where: { id: entry.taskId }, include: sampleTaskInclude })
       : null;
-    return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null }, { status: 201 });
+    return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null, deduplicated: entryResult.deduplicated }, { status: entryResult.deduplicated ? 200 : 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
-      if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务不能继续采集，请先重新打开任务' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务仅支持查看历史，不能新增数据' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_SUBMITTED') return NextResponse.json({ ok: false, error: '样品数据已经提交，请先撤回提交再编辑' }, { status: 409 });
       if (error.message === 'SAMPLE_ENTRY_MUTATION_CONFLICT') return NextResponse.json({ ok: false, error: '同一数据保存编号对应了不同内容，请重新保存' }, { status: 409 });
       if (error.message === 'SAMPLE_ENTRY_MUTATION_TOMBSTONED') return NextResponse.json({ ok: false, error: '该数据保存记录已经删除，请使用新的保存编号' }, { status: 409 });

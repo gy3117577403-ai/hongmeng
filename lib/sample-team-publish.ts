@@ -362,6 +362,7 @@ export async function publishSamplePhoto(
   task: SampleTaskForPublish,
   photo: SamplePhotoForPublish,
   actor: SampleActor,
+  options: { deferLifecycleSync?: boolean } = {},
 ) {
   if (photo.publishedFileId) {
     return { entityType: 'drawing_library_file', entityId: photo.publishedFileId, detail: { reused: true } };
@@ -391,8 +392,17 @@ export async function publishSamplePhoto(
     select: { id: true },
   });
   await tx.samplePhoto.update({ where: { id: photo.id }, data: { publishedFileId: file.id } });
-  await tx.drawingLibraryItem.update({ where: { id: task.drawingLibraryItemId }, data: { updatedAt: new Date() } });
-  await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: task.drawingLibraryItemId });
-  await synchronizeDrawingLibraryWorkOrderStatus(tx, task.drawingLibraryItemId);
+  if (!options.deferLifecycleSync) {
+    await finalizeSamplePhotoPublication(tx, task.drawingLibraryItemId);
+  }
   return { entityType: 'drawing_library_file', entityId: file.id, detail: { categoryCode, version } };
+}
+
+export async function finalizeSamplePhotoPublication(
+  tx: Prisma.TransactionClient,
+  drawingLibraryItemId: string,
+) {
+  await tx.drawingLibraryItem.update({ where: { id: drawingLibraryItemId }, data: { updatedAt: new Date() } });
+  await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId });
+  await synchronizeDrawingLibraryWorkOrderStatus(tx, drawingLibraryItemId);
 }

@@ -188,10 +188,8 @@ function sampleFocusItem(
   task: Awaited<ReturnType<typeof loadSampleTasks>>[number],
   referenceAt: Date,
 ): ReportCenterFocusItemDTO {
-  const pendingReviewCount = task.entries.filter(entry => entry.reviewStatus === 'PENDING').length
-    + task.photos.filter(photo => photo.reviewStatus === 'PENDING').length;
-  const reviewedCount = task.entries.filter(entry => ['APPROVED', 'PUBLISHED'].includes(entry.reviewStatus)).length
-    + task.photos.filter(photo => ['APPROVED', 'PUBLISHED'].includes(photo.reviewStatus)).length;
+  const pendingReviewCount = task.activeSubmissionId ? 1 : 0;
+  const reviewedCount = task.submissions.filter(submission => ['CONFIRMED', 'REJECTED'].includes(submission.status)).length;
   const submittedCount = pendingReviewCount + reviewedCount;
   const state = reportSampleStatus({ status: task.status, dueAt: task.dueDate, referenceAt, pendingReviewCount });
   const dueInDays = task.dueDate
@@ -221,7 +219,7 @@ function sampleFocusItem(
         : null,
     status: state.status,
     statusLabel: state.label,
-    currentProcess: task.status === 'COMPLETED' ? '完成归档' : pendingReviewCount > 0 ? '分项审核' : '数据采集',
+    currentProcess: task.status === 'COMPLETED' ? '完成归档' : pendingReviewCount > 0 ? '整包审核' : '数据采集',
     nextProcess: pendingReviewCount > 0 ? '发布产品资料' : null,
     owner: task.assignees.map(item => item.employee.name).join('、') || null,
     dueAt: task.dueDate?.toISOString() || null,
@@ -254,6 +252,7 @@ async function loadSampleTasks(where: Prisma.SampleTaskWhereInput) {
       sampleQuantity: true,
       dueDate: true,
       status: true,
+      activeSubmissionId: true,
       createdAt: true,
       completedAt: true,
       assignees: { select: { employee: { select: { name: true } } } },
@@ -265,6 +264,7 @@ async function loadSampleTasks(where: Prisma.SampleTaskWhereInput) {
         where: { deletedAt: null },
         select: { reviewStatus: true, publishedAt: true },
       },
+      submissions: { select: { status: true } },
     },
   });
 }
@@ -478,12 +478,9 @@ export async function GET(req: NextRequest) {
         || right.workOrderCount - left.workOrderCount)
       .slice(0, 6);
 
-    const pendingSampleReviewItems = sampleTasks.reduce((sum, task) => sum
-      + task.entries.filter(entry => entry.reviewStatus === 'PENDING').length
-      + task.photos.filter(photo => photo.reviewStatus === 'PENDING').length, 0);
+    const pendingSampleReviewItems = sampleTasks.filter(task => Boolean(task.activeSubmissionId)).length;
     const reviewedSampleItems = sampleTasks.reduce((sum, task) => sum
-      + task.entries.filter(entry => ['APPROVED', 'PUBLISHED', 'CHANGES_REQUESTED', 'VOID'].includes(entry.reviewStatus)).length
-      + task.photos.filter(photo => ['APPROVED', 'PUBLISHED', 'CHANGES_REQUESTED', 'VOID'].includes(photo.reviewStatus)).length, 0);
+      + task.submissions.filter(submission => ['CONFIRMED', 'REJECTED'].includes(submission.status)).length, 0);
     const publishedSampleItems = sampleTasks.reduce((sum, task) => sum
       + task.entries.filter(entry => entry.reviewStatus === 'PUBLISHED').length
       + task.photos.filter(photo => photo.reviewStatus === 'PUBLISHED').length, 0);
@@ -585,7 +582,7 @@ export async function GET(req: NextRequest) {
         { key: 'standard', label: '标准工时未补齐', count: missingStandardOrders, note: '仅统计需要计效且缺少标准的工单', route: '/workspace/product-times' },
         { key: 'drawing', label: '未关联当前图纸', count: missingDrawingOrders, note: '按图纸资料库当前版本判断', route: '/drawing-library' },
         { key: 'material', label: '未建立辅料规则', count: materialRuleUnpublishedOrders, note: '辅料记录仍为选填，不作为样品缺项', route: '/weekly-plan-center?branch=samples' },
-        { key: 'sample_review', label: '样品资料待分项审核', count: pendingSampleReviewItems, note: '仅待审核项；空白采集字段不计缺项', route: '/weekly-plan-center?branch=samples' },
+        { key: 'sample_review', label: '样品资料待整包审核', count: pendingSampleReviewItems, note: '按产品提交包计数；空白采集字段不计缺项', route: '/weekly-plan-center?branch=samples' },
       ],
       sample: sampleSummary,
       focusItems: allFocusItems.slice(0, 120),

@@ -21,13 +21,13 @@ export const dynamic = 'force-dynamic';
 
 function responseFor(error: Error) {
   if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
-  if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务不能保存草稿，请先重新打开任务' }, { status: 409 });
+  if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务仅支持查看历史，不能保存草稿' }, { status: 409 });
   if (error.message === 'SAMPLE_TASK_SUBMITTED') return NextResponse.json({ ok: false, error: '样品数据已经提交，请先撤回提交再编辑' }, { status: 409 });
   if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
   if (error.message === 'SAMPLE_SECTION_CONFLICT') return NextResponse.json({ ok: false, error: '该分区草稿已被其他人修改，请刷新后重试' }, { status: 409 });
   if (error.message === 'SAMPLE_MUTATION_CONFLICT') return NextResponse.json({ ok: false, error: '同一保存编号对应了不同内容，请重新保存' }, { status: 409 });
   if (error.message === 'SAMPLE_PROCESS_NOT_FOUND') return NextResponse.json({ ok: false, error: '所选正式工序已停用或不存在，请重新选择' }, { status: 409 });
-  if (error.message === 'SAMPLE_SECTION_CLEAR_REQUIRES_VOID') return NextResponse.json({ ok: false, error: '该分区已有通过或发布记录，不能直接清空，请由审核人员作废后再修订' }, { status: 409 });
+  if (error.message === 'SAMPLE_SECTION_CLEAR_REQUIRES_VOID') return NextResponse.json({ ok: false, error: '该分区已形成正式资料，不能从采集页删除；请保留历史并在后续任务中提交修订' }, { status: 409 });
   if (error.message === 'SAMPLE_DRAFT_ROW_LIMIT') return NextResponse.json({ ok: false, error: '每个分区最多保存50行' }, { status: 400 });
   if (['INVALID_SAMPLE_DRAFT_SECTION', 'INVALID_SAMPLE_DRAFT_ROW', 'DUPLICATE_SAMPLE_DRAFT_ROW', 'INVALID_SAMPLE_PROCESS_TIME', 'INVALID_SAMPLE_PROCESS_REFERENCE', 'INVALID_SAMPLE_STRIPPING_VALUE', 'INVALID_SAMPLE_DRAFT_UI_STATE', 'SAMPLE_DRAFT_UI_STATE_TOO_LARGE'].includes(error.message)) {
     return NextResponse.json({ ok: false, error: '草稿字段格式无效，请检查行号、工序、工时或剥皮参数' }, { status: 400 });
@@ -63,16 +63,19 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string; 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${params.id}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
       const existing = await tx.sampleDraftSection.findUnique({
         where: { taskId_kind: { taskId: task.id, kind: params.kind } },
       });
       if (existing?.lastMutationId === clientMutationId) {
         if (existing.lastRequestHash !== requestHash) throw new Error('SAMPLE_MUTATION_CONFLICT');
-        return { taskId: task.id, sectionId: existing.id };
+        return { taskId: task.id, sectionId: existing.id, deduplicated: true };
+      }
+      if (task.status === 'SUBMITTED' || task.activeSubmissionId) throw new Error('SAMPLE_TASK_SUBMITTED');
+      if (existing && sampleRequestHash({ kind: params.kind, payload: existing.payload }) === sampleRequestHash({ kind: params.kind, payload })) {
+        return { taskId: task.id, sectionId: existing.id, deduplicated: true };
       }
       if (task.version !== expectedTaskVersion) throw new Error('SAMPLE_TASK_CONFLICT');
-      if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
-      if (task.status === 'SUBMITTED' || task.activeSubmissionId) throw new Error('SAMPLE_TASK_SUBMITTED');
       if ((existing?.revision || 0) !== expectedSectionRevision) throw new Error('SAMPLE_SECTION_CONFLICT');
 
       const clearsSubmittedSection = Boolean(existing && existing.lastSubmittedRevision > 0 && !sampleDraftSectionHasData(payload));
@@ -180,7 +183,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string; 
           },
         },
       });
-      return { taskId: task.id, sectionId };
+      return { taskId: task.id, sectionId, deduplicated: false };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     const [task, section] = await Promise.all([
@@ -189,6 +192,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string; 
     ]);
     return NextResponse.json({
       ok: true,
+      deduplicated: result.deduplicated,
       task: task ? serializeSampleTask(task) : null,
       section: section ? serializeSampleDraftSection(section) : null,
     });

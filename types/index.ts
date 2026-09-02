@@ -197,6 +197,8 @@ export type SampleDataKindDTO = 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOT
 export type SamplePhotoCategoryDTO = 'UNCLASSIFIED' | 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOTICE' | 'SEMI_FINISHED' | 'PROCESS' | 'MEASUREMENT' | 'FINISHED' | 'DETAIL' | 'EXCEPTION';
 export type SamplePublishModeDTO = 'APPEND' | 'REPLACE_MATCHING' | 'RECORD_ONLY';
 export type SampleDraftSectionKindDTO = 'PROCESS_TIME' | 'STRIPPING';
+export type SampleSubmissionStatusDTO = 'PENDING' | 'CONFIRMED' | 'REJECTED' | 'WITHDRAWN' | 'CANCELLED' | 'REVIEWED';
+export type SamplePackageDecisionDTO = 'CONFIRM' | 'EDIT' | 'REJECT' | 'CANCEL';
 
 export type SampleDraftSectionDTO = {
   id: string;
@@ -215,11 +217,16 @@ export type SampleDraftSectionDTO = {
 export type SampleSubmissionSummaryDTO = {
   id: string;
   revision: number;
-  status: string;
+  status: SampleSubmissionStatusDTO;
   submittedBy: string | null;
   submittedAt: string;
   withdrawnBy: string | null;
   withdrawnAt: string | null;
+  withdrawalReason?: string | null;
+  decision: SamplePackageDecisionDTO | null;
+  decisionComment: string | null;
+  decidedBy: string | null;
+  decidedAt: string | null;
 };
 
 export type SampleTaskAssigneeDTO = {
@@ -305,13 +312,18 @@ export type SampleTaskDTO = {
   version: number;
   submissionRevision: number;
   activeSubmissionId: string | null;
+  acceptedSubmissionId: string | null;
   lastEditedKind: SampleDraftSectionKindDTO | null;
   lastEditedRowId: string | null;
   activeSubmission: SampleSubmissionSummaryDTO | null;
+  acceptedSubmission: SampleSubmissionSummaryDTO | null;
   startedAt: string | null;
   submittedAt: string | null;
   completedAt: string | null;
   cancelledAt: string | null;
+  archivedAt: string | null;
+  archivedBy: string | null;
+  archiveReason: string | null;
   createdBy: string | null;
   updatedBy: string | null;
   createdAt: string;
@@ -323,6 +335,7 @@ export type SampleTaskDTO = {
   counts: {
     data: number;
     photos: number;
+    pendingItems: number;
     pendingReview: number;
     changesRequested: number;
     published: number;

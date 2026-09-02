@@ -48,6 +48,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ ok: false, error: '样品任务版本已失效，请刷新后重试' }, { status: 400 });
     }
     const action = cleanSampleText(body.action, 30) || 'UPDATE';
+    if (!['UPDATE', 'START', 'COMPLETE', 'CANCEL', 'ARCHIVE', 'UNARCHIVE'].includes(action)) {
+      return NextResponse.json({ ok: false, error: '不支持的样品任务操作' }, { status: 400 });
+    }
     const assigneeIds = ids(body.assigneeEmployeeIds);
     const now = new Date();
     const resultId = await prisma.$transaction(async tx => {
@@ -56,15 +59,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (!existing) throw new Error('SAMPLE_TASK_NOT_FOUND');
       if (existing.version !== expectedVersion) throw new Error('SAMPLE_TASK_CONFLICT');
       let status = existing.status;
-      const lifecycle: Prisma.SampleTaskUpdateInput = {};
+      const lifecycle: Prisma.SampleTaskUncheckedUpdateInput = {};
       let noDataCompletion = false;
       if (action === 'START') {
-        if (status !== 'CANCELLED' && status !== 'COMPLETED') {
-          status = 'IN_PROGRESS';
-          lifecycle.startedAt = existing.startedAt || now;
-        }
+        if (status === 'CANCELLED' || status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+        if (status === 'SUBMITTED' || existing.activeSubmissionId) throw new Error('SAMPLE_TASK_SUBMITTED');
+        status = 'IN_PROGRESS';
+        lifecycle.startedAt = existing.startedAt || now;
       } else if (action === 'COMPLETE') {
-        if (status !== 'CANCELLED') {
+        if (status === 'CANCELLED' || status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+        {
           const [blockingEntries, blockingPhotos, totalEntries, totalPhotos, sections] = await Promise.all([
             tx.sampleDataEntry.count({ where: { taskId: existing.id, deletedAt: null, reviewStatus: { in: ['DRAFT', 'PENDING', 'CHANGES_REQUESTED'] } } }),
             tx.samplePhoto.count({ where: { taskId: existing.id, deletedAt: null, reviewStatus: { in: ['DRAFT', 'PENDING', 'CHANGES_REQUESTED'] } } }),
@@ -83,26 +87,62 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           }
           status = 'COMPLETED';
           lifecycle.completedAt = now;
+          lifecycle.archivedAt = now;
+          lifecycle.archivedById = actor.id;
+          lifecycle.archivedByName = actor.name;
+          lifecycle.archiveReason = noDataCompletion ? '无采集数据完成后归档' : '任务完成后归档';
         }
       } else if (action === 'CANCEL') {
-        const pendingReviewCount = await tx.sampleDataEntry.count({ where: { taskId: existing.id, deletedAt: null, reviewStatus: 'PENDING' } })
-          + await tx.samplePhoto.count({ where: { taskId: existing.id, deletedAt: null, reviewStatus: 'PENDING' } });
-        if (existing.status === 'SUBMITTED' || existing.activeSubmissionId || pendingReviewCount > 0) {
-          throw new Error('SAMPLE_TASK_SUBMITTED_CANCEL_BLOCKED');
+        if (status === 'CANCELLED' || status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
+        const cancelReason = cleanSampleText(body.reason, 500) || '任务已取消';
+        if (existing.activeSubmissionId) {
+          await Promise.all([
+            tx.sampleSubmission.updateMany({
+              where: { id: existing.activeSubmissionId, taskId: existing.id, status: 'PENDING' },
+              data: {
+                status: 'CANCELLED',
+                decision: 'CANCEL',
+                decisionComment: cancelReason,
+                decidedById: actor.id,
+                decidedByName: actor.name,
+                decidedAt: now,
+              },
+            }),
+            tx.sampleDataEntry.updateMany({
+              where: { taskId: existing.id, deletedAt: null, submissionRevision: existing.submissionRevision, reviewStatus: 'PENDING' },
+              data: { reviewStatus: 'VOIDED', reviewComment: cancelReason, reviewedById: actor.id, reviewedByName: actor.name, reviewedAt: now, version: { increment: 1 } },
+            }),
+            tx.samplePhoto.updateMany({
+              where: { taskId: existing.id, deletedAt: null, submissionRevision: existing.submissionRevision, reviewStatus: 'PENDING' },
+              data: { reviewStatus: 'VOIDED', reviewComment: cancelReason, reviewedById: actor.id, reviewedByName: actor.name, reviewedAt: now, version: { increment: 1 } },
+            }),
+          ]);
         }
         status = 'CANCELLED';
         lifecycle.cancelledAt = now;
-      } else if (action === 'REOPEN') {
-        status = 'IN_PROGRESS';
-        lifecycle.cancelledAt = null;
-        lifecycle.completedAt = null;
-        lifecycle.startedAt = existing.startedAt || now;
+        lifecycle.activeSubmissionId = null;
+        lifecycle.submittedAt = null;
+      } else if (action === 'ARCHIVE') {
+        if (status !== 'COMPLETED') throw new Error('SAMPLE_TASK_ARCHIVE_STATE_INVALID');
+        lifecycle.archivedAt = existing.archivedAt || now;
+        lifecycle.archivedById = actor.id;
+        lifecycle.archivedByName = actor.name;
+        lifecycle.archiveReason = cleanSampleText(body.reason, 500) || existing.archiveReason || '手动归档';
+      } else if (action === 'UNARCHIVE') {
+        if (status !== 'COMPLETED') throw new Error('SAMPLE_TASK_ARCHIVE_STATE_INVALID');
+        lifecycle.archivedAt = null;
+        lifecycle.archivedById = null;
+        lifecycle.archivedByName = null;
+        lifecycle.archiveReason = null;
+      } else if (status === 'CANCELLED' || status === 'COMPLETED') {
+        throw new Error('SAMPLE_TASK_CLOSED');
       }
-      const dueDate = body.dueDate === undefined ? existing.dueDate : parseOptionalSampleDate(body.dueDate);
-      const sampleQuantity = body.sampleQuantity === undefined
+      const metadataUpdate = action === 'UPDATE';
+      const dueDate = !metadataUpdate || body.dueDate === undefined ? existing.dueDate : parseOptionalSampleDate(body.dueDate);
+      const sampleQuantity = !metadataUpdate || body.sampleQuantity === undefined
         ? existing.sampleQuantity
         : parseOptionalNonNegativeInteger(body.sampleQuantity);
-      const priority = body.priority === undefined
+      const priority = !metadataUpdate || body.priority === undefined
         ? existing.priority
         : (parseOptionalNonNegativeInteger(body.priority, 9) ?? 0);
       const updated = await tx.sampleTask.updateMany({
@@ -110,21 +150,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         data: {
           status,
           ...lifecycle,
-          sourceOrderNo: body.sourceOrderNo === undefined ? existing.sourceOrderNo : cleanSampleText(body.sourceOrderNo, 120),
-          customerLevelCode: body.customerLevelCode === undefined ? existing.customerLevelCode : cleanSampleText(body.customerLevelCode, 30),
-          customerLevelLabel: body.customerLevelLabel === undefined ? existing.customerLevelLabel : cleanSampleText(body.customerLevelLabel, 60),
-          customerLevelColor: body.customerLevelColor === undefined ? existing.customerLevelColor : cleanSampleColor(body.customerLevelColor),
+          sourceOrderNo: !metadataUpdate || body.sourceOrderNo === undefined ? existing.sourceOrderNo : cleanSampleText(body.sourceOrderNo, 120),
+          customerLevelCode: !metadataUpdate || body.customerLevelCode === undefined ? existing.customerLevelCode : cleanSampleText(body.customerLevelCode, 30),
+          customerLevelLabel: !metadataUpdate || body.customerLevelLabel === undefined ? existing.customerLevelLabel : cleanSampleText(body.customerLevelLabel, 60),
+          customerLevelColor: !metadataUpdate || body.customerLevelColor === undefined ? existing.customerLevelColor : cleanSampleColor(body.customerLevelColor),
           sampleQuantity,
           dueDate,
           priority,
-          planRemark: body.planRemark === undefined ? existing.planRemark : cleanSampleText(body.planRemark, 1000),
+          planRemark: !metadataUpdate || body.planRemark === undefined ? existing.planRemark : cleanSampleText(body.planRemark, 1000),
           updatedById: actor.id,
           updatedByName: actor.name,
           version: { increment: 1 },
         },
       });
       if (updated.count !== 1) throw new Error('SAMPLE_TASK_CONFLICT');
-      if (assigneeIds) {
+      if (assigneeIds && action === 'UPDATE') {
         const employees = assigneeIds.length
           ? await tx.employee.findMany({
               where: { id: { in: assigneeIds }, isActive: true, resignedAt: null },
@@ -161,9 +201,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_CLOSED') return NextResponse.json({ ok: false, error: '已完成或已取消任务仅支持查看历史，不能重新打开或修改' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_SUBMITTED') return NextResponse.json({ ok: false, error: '任务已经提交整包审核，不能再次开始' }, { status: 409 });
+      if (error.message === 'SAMPLE_TASK_ARCHIVE_STATE_INVALID') return NextResponse.json({ ok: false, error: '只有已完成任务可以归档或取消归档' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_HAS_UNFINISHED_DATA') return NextResponse.json({ ok: false, error: '任务仍有草稿、待审核或退回修改内容，处理完成后才能结束任务' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_CONFIRM_NO_DATA_REQUIRED') return NextResponse.json({ ok: false, error: '任务没有任何采集记录，请明确确认“无采集数据完成”' }, { status: 409 });
-      if (error.message === 'SAMPLE_TASK_SUBMITTED_CANCEL_BLOCKED') return NextResponse.json({ ok: false, error: '任务正在审核中，请先撤回提交或由审核人员退回后再取消' }, { status: 409 });
       if (error.message === 'INVALID_SAMPLE_DATE') return NextResponse.json({ ok: false, error: '计划完成日期格式无效' }, { status: 400 });
       if (error.message === 'INVALID_SAMPLE_NUMBER') return NextResponse.json({ ok: false, error: '数量或优先级格式无效' }, { status: 400 });
     }

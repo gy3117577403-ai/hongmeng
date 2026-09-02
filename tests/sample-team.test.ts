@@ -73,15 +73,19 @@ test('sample collection and publication stay outside production reporting ledger
   assert.match(source, /status:\s*'draft'/);
 });
 
-test('review contract is item-level, optimistic, and supports free-form optional comments', () => {
+test('review contract is package-level, optimistic, idempotent, and has exactly three decisions', () => {
   const reviewRoute = readFileSync('app/api/sample-tasks/[id]/review/route.ts', 'utf8');
-  assert.match(reviewRoute, /itemType/);
-  assert.match(reviewRoute, /itemId/);
-  assert.match(reviewRoute, /expectedVersion/);
+  assert.match(reviewRoute, /type PackageDecision = 'CONFIRM' \| 'EDIT' \| 'REJECT'/);
+  assert.match(reviewRoute, /submissionId/);
+  assert.match(reviewRoute, /submissionRevision/);
+  assert.match(reviewRoute, /expectedTaskVersion/);
+  assert.match(reviewRoute, /decisionMutationId/);
   assert.match(reviewRoute, /cleanSampleText\(body\.comment/);
   assert.doesNotMatch(reviewRoute, /reasonCode|fixedReason|reasonOptions/);
   assert.match(reviewRoute, /sampleDataEntry\.updateMany\(\{\s*where:\s*\{\s*id:\s*entry\.id/);
-  assert.match(reviewRoute, /submissionRevision:\s*task\.submissionRevision/);
+  assert.match(reviewRoute, /status:\s*'CONFIRMED'/);
+  assert.match(reviewRoute, /acceptedSubmissionId:\s*submission\.id/);
+  assert.match(reviewRoute, /status:\s*'COMPLETED'/);
 });
 
 test('durable sample section drafts validate row shape, limits, and proposed process boundaries', () => {
@@ -131,14 +135,15 @@ test('P0 sample capture routes enforce submit lock, withdrawal, completion, and 
   assert.match(withdraw, /SAMPLE_SUBMISSION_REVIEW_STARTED/);
   assert.match(withdraw, /withdrawalMutationId/);
   assert.match(task, /SAMPLE_TASK_HAS_UNFINISHED_DATA/);
-  assert.match(task, /SAMPLE_TASK_SUBMITTED_CANCEL_BLOCKED/);
+  assert.match(task, /status:\s*'CANCELLED'/);
+  assert.match(task, /archivedAt/);
+  assert.doesNotMatch(task, /REOPEN/);
   assert.match(task, /confirmNoData/);
   assert.match(review, /processDefinitionId/);
-  assert.match(review, /SAMPLE_PROCESS_MAPPING_REQUIRED/);
-  assert.match(review, /create_process_definition_from_sample_review/);
-  assert.match(review, /SAMPLE_PROCESS_CREATE_FORBIDDEN/);
-  assert.match(center, /正式工序归属/);
-  assert.match(center, /createProcessDefinition: reviewProcessBinding === '__create__'/);
+  assert.match(review, /SAMPLE_PACKAGE_NOT_READY/);
+  assert.doesNotMatch(review, /create_process_definition_from_sample_review/);
+  assert.match(center, /请选择已有正式工序/);
+  assert.doesNotMatch(center, /createProcessDefinition/);
   assert.match(entry, /SAMPLE_TASK_SUBMITTED/);
   assert.match(entry, /taskId_clientMutationId/);
   assert.match(entry, /SAMPLE_ENTRY_MUTATION_CONFLICT/);
@@ -210,7 +215,11 @@ test('sample planning workspace uses one compact master-detail surface instead o
   assert.match(component, /任务概览/);
   assert.match(component, /采集数据/);
   assert.match(component, /过程照片/);
-  assert.match(component, /逐项审核/);
+  assert.match(component, /整包审核/);
+  assert.match(component, /确认通过/);
+  assert.match(component, /编辑资料/);
+  assert.match(component, /整包驳回/);
+  assert.doesNotMatch(component, /逐项审核/);
   assert.doesNotMatch(component, /className="sample-team-metrics"/);
   assert.doesNotMatch(component, /className="sample-team-toolbar"/);
   assert.match(stylesheet, /grid-template-columns:\s*352px minmax\(0, 1fr\)/);
@@ -219,10 +228,12 @@ test('sample planning workspace uses one compact master-detail surface instead o
   assert.match(stylesheet, /\.sample-capture-page\s*\{\s*box-sizing:\s*border-box;\s*padding-bottom:\s*88px/);
 });
 
-test('pending review summary counts review items rather than tasks', () => {
+test('pending review summary counts active submission packages rather than child items', () => {
   const listRoute = readFileSync('app/api/sample-tasks/route.ts', 'utf8');
+  const serializer = readFileSync('lib/sample-team.ts', 'utf8');
 
   assert.match(listRoute, /active\.reduce\(\(count, task\) => count \+ task\.counts\.pendingReview, 0\)/);
+  assert.match(serializer, /pendingReview:\s*task\.activeSubmission\?\.status === 'PENDING' \? 1 : 0/);
 });
 
 test('production, planning, and warehouse share a push-down mass/sample mode drawer', () => {

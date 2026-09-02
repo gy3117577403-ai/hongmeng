@@ -261,7 +261,7 @@ function branchMethod(branch: ReportBranchKey): string {
   if (['sample-tasks', 'sample-attainment', 'pending-review', 'published-materials', 'review-attainment'].includes(branch)) {
     return branch === 'sample-attainment'
       ? '样品达成按独立任务完成数 / 周期样品任务数计算，不计入量产员工标准工时效率。'
-      : '样品采集数据只有经过分项审核并发布后，才计入正式产品资料。';
+      : '样品采集数据按产品提交包一次确认后，才计入正式产品资料。';
   }
   return '当前页面只呈现这一指标及其直接明细，避免跨主题数据混在同一屏。';
 }
@@ -452,19 +452,19 @@ function metricForBranch(
       { label: '已完成', value: numberText(overview?.sample.completedCount), note: '项' },
       { label: '已逾期', value: numberText(overview?.sample.overdueCount), note: '项' },
     ] },
-    'pending-review': { label: '待分项审核', value: numberText(overview?.sample.pendingReviewCount), unit: '项', description: '提交后尚未成为正式产品资料', tone: 'red', stats: [
+    'pending-review': { label: '待整包审核', value: numberText(overview?.sample.pendingReviewCount), unit: '包', description: '提交后尚未整包确认或驳回', tone: 'red', stats: [
       { label: '涉及任务', value: numberText(branchItems.length), note: '个' },
-      { label: '已审核', value: numberText(overview?.sample.reviewedItemCount), note: '项' },
+      { label: '已审核', value: numberText(overview?.sample.reviewedItemCount), note: '包' },
       { label: '审核完成率', value: percentText(overview?.sample.reviewBasisPoints), note: '已审 / 已提交' },
     ] },
     'published-materials': { label: '已发布资料', value: numberText(overview?.sample.publishedItemCount), unit: '项', description: '已进入正式产品资料库', tone: 'green', stats: [
       { label: '涉及任务', value: numberText(branchItems.length), note: '个' },
-      { label: '已审核', value: numberText(overview?.sample.reviewedItemCount), note: '项' },
-      { label: '待审核', value: numberText(overview?.sample.pendingReviewCount), note: '项' },
+      { label: '已审核', value: numberText(overview?.sample.reviewedItemCount), note: '包' },
+      { label: '待审核', value: numberText(overview?.sample.pendingReviewCount), note: '包' },
     ] },
-    'review-attainment': { label: '审核完成率', value: percentText(overview?.sample.reviewBasisPoints), description: '已审核项目 / 已提交项目', tone: 'purple', stats: [
-      { label: '已审核', value: numberText(overview?.sample.reviewedItemCount), note: '项' },
-      { label: '待审核', value: numberText(overview?.sample.pendingReviewCount), note: '项' },
+    'review-attainment': { label: '审核完成率', value: percentText(overview?.sample.reviewBasisPoints), description: '已审核提交包 / 全部提交包', tone: 'purple', stats: [
+      { label: '已审核', value: numberText(overview?.sample.reviewedItemCount), note: '包' },
+      { label: '待审核', value: numberText(overview?.sample.pendingReviewCount), note: '包' },
       { label: '已发布', value: numberText(overview?.sample.publishedItemCount), note: '项' },
     ] },
   };
@@ -707,7 +707,7 @@ export default function ReportCenterBranchDashboard({
       ];
     } else if (initialBranch === 'review-attainment') {
       rows = [
-        ['样品任务', '进行中', '已完成', '已逾期', '待分项审核', '已审核', '已发布', '审核完成率'],
+        ['样品任务', '进行中', '已完成', '已逾期', '待整包审核', '已审核提交包', '已发布资料', '审核完成率'],
         [overview?.sample.taskCount || 0, overview?.sample.activeCount || 0, overview?.sample.completedCount || 0, overview?.sample.overdueCount || 0, overview?.sample.pendingReviewCount || 0, overview?.sample.reviewedItemCount || 0, overview?.sample.publishedItemCount || 0, percentText(overview?.sample.reviewBasisPoints)],
       ];
     } else if (initialBranch === 'completed-orders') {
@@ -930,7 +930,7 @@ function BranchContent(props: {
   if (branch.startsWith('missing-')) return <FocusTable title="资料缺口工单" items={focusItems} onSelect={onFocus} />;
   if (branch === 'sample-attainment') return <><SampleTaskAttainment report={overview} /><FocusTable title="样品任务达成明细" items={focusItems} onSelect={onFocus} /></>;
   if (branch === 'review-attainment') return <SampleReview report={overview} />;
-  return <FocusTable title={branch === 'pending-review' ? '待分项审核任务' : branch === 'published-materials' ? '已发布资料任务' : '样品任务明细'} items={focusItems} onSelect={onFocus} />;
+  return <FocusTable title={branch === 'pending-review' ? '待整包审核任务' : branch === 'published-materials' ? '已发布资料任务' : '样品任务明细'} items={focusItems} onSelect={onFocus} />;
 }
 
 function Panel({ kicker, title, action, children }: { kicker: string; title: string; action?: ReactNode; children: ReactNode }) {
@@ -1107,7 +1107,7 @@ function SampleTaskAttainment({ report }: { report: ReportCenterOverviewDTO | nu
 
 function SampleReview({ report }: { report: ReportCenterOverviewDTO | null }) {
   const sample = report?.sample;
-  return <Panel kicker="审核链路" title="提交、分项审核与正式发布"><div className="report-review-flow"><article><span>01</span><div><small>样品采集</small><strong>{numberText(sample?.taskCount)} 个任务</strong><p>扫码填写数据并拍摄过程、成品照片</p></div></article><ChevronRight /><article><span>02</span><div><small>分项审核</small><strong>{numberText(sample?.reviewedItemCount)} 项已审核</strong><p>{numberText(sample?.pendingReviewCount)} 项仍待审核，未审核不进入正式资料</p></div></article><ChevronRight /><article><span>03</span><div><small>正式发布</small><strong>{numberText(sample?.publishedItemCount)} 项资料</strong><p>发布后同步到产品数据、图纸注意事项与辅料规则</p></div></article></div><div className="report-review-progress"><div><span>当前审核完成率</span><strong>{percentText(sample?.reviewBasisPoints)}</strong></div><i><b style={{ width: `${Math.min(100, (sample?.reviewBasisPoints || 0) / 100)}%` }} /></i></div></Panel>;
+  return <Panel kicker="审核链路" title="提交、整包审核与正式发布"><div className="report-review-flow"><article><span>01</span><div><small>样品采集</small><strong>{numberText(sample?.taskCount)} 个任务</strong><p>扫码填写数据并拍摄过程、成品照片</p></div></article><ChevronRight /><article><span>02</span><div><small>整包审核</small><strong>{numberText(sample?.reviewedItemCount)} 包已审核</strong><p>{numberText(sample?.pendingReviewCount)} 包仍待审核，每个产品提交只处理一次</p></div></article><ChevronRight /><article><span>03</span><div><small>正式发布</small><strong>{numberText(sample?.publishedItemCount)} 项资料</strong><p>确认时统一同步到产品数据、工时草稿和照片资料</p></div></article></div><div className="report-review-progress"><div><span>当前审核完成率</span><strong>{percentText(sample?.reviewBasisPoints)}</strong></div><i><b style={{ width: `${Math.min(100, (sample?.reviewBasisPoints || 0) / 100)}%` }} /></i></div></Panel>;
 }
 
 function FocusTable({ title, items, onSelect }: { title: string; items: ReportCenterFocusItemDTO[]; onSelect: (item: ReportCenterFocusItemDTO) => void }) {

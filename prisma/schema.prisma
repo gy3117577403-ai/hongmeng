@@ -3480,12 +3480,17 @@ model SampleTask {
   lastSubmissionMutationId String?              @map("last_submission_mutation_id")
   submissionRevision       Int                  @default(0) @map("submission_revision")
   activeSubmissionId       String?              @unique @map("active_submission_id")
+  acceptedSubmissionId     String?              @unique @map("accepted_submission_id")
   lastEditedKind           String?              @map("last_edited_kind")
   lastEditedRowId          String?              @map("last_edited_row_id")
   startedAt                DateTime?            @map("started_at")
   submittedAt              DateTime?            @map("submitted_at")
   completedAt              DateTime?            @map("completed_at")
   cancelledAt              DateTime?            @map("cancelled_at")
+  archivedAt               DateTime?            @map("archived_at")
+  archivedById             String?              @map("archived_by_id")
+  archivedByName           String?              @map("archived_by_name")
+  archiveReason            String?              @map("archive_reason")
   deletedAt                DateTime?            @map("deleted_at")
   createdAt                DateTime             @default(now()) @map("created_at")
   updatedAt                DateTime             @updatedAt @map("updated_at")
@@ -3496,6 +3501,7 @@ model SampleTask {
   draftSections            SampleDraftSection[]
   submissions              SampleSubmission[]   @relation("SampleTaskSubmissions")
   activeSubmission         SampleSubmission?    @relation("SampleTaskActiveSubmission", fields: [activeSubmissionId], references: [id], onDelete: SetNull)
+  acceptedSubmission       SampleSubmission?    @relation("SampleTaskAcceptedSubmission", fields: [acceptedSubmissionId], references: [id], onDelete: SetNull)
 
   @@index([drawingLibraryItemId, createdAt])
   @@index([status, dueDate])
@@ -3533,8 +3539,18 @@ model SampleSubmission {
   revision              Int
   mutationId            String      @map("mutation_id")
   requestHash           String      @map("request_hash")
+  contentHash           String?     @map("content_hash")
   status                String      @default("PENDING")
   snapshot              Json
+  decision              String?
+  decisionMutationId    String?     @map("decision_mutation_id")
+  decisionRequestHash   String?     @map("decision_request_hash")
+  decisionComment       String?     @map("decision_comment")
+  reviewPatch           Json?       @map("review_patch")
+  reviewedSnapshot      Json?       @map("reviewed_snapshot")
+  decidedById           String?     @map("decided_by_id")
+  decidedByName         String?     @map("decided_by_name")
+  decidedAt             DateTime?   @map("decided_at")
   submittedById         String?     @map("submitted_by_id")
   submittedByName       String?     @map("submitted_by_name")
   submittedAt           DateTime    @default(now()) @map("submitted_at")
@@ -3548,11 +3564,14 @@ model SampleSubmission {
   updatedAt             DateTime    @updatedAt @map("updated_at")
   task                  SampleTask  @relation("SampleTaskSubmissions", fields: [taskId], references: [id], onDelete: Cascade)
   activeForTask         SampleTask? @relation("SampleTaskActiveSubmission")
+  acceptedForTask       SampleTask? @relation("SampleTaskAcceptedSubmission")
 
   @@unique([taskId, revision])
   @@unique([taskId, mutationId])
   @@unique([taskId, withdrawalMutationId])
+  @@unique([taskId, decisionMutationId])
   @@index([taskId, status, submittedAt])
+  @@index([taskId, contentHash])
   @@map("sample_submissions")
 }
 
@@ -3607,6 +3626,7 @@ model SampleDataEntry {
   @@unique([taskId, clientMutationId])
   @@unique([taskId, draftSectionKind, draftRowId, submissionRevision], map: "sample_entries_draft_row_submission_key")
   @@index([taskId, reviewStatus, createdAt])
+  @@index([taskId, requestHash])
   @@index([kind, reviewStatus])
   @@index([publishedEntityType, publishedEntityId])
   @@index([deletedAt])
@@ -3626,6 +3646,7 @@ model SamplePhoto {
   size               Int
   objectKey          String              @unique @map("object_key")
   sha256             String
+  duplicateOfId       String?             @map("duplicate_of_id")
   captureSource      String?             @map("capture_source")
   sourceOriginalName String?             @map("source_original_name")
   sortOrder          Int                 @default(0) @map("sort_order")
@@ -3654,6 +3675,8 @@ model SamplePhoto {
 
   @@unique([taskId, clientMutationId])
   @@index([taskId, reviewStatus, createdAt])
+  @@index([taskId, sha256])
+  @@index([duplicateOfId])
   @@index([linkedEntryId])
   @@index([category, reviewStatus])
   @@index([deletedAt])
