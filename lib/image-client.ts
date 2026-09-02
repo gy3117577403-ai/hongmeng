@@ -31,6 +31,16 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number):
   return new Promise(resolve => canvas.toBlob(resolve, type, quality));
 }
 
+async function hasJpegSignature(file: Blob): Promise<boolean> {
+  const header = new Uint8Array(await file.slice(0, 3).arrayBuffer());
+  return header.length === 3 && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff;
+}
+
+function samplePhotoUploadName(mutationId: string): string {
+  const stableId = mutationId.replace(/[^a-z0-9_-]/gi, '').slice(0, 64) || String(Date.now());
+  return `sample-${stableId}.jpg`;
+}
+
 function loadImageElement(file: File): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -113,10 +123,23 @@ export async function compressImageForUpload(file: File, options: ImageOptimizeO
 }
 
 export async function normalizeCapturedImage(file: File): Promise<File> {
-  return compressImageForUpload(file, {
+  const normalized = await compressImageForUpload(file, {
     force: true,
     fileName: readableCameraName(),
     maxSize: DEFAULT_MAX_SIZE,
     quality: DEFAULT_QUALITY,
   });
+  if (normalized === file || normalized.type !== 'image/jpeg' || !(await hasJpegSignature(normalized))) {
+    throw new Error('照片无法转换为标准 JPEG，请重新拍照或从相册选择 JPG、PNG、WEBP 图片');
+  }
+  return normalized;
+}
+
+export async function prepareSamplePhotoForUpload(file: File, mutationId: string): Promise<File> {
+  const fileName = samplePhotoUploadName(mutationId);
+  if (await hasJpegSignature(file)) {
+    return new File([file], fileName, { type: 'image/jpeg', lastModified: file.lastModified || Date.now() });
+  }
+  const normalized = await normalizeCapturedImage(file);
+  return new File([normalized], fileName, { type: 'image/jpeg', lastModified: normalized.lastModified });
 }

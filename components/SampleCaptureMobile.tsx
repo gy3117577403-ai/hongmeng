@@ -32,7 +32,7 @@ import {
 import Image from 'next/image';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { normalizeCapturedImage } from '@/lib/image-client';
+import { normalizeCapturedImage, prepareSamplePhotoForUpload } from '@/lib/image-client';
 import {
   SAMPLE_SECTION_MAX_ROWS,
   createProcessRow,
@@ -174,6 +174,13 @@ function taskStatusText(task: SampleTaskDTO) {
 
 async function bodyJson(response: Response) {
   return response.json().catch(() => ({})) as Promise<Record<string, any>>;
+}
+
+function encodePhotoUploadMetadata(metadata: Record<string, string>): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(metadata));
+  if (bytes.length > 6 * 1024) throw new Error('照片说明或原文件名过长，请缩短后重试');
+  const binary = Array.from(bytes, byte => String.fromCharCode(byte)).join('');
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
 function openPhotoDb(): Promise<IDBDatabase | null> {
@@ -675,13 +682,27 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     if (!task) return false;
     updateLocalPhoto(item.id, { status: 'UPLOADING', progress: 20, error: '' });
     try {
-      const data = new FormData();
-      data.set('file', item.file); data.set('category', item.category); data.set('caption', item.caption);
-      data.set('captureSource', item.source); data.set('sourceOriginalName', item.originalName);
-      data.set('sortOrder', String(sortOrder)); data.set('clientMutationId', item.mutationId);
-      data.set('expectedTaskVersion', String(task.version));
-      if (item.linkedEntryId) data.set('linkedEntryId', item.linkedEntryId);
-      const response = await fetch(`/api/sample-tasks/${task.id}/photos`, { method: 'POST', body: data });
+      const uploadFile = await prepareSamplePhotoForUpload(item.file, item.mutationId);
+      const metadata = encodePhotoUploadMetadata({
+        category: item.category,
+        caption: item.caption.slice(0, 500),
+        captureSource: item.source,
+        sourceOriginalName: item.originalName.slice(0, 255),
+        sortOrder: String(sortOrder),
+        clientMutationId: item.mutationId,
+        expectedTaskVersion: String(task.version),
+        linkedEntryId: item.linkedEntryId,
+      });
+      updateLocalPhoto(item.id, { progress: 45 });
+      const response = await fetch(`/api/sample-tasks/${task.id}/photos`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'X-Sample-Photo-Protocol': 'raw-v1',
+          'X-Sample-Photo-Metadata': metadata,
+        },
+        body: uploadFile,
+      });
       const body = await bodyJson(response);
       if (!response.ok) throw new Error(body.error || '照片上传失败');
       if (body.task) setTask(current => !current || (body.task as SampleTaskDTO).version >= current.version ? body.task as SampleTaskDTO : current);

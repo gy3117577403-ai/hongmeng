@@ -20,26 +20,133 @@ import { withSamplePhotoSerializableRetry } from './serializable-retry';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const RAW_PHOTO_PROTOCOL = 'raw-v1';
+const RAW_PHOTO_METADATA_LIMIT = 8 * 1024;
+
+type ParsedSamplePhotoUpload = {
+  upload: { name: string; type: string; size: number };
+  body: Buffer;
+  fields: Record<string, unknown>;
+  protocol: 'multipart' | typeof RAW_PHOTO_PROTOCOL;
+};
+
+class SamplePhotoRequestError extends Error {
+  constructor(
+    readonly code: string,
+    readonly publicMessage: string,
+    readonly status: number,
+    readonly detail?: unknown,
+  ) {
+    super(publicMessage);
+    this.name = 'SamplePhotoRequestError';
+  }
+}
+
+function rawPhotoExtension(mimeType: string): string | null {
+  if (mimeType === 'image/jpeg') return 'jpg';
+  if (mimeType === 'image/png') return 'png';
+  if (mimeType === 'image/webp') return 'webp';
+  return null;
+}
+
+function decodeRawPhotoMetadata(encoded: string | null): Record<string, unknown> {
+  if (!encoded || encoded.length > RAW_PHOTO_METADATA_LIMIT || !/^[a-z0-9_-]+$/i.test(encoded)) {
+    throw new SamplePhotoRequestError('SAMPLE_PHOTO_METADATA_INVALID', '照片上传信息无效，请保留照片后重试', 400);
+  }
+  try {
+    const decoded = Buffer.from(encoded, 'base64url');
+    if (!decoded.length || decoded.length > RAW_PHOTO_METADATA_LIMIT) throw new Error('metadata size invalid');
+    const metadata: unknown = JSON.parse(decoded.toString('utf8'));
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('metadata object invalid');
+    return metadata as Record<string, unknown>;
+  } catch (error) {
+    throw new SamplePhotoRequestError('SAMPLE_PHOTO_METADATA_INVALID', '照片上传信息无效，请保留照片后重试', 400, error);
+  }
+}
+
+async function parseSamplePhotoUpload(req: NextRequest): Promise<ParsedSamplePhotoUpload> {
+  const protocol = req.headers.get('x-sample-photo-protocol');
+  if (protocol === RAW_PHOTO_PROTOCOL) {
+    const fields = decodeRawPhotoMetadata(req.headers.get('x-sample-photo-metadata'));
+    const mimeType = (req.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+    const extension = rawPhotoExtension(mimeType);
+    if (!extension) {
+      throw new SamplePhotoRequestError('SAMPLE_PHOTO_CONTENT_TYPE_INVALID', '样品照片仅支持 JPG、PNG、WEBP 图片', 400);
+    }
+    let body: Buffer;
+    try {
+      body = Buffer.from(await req.arrayBuffer());
+    } catch (error) {
+      throw new SamplePhotoRequestError('SAMPLE_PHOTO_BODY_READ_FAILED', '照片内容读取失败，请保留照片后重试', 400, error);
+    }
+    const mutationId = cleanSampleText(fields.clientMutationId, 80);
+    const stableId = mutationId?.replace(/[^a-z0-9_-]/gi, '').slice(0, 64) || crypto.randomUUID();
+    return {
+      upload: { name: `sample-${stableId}.${extension}`, type: mimeType, size: body.length },
+      body,
+      fields,
+      protocol: RAW_PHOTO_PROTOCOL,
+    };
+  }
+  if (protocol) {
+    throw new SamplePhotoRequestError('SAMPLE_PHOTO_PROTOCOL_UNSUPPORTED', '照片上传协议不受支持，请刷新页面后重试', 400);
+  }
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch (error) {
+    throw new SamplePhotoRequestError('SAMPLE_PHOTO_FORM_PARSE_FAILED', '照片上传请求解析失败，请保留照片后重试', 400, error);
+  }
+  const file = form.get('file');
+  if (!(file instanceof File)) {
+    throw new SamplePhotoRequestError('SAMPLE_PHOTO_FILE_MISSING', '请选择照片', 400);
+  }
+  let body: Buffer;
+  try {
+    body = Buffer.from(await file.arrayBuffer());
+  } catch (error) {
+    throw new SamplePhotoRequestError('SAMPLE_PHOTO_BODY_READ_FAILED', '照片内容读取失败，请保留照片后重试', 400, error);
+  }
+  return {
+    upload: { name: file.name, type: file.type, size: file.size },
+    body,
+    fields: {
+      category: form.get('category'),
+      caption: form.get('caption'),
+      captureSource: form.get('captureSource'),
+      sourceOriginalName: form.get('sourceOriginalName'),
+      sortOrder: form.get('sortOrder'),
+      clientMutationId: form.get('clientMutationId'),
+      expectedTaskVersion: form.get('expectedTaskVersion'),
+      linkedEntryId: form.get('linkedEntryId'),
+    },
+    protocol: 'multipart',
+  };
+}
+
 function datePart(date = new Date()) {
   return `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, '0')}${String(date.getUTCDate()).padStart(2, '0')}`;
 }
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   let objectKey: string | null = null;
+  let failureStage = 'authentication';
   try {
     const user = await requireUser();
     const actor = sampleActor(user);
-    const form = await req.formData();
-    const upload = form.get('file');
-    if (!(upload instanceof File)) return NextResponse.json({ ok: false, error: '请选择照片' }, { status: 400 });
-    const categoryValue = form.get('category');
+    failureStage = 'request-parse';
+    const parsedUpload = await parseSamplePhotoUpload(req);
+    const { upload, body, fields } = parsedUpload;
+    failureStage = 'validation';
+    const categoryValue = fields.category;
     const category = isSamplePhotoCategory(categoryValue) ? categoryValue : 'UNCLASSIFIED';
-    const caption = cleanSampleText(form.get('caption'), 500);
-    const captureSource = cleanSampleText(form.get('captureSource'), 30);
-    const clientMutationId = cleanSampleText(form.get('clientMutationId'), 80);
-    const linkedEntryId = cleanSampleText(form.get('linkedEntryId'), 80);
-    const sourceOriginalName = cleanSampleText(form.get('sourceOriginalName'), 255) || upload.name;
-    const expectedTaskVersion = Number(form.get('expectedTaskVersion'));
-    const sortOrder = Number(form.get('sortOrder') || 0);
+    const caption = cleanSampleText(fields.caption, 500);
+    const captureSource = cleanSampleText(fields.captureSource, 30);
+    const clientMutationId = cleanSampleText(fields.clientMutationId, 80);
+    const linkedEntryId = cleanSampleText(fields.linkedEntryId, 80);
+    const sourceOriginalName = cleanSampleText(fields.sourceOriginalName, 255) || upload.name;
+    const expectedTaskVersion = Number(fields.expectedTaskVersion);
+    const sortOrder = Number(fields.sortOrder || 0);
     if (!Number.isInteger(expectedTaskVersion) || expectedTaskVersion < 1) {
       return NextResponse.json({ ok: false, error: '样品任务版本已失效，请刷新后重试' }, { status: 400 });
     }
@@ -52,7 +159,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (task.status === 'CANCELLED' || task.status === 'COMPLETED') {
       return NextResponse.json({ ok: false, error: '已完成或已取消任务不能继续上传，请先重新打开任务' }, { status: 409 });
     }
-    const body = Buffer.from(await upload.arrayBuffer());
     const error = validateFileContent(upload.name, upload.type, upload.size, body);
     if (error) return NextResponse.json({ ok: false, error }, { status: 400 });
     if (!upload.type.startsWith('image/')) return NextResponse.json({ ok: false, error: '样品照片仅支持图片文件' }, { status: 400 });
@@ -78,12 +184,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ ok: false, error: '样品数据已经提交，请先撤回提交再上传照片' }, { status: 409 });
     }
     objectKey = `sample-tasks/${task.code}/${datePart()}/sha256-${sha256}-${crypto.randomUUID()}-${safeFilename(upload.name)}`;
+    failureStage = 'object-storage';
     await putObject({
       key: objectKey,
       body,
       contentType: upload.type || 'application/octet-stream',
       originalName: upload.name,
     });
+    failureStage = 'database';
     const photoResult = await withSamplePhotoSerializableRetry(() => prisma.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${task.id}`}))`;
       const fresh = await tx.sampleTask.findFirst({ where: { id: task.id, deletedAt: null } });
@@ -157,6 +265,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
     if (photoResult.duplicate && objectKey) await deleteObjectsBestEffort([objectKey]);
     objectKey = null;
+    failureStage = 'response';
     const photo = await prisma.samplePhoto.findUnique({ where: { id: photoResult.id }, select: { taskId: true } });
     const updated = photo
       ? await prisma.sampleTask.findUnique({ where: { id: photo.taskId }, include: sampleTaskInclude })
@@ -165,6 +274,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   } catch (error) {
     if (objectKey) await deleteObjectsBestEffort([objectKey]);
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof SamplePhotoRequestError) {
+      const incidentId = crypto.randomUUID();
+      console.error('parse sample photo request failed', {
+        incidentId,
+        code: error.code,
+        protocol: req.headers.get('x-sample-photo-protocol') || 'multipart',
+        contentType: req.headers.get('content-type'),
+        contentLength: req.headers.get('content-length'),
+        detail: error.detail,
+      });
+      return NextResponse.json({ ok: false, code: error.code, error: error.publicMessage, incidentId }, { status: error.status });
+    }
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });
@@ -174,7 +295,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       if (error.message === 'SAMPLE_PHOTO_MUTATION_TOMBSTONED') return NextResponse.json({ ok: false, error: '该照片上传记录已经删除，请使用新的上传编号' }, { status: 409 });
       if (error.message === 'SAMPLE_LINKED_ENTRY_NOT_FOUND') return NextResponse.json({ ok: false, error: '关联的采集记录不存在，请刷新后重试' }, { status: 409 });
     }
-    console.error('upload sample photo failed', error);
-    return NextResponse.json({ ok: false, error: '照片上传失败，请检查对象存储' }, { status: 500 });
+    const incidentId = crypto.randomUUID();
+    console.error('upload sample photo failed', { incidentId, stage: failureStage, error });
+    const storageFailure = failureStage === 'object-storage';
+    return NextResponse.json({
+      ok: false,
+      code: storageFailure ? 'SAMPLE_PHOTO_STORAGE_WRITE_FAILED' : 'SAMPLE_PHOTO_UPLOAD_FAILED',
+      error: storageFailure ? '照片暂时无法写入对象存储，请保留照片后重试' : '照片上传处理失败，请保留照片后重试',
+      incidentId,
+    }, { status: storageFailure ? 503 : 500 });
   }
 }
