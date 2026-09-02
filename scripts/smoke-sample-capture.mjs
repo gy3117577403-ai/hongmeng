@@ -337,9 +337,11 @@ async function run() {
   const capturePage = await request('authenticated capture page renders', `/sample-capture/${encodeURIComponent(task.qrCode)}`);
   assert.ok(typeof capturePage.body === 'string' && capturePage.body.length > 500);
   const printPage = await request('authenticated standard print sheet renders', `/sample-print/${task.id}?mode=current&from=planning`);
-  assert.ok(typeof printPage.body === 'string' && printPage.body.includes('样品工艺采集单'));
+  assert.ok(typeof printPage.body === 'string' && printPage.body.includes('样品资料采集单'));
   assert.ok(printPage.body.includes(task.code));
-  assert.ok(printPage.body.includes(candidateProcessName));
+  assert.ok(printPage.body.includes('热缩管'));
+  assert.ok(printPage.body.includes('压接后拍照确认端子位置'));
+  assert.equal(printPage.body.includes(candidateProcessName), false);
   assert.match(printPage.response.headers.get('cache-control') || '', /(?:private.*no-store|no-store.*private)/i);
 
   const withdrawn = await request('withdraw untouched submission', `/api/sample-tasks/${task.id}/withdraw-submission`, {
