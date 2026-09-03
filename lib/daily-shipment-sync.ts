@@ -100,6 +100,7 @@ export async function syncProductionBatchToDueShipmentPlan(
     actorId: string | null;
     reason: DailyShipmentSyncReason;
     now?: Date;
+    allowArchived?: boolean;
   },
 ): Promise<DailyShipmentSyncResult> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`daily-shipment-batch:${input.batchId}`}))`;
@@ -122,8 +123,11 @@ export async function syncProductionBatchToDueShipmentPlan(
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt || !batch.workOrderId || batch.workOrder?.deletedAt) {
     return empty('batch_missing');
   }
+  const allowedReleaseStates = input.allowArchived
+    ? ['active', 'preparation', 'archived']
+    : ['active', 'preparation'];
   if (
-    !['active', 'preparation'].includes(batch.releaseState)
+    !allowedReleaseStates.includes(batch.releaseState)
     || batch.planOrder.status === 'paused'
     || batch.planOrder.status === 'cancelled'
   ) return empty('not_released');
@@ -287,7 +291,9 @@ export async function syncProductionBatchToDueShipmentPlan(
       create: {
         planId: plan.id,
         itemId,
-        action: input.reason === 'due_date_change' ? 'SYNC_DUE_DATE_CHANGE' : 'AUTO_LINK_DUE_DATE',
+        action: input.reason === 'due_date_change'
+          ? 'SYNC_DUE_DATE_CHANGE'
+          : input.reason === 'repair' ? 'CUTOVER_BACKFILL' : 'AUTO_LINK_DUE_DATE',
         idempotencyKey: revisionKey,
         payloadHash: revisionKey,
         afterData: {

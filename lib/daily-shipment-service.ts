@@ -29,6 +29,12 @@ import {
   shipmentWeek,
 } from '@/lib/daily-shipment-domain';
 import { chinaDateKey } from '@/lib/china-date';
+import {
+  dailyShipmentCutoverApplies,
+  dailyShipmentDisplayWindow,
+  dailyShipmentWarningWindow,
+  safeShipmentProcessName,
+} from '@/lib/daily-shipment-policy';
 import { prisma } from '@/lib/prisma';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { productionBatchWeekStartWindow } from '@/lib/production-week';
@@ -37,6 +43,7 @@ import {
   isCurrentProductionCarryoverTarget,
   reconcileCurrentProductionCarryovers,
 } from '@/lib/production-carryovers';
+import { syncProductionBatchToDueShipmentPlan } from '@/lib/daily-shipment-sync';
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -259,9 +266,9 @@ function currentProcess(workOrder: {
   processRoute: { status: string; steps: Array<{ processName: string; status: string }> } | null;
 }): string {
   const step = workOrder.processRoute?.steps.find(item => !['completed', 'skipped'].includes(item.status));
-  if (step) return step.processName;
+  if (step) return safeShipmentProcessName(step.processName);
   if (workOrder.processRoute?.status === 'completed') return '全部工序完成';
-  return workOrder.processName || '待生产反馈';
+  return safeShipmentProcessName(workOrder.processName);
 }
 
 function workOrderProgress(workOrder: {
@@ -737,12 +744,142 @@ export async function reconcileAllDailyShipmentCarryovers(input: {
   return result;
 }
 
+export type DailyShipmentRepairResult = {
+  startDate: string;
+  endDate: string;
+  scannedCount: number;
+  changedCount: number;
+  unchangedCount: number;
+  skippedCount: number;
+  failed: Array<{ batchId: string; reason: string }>;
+};
+
+/**
+ * Rebuilds missing due-date associations for the cutover window. This is safe
+ * to replay because syncProductionBatchToDueShipmentPlan locks by batch and
+ * uses the stable `daily-shipment-open:<batchId>` association key.
+ */
+export async function reconcileDailyShipmentCutoverWindow(input: {
+  startDate: unknown;
+  endDate: unknown;
+  actorUserId?: string | null;
+  pageSize?: number;
+}): Promise<DailyShipmentRepairResult> {
+  const requestedStart = parseShipmentDate(input.startDate);
+  const end = parseShipmentDate(input.endDate);
+  const policyWindow = dailyShipmentDisplayWindow(end.key);
+  const startKey = policyWindow.cutoverApplied && requestedStart.key < policyWindow.startKey
+    ? policyWindow.startKey
+    : requestedStart.key;
+  const start = parseShipmentDate(startKey);
+  const result: DailyShipmentRepairResult = {
+    startDate: start.key,
+    endDate: end.key,
+    scannedCount: 0,
+    changedCount: 0,
+    unchangedCount: 0,
+    skippedCount: 0,
+    failed: [],
+  };
+  if (start.key > end.key) return result;
+
+  const pageSize = Math.max(25, Math.min(500, input.pageSize ?? 200));
+  let cursor: string | undefined;
+  do {
+    const batches = await prisma.productionPlanBatch.findMany({
+      where: {
+        deletedAt: null,
+        workOrderId: { not: null },
+        releaseState: { in: ['active', 'preparation', 'archived'] },
+        planOrder: {
+          deletedAt: null,
+          customerDueDateConfirmed: true,
+          customerDueDate: { gte: start.value, lt: parseShipmentDate(shiftShipmentDateKey(end.key, 1)).value },
+          status: { notIn: ['cancelled', 'paused'] },
+        },
+        workOrder: { is: { deletedAt: null } },
+      },
+      orderBy: { id: 'asc' },
+      take: pageSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        quantity: true,
+        planOrder: { select: { customerDueDate: true, deliveryVersion: true } },
+        dailyShipmentItems: {
+          select: {
+            associationKey: true,
+            status: true,
+            deliveryVersionSnapshot: true,
+            dueDateSnapshot: true,
+            plan: { select: { shipDate: true } },
+            events: { select: { eventType: true, quantity: true } },
+          },
+        },
+      },
+    });
+    if (!batches.length) break;
+    result.scannedCount += batches.length;
+    for (const batch of batches) {
+      const shippedQuantity = netShipmentQuantity(batch.dailyShipmentItems.flatMap(item => item.events));
+      if (shippedQuantity >= batch.quantity) {
+        result.skippedCount += 1;
+        continue;
+      }
+      const dueDate = dateKey(batch.planOrder.customerDueDate);
+      const healthy = batch.dailyShipmentItems.some(item => (
+        item.associationKey === `daily-shipment-open:${batch.id}`
+        && (item.status === DailyShipmentItemStatus.PLANNED || item.status === DailyShipmentItemStatus.PARTIALLY_SHIPPED)
+        && item.deliveryVersionSnapshot === batch.planOrder.deliveryVersion
+        && item.dueDateSnapshot !== null
+        && dateKey(item.dueDateSnapshot) === dueDate
+      ));
+      if (healthy) {
+        result.unchangedCount += 1;
+        continue;
+      }
+      try {
+        const synced = await prisma.$transaction(tx => syncProductionBatchToDueShipmentPlan(tx, {
+          batchId: batch.id,
+          actorId: input.actorUserId || null,
+          reason: 'repair',
+          allowArchived: true,
+        }), {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 30_000,
+        });
+        if (synced.skippedReason) result.skippedCount += 1;
+        else if (synced.changed) result.changedCount += 1;
+        else result.unchangedCount += 1;
+      } catch (error) {
+        result.failed.push({
+          batchId: batch.id,
+          reason: error instanceof Error ? error.message : '未知关联修复错误',
+        });
+      }
+    }
+    cursor = batches[batches.length - 1]?.id;
+    if (batches.length < pageSize) break;
+  } while (cursor);
+  return result;
+}
+
 export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; actorUserId?: string }) {
   const parsedDate = parseShipmentDate(input.shipDate);
+  const displayWindow = dailyShipmentDisplayWindow(parsedDate.key);
   const week = shipmentWeek(parsedDate.key);
   const batchWeek = productionBatchWeekStartWindow(parsedDate.key);
   const now = new Date();
+  let repairSummary: DailyShipmentRepairResult | null = null;
   let carryoverReconciliation: DailyShipmentCarryoverResult | null = null;
+  if (input.actorUserId && displayWindow.cutoverApplied) {
+    repairSummary = await reconcileDailyShipmentCutoverWindow({
+      startDate: displayWindow.startKey,
+      endDate: displayWindow.endKey,
+      actorUserId: input.actorUserId,
+    });
+  }
   if (input.actorUserId && parsedDate.key === chinaDateKey(now)) {
     const maintenance = await reconcileAllDailyShipmentCarryovers({
       targetShipDate: parsedDate.key,
@@ -764,7 +901,7 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
     await reconcileCurrentProductionCarryovers({ targetWeekStart: week.startDate, actorId: input.actorUserId });
   }
 
-  const [plan, batches, weekPlans] = await Promise.all([
+  const [plan, batches, weekPlans, windowItems] = await Promise.all([
     prisma.dailyShipmentPlan.findUnique({
       where: { shipDate: parsedDate.value },
       include: {
@@ -803,6 +940,24 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
           },
         },
       },
+    }),
+    prisma.dailyShipmentPlanItem.findMany({
+      where: {
+        status: { not: DailyShipmentItemStatus.CANCELLED },
+        plan: { shipDate: { lte: parsedDate.value } },
+        productionPlanBatch: {
+          deletedAt: null,
+          planOrder: {
+            deletedAt: null,
+            customerDueDateConfirmed: true,
+            customerDueDate: { gte: displayWindow.startDate, lt: displayWindow.endExclusiveDate },
+            status: { notIn: ['cancelled', 'paused'] },
+          },
+        },
+        workOrder: { is: { deletedAt: null } },
+      },
+      include: itemInclude,
+      orderBy: [{ plannedShipAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
     }),
   ]);
 
@@ -936,24 +1091,66 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
       || first.plannedShipAt.localeCompare(second.plannedShipAt)
       || first.sortOrder - second.sortOrder;
   });
-  const plannedQuantity = serializedItems.reduce((total, item) => total + item.plannedQuantity, 0);
-  const shippedQuantity = serializedItems.reduce((total, item) => total + item.shippedQuantity, 0);
-  const readyQuantity = serializedItems.reduce((total, item) => {
-    if (item.status === DailyShipmentItemStatus.CARRIED_OVER) return total;
-    const completedAvailable = Math.max(
-      0,
-      item.completedQuantity - (shippedByBatch.get(item.batchId) || 0),
-    );
-    return total + Math.min(item.pendingQuantity, completedAvailable);
-  }, 0);
-  const operationalItems = serializedItems.filter(item => (
+  const incomingCarryovers = serializedItems.filter(item => item.isCarryover);
+  const carriedOutItems = serializedItems.filter(item => item.status === DailyShipmentItemStatus.CARRIED_OVER);
+  const itemsByBatch = new Map<string, typeof windowItems>();
+  for (const item of windowItems) {
+    const grouped = itemsByBatch.get(item.productionPlanBatchId) || [];
+    grouped.push(item);
+    itemsByBatch.set(item.productionPlanBatchId, grouped);
+  }
+  const displayItems = [...itemsByBatch.values()].flatMap(items => {
+    const canonical = items.find(item => (
+      item.status === DailyShipmentItemStatus.PLANNED
+      || item.status === DailyShipmentItemStatus.PARTIALLY_SHIPPED
+    )) || items.find(item => item.status === DailyShipmentItemStatus.SHIPPED) || items[0];
+    if (!canonical) return [];
+    const allEvents = items.flatMap(item => item.events).sort((first, second) => (
+      first.shippedAt.getTime() - second.shippedAt.getTime()
+      || first.createdAt.getTime() - second.createdAt.getTime()
+    ));
+    const base = serializeItem(canonical, now);
+    const totalQuantity = canonical.productionPlanBatch.quantity;
+    const totalShipped = netShipmentQuantity(allEvents);
+    const pending = Math.max(0, totalQuantity - totalShipped);
+    const currentStatus = pending <= 0
+      ? DailyShipmentItemStatus.SHIPPED
+      : totalShipped > 0 ? DailyShipmentItemStatus.PARTIALLY_SHIPPED : canonical.status;
+    const actualShipAt = latestEffectiveShipmentAt(allEvents);
+    return [{
+      ...base,
+      status: currentStatus,
+      plannedQuantity: totalQuantity,
+      shippedQuantity: totalShipped,
+      pendingQuantity: pending,
+      actualShipAt: actualShipAt?.toISOString() || null,
+      progressState: shipmentProgressState({
+        plannedQuantity: totalQuantity,
+        shippedQuantity: totalShipped,
+        completedQuantity: base.completedQuantity,
+        plannedShipAt: canonical.plannedShipAt,
+        itemStatus: currentStatus,
+        now,
+      }),
+      // Keep row actions bound to the canonical item's own revision/events.
+      // Cross-day audit history remains available in the dedicated history view.
+      events: base.events,
+      isOperationalOnSelectedDate: dateKey(canonical.plan.shipDate) === parsedDate.key
+        && currentStatus !== DailyShipmentItemStatus.SHIPPED
+        && currentStatus !== DailyShipmentItemStatus.CARRIED_OVER,
+    }];
+  }).sort((first, second) => (
+    first.customerDueDate.localeCompare(second.customerDueDate)
+    || Number(first.status === DailyShipmentItemStatus.SHIPPED) - Number(second.status === DailyShipmentItemStatus.SHIPPED)
+    || shipmentPriorityRank(first.shipmentPriority) - shipmentPriorityRank(second.shipmentPriority)
+    || first.workOrderCode.localeCompare(second.workOrderCode)
+  ));
+  const displayedOperationalItems = displayItems.filter(item => (
     item.status !== DailyShipmentItemStatus.CARRIED_OVER
     && item.status !== DailyShipmentItemStatus.SHIPPED
   ));
-  const incomingCarryovers = serializedItems.filter(item => item.isCarryover);
-  const carriedOutItems = serializedItems.filter(item => item.status === DailyShipmentItemStatus.CARRIED_OVER);
   const prioritySummary = (priority: DailyShipmentPriority) => {
-    const items = operationalItems.filter(item => item.shipmentPriority === priority);
+    const items = displayedOperationalItems.filter(item => item.shipmentPriority === priority);
     return {
       itemCount: items.length,
       quantity: items.reduce((total, item) => total + item.pendingQuantity, 0),
@@ -975,6 +1172,11 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
   return {
     selectedDate: parsedDate.key,
     generatedAt: now.toISOString(),
+    range: {
+      cutoverDate: displayWindow.cutoverApplied ? displayWindow.startKey : null,
+      startDate: displayWindow.startKey,
+      endDate: displayWindow.endKey,
+    },
     week: {
       startDate: week.startKey,
       endDate: week.endKey,
@@ -1002,19 +1204,22 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
         : null,
       items: serializedItems,
     } : null,
+    displayItems,
     summary: {
-      itemCount: serializedItems.length,
-      plannedQuantity,
-      readyQuantity,
-      shippedQuantity,
-      pendingQuantity: operationalItems.reduce((total, item) => total + item.pendingQuantity, 0),
-      riskItemCount: operationalItems.filter(item => ['OVERDUE', 'NOT_STARTED'].includes(item.progressState)).length,
+      itemCount: displayItems.length,
+      plannedQuantity: displayItems.reduce((total, item) => total + item.plannedQuantity, 0),
+      readyQuantity: displayItems.reduce((total, item) => (
+        total + Math.min(item.pendingQuantity, Math.max(0, item.completedQuantity - item.shippedQuantity))
+      ), 0),
+      shippedQuantity: displayItems.reduce((total, item) => total + item.shippedQuantity, 0),
+      pendingQuantity: displayedOperationalItems.reduce((total, item) => total + item.pendingQuantity, 0),
+      riskItemCount: displayedOperationalItems.filter(item => ['OVERDUE', 'NOT_STARTED'].includes(item.progressState)).length,
       urgent: prioritySummary(DailyShipmentPriority.URGENT),
       priority: prioritySummary(DailyShipmentPriority.PRIORITY),
       normal: prioritySummary(DailyShipmentPriority.NORMAL),
       completed: {
-        itemCount: serializedItems.filter(item => item.status === DailyShipmentItemStatus.SHIPPED).length,
-        quantity: serializedItems
+        itemCount: displayItems.filter(item => item.status === DailyShipmentItemStatus.SHIPPED).length,
+        quantity: displayItems
           .filter(item => item.status === DailyShipmentItemStatus.SHIPPED)
           .reduce((total, item) => total + item.shippedQuantity, 0),
       },
@@ -1030,24 +1235,33 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
       },
     },
     carryoverReconciliation,
+    repairSummary,
     candidates,
   };
 }
 
-export async function loadShipmentWarningOverview(input: { anchorDate: unknown }) {
+export async function loadShipmentWarningOverview(input: { anchorDate: unknown; actorUserId?: string | null }) {
   const anchor = parseShipmentDate(input.anchorDate);
-  const rangeEndKey = shiftShipmentDateKey(anchor.key, 3);
-  const rangeEnd = parseShipmentDate(rangeEndKey);
+  const warningWindow = dailyShipmentWarningWindow(anchor.key);
+  const rangeEndKey = warningWindow.endKey;
   const now = new Date();
+  let repairSummary: DailyShipmentRepairResult | null = null;
+  if (input.actorUserId && warningWindow.cutoverApplied) {
+    repairSummary = await reconcileDailyShipmentCutoverWindow({
+      startDate: warningWindow.startKey,
+      endDate: warningWindow.endKey,
+      actorUserId: input.actorUserId,
+    });
+  }
   const batches = await prisma.productionPlanBatch.findMany({
     where: {
       deletedAt: null,
       workOrderId: { not: null },
-      releaseState: { in: ['active', 'preparation'] },
+      releaseState: { in: ['active', 'preparation', 'archived'] },
       planOrder: {
         deletedAt: null,
         customerDueDateConfirmed: true,
-        customerDueDate: { lte: rangeEnd.value },
+        customerDueDate: { gte: warningWindow.startDate, lt: warningWindow.endExclusiveDate },
         status: { notIn: ['cancelled', 'paused'] },
       },
       workOrder: { is: { deletedAt: null } },
@@ -1068,12 +1282,11 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown }
       { batchNo: 'asc' },
       { createdAt: 'asc' },
     ],
-    take: 1000,
   });
   const items = batches.flatMap(batch => {
     const shippedQuantity = netShipmentQuantity(batch.dailyShipmentItems.flatMap(item => item.events));
     const pendingQuantity = Math.max(0, batch.quantity - shippedQuantity);
-    if (pendingQuantity <= 0 || !batch.workOrder) return [];
+    if (!batch.workOrder) return [];
     const dueDate = dateKey(batch.planOrder.customerDueDate);
     const daysUntilDue = Math.round(
       (parseShipmentDate(dueDate).value.getTime() - anchor.value.getTime()) / 86_400_000,
@@ -1087,9 +1300,23 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown }
       item.status === DailyShipmentItemStatus.PLANNED
       || item.status === DailyShipmentItemStatus.PARTIALLY_SHIPPED
     )) || null;
-    const associatedPlanDate = openItem ? dateKey(openItem.plan.shipDate) : null;
+    const latestItem = openItem || batch.dailyShipmentItems.find(item => item.status !== DailyShipmentItemStatus.CANCELLED) || null;
+    const associatedPlanDate = latestItem ? dateKey(latestItem.plan.shipDate) : null;
     const expectedPlanDate = daysUntilDue < 0 ? anchor.key : dueDate;
     const completedQuantity = completedGoodQuantity(batch.workOrder);
+    const productionState = completedQuantity >= batch.quantity
+      ? 'COMPLETED'
+      : completedQuantity > 0 ? 'IN_PRODUCTION' : 'NOT_STARTED';
+    const shipmentState = pendingQuantity <= 0
+      ? 'SHIPPED'
+      : shippedQuantity > 0
+        ? 'PARTIAL'
+        : daysUntilDue < 0 ? 'OVERDUE' : openItem ? 'PENDING' : 'EXPECTED_NOT_PLANNED';
+    const planningState = latestItem
+      ? latestItem.status === DailyShipmentItemStatus.CARRIED_OVER || latestItem.associationType === DailyShipmentAssociationType.CARRYOVER
+        ? 'CARRIED_OVER'
+        : 'PLAN_CREATED'
+      : 'EXPECTED_NOT_PLANNED';
     return [{
       batchId: batch.id,
       workOrderId: batch.workOrder.id,
@@ -1109,9 +1336,14 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown }
       productionProgress: workOrderProgress(batch.workOrder, batch.quantity),
       productionStage: batch.workOrder.stage,
       currentProcess: currentProcess(batch.workOrder),
-      associationType: openItem?.associationType || null,
+      productionState,
+      shipmentState,
+      planningState,
+      associationType: latestItem?.associationType || null,
       associatedPlanDate,
-      associationHealthy: associatedPlanDate === expectedPlanDate,
+      associationHealthy: pendingQuantity <= 0
+        ? Boolean(latestItem)
+        : associatedPlanDate === expectedPlanDate,
     }];
   });
   const groupMeta = [
@@ -1133,21 +1365,31 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown }
   const count = (level: typeof groupMeta[number]['level']) => items.filter(item => item.warningLevel === level).length;
   return {
     anchorDate: anchor.key,
+    cutoverDate: warningWindow.cutoverApplied ? warningWindow.startKey : null,
+    rangeStartDate: warningWindow.startKey,
     rangeEndDate: rangeEndKey,
     generatedAt: now.toISOString(),
     summary: {
       itemCount: items.length,
       pendingQuantity: items.reduce((sum, item) => sum + item.pendingQuantity, 0),
+      completedCount: items.filter(item => item.shipmentState === 'SHIPPED').length,
+      incompleteCount: items.filter(item => item.shipmentState !== 'SHIPPED').length,
+      expectedNotPlannedCount: items.filter(item => item.planningState === 'EXPECTED_NOT_PLANNED').length,
       overdueCount: count('OVERDUE'),
       todayCount: count('TODAY'),
       tomorrowCount: count('T1'),
       twoDaysCount: count('T2'),
       threeDaysCount: count('T3'),
-      productionRiskCount: items.filter(item => item.completedQuantity < item.pendingQuantity).length,
-      readyCount: items.filter(item => item.completedQuantity >= item.pendingQuantity).length,
+      productionRiskCount: items.filter(item => (
+        item.pendingQuantity > 0 && Math.max(0, item.completedQuantity - item.shippedQuantity) < item.pendingQuantity
+      )).length,
+      readyCount: items.filter(item => (
+        item.pendingQuantity <= 0 || Math.max(0, item.completedQuantity - item.shippedQuantity) >= item.pendingQuantity
+      )).length,
       associationIssueCount: items.filter(item => !item.associationHealthy).length,
     },
     groups,
+    repairSummary,
   };
 }
 
