@@ -529,9 +529,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     && selected.canApplyProductTimeProfile
     && availableProductTimeVersion,
   );
-  const productTimeActionLabel = selected?.productTimeRouteLinkState === 'upgrade_available'
-    ? `升级至 V${availableProductTimeVersion}`
-    : `应用 V${availableProductTimeVersion} 到本工单`;
+  const productTimeActionLabel = selected?.productTimeRouteLinkState === 'repair_required'
+    ? `修复并确认 V${availableProductTimeVersion}`
+    : selected?.productTimeRouteLinkState === 'upgrade_available'
+      ? `升级至 V${availableProductTimeVersion}`
+      : `应用 V${availableProductTimeVersion} 到本工单`;
 
   async function applyProductTimeToSelectedWorkOrder(): Promise<void> {
     if (!selected?.workOrderId || !availableProductTimeVersion || routeActionPending) return;
@@ -1138,6 +1140,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                     <h3>{selected.currentStep}</h3>
                     <p>{selected.processStatus === 'closed'
                       ? '该历史工单已经完成，不再回放旧版“前端 / 后端”阶段。'
+                      : availableProductTimeVersion && selected.productTimeRouteLinkState === 'repair_required'
+                        ? `产品工序与工时 V${availableProductTimeVersion} 已写入本工单，但路线仍是草稿。系统将安全修复并完成确认。`
                       : availableProductTimeVersion && selected.productTimeRouteLinkState === 'available'
                         ? `产品工序与工时 V${availableProductTimeVersion} 已发布，但当前工单还没有生成路线快照。应用后将按真实工序流转。`
                         : availableProductTimeVersion && selected.productTimeRouteLinkState === 'locked'
@@ -1148,7 +1152,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                     {availableProductTimeVersion && <div className="workflow-product-time-facts">
                       <span>产品标准 V{availableProductTimeVersion}</span>
                       <span>{selected.availableProductTimeProcessCount || 0} 道工序</span>
-                      <span>{selected.productTimeRouteLinkState === 'locked' ? '工单快照已锁定' : '工单快照待生成'}</span>
+                      <span>{selected.productTimeRouteLinkState === 'locked'
+                        ? '工单快照已锁定'
+                        : selected.productTimeRouteLinkState === 'repair_required'
+                          ? '工单路线待确认'
+                          : '工单快照待生成'}</span>
                     </div>}
                   </div>
                   {selected.processStatus !== 'closed' && (canApplyProductTime

@@ -139,7 +139,7 @@ jobs:
       - name: Production correction and product-time sync PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/process-completion-withdrawal-integration.test.ts tests/product-time-active-sync-integration.test.ts tests/product-time-draft-sync-integration.test.ts tests/product-time-draft-rebuild-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/process-completion-withdrawal-integration.test.ts tests/product-time-active-sync-integration.test.ts tests/product-time-draft-sync-integration.test.ts tests/product-time-draft-rebuild-integration.test.ts tests/product-time-route-confirmation-repair-integration.test.ts
       - name: Process route change PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

@@ -1687,6 +1687,8 @@ export type ProductionPlanBatchDTO = {
   materialExecutionControl?: import('@/lib/material-execution-control').MaterialExecutionControlView;
   warehouseStatus?: WarehouseMaterialStatus | 'not_created';
   processStatus?: ProcessRouteStatus | 'not_created';
+  processRouteSource?: string | null;
+  processRouteProductTimeProfileVersion?: number | null;
   warehouseCompletedAt?: string | null;
   processConfirmedAt?: string | null;
   processStartedAt?: string | null;
@@ -3546,6 +3548,7 @@ export type ProductTimeRouteLinkState =
   | 'linked'
   | 'available'
   | 'upgrade_available'
+  | 'repair_required'
   | 'missing_profile'
   | 'locked';
 

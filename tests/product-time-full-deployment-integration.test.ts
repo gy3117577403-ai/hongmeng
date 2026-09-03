@@ -210,13 +210,13 @@ test(
             create: {
               templateName: `${item.specification} 产品工时`,
               templateVersion: 1,
-              status: 'confirmed',
+              // Reproduce the historical partial-application defect: profile
+              // metadata and steps exist, but the route never left draft.
+              status: 'draft',
               version: 0,
               routeSource: 'product_time_profile',
               productTimeProfileId: oldProfile.id,
               productTimeProfileVersion: 1,
-              confirmedAt: new Date('2026-08-10T00:00:00.000Z'),
-              confirmedById: actor.id,
               steps: { create: createSteps(false) },
             },
           },
@@ -412,6 +412,9 @@ test(
           },
         },
       });
+      assert.equal(factFree.status, 'confirmed');
+      assert.ok(factFree.confirmedAt);
+      assert.equal(factFree.confirmedById, actor.id);
       assert.deepEqual(factFree.steps.map(step => step.processName), ['裁线', '穿号码管', '剥皮', '裁线']);
       assert.equal(factFree.steps[0].id, firstAId);
       assert.equal(factFree.steps[3].id, secondAId);

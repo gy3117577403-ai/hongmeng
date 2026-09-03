@@ -103,6 +103,7 @@ function productTimeRouteLink(
     && route.productTimeProfileVersion !== null
     && route.productTimeProfileVersion >= availableVersion
     && route.steps.length > 0
+    && route.status !== 'draft'
   ) {
     return { productTimeRouteLinkState: 'linked', canApplyProductTimeProfile: false };
   }
@@ -110,8 +111,14 @@ function productTimeRouteLink(
     const canApply = canReplaceDraftRouteWithProductTime(route)
       || canUpgradeUnstartedConfirmedProductTimeRoute(route);
     return {
-      productTimeRouteLinkState: canApply && route.productTimeProfileVersion
-        ? 'upgrade_available'
+      productTimeRouteLinkState: canApply
+        && route.status === 'draft'
+        && route.routeSource === 'product_time_profile'
+        && route.productTimeProfileVersion !== null
+        && route.productTimeProfileVersion >= availableVersion
+        ? 'repair_required'
+        : canApply && route.productTimeProfileVersion
+          ? 'upgrade_available'
         : canApply ? 'available' : 'locked',
       canApplyProductTimeProfile: canApply,
     };

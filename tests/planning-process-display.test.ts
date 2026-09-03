@@ -30,3 +30,26 @@ test('actual route state wins after release', () => {
     productTimeProfileVersion: 2,
   }).label, '已完成');
 });
+
+test('draft route never pretends to be actively syncing without a real job state', () => {
+  assert.deepEqual(planningProcessDisplay({
+    processStatus: 'draft',
+    productTimeProfileVersion: 1,
+    routeSource: 'product_time_profile',
+    routeProductTimeProfileVersion: 1,
+  }), {
+    label: '路线待确认',
+    detail: '工艺 V1 已写入，等待自动修复',
+    readiness: 'pending',
+  });
+  assert.deepEqual(planningProcessDisplay({
+    processStatus: 'draft',
+    productTimeProfileVersion: 2,
+    routeSource: 'product_time_pending',
+    routeProductTimeProfileVersion: null,
+  }), {
+    label: '工艺待同步',
+    detail: '产品工时 V2 已发布',
+    readiness: 'pending',
+  });
+});

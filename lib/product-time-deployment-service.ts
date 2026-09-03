@@ -32,6 +32,7 @@ import {
 import {
   syncDailyTasksAfterProcessRouteChange,
 } from '@/lib/process-route-change-daily-task-sync';
+import { productTimeRouteActivation } from '@/lib/process-routing';
 import { prisma } from '@/lib/prisma';
 
 type Tx = Prisma.TransactionClient;
@@ -1959,8 +1960,18 @@ async function applyRouteDeployment(
       routeVersionAfter: route.version,
     };
   }
+  const facts = routeHasFacts(route);
+  const activation = route.status === 'draft' && !facts && !route.startedAt
+    ? productTimeRouteActivation(route.workOrder.stage, route.workOrder.status)
+    : null;
+  const activationAt = activation ? new Date() : null;
+  const effectiveStartedAt = activation?.shouldStart ? activationAt : route.startedAt;
   const routeLock = await tx.workOrderProcessRoute.updateMany({
-    where: { id: route.id, version: route.version },
+    where: {
+      id: route.id,
+      version: route.version,
+      ...(activation ? { status: 'draft' } : {}),
+    },
     data: {
       templateId: null,
       templateName: `${route.workOrder.code} 产品工序与工时`,
@@ -1969,6 +1980,12 @@ async function applyRouteDeployment(
       productTimeProfileVersion: profile.version,
       reportingPolicy: profile.reportingPolicy,
       routeSource: 'product_time_profile',
+      ...(activation && activationAt ? {
+        status: activation.status,
+        confirmedAt: activationAt,
+        confirmedById: input.actorId,
+        startedAt: activation.shouldStart ? activationAt : null,
+      } : {}),
       version: { increment: 1 },
     },
   });
@@ -1979,8 +1996,6 @@ async function applyRouteDeployment(
       'PRODUCT_TIME_ROUTE_VERSION_CONFLICT',
     );
   }
-
-  const facts = routeHasFacts(route);
   const currentByKey = new Map<string, DeploymentStepRecord>();
   for (const step of route.steps) {
     const key = stepOccurrenceKey(step);
@@ -2402,8 +2417,8 @@ async function applyRouteDeployment(
         where: { id: { in: firstIds } },
         data: {
           inputQty: targetQty,
-          status: route.startedAt ? 'current' : 'pending',
-          startedAt: route.startedAt,
+          status: effectiveStartedAt ? 'current' : 'pending',
+          startedAt: effectiveStartedAt,
           quantityVersion: { increment: 1 },
         },
       });
@@ -2497,6 +2512,8 @@ async function applyRouteDeployment(
     closedAfterSupplementCancellation,
     taskSync,
     stepChanges,
+    routeActivated: Boolean(activation),
+    activatedStatus: activation?.status || null,
   };
   await tx.processRouteActivity.create({
     data: {

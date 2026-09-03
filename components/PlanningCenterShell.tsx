@@ -2411,6 +2411,8 @@ export default function PlanningCenterShell({
                   const processDisplay = planningProcessDisplay({
                     processStatus: batch.processStatus || 'not_created',
                     productTimeProfileVersion: order.currentProductTimeVersion,
+                    routeSource: batch.processRouteSource,
+                    routeProductTimeProfileVersion: batch.processRouteProductTimeProfileVersion,
                   });
                   const processFinishedAt = batch.processCompletedAt || batch.processConfirmedAt;
                   const flowFinishedAt = batch.workOrderCompletedAt;

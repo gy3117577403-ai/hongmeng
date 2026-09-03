@@ -61,8 +61,10 @@ type ProductionPlanningAuxiliaryPhase = Exclude<ProductionPlanningMaintenancePha
 const ROTATING_AUXILIARY_PHASES: ProductionPlanningAuxiliaryPhase[] = [
   'future_week_alignment',
   'current_week_carryover',
-  'draft_product_time_routes',
   'drawing_links',
+  // Link repair and route materialization are consecutive phases so a newly
+  // linked work order does not wait a full rotation before receiving V1.
+  'draft_product_time_routes',
   'legacy_deleted_quantities',
 ];
 const ON_EVERY_POLL_PHASES: ProductionPlanningAuxiliaryPhase[] = [
@@ -71,6 +73,7 @@ const ON_EVERY_POLL_PHASES: ProductionPlanningAuxiliaryPhase[] = [
 ];
 const ALL_AUXILIARY_PHASES = [...ROTATING_AUXILIARY_PHASES, ...ON_EVERY_POLL_PHASES];
 let auxiliaryPhaseCursor = 0;
+let draftProductTimeRouteCursor: string | null = null;
 let automaticFinalizeCursor: string | null = null;
 let automaticReleaseActiveCursor: string | null = null;
 let automaticReleasePreparationCursor: string | null = null;
@@ -592,7 +595,11 @@ function lockedAuxiliaryPhase(
               actorId: null,
             });
           case 'draft_product_time_routes':
-            return reconcileDraftProductTimeRoutes(tx, { actorId: null });
+            return reconcileDraftProductTimeRoutes(tx, {
+              actorId: null,
+              afterRouteId: draftProductTimeRouteCursor,
+              limit: 10,
+            });
           case 'drawing_links':
             return reconcileProductionPlanDrawingLinks(tx);
           case 'legacy_deleted_quantities':
@@ -604,9 +611,21 @@ function lockedAuxiliaryPhase(
         }
       },
     });
-    return locked.acquired
-      ? { status: 'completed', result: locked.value }
-      : { status: 'skipped_locked', result: { reason: 'another_worker_active' } };
+    if (!locked.acquired) {
+      return { status: 'skipped_locked', result: { reason: 'another_worker_active' } };
+    }
+    if (phase === 'draft_product_time_routes') {
+      const result = locked.value as {
+        lastRouteId?: string | null;
+        hasMore?: boolean;
+      };
+      // Move past intentionally locked historical routes; otherwise a single
+      // skipped item would starve every later repair candidate.
+      draftProductTimeRouteCursor = result.hasMore && result.lastRouteId
+        ? result.lastRouteId
+        : null;
+    }
+    return { status: 'completed', result: locked.value };
   };
   return { phase, execute };
 }
@@ -627,6 +646,9 @@ export async function runProductionPlanningMaintenanceCycle(input: {
     : auxiliaryPhase === 'quality_warning_projection'
       ? { phase: auxiliaryPhase, execute: () => runQualityWarningProjectionPhase(now, automaticReleaseLimit) }
       : lockedAuxiliaryPhase(auxiliaryPhase, now);
+  const routeRepairDefinitions = auxiliaryPhase === 'draft_product_time_routes'
+    ? []
+    : [lockedAuxiliaryPhase('draft_product_time_routes', now)];
   const phases = await executeProductionPlanningMaintenancePhases([
     ...(input.includeAutomaticRelease === false
       ? []
@@ -635,6 +657,9 @@ export async function runProductionPlanningMaintenanceCycle(input: {
           execute: () => runAutomaticReleasePhase(now, automaticReleaseLimit),
         }]),
     auxiliaryDefinition,
+    // Route confirmation repair is a bounded, idempotent safety phase and must
+    // not wait for the five-phase rotation after a product link is corrected.
+    ...routeRepairDefinitions,
   ]);
   const ok = phases.every(phase => phase.status === 'completed' || phase.status === 'skipped_locked');
   return {

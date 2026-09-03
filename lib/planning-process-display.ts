@@ -1,6 +1,8 @@
 export type PlanningProcessDisplayInput = {
   processStatus: 'not_created' | 'draft' | 'confirmed' | 'in_progress' | 'completed' | string;
   productTimeProfileVersion?: number | null;
+  routeSource?: string | null;
+  routeProductTimeProfileVersion?: number | null;
 };
 
 export type PlanningProcessDisplay = {
@@ -22,9 +24,24 @@ export function planningProcessDisplay(input: PlanningProcessDisplayInput): Plan
     return { label: '已确认', detail: null, readiness: 'ready' };
   }
   if (input.productTimeProfileVersion) {
+    if (input.processStatus !== 'not_created') {
+      const routeVersion = input.routeProductTimeProfileVersion;
+      const profileAlreadyWritten = input.routeSource === 'product_time_profile' && Boolean(routeVersion);
+      return profileAlreadyWritten
+        ? {
+            label: '路线待确认',
+            detail: `工艺 V${routeVersion} 已写入，等待自动修复`,
+            readiness: 'pending',
+          }
+        : {
+            label: '工艺待同步',
+            detail: `产品工时 V${input.productTimeProfileVersion} 已发布`,
+            readiness: 'pending',
+          };
+    }
     return {
       label: `已关联 V${input.productTimeProfileVersion}`,
-      detail: input.processStatus === 'not_created' ? '下达后自动生成' : '正在同步正式工艺',
+      detail: '下达后自动生成',
       readiness: 'registered',
     };
   }

@@ -4,9 +4,11 @@ import { prisma } from '@/lib/prisma';
 import { ProductionControlError } from '@/lib/production-control';
 import { assertProductionMayRun } from '@/lib/production-pause-guard';
 import {
+  applyPublishedProductTimeToWorkOrder,
   normalizeProcessStageGroup,
   processRouteInclude,
   processStageForGroup,
+  ProductTimeRouteLinkError,
   resolveCompletedProcessGroupTransition,
   validateProcessSteps,
   type ProcessStepInput,
@@ -116,6 +118,7 @@ function targetQuantity(order: Parameters<typeof resolveEffectiveFrontendTransfe
 
 function normalizeServiceError(error: unknown): ProcessRouteServiceError {
   if (error instanceof ProductionControlError) return new ProcessRouteServiceError(error.message, error.status, error.code);
+  if (error instanceof ProductTimeRouteLinkError) return new ProcessRouteServiceError(error.message, error.status, error.code);
   if (error instanceof ProcessRouteServiceError) return error;
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') return conflict();
   if (error instanceof Error && (
@@ -292,68 +295,11 @@ async function applyProductTimeProfile(input: ApplyProductTimeProfileCommand): P
       throw new ProcessRouteServiceError('已确认或已开始的路线不能切换产品工时', 409, 'PROCESS_ROUTE_LOCKED');
     }
     if (route.version !== parseVersion(input.expectedVersion)) throw conflict();
-    if (!route.workOrder.drawingLibraryItemId) {
-      throw new ProcessRouteServiceError('当前工单尚未关联图纸资料产品', 409, 'PRODUCT_TIME_ITEM_MISSING');
-    }
-    const profile = await tx.productTimeProfile.findFirst({
-      where: { drawingLibraryItemId: route.workOrder.drawingLibraryItemId, status: 'published' },
-      include: productTimeProfileInclude,
-      orderBy: { version: 'desc' },
+    const applied = await applyPublishedProductTimeToWorkOrder(tx, {
+      workOrderId: route.workOrderId,
+      actorId: input.userId,
     });
-    if (!profile?.entries.length) {
-      throw new ProcessRouteServiceError('当前产品没有已发布工时，请先到产品工时维护并发布', 409, 'PRODUCT_TIME_PROFILE_MISSING');
-    }
-    const update = await tx.workOrderProcessRoute.updateMany({
-      where: { id: route.id, version: route.version, status: 'draft' },
-      data: {
-        templateId: null,
-        templateName: `${route.workOrder.specification || '当前产品'} 产品工时`,
-        templateVersion: profile.version,
-        productTimeProfileId: profile.id,
-        productTimeProfileVersion: profile.version,
-        routeSource: 'product_time_profile',
-        version: { increment: 1 },
-      },
-    });
-    if (update.count !== 1) throw conflict();
-    await tx.workOrderProcessStep.deleteMany({ where: { routeId: route.id } });
-    await tx.workOrderProcessStep.createMany({
-      data: profile.entries.map(entry => ({
-        routeId: route.id,
-        processDefinitionId: entry.processDefinitionId,
-        processCode: entry.processDefinition.code,
-        processName: entry.processDefinition.name,
-        stageGroup: entry.processDefinition.stageGroup,
-        position: entry.position,
-        sequenceGroup: entry.sequenceGroup,
-        ...productTimeStandardSnapshot(profile, entry),
-        status: 'pending',
-      })),
-    });
-    await tx.processRouteActivity.create({
-      data: {
-        routeId: route.id,
-        action: 'apply_product_time_profile',
-        content: `应用产品工时 V${profile.version}，共 ${profile.entries.length} 道工序`,
-        actorId: input.userId,
-        detail: { productTimeProfileId: profile.id, productTimeProfileVersion: profile.version },
-      },
-    });
-    await tx.operationLog.create({
-      data: {
-        userId: input.userId,
-        action: 'apply_product_time_profile',
-        targetType: 'work_order_process_route',
-        targetId: route.id,
-        detail: {
-          workOrderId: route.workOrderId,
-          productTimeProfileId: profile.id,
-          productTimeProfileVersion: profile.version,
-          processCount: profile.entries.length,
-        },
-      },
-    });
-    return route.id;
+    return applied.routeId;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 

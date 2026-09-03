@@ -971,16 +971,36 @@ export async function reconcileDraftProductTimeRoutes(
   input: {
     workOrderWhere?: Prisma.WorkOrderWhereInput;
     actorId?: string | null;
+    afterRouteId?: string | null;
+    limit?: number;
   } = {},
-): Promise<{ updated: number; applied: number; pending: number; started: number; skipped: number }> {
-  const routes = await tx.workOrderProcessRoute.findMany({
+): Promise<{
+  updated: number;
+  applied: number;
+  pending: number;
+  started: number;
+  skipped: number;
+  scanned: number;
+  lastRouteId: string | null;
+  hasMore: boolean;
+}> {
+  const limit = Math.max(1, Math.min(50, input.limit ?? 10));
+  const candidates = await tx.workOrderProcessRoute.findMany({
     where: {
       status: 'draft',
-      routeSource: { in: ['process_template', PRODUCT_TIME_PENDING_ROUTE_SOURCE] },
+      // product_time_profile + draft is a legacy partial-application state:
+      // the profile and steps were written, but the route was never confirmed.
+      // It must remain repairable instead of falling outside the compensator.
+      routeSource: { in: ['process_template', PRODUCT_TIME_PENDING_ROUTE_SOURCE, 'product_time_profile'] },
+      ...(input.afterRouteId ? { id: { gt: input.afterRouteId } } : {}),
       ...(input.workOrderWhere ? { workOrder: input.workOrderWhere } : {}),
     },
     include: draftRouteSyncInclude,
+    orderBy: { id: 'asc' },
+    take: limit + 1,
   });
+  const hasMore = candidates.length > limit;
+  const routes = candidates.slice(0, limit);
   const drawingLibraryItemIds = [...new Set(routes
     .map(route => route.workOrder.drawingLibraryItemId)
     .filter((id): id is string => Boolean(id)))];
@@ -1026,7 +1046,16 @@ export async function reconcileDraftProductTimeRoutes(
     if (await resetLegacyDraftRouteToProductTimePending(tx, route, input.actorId)) pending += 1;
     else skipped += 1;
   }
-  return { updated: applied + pending, applied, pending, started, skipped };
+  return {
+    updated: applied + pending,
+    applied,
+    pending,
+    started,
+    skipped,
+    scanned: routes.length,
+    lastRouteId: routes.at(-1)?.id || null,
+    hasMore,
+  };
 }
 
 export async function createWorkOrderProcessRoute(
@@ -1203,6 +1232,8 @@ export async function applyPublishedProductTimeToWorkOrder(
     && existing.routeSource === 'product_time_profile'
     && existing.productTimeProfileVersion === profile.version
     && existing.steps.length > 0
+    && existing.status !== 'draft'
+    && Boolean(existing.confirmedAt)
   ) {
     return {
       routeId: existing.id,
