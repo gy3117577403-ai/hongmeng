@@ -353,6 +353,13 @@ test('planning product creation is idempotent and requires confirmation before r
   let upsertCount = 0;
   const tx = {
     drawingLibraryItem: {
+      findMany: async () => state === 'active' ? [{
+        id: 'drawing-1',
+        libraryKey: '杭州测试(10999)::PLAN-NEW-002',
+        customerName: parsed.data.customerName,
+        specification: parsed.data.specification,
+        _count: { files: 0 },
+      }] : [],
       findFirst: async () => state === 'active' ? {
         id: 'drawing-1',
         customerName: parsed.data.customerName,
