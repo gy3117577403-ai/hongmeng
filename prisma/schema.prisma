@@ -594,6 +594,7 @@ model User {
   wipEvents                       WipEvent[]                             @relation("WipEventActor")
   wipInventoryMovements           WipInventoryMovement[]                 @relation("WipInventoryMovementActor")
   productionPlanChanges           ProductionPlanChange[]                 @relation("ProductionPlanChangeActor")
+  productionPlanImportBatches     ProductionPlanImportBatch[]            @relation("ProductionPlanImportBatchCreatedBy")
   createdProcessCompletions       ProcessCompletion[]                    @relation("ProcessCompletionCreatedBy")
   voidedProcessCompletions        ProcessCompletion[]                    @relation("ProcessCompletionVoidedBy")
   claimedProcessLaborClaims       ProcessLaborClaim[]                    @relation("ProcessLaborClaimClaimedBy")
@@ -3427,6 +3428,33 @@ model ProductionPlanChange {
   @@index([action])
   @@index([createdAt])
   @@map("production_plan_changes")
+}
+
+model ProductionPlanImportBatch {
+  id                  String    @id @default(uuid())
+  requestId           String    @unique @map("request_id")
+  previewToken        String    @map("preview_token")
+  status              String    @default("previewed")
+  sourceFileName      String    @map("source_file_name")
+  sourceSheetName     String?   @map("source_sheet_name")
+  sourceFileHash      String    @map("source_file_hash")
+  targetWeekStartDate DateTime  @map("target_week_start_date")
+  targetWeekEndDate   DateTime  @map("target_week_end_date")
+  previewData         Json      @map("preview_data")
+  decisions           Json?
+  resultData          Json?     @map("result_data")
+  errorMessage        String?   @map("error_message")
+  createdById         String?   @map("created_by_id")
+  committedAt         DateTime? @map("committed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  createdBy           User?     @relation("ProductionPlanImportBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([previewToken])
+  @@index([targetWeekStartDate, createdAt])
+  @@index([createdById, createdAt])
+  @@map("production_plan_import_batches")
 }
 
 model ProductProcessTimeEntry {

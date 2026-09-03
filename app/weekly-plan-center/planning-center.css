@@ -4587,3 +4587,55 @@ main.planning-center-shell.hm-workbench-root {
   .planning-wip-route { grid-column: 2 / -1; }
   .planning-wip-lane-list nav { grid-column: 2 / -1; }
 }
+
+/* Production-plan bulk import: upload, product-library reconciliation, commit and audit. */
+.planning-dialog.production-bulk-import { width: min(1040px, calc(100vw - 32px)); max-height: calc(100vh - 32px); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.planning-import-steps { min-height: 54px; padding: 9px 22px; display: flex; align-items: center; justify-content: center; gap: 10px; border-bottom: 1px solid #edf0f4; background: #fff; }
+.planning-import-steps > span { display: inline-flex; align-items: center; gap: 6px; color: #8793a1; font-size: 10px; font-weight: 800; }
+.planning-import-steps > span > b { width: 25px; height: 25px; display: grid; place-items: center; border: 1px solid #d8e0e8; border-radius: 999px; background: #fff; }
+.planning-import-steps > span.active,
+.planning-import-steps > span.done { color: #d95600; }
+.planning-import-steps > span.active > b { border-color: #ea580c; background: #ea580c; color: #fff; }
+.planning-import-steps > span.done > b { border-color: #86c9a4; background: #edf9f2; color: #18794e; }
+.planning-import-steps > i { width: 72px; height: 1px; background: #dde4eb; }
+.planning-import-tools > button { padding: 4px 8px; border: 1px solid #d9e1ea; border-radius: 6px; background: #fff; color: #526176; font-size: 9px; font-weight: 750; }
+.planning-import-summary.production-summary { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.planning-import-rule,
+.planning-import-complete-mark { min-height: 54px; padding: 9px 12px; display: flex; align-items: center; gap: 10px; border: 1px solid #bfe2cf; border-radius: 9px; background: #f1faf5; color: #18794e; }
+.planning-import-rule > svg,
+.planning-import-complete-mark > svg { width: 23px; flex: 0 0 auto; }
+.planning-import-rule > span,
+.planning-import-complete-mark > span { display: grid; gap: 2px; }
+.planning-import-rule strong,
+.planning-import-complete-mark strong { font-size: 11px; }
+.planning-import-rule small,
+.planning-import-complete-mark small { color: #548166; font-size: 9px; }
+.planning-import-table select { width: min(280px, 100%); min-height: 30px; border: 1px solid #e9a56f; border-radius: 6px; background: #fffaf5; color: #8a3c0b; font-size: 9px; }
+.planning-import-table .product-action { display: inline-flex; padding: 4px 7px; border-radius: 999px; background: #eef2f6; color: #526176; font-size: 9px; font-weight: 800; }
+.planning-import-table .product-action.action-reuse { background: #edf9f2; color: #18794e; }
+.planning-import-table .product-action.action-restore { background: #fff7e8; color: #a65c00; }
+.planning-import-table .product-action.action-create { background: #eef5fc; color: #3569a8; }
+.planning-import-table tr.status-conflict td:last-child { color: #b42318; }
+.planning-import-complete { display: grid; gap: 12px; }
+.planning-import-complete-mark { min-height: 74px; }
+.planning-import-complete-mark strong { font-size: 15px; }
+.planning-import-result-list { max-height: 270px; overflow: auto; border: 1px solid #e0e6ec; border-radius: 9px; }
+.planning-import-result-list article,
+.planning-import-history article { min-height: 46px; padding: 8px 11px; display: grid; grid-template-columns: 76px minmax(0, 1fr) minmax(220px, auto); align-items: center; gap: 10px; border-top: 1px solid #edf0f4; color: #657287; font-size: 9px; }
+.planning-import-result-list article:first-child,
+.planning-import-history article:first-child { border-top: 0; }
+.planning-import-result-list article strong { color: #27364b; font-size: 10px; }
+.planning-import-result-list article em { color: #18794e; font-style: normal; text-align: right; }
+.planning-import-history { max-height: 440px; overflow: auto; border: 1px solid #e0e6ec; border-radius: 9px; }
+.planning-import-history article { grid-template-columns: minmax(0, 1fr) 120px 110px; }
+.planning-import-history article > span { display: grid; gap: 2px; }
+.planning-import-history article strong { color: #27364b; font-size: 10px; }
+.planning-import-history article small,
+.planning-import-history article time { color: #8793a1; font-size: 8px; }
+.planning-import-history article em { padding: 4px 7px; border-radius: 999px; background: #fff7e8; color: #9a5700; font-style: normal; font-weight: 800; text-align: center; }
+.planning-import-history article em.status-completed { background: #edf9f2; color: #18794e; }
+
+@media (max-width: 900px) {
+  .planning-import-summary.production-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .planning-import-steps > i { width: 28px; }
+}

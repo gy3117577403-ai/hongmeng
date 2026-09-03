@@ -276,39 +276,103 @@ type MovePreview = {
 
 type PlanningImportRow = {
   rowNo: number;
-  status: 'ready' | 'skipped' | 'invalid' | 'duplicate';
+  status: 'ready' | 'skipped' | 'invalid' | 'duplicate' | 'conflict';
   reason: string;
-  code: string;
-  workOrder: {
-    customerName?: string | null;
-    productName?: string | null;
-    specification?: string | null;
-    uncompletedQty?: string | null;
-    plannedAt?: string | null;
-    [key: string]: unknown;
-  };
+  warning: string | null;
+  productAction: 'reuse' | 'restore' | 'create' | 'conflict' | 'none';
+  matchedDrawingLibraryItemId: string | null;
+  candidates: Array<{
+    id: string;
+    libraryKey: string;
+    customerName: string;
+    productName: string | null;
+    specification: string;
+    deletedAt: string | null;
+    drawingFileCount: number;
+    sopFileCount: number;
+    productTimeVersion: number | null;
+  }>;
+  existingPlanOrderId: string | null;
+  input: {
+    sourceOrderNo: string;
+    sourceLineNo: number;
+    customerName: string;
+    productName: string;
+    specification: string;
+    orderQuantity: number;
+    plannedQuantity: number;
+    customerDueDate: string;
+    plannedCompletionDate: string;
+  } | null;
 };
 
 type PlanningImportPreview = {
-  mode: 'weekly_plan';
+  batchId: string;
+  requestId: string;
+  previewToken: string;
   sourceFileName: string;
   sourceSheetName?: string | null;
-  weekStartDate: string;
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
   summary: {
     totalRows: number;
     readyCount: number;
+    reuseCount: number;
+    restoreCount: number;
+    createCount: number;
     skippedCount: number;
     invalidCount: number;
     duplicateCount: number;
+    conflictCount: number;
   };
   rows: PlanningImportRow[];
 };
 
+type PlanningImportResult = {
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
+  summary: {
+    created: number;
+    skipped: number;
+    failed: number;
+    reusedProducts: number;
+    restoredProducts: number;
+    createdProducts: number;
+    automaticallyActive: number;
+    automaticallyPrepared: number;
+    total: number;
+  };
+  results: Array<{
+    row: number;
+    specification: string;
+    status: 'created' | 'skipped';
+    productAction: 'reuse' | 'restore' | 'create' | 'none';
+    message: string;
+  }>;
+};
+
+type PlanningImportHistoryRecord = {
+  id: string;
+  requestId: string;
+  status: string;
+  sourceFileName: string;
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
+  operator: string;
+  committedAt: string | null;
+  createdAt: string;
+  result?: { summary?: PlanningImportResult['summary'] } | null;
+};
+
 type PlanningImportDialog = {
+  step: 'upload' | 'preview' | 'complete' | 'history';
   targetWeekStartDate: string;
   targetWeekEndDate: string;
   fileName: string;
   preview: PlanningImportPreview | null;
+  result: PlanningImportResult | null;
+  decisions: Record<string, string>;
+  history: PlanningImportHistoryRecord[];
   loading: boolean;
 };
 
@@ -1977,10 +2041,14 @@ export default function PlanningCenterShell({
     dialogTriggerRef.current = trigger;
     setError('');
     setImportDialog({
+      step: 'upload',
       targetWeekStartDate: selectedWeek.weekStartDate,
       targetWeekEndDate: selectedWeek.weekEndDate,
       fileName: '',
       preview: null,
+      result: null,
+      decisions: {},
+      history: [],
       loading: false,
     });
     window.requestAnimationFrame(() => importInputRef.current?.focus());
@@ -1996,13 +2064,16 @@ export default function PlanningCenterShell({
       form.set('mode', 'weekly_plan');
       form.set('destination', 'planning');
       form.set('weekStartDate', importDialog.targetWeekStartDate);
-      const response = await fetch('/api/import/work-orders/preview', { method: 'POST', body: form });
+      const response = await fetch('/api/planning/import/preview', { method: 'POST', body: form });
       const body = await responseBody<PlanningImportPreview>(response);
       if (!response.ok || !Array.isArray(body.rows)) throw new Error(body.error || '排单清单预览失败');
       setImportDialog(current => current ? {
         ...current,
+        step: 'preview',
         fileName: file.name,
         preview: body,
+        result: null,
+        decisions: {},
         loading: false,
       } : current);
     } catch (reason) {
@@ -2020,22 +2091,12 @@ export default function PlanningCenterShell({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          rows: importDialog.preview.rows,
-          targetWeekStartDate: importDialog.targetWeekStartDate,
-          sourceFileName: importDialog.preview.sourceFileName,
-          sourceSheetName: importDialog.preview.sourceSheetName,
+          batchId: importDialog.preview.batchId,
+          previewToken: importDialog.preview.previewToken,
+          decisions: importDialog.decisions,
         }),
       });
-      const body = await responseBody<{
-        summary?: {
-          created: number;
-          skipped: number;
-          failed: number;
-          automaticallyActive: number;
-          automaticallyPrepared: number;
-          total: number;
-        };
-      }>(response);
+      const body = await responseBody<PlanningImportResult>(response);
       if (!response.ok || !body.summary) throw new Error(body.error || '排单清单导入失败');
       const automaticMessage = body.summary.automaticallyActive
         ? `，${body.summary.automaticallyActive} 批已进入本周生产`
@@ -2043,12 +2104,26 @@ export default function PlanningCenterShell({
           ? `，${body.summary.automaticallyPrepared} 批已进入下周生产`
           : '';
       setToast(`已导入 ${body.summary.created} 批${automaticMessage}，跳过 ${body.summary.skipped} 行，失败 ${body.summary.failed} 行`);
-      closeDialog();
+      setImportDialog(current => current ? { ...current, step: 'complete', result: body, loading: false } : current);
       setRefreshToken(value => value + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '排单清单导入失败');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function openPlanningImportHistory(): Promise<void> {
+    setError('');
+    setImportDialog(current => current ? { ...current, step: 'history', loading: true } : current);
+    try {
+      const response = await fetch('/api/planning/import/history', { cache: 'no-store' });
+      const body = await responseBody<{ records?: PlanningImportHistoryRecord[] }>(response);
+      if (!response.ok || !Array.isArray(body.records)) throw new Error(body.error || '导入记录加载失败');
+      setImportDialog(current => current ? { ...current, history: body.records || [], loading: false } : current);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '导入记录加载失败');
+      setImportDialog(current => current ? { ...current, loading: false } : current);
     }
   }
 
@@ -2789,36 +2864,73 @@ export default function PlanningCenterShell({
       <footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || movePreview.blockers > 0} onClick={() => { void commitMove(); }}>{saving ? '调配中...' : '确认调配周次'}</button></footer>
     </div>}
 
-    {importDialog && <div ref={dialogRef} className="planning-dialog import-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-import-title">
-      <header><div><span>独立周排单导入</span><h2 id="planning-import-title">导入到 {importDialog.targetWeekStartDate.slice(5)} - {importDialog.targetWeekEndDate.slice(5)}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
+    {importDialog && <div ref={dialogRef} className="planning-dialog import-dialog production-bulk-import" role="dialog" aria-modal="true" aria-labelledby="planning-import-title">
+      <header><div><span>量产计划批量导入</span><h2 id="planning-import-title">{importDialog.step === 'upload' ? '上传排产模板' : importDialog.step === 'preview' ? '核对产品档案与排产' : importDialog.step === 'complete' ? '批量导入完成' : '最近导入记录'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
+      <nav className="planning-import-steps" aria-label="导入步骤">
+        <span className={importDialog.step === 'upload' ? 'active' : importDialog.preview ? 'done' : ''}><b>1</b>上传模板</span>
+        <i />
+        <span className={importDialog.step === 'preview' ? 'active' : importDialog.result ? 'done' : ''}><b>2</b>预检确认</span>
+        <i />
+        <span className={importDialog.step === 'complete' ? 'active' : ''}><b>3</b>导入完成</span>
+      </nav>
       <div className="planning-dialog-body">
-        <section className="planning-import-target">
+        {importDialog.step !== 'history' && <section className="planning-import-target">
           <CalendarCheck2 />
-          <div><span>本次唯一目标周</span><strong>{importDialog.targetWeekStartDate} 至 {importDialog.targetWeekEndDate}</strong><small>不会覆盖其他生产周；目标周已有相同订单时自动跳过。</small></div>
+          <div><span>本次唯一目标周</span><strong>{importDialog.targetWeekStartDate} 至 {importDialog.targetWeekEndDate}</strong><small>同一订单行在目标周重复出现会自动跳过，不累加数量。</small></div>
           <em>{editableWeeks.find(week => week.weekStartDate === importDialog.targetWeekStartDate) ? editableWeekLabel(editableWeeks.find(week => week.weekStartDate === importDialog.targetWeekStartDate)!.key) : '目标周'}</em>
-        </section>
-        <label className="planning-import-picker">
-          <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" onChange={event => { const file = event.target.files?.[0]; if (file) void previewPlanningImport(file); }} />
-          <FileSpreadsheet />
-          <span><strong>{importDialog.fileName || '选择 Excel 或 CSV 排单清单'}</strong><small>{importDialog.loading ? '正在读取并校验清单…' : '支持现有周排单字段；文件仅用于本次解析，不保存到本地磁盘。'}</small></span>
-          <b>{importDialog.fileName ? '重新选择' : '选择文件'}</b>
-        </label>
-        <div className="planning-import-tools"><a href="/api/planning/import/template.csv"><FileSpreadsheet size={15} />下载周排单模板</a><span>导入前必须确认目标周，历史周不可写入。</span></div>
-        {importDialog.loading && <div className="planning-loading compact">正在生成排单预览...</div>}
-        {importDialog.preview && <section className="planning-import-preview">
-          <div className="planning-import-summary">
+        </section>}
+
+        {(importDialog.step === 'upload' || importDialog.step === 'preview') && <>
+          <label className="planning-import-picker">
+            <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" onChange={event => { const file = event.target.files?.[0]; if (file) void previewPlanningImport(file); }} />
+            <FileSpreadsheet />
+            <span><strong>{importDialog.fileName || '选择已填写的量产计划模板'}</strong><small>{importDialog.loading ? '正在校验订单、目标周和产品图纸库…' : '文件只用于本次解析；不会保存到本地磁盘。'}</small></span>
+            <b>{importDialog.fileName ? '重新选择' : '选择文件'}</b>
+          </label>
+          <div className="planning-import-tools"><a href="/api/planning/import/template"><FileSpreadsheet size={15} />下载简版 Excel 模板</a><button type="button" onClick={() => { void openPlanningImportHistory(); }}>导入记录</button><span>系统只在没有任何匹配档案时新建图纸库。</span></div>
+        </>}
+
+        {importDialog.loading && <div className="planning-loading compact">{importDialog.step === 'history' ? '正在读取导入记录...' : '正在生成产品匹配与排产预览...'}</div>}
+        {importDialog.step === 'preview' && importDialog.preview && <section className="planning-import-preview">
+          <div className="planning-import-summary production-summary">
             <span><small>总行数</small><strong>{importDialog.preview.summary.totalRows}</strong></span>
-            <span className="ready"><small>可导入</small><strong>{importDialog.preview.summary.readyCount}</strong></span>
-            <span><small>自动跳过</small><strong>{importDialog.preview.summary.skippedCount + importDialog.preview.summary.duplicateCount}</strong></span>
-            <span className={importDialog.preview.summary.invalidCount ? 'danger' : ''}><small>异常行</small><strong>{importDialog.preview.summary.invalidCount}</strong></span>
+            <span className="ready"><small>复用原档案</small><strong>{importDialog.preview.summary.reuseCount}</strong></span>
+            <span><small>恢复归档</small><strong>{importDialog.preview.summary.restoreCount}</strong></span>
+            <span><small>自动新建</small><strong>{importDialog.preview.summary.createCount}</strong></span>
+            <span><small>重复跳过</small><strong>{importDialog.preview.summary.skippedCount + importDialog.preview.summary.duplicateCount}</strong></span>
+            <span className={importDialog.preview.summary.conflictCount ? 'danger' : ''}><small>待选择</small><strong>{importDialog.preview.summary.conflictCount}</strong></span>
+            <span className={importDialog.preview.summary.invalidCount ? 'danger' : ''}><small>格式错误</small><strong>{importDialog.preview.summary.invalidCount}</strong></span>
           </div>
+          <div className="planning-import-rule"><ShieldCheck /><span><strong>原资料保护已开启</strong><small>复用/恢复只绑定原图纸库，不复制、不覆盖图纸、SOP、工时和产品资料。</small></span></div>
           <div className="planning-import-table hm-scroll-region">
-            <table><thead><tr><th>行</th><th>客户 / 规格</th><th>数量</th><th>计划完成</th><th>校验结果</th></tr></thead><tbody>{importDialog.preview.rows.map(row => <tr className={`status-${row.status}`} key={row.rowNo}><td>{row.rowNo}</td><td><strong>{String(row.workOrder.specification || row.workOrder.productName || '-')}</strong><small>{String(row.workOrder.customerName || '客户缺失')}</small></td><td>{String(row.workOrder.uncompletedQty || '-')}</td><td>{row.workOrder.plannedAt ? String(row.workOrder.plannedAt).slice(0, 10) : importDialog.targetWeekEndDate}</td><td><span>{row.status === 'ready' ? '可导入' : row.reason || (row.status === 'skipped' ? '已跳过' : '需处理')}</span></td></tr>)}</tbody></table>
+            <table><thead><tr><th>行</th><th>订单 / 产品</th><th>本周数量</th><th>档案处理</th><th>预检结果</th></tr></thead><tbody>{importDialog.preview.rows.map(row => <tr className={`status-${row.status}`} key={row.rowNo}>
+              <td>{row.rowNo}</td>
+              <td><strong>{row.input?.specification || '-'}</strong><small>{row.input ? `${row.input.sourceOrderNo}-${row.input.sourceLineNo} · ${row.input.customerName}` : '空行/说明行'}</small></td>
+              <td>{row.input?.plannedQuantity?.toLocaleString() || '-'}</td>
+              <td>{row.status === 'conflict' ? <select aria-label={`第 ${row.rowNo} 行选择图纸库`} value={importDialog.decisions[String(row.rowNo)] || ''} onChange={event => setImportDialog(current => current ? { ...current, decisions: { ...current.decisions, [String(row.rowNo)]: event.target.value } } : current)}><option value="">请选择原档案</option>{row.candidates.map(candidate => <option value={candidate.id} key={candidate.id}>{candidate.specification} · 图{candidate.drawingFileCount}/SOP{candidate.sopFileCount}{candidate.productTimeVersion ? `/V${candidate.productTimeVersion}` : ''}{candidate.deletedAt ? ' · 已归档' : ''}</option>)}</select> : <span className={`product-action action-${row.productAction}`}>{row.productAction === 'reuse' ? '复用原档案' : row.productAction === 'restore' ? '恢复原档案' : row.productAction === 'create' ? '新建空档案' : '不处理'}</span>}</td>
+              <td><span>{row.status === 'ready' ? row.warning || '校验通过' : row.status === 'duplicate' ? row.reason : row.status === 'skipped' ? row.reason : row.status === 'conflict' ? '选择一个原档案后可导入' : row.reason}</span></td>
+            </tr>)}</tbody></table>
           </div>
+        </section>}
+
+        {importDialog.step === 'complete' && importDialog.result && <section className="planning-import-complete">
+          <div className="planning-import-complete-mark"><CheckCircle2 /><span><strong>已写入 {importDialog.result.summary.created} 个排产批次</strong><small>重复行已安全跳过，产品资料未被覆盖。</small></span></div>
+          <div className="planning-import-summary production-summary"><span className="ready"><small>复用原档案</small><strong>{importDialog.result.summary.reusedProducts}</strong></span><span><small>恢复归档</small><strong>{importDialog.result.summary.restoredProducts}</strong></span><span><small>新建档案</small><strong>{importDialog.result.summary.createdProducts}</strong></span><span><small>重复跳过</small><strong>{importDialog.result.summary.skipped}</strong></span></div>
+          <div className="planning-import-result-list hm-scroll-region">{importDialog.result.results.map(item => <article key={`${item.row}-${item.specification}`}><span>第 {item.row} 行</span><strong>{item.specification}</strong><em className={item.status}>{item.message}</em></article>)}</div>
+        </section>}
+
+        {importDialog.step === 'history' && !importDialog.loading && <section className="planning-import-history">
+          {importDialog.history.map(record => <article key={record.id}><span><strong>{record.sourceFileName}</strong><small>{record.targetWeekStartDate} 至 {record.targetWeekEndDate} · {record.operator}</small></span><em className={`status-${record.status}`}>{record.status === 'completed' ? `成功 ${record.result?.summary?.created || 0} 批` : '已预检未提交'}</em><time>{flowTime(record.committedAt || record.createdAt)}</time></article>)}
+          {!importDialog.history.length && <div className="planning-empty compact"><FileSpreadsheet /><strong>暂无批量导入记录</strong><span>完成首次导入后会在这里保留结果。</span></div>}
         </section>}
         {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
       </div>
-      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || importDialog.loading || !importDialog.preview?.summary.readyCount} onClick={() => { void commitPlanningImport(); }}>{saving ? '导入中...' : `确认导入到 ${importDialog.targetWeekStartDate.slice(5)} 周`}</button></footer>
+      <footer>
+        {importDialog.step === 'upload' && <><button type="button" onClick={closeDialog}>取消</button><span>请先下载模板并选择文件</span></>}
+        {importDialog.step === 'preview' && <><button type="button" onClick={() => setImportDialog(current => current ? { ...current, step: 'upload', fileName: '', preview: null, decisions: {} } : current)}>重新上传</button><button type="button" className="primary" disabled={saving || importDialog.loading || Boolean(importDialog.preview?.summary.invalidCount) || Boolean(importDialog.preview?.rows.some(row => row.status === 'conflict' && !importDialog.decisions[String(row.rowNo)])) || !importDialog.preview || (importDialog.preview.summary.readyCount + importDialog.preview.summary.conflictCount === 0)} onClick={() => { void commitPlanningImport(); }}>{saving ? '正在原子写入...' : `确认导入 ${((importDialog.preview?.summary.readyCount || 0) + (importDialog.preview?.summary.conflictCount || 0))} 行`}</button></>}
+        {importDialog.step === 'complete' && <><button type="button" onClick={() => { void openPlanningImportHistory(); }}>查看导入记录</button><button type="button" className="primary" onClick={closeDialog}>完成并查看计划</button></>}
+        {importDialog.step === 'history' && <><button type="button" onClick={() => setImportDialog(current => current ? { ...current, step: current.preview ? 'preview' : 'upload' } : current)}>返回导入</button><button type="button" className="primary" onClick={closeDialog}>关闭</button></>}
+      </footer>
     </div>}
 
   </>;
