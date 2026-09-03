@@ -19,6 +19,7 @@ import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
 import {
   AUTO_REFRESH_BASE_DELAY_MS,
+  AUTO_REFRESH_CHECK_INTERVAL_MS,
   autoRefreshDelayMs,
   cacheBoundSnapshotValue,
   retainCacheBoundSnapshot,
@@ -1557,7 +1558,7 @@ export default function ProductionExecutionCenter({
         setLastRefreshedAt(new Date());
         setLoadError('');
         autoRefreshFailureCountRef.current = 0;
-        nextAutoRefreshAtRef.current = Date.now() + AUTO_REFRESH_BASE_DELAY_MS;
+        nextAutoRefreshAtRef.current = Date.now() + autoRefreshDelayMs(0, Math.random());
         setSelected(current => current.filter(id => data.items.some(item => item.id === id)));
       })
       .catch(reason => {
@@ -1565,7 +1566,7 @@ export default function ProductionExecutionCenter({
         if (requestId === requestRef.current) {
           const failures = autoRefreshFailureCountRef.current + 1;
           autoRefreshFailureCountRef.current = failures;
-          nextAutoRefreshAtRef.current = Date.now() + autoRefreshDelayMs(failures);
+          nextAutoRefreshAtRef.current = Date.now() + autoRefreshDelayMs(failures, Math.random());
           setLoadError(reason instanceof Error ? reason.message : '生产看板加载失败');
         }
       })
@@ -1668,11 +1669,11 @@ export default function ProductionExecutionCenter({
         now,
         nextAllowedAt: nextAutoRefreshAtRef.current,
       })) return;
-      nextAutoRefreshAtRef.current = now + AUTO_REFRESH_BASE_DELAY_MS;
+      nextAutoRefreshAtRef.current = now + autoRefreshDelayMs(0, Math.random());
       productionBoardCache.clear();
       setRefreshToken(value => value + 1);
     };
-    const timer = window.setInterval(refresh, AUTO_REFRESH_BASE_DELAY_MS);
+    const timer = window.setInterval(refresh, AUTO_REFRESH_CHECK_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [autoRefresh]);
 
@@ -3274,7 +3275,7 @@ export default function ProductionExecutionCenter({
           <PortalMenu open={filtersOpen} anchorRef={filterButtonRef} align="right" className="production-filter-menu hm-production-menu hm-production-filter-menu" width={420} onClose={() => setFiltersOpen(false)} closeOnSelect={false}>
             <AdvancedFilterPanel customers={board?.filterOptions.customers || []} value={draftAdvanced} setValue={setDraftAdvanced} clear={() => setDraftAdvanced(emptyAdvanced)} apply={() => { setAdvanced(cloneAdvanced(draftAdvanced)); setFiltersOpen(false); setPage(1); }} />
           </PortalMenu>
-          <button className={`production-auto-refresh ${autoRefresh ? 'active' : ''}`} type="button" aria-pressed={autoRefresh} title="正常每 30 秒刷新；失败后自动退避，最长 5 分钟" onClick={() => setAutoRefresh(value => !value)}><RefreshCw size={15} aria-hidden="true" />自动刷新 <span>30 秒起</span></button>
+          <button className={`production-auto-refresh ${autoRefresh ? 'active' : ''}`} type="button" aria-pressed={autoRefresh} title="前台可见时约 60–90 秒刷新；随机错峰，失败后自动退避，最长 5 分钟" onClick={() => setAutoRefresh(value => !value)}><RefreshCw size={15} aria-hidden="true" />自动刷新 <span>60–90 秒</span></button>
           {loading
             ? <span className="production-refresh-status loading" aria-live="polite"><Loader2 size={13} aria-hidden="true" />同步中</span>
             : lastRefreshedAt && <span className="production-refresh-status" aria-live="polite">更新 {new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(lastRefreshedAt)}</span>}

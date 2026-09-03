@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import {
   AUTO_REFRESH_BASE_DELAY_MS,
+  AUTO_REFRESH_CHECK_INTERVAL_MS,
+  AUTO_REFRESH_JITTER_MS,
   AUTO_REFRESH_MAX_DELAY_MS,
   auxiliaryValueAfterLoad,
   autoRefreshDelayMs,
@@ -14,12 +16,18 @@ import {
 
 const repositoryRoot = resolve(import.meta.dirname, '..');
 
-test('auto refresh exponentially backs off after consecutive failures and caps at five minutes', () => {
+test('auto refresh uses a one-minute base, bounded jitter, exponential failure backoff and a five-minute cap', () => {
+  assert.equal(AUTO_REFRESH_CHECK_INTERVAL_MS, 15_000);
+  assert.equal(AUTO_REFRESH_JITTER_MS, 30_000);
   assert.equal(autoRefreshDelayMs(0), AUTO_REFRESH_BASE_DELAY_MS);
-  assert.equal(autoRefreshDelayMs(1), 60_000);
-  assert.equal(autoRefreshDelayMs(2), 120_000);
-  assert.equal(autoRefreshDelayMs(3), 240_000);
-  assert.equal(autoRefreshDelayMs(4), AUTO_REFRESH_MAX_DELAY_MS);
+  assert.equal(autoRefreshDelayMs(0, 0.5), 75_000);
+  assert.equal(autoRefreshDelayMs(0, 1), 90_000);
+  assert.equal(autoRefreshDelayMs(0, -1), AUTO_REFRESH_BASE_DELAY_MS);
+  assert.equal(autoRefreshDelayMs(0, 2), 90_000);
+  assert.equal(autoRefreshDelayMs(0, Number.NaN), AUTO_REFRESH_BASE_DELAY_MS);
+  assert.equal(autoRefreshDelayMs(1), 120_000);
+  assert.equal(autoRefreshDelayMs(2), 240_000);
+  assert.equal(autoRefreshDelayMs(3), AUTO_REFRESH_MAX_DELAY_MS);
   assert.equal(autoRefreshDelayMs(20), AUTO_REFRESH_MAX_DELAY_MS);
 });
 
@@ -87,5 +95,7 @@ test('production execution keeps a prior board on refresh failure and never pres
   assert.match(source, /board \? '未获取到最新数据' : '数据加载失败'/);
   assert.match(source, /!loading && board && !board\.items\.length/);
   assert.match(source, /shouldStartAutoRefresh/);
-  assert.match(source, /autoRefreshDelayMs\(failures\)/);
+  assert.match(source, /autoRefreshDelayMs\(0, Math\.random\(\)\)/);
+  assert.match(source, /autoRefreshDelayMs\(failures, Math\.random\(\)\)/);
+  assert.match(source, /setInterval\(refresh, AUTO_REFRESH_CHECK_INTERVAL_MS\)/);
 });

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { chinaDate } from '@/lib/production-planning';
-import { loadPlanningCapacity } from '@/lib/planning-capacity';
+import { loadPlanningCapacities } from '@/lib/planning-capacity';
 import { planningMonthRange, parsePlanningDateRange } from '@/lib/planning-date-range';
 
 export const runtime = 'nodejs';
@@ -32,14 +32,16 @@ export async function GET(request: NextRequest) {
       current.totalQuantity += batch.quantity;
       weekMap.set(key, current);
     }
-    const capacity = await loadPlanningCapacity(range);
-    const weeks = await Promise.all([...weekMap.values()].map(async week => {
+    const weekEntries = [...weekMap.values()];
+    const weekRanges = weekEntries.map(week => {
       const startDate = week.weekStartDate < range.startDate ? range.startDate : week.weekStartDate;
       const endDate = week.weekEndDate > range.endDate ? range.endDate : week.weekEndDate;
-      return {
-        ...week,
-        ...(await loadPlanningCapacity(parsePlanningDateRange(startDate, endDate))),
-      };
+      return parsePlanningDateRange(startDate, endDate);
+    });
+    const [capacity, ...weekCapacities] = await loadPlanningCapacities(range, [range, ...weekRanges]);
+    const weeks = weekEntries.map((week, index) => ({
+      ...week,
+      ...weekCapacities[index],
     }));
     return NextResponse.json({
       ok: true,

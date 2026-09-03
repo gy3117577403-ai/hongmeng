@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { backgroundMaintenanceGate } from '@/lib/maintenance-single-flight';
 import { dispatchProcessRouteChangeOutbox } from '@/lib/process-route-change-notifications';
 import { recoverStaleSupplementRouteCompletions } from '@/lib/process-supplement-completion-recovery';
 
@@ -20,13 +21,33 @@ export async function POST(req: NextRequest) {
   if (!validWorkerToken(req)) {
     return NextResponse.json({ ok: false, error: 'not found' }, { status: 404 });
   }
-  const recovery = process.env.PROCESS_SUPPLEMENT_COMPLETION_RECOVERY_ENABLED === 'false'
-    ? null
-    : await recoverStaleSupplementRouteCompletions({ afterId: recoveryCursor, limit: 3 });
-  if (recovery) recoveryCursor = recovery.nextCursor;
-  if (recovery?.repairedRouteIds.length || recovery?.failures.length) {
-    console.info('supplement route completion recovery', JSON.stringify(recovery));
+  const requestId = crypto.randomUUID();
+  const flight = await backgroundMaintenanceGate.run({
+    requestId,
+    phase: 'process_route_change_outbox',
+  }, async () => {
+    const recovery = process.env.PROCESS_SUPPLEMENT_COMPLETION_RECOVERY_ENABLED === 'false'
+      ? null
+      : await recoverStaleSupplementRouteCompletions({ afterId: recoveryCursor, limit: 3 });
+    if (recovery) recoveryCursor = recovery.nextCursor;
+    if (recovery?.repairedRouteIds.length || recovery?.failures.length) {
+      console.info('supplement route completion recovery', JSON.stringify(recovery));
+    }
+    const result = await dispatchProcessRouteChangeOutbox({ limit: 10 });
+    return { result, recovery };
+  });
+  if (!flight.started) {
+    const response = NextResponse.json({
+      ok: false,
+      error: 'background maintenance already running',
+      code: 'BACKGROUND_MAINTENANCE_ALREADY_RUNNING',
+      requestId,
+      active: flight.active,
+      activeForMs: flight.activeForMs,
+    }, { status: 409 });
+    response.headers.set('Cache-Control', 'private, no-store');
+    response.headers.set('Retry-After', '30');
+    return response;
   }
-  const result = await dispatchProcessRouteChangeOutbox({ limit: 10 });
-  return NextResponse.json({ ok: true, result, recovery });
+  return NextResponse.json({ ok: true, requestId, ...flight.value });
 }

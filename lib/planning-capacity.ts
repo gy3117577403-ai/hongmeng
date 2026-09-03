@@ -21,11 +21,7 @@ export type PlanningCapacityMetric = {
   capacitySource: 'planned' | 'confirmed_attendance' | 'mixed';
 };
 
-export async function loadPlanningCapacity(
-  range: PlanningDateRange,
-  options: { now?: Date } = {},
-): Promise<PlanningCapacityMetric> {
-  const now = options.now || new Date();
+async function loadPlanningCapacitySnapshot(range: PlanningDateRange) {
   const [batches, employees, attendance, overrides, sourceWipLots, targetWipAllocations] = await Promise.all([
     prisma.productionPlanBatch.findMany({
       where: {
@@ -84,6 +80,32 @@ export async function loadPlanningCapacity(
       },
     }),
   ]);
+  return { batches, employees, attendance, overrides, sourceWipLots, targetWipAllocations };
+}
+
+export type PlanningCapacitySnapshot = Awaited<ReturnType<typeof loadPlanningCapacitySnapshot>>;
+
+function dateInPlanningRange(value: Date, range: PlanningDateRange): boolean {
+  const timestamp = value.getTime();
+  return timestamp >= range.start.getTime() && timestamp < range.endExclusive.getTime();
+}
+
+export function summarizePlanningCapacitySnapshot(
+  range: PlanningDateRange,
+  snapshot: PlanningCapacitySnapshot,
+  options: { now?: Date } = {},
+): PlanningCapacityMetric {
+  const now = options.now || new Date();
+  const batches = snapshot.batches.filter(batch => dateInPlanningRange(batch.plannedCompletionDate, range));
+  const employees = snapshot.employees;
+  const attendance = snapshot.attendance.filter(record => dateInPlanningRange(record.workDate, range));
+  const overrides = snapshot.overrides.filter(item => dateInPlanningRange(item.workDate, range));
+  const sourceWipLots = snapshot.sourceWipLots.filter(lot => (
+    dateInPlanningRange(lot.productionPlanBatch.plannedCompletionDate, range)
+  ));
+  const targetWipAllocations = snapshot.targetWipAllocations.filter(allocation => (
+    dateInPlanningRange(allocation.targetWeekStartDate, range)
+  ));
   let scheduled = 0n;
   let attendanceScopeScheduled = 0n;
   let frozen = 0n;
@@ -161,4 +183,37 @@ export async function loadPlanningCapacity(
     confirmedAttendanceRecordCount: attendance.length,
     capacitySource,
   };
+}
+
+/**
+ * Load one enclosing date range once, then derive each requested range in
+ * memory. This keeps month + production-week capacity reads at a fixed six
+ * Prisma queries instead of repeating the same employee, attendance, calendar,
+ * batch and WIP reads for every week.
+ */
+export async function loadPlanningCapacities(
+  queryRange: PlanningDateRange,
+  ranges: readonly PlanningDateRange[],
+  options: { now?: Date } = {},
+): Promise<PlanningCapacityMetric[]> {
+  if (!ranges.length) return [];
+  for (const range of ranges) {
+    if (
+      range.start.getTime() < queryRange.start.getTime()
+      || range.endExclusive.getTime() > queryRange.endExclusive.getTime()
+    ) {
+      throw new Error('容量分段日期必须位于查询范围内');
+    }
+  }
+  const snapshot = await loadPlanningCapacitySnapshot(queryRange);
+  const now = options.now || new Date();
+  return ranges.map(range => summarizePlanningCapacitySnapshot(range, snapshot, { now }));
+}
+
+export async function loadPlanningCapacity(
+  range: PlanningDateRange,
+  options: { now?: Date } = {},
+): Promise<PlanningCapacityMetric> {
+  const [capacity] = await loadPlanningCapacities(range, [range], options);
+  return capacity;
 }

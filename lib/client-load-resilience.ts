@@ -1,4 +1,6 @@
-export const AUTO_REFRESH_BASE_DELAY_MS = 30_000;
+export const AUTO_REFRESH_BASE_DELAY_MS = 60_000;
+export const AUTO_REFRESH_JITTER_MS = 30_000;
+export const AUTO_REFRESH_CHECK_INTERVAL_MS = 15_000;
 export const AUTO_REFRESH_MAX_DELAY_MS = 5 * 60_000;
 
 export type CacheBoundSnapshot<T> = {
@@ -36,11 +38,15 @@ export function retainCacheBoundSnapshot<T>(
   return snapshot?.cacheKey === cacheKey ? snapshot : null;
 }
 
-export function autoRefreshDelayMs(consecutiveFailures: number): number {
+export function autoRefreshDelayMs(consecutiveFailures: number, randomUnit = 0): number {
   const failures = Math.max(0, Math.floor(consecutiveFailures));
+  const boundedRandom = Number.isFinite(randomUnit)
+    ? Math.min(1, Math.max(0, randomUnit))
+    : 0;
+  const jitter = Math.floor(AUTO_REFRESH_JITTER_MS * boundedRandom);
   return Math.min(
     AUTO_REFRESH_MAX_DELAY_MS,
-    AUTO_REFRESH_BASE_DELAY_MS * (2 ** failures),
+    AUTO_REFRESH_BASE_DELAY_MS * (2 ** failures) + jitter,
   );
 }
 

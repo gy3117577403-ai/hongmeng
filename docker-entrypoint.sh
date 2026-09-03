@@ -53,32 +53,143 @@ if [ "$outbox_poll_seconds" -lt 1 ]; then
   exit 1
 fi
 
+case "${BACKGROUND_MAINTENANCE_REQUEST_TIMEOUT_MS:-60000}" in
+  ''|*[!0-9]*)
+    echo "BACKGROUND_MAINTENANCE_REQUEST_TIMEOUT_MS must be an integer between 1 and 2147483647"
+    exit 1
+    ;;
+  *) maintenance_request_timeout_ms="${BACKGROUND_MAINTENANCE_REQUEST_TIMEOUT_MS:-60000}" ;;
+esac
+if [ "$maintenance_request_timeout_ms" -lt 1 ] || [ "$maintenance_request_timeout_ms" -gt 2147483647 ]; then
+  echo "BACKGROUND_MAINTENANCE_REQUEST_TIMEOUT_MS must be an integer between 1 and 2147483647"
+  exit 1
+fi
+
+# Cap retry growth while never making a configured normal poll interval shorter.
+maintenance_max_backoff_seconds=300
+if [ "$outbox_poll_seconds" -gt "$maintenance_max_backoff_seconds" ]; then
+  maintenance_max_backoff_seconds="$outbox_poll_seconds"
+fi
+
+maintenance_log() {
+  maintenance_log_level="$1"
+  shift
+  echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') component=background-maintenance level=${maintenance_log_level} $*" >&2
+}
+
+run_maintenance_step() {
+  maintenance_step_name="$1"
+  maintenance_step_path="$2"
+
+  # This watchdog prevents the worker from waiting silently forever. It only
+  # closes the localhost client and does not cancel the server-side handler.
+  # The shared server-side single-flight gate therefore remains authoritative:
+  # a still-running timed-out handler makes the next cycle fail fast with 409.
+  MAINTENANCE_STEP_NAME="$maintenance_step_name" \
+    MAINTENANCE_STEP_PATH="$maintenance_step_path" \
+    BACKGROUND_MAINTENANCE_REQUEST_TIMEOUT_MS="$maintenance_request_timeout_ms" \
+    node -e '
+      const step = process.env.MAINTENANCE_STEP_NAME || "unknown";
+      const path = process.env.MAINTENANCE_STEP_PATH || "/";
+      const requestTimeoutMs = Number(process.env.BACKGROUND_MAINTENANCE_REQUEST_TIMEOUT_MS);
+      const startedAt = Date.now();
+      const fail = error => {
+        const message = error instanceof Error ? error.message : String(error);
+        const errorName = error instanceof Error ? error.name : typeof error;
+        const cause = error instanceof Error && error.cause instanceof Error
+          ? ` cause=${JSON.stringify(error.cause.message)}`
+          : "";
+        console.error(`${new Date().toISOString()} component=background-maintenance level=error event=step_failed step=${JSON.stringify(step)} duration_ms=${Date.now() - startedAt} error_name=${JSON.stringify(errorName)} error=${JSON.stringify(message)}${cause}`);
+        process.exitCode = 1;
+      };
+      fetch(`http://127.0.0.1:${process.env.PORT || "3000"}${path}`, {
+        method: "POST",
+        headers: { "x-outbox-worker-token": process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN },
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      }).then(async response => {
+        const text = await response.text();
+        let body = null;
+        try { body = text ? JSON.parse(text) : null; } catch {}
+        if (!response.ok || body?.ok !== true) {
+          const code = body && typeof body.code === "string" ? body.code : "";
+          const serverError = body && typeof body.error === "string" ? body.error.slice(0, 160) : "";
+          const retryAfter = response.headers.get("retry-after") || "";
+          throw new Error(`status=${response.status} code=${JSON.stringify(code)} retry_after=${JSON.stringify(retryAfter)} server_error=${JSON.stringify(serverError)}`);
+        }
+      }).catch(fail);
+    '
+}
+
 HOSTNAME=0.0.0.0 node .next/standalone/server.js &
 server_pid=$!
 
 (
+  maintenance_delay_seconds="$outbox_poll_seconds"
+  maintenance_failure_streak=0
+  maintenance_cycle=0
+  maintenance_log info "event=worker_started poll_seconds=${outbox_poll_seconds} request_timeout_ms=${maintenance_request_timeout_ms} max_backoff_seconds=${maintenance_max_backoff_seconds} policy=single_flight_fail_fast"
+
   while kill -0 "$server_pid" 2>/dev/null; do
-    sleep "$outbox_poll_seconds"
-    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/process-route-change-outbox', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(10000)}).then(async response=>{if(!response.ok){throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,200))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
-      echo "process route change outbox poll failed; it will retry after ${outbox_poll_seconds}s" >&2
+    sleep "$maintenance_delay_seconds"
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      break
     fi
+
+    maintenance_cycle=$((maintenance_cycle + 1))
+    maintenance_cycle_started_at="$(date +%s)"
+    maintenance_failed_step=""
+
+    # A cycle is strict single-flight and fail-fast: never start the next step
+    # until the current handler responds, and stop the cycle on the first error
+    # (including an endpoint's 409 already-running response).
+    if ! run_maintenance_step \
+      process_route_change_outbox \
+      /api/internal/process-route-change-outbox; then
+      maintenance_failed_step=process_route_change_outbox
     # Keep week transitions and historical repair work away from user-facing
     # GET requests. The endpoint uses non-blocking advisory locks, processes a
     # bounded batch, and rotates one auxiliary phase per poll. A failed cycle
-    # is observable but never stops the HTTP server or the other workers.
-    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/production-planning-maintenance', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(12000)}).then(async response=>{const body=await response.json().catch(()=>null);if(!response.ok||!body?.ok){throw new Error('HTTP '+response.status+' '+JSON.stringify(body).slice(0,300))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
-      echo "production planning maintenance cycle failed; reads remain available and the worker will retry after ${outbox_poll_seconds}s" >&2
+    # is observable but never stops the HTTP server.
+    elif ! run_maintenance_step \
+      production_planning_maintenance \
+      /api/internal/production-planning-maintenance; then
+      maintenance_failed_step=production_planning_maintenance
+    elif ! run_maintenance_step \
+      production_automatic_finalize \
+      '/api/internal/production-planning-maintenance?phase=automatic_start_finalize&release=0&limit=2'; then
+      maintenance_failed_step=production_automatic_finalize
+    elif ! run_maintenance_step \
+      quality_warning_projection \
+      '/api/internal/production-planning-maintenance?phase=quality_warning_projection&release=0&limit=2'; then
+      maintenance_failed_step=quality_warning_projection
+    elif ! run_maintenance_step \
+      quality_notification_outbox \
+      /api/internal/quality-risk-outbox; then
+      maintenance_failed_step=quality_notification_outbox
     fi
-    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/production-planning-maintenance?phase=automatic_start_finalize&release=0&limit=2', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(8000)}).then(async response=>{const body=await response.json().catch(()=>null);if(!response.ok||!body?.ok){throw new Error('HTTP '+response.status+' '+JSON.stringify(body).slice(0,300))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
-      echo "production automatic finalize poll failed; reads remain available and it will retry after ${outbox_poll_seconds}s" >&2
-    fi
-    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/production-planning-maintenance?phase=quality_warning_projection&release=0&limit=2', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(8000)}).then(async response=>{const body=await response.json().catch(()=>null);if(!response.ok||!body?.ok){throw new Error('HTTP '+response.status+' '+JSON.stringify(body).slice(0,300))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
-      echo "quality warning projection poll failed; reads remain available and it will retry after ${outbox_poll_seconds}s" >&2
-    fi
-    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/quality-risk-outbox', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(10000)}).then(response=>{if(!response.ok)throw new Error('HTTP '+response.status)}).catch(()=>{console.error('quality notification poll failed');process.exit(1)})"; then
-      echo "quality notification outbox will retry on next poll" >&2
+
+    maintenance_cycle_duration_seconds=$(($(date +%s) - maintenance_cycle_started_at))
+    if [ -n "$maintenance_failed_step" ]; then
+      maintenance_failure_streak=$((maintenance_failure_streak + 1))
+      if [ "$maintenance_delay_seconds" -lt "$maintenance_max_backoff_seconds" ]; then
+        if [ "$maintenance_delay_seconds" -gt $((maintenance_max_backoff_seconds / 2)) ]; then
+          maintenance_delay_seconds="$maintenance_max_backoff_seconds"
+        else
+          maintenance_delay_seconds=$((maintenance_delay_seconds * 2))
+        fi
+      fi
+      maintenance_log warn "event=cycle_failed cycle=${maintenance_cycle} failed_step=${maintenance_failed_step} duration_seconds=${maintenance_cycle_duration_seconds} failure_streak=${maintenance_failure_streak} next_delay_seconds=${maintenance_delay_seconds} http_server_process_running=true read_availability=unknown"
+    else
+      if [ "$maintenance_failure_streak" -gt 0 ]; then
+        maintenance_log info "event=worker_recovered cycle=${maintenance_cycle} duration_seconds=${maintenance_cycle_duration_seconds} previous_failure_streak=${maintenance_failure_streak} next_delay_seconds=${outbox_poll_seconds}"
+      else
+        maintenance_log info "event=cycle_completed cycle=${maintenance_cycle} duration_seconds=${maintenance_cycle_duration_seconds} next_delay_seconds=${outbox_poll_seconds}"
+      fi
+      maintenance_failure_streak=0
+      maintenance_delay_seconds="$outbox_poll_seconds"
     fi
   done
+  maintenance_log info "event=worker_stopped reason=http_server_exited"
 ) &
 worker_pid=$!
 

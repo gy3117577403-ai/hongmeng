@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import test from 'node:test';
 import {
@@ -166,11 +169,109 @@ test('internal maintenance worker is token guarded, non-blocking, bounded and sy
   assert.match(helper, /boundedLimit \+ 1/);
   assert.match(helper, /The scan transaction ends before any projection pair starts/);
   assert.match(entrypoint, /api\/internal\/production-planning-maintenance/);
-  assert.match(entrypoint, /AbortSignal\.timeout\(12000\)/);
   assert.match(entrypoint, /phase=automatic_start_finalize&release=0&limit=2/);
   assert.match(entrypoint, /phase=quality_warning_projection&release=0&limit=2/);
-  assert.match(entrypoint, /AbortSignal\.timeout\(8000\)/);
-  assert.match(entrypoint, /reads remain available/);
+  assert.match(entrypoint, /policy=single_flight_fail_fast/);
+  assert.match(entrypoint, /elif ! run_maintenance_step/);
+  assert.match(entrypoint, /maintenance_failed_step/);
+  assert.match(entrypoint, /maintenance_delay_seconds=\$\(\(maintenance_delay_seconds \* 2\)\)/);
+  assert.match(entrypoint, /maintenance_max_backoff_seconds=300/);
+  assert.match(entrypoint, /event=cycle_failed/);
+  assert.match(entrypoint, /http_server_process_running=true read_availability=unknown/);
+  assert.doesNotMatch(entrypoint, /reads_available=true/);
+  assert.match(entrypoint, /BACKGROUND_MAINTENANCE_REQUEST_TIMEOUT_MS:-60000/);
+  assert.match(entrypoint, /signal:\s*AbortSignal\.timeout\(requestTimeoutMs\)/);
   assert.match(planningDomain, /actorId: string \| null/);
   assert.match(routeService, /userId: string \| null/);
+});
+
+test('maintenance request watchdog exits while the server handler keeps running', { timeout: 30_000 }, async t => {
+  const entrypoint = source('docker-entrypoint.sh');
+  const workerScript = entrypoint.match(/node -e '\r?\n(?<script>[\s\S]*?)\r?\n    '\r?\n\}/)?.groups?.script;
+  assert.ok(workerScript, 'inline maintenance request helper must remain extractable');
+
+  let handlerFinished = false;
+  let markHandlerStarted!: () => void;
+  const handlerStarted = new Promise<void>(resolve => {
+    markHandlerStarted = resolve;
+  });
+  let releaseHandler!: () => void;
+  const handlerRelease = new Promise<void>(resolve => {
+    releaseHandler = resolve;
+  });
+  let finishHandler: (() => void) | undefined;
+  const handlerDone = new Promise<void>(resolve => {
+    finishHandler = resolve;
+  });
+  const server = createServer((_request, response) => {
+    markHandlerStarted();
+    void handlerRelease.then(() => {
+      handlerFinished = true;
+      if (!response.destroyed) {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ ok: true }));
+      }
+      finishHandler?.();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  let child: ReturnType<typeof spawn> | undefined;
+  t.after(async () => {
+    releaseHandler();
+    child?.kill();
+    const closed = new Promise<void>(resolve => {
+      server.close(() => resolve());
+    });
+    server.closeAllConnections();
+    await closed;
+  });
+
+  const port = String((server.address() as AddressInfo).port);
+  const resultPromise = new Promise<{ code: number | null; stderr: string }>((resolve, reject) => {
+    const spawnedChild = spawn(process.execPath, ['-e', workerScript], {
+      env: {
+        ...process.env,
+        PORT: port,
+        MAINTENANCE_STEP_NAME: 'watchdog_contract',
+        MAINTENANCE_STEP_PATH: '/delayed',
+        PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN: 'x'.repeat(32),
+        BACKGROUND_MAINTENANCE_REQUEST_TIMEOUT_MS: '1000',
+      },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    child = spawnedChild;
+    const childStderr = spawnedChild.stderr;
+    if (!childStderr) {
+      reject(new Error('maintenance worker stderr pipe is unavailable'));
+      return;
+    }
+    let stderr = '';
+    childStderr.setEncoding('utf8');
+    childStderr.on('data', chunk => {
+      stderr += chunk;
+    });
+    spawnedChild.once('error', reject);
+    spawnedChild.once('close', code => resolve({ code, stderr }));
+  });
+  const firstEvent = await Promise.race([
+    handlerStarted.then(() => ({ kind: 'handler_started' as const })),
+    resultPromise.then(result => ({ kind: 'child_exited' as const, result })),
+  ]);
+  assert.equal(firstEvent.kind, 'handler_started',
+    `watchdog fired before the request reached the server: ${
+      firstEvent.kind === 'child_exited' ? firstEvent.result.stderr : ''
+    }`);
+  const result = await resultPromise;
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /event=step_failed/);
+  assert.match(result.stderr, /error_name="TimeoutError"/);
+  assert.equal(handlerFinished, false,
+    'client watchdog expiry must not be mistaken for server-side handler cancellation');
+  releaseHandler();
+  await handlerDone;
+  assert.equal(handlerFinished, true);
 });

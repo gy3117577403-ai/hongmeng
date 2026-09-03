@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   normalizePlanningProductText,
   planningProductIdentity,
+  PlanningProductLinkItemIndex,
   reconcileProductionPlanDrawingLinks,
   selectCanonicalDrawingItem,
   type PlanningProductLinkItem,
@@ -53,6 +54,80 @@ test('keeps an ambiguous identity unresolved instead of relinking arbitrarily', 
     customerName: '福尔达',
     specification: 'F319951035',
   }, [first, second]), null);
+});
+
+test('pre-indexed canonical lookup preserves exact-key, exact-field, and current-link priority', () => {
+  const order = {
+    drawingLibraryItemId: 'current-link',
+    customerName: '福尔达',
+    specification: 'F319951035',
+  };
+
+  const exactKey = item({
+    id: 'exact-key',
+    customerName: ' 福尔达',
+    libraryKey: '福尔达::F319951035',
+    drawingFileCount: 1,
+  });
+  const exactFields = item({
+    id: 'exact-fields',
+    libraryKey: 'non-canonical-key',
+    drawingFileCount: 1,
+  });
+  const currentLink = item({
+    id: 'current-link',
+    customerName: '福尔达 ',
+    specification: 'Ｆ319951035',
+    libraryKey: 'another-key',
+    drawingFileCount: 1,
+  });
+
+  assert.equal(
+    new PlanningProductLinkItemIndex([currentLink, exactFields, exactKey])
+      .selectCanonicalDrawingItem(order)?.id,
+    exactKey.id,
+  );
+  assert.equal(
+    new PlanningProductLinkItemIndex([currentLink, exactFields])
+      .selectCanonicalDrawingItem(order)?.id,
+    exactFields.id,
+  );
+  assert.equal(
+    new PlanningProductLinkItemIndex([
+      currentLink,
+      item({
+        id: 'other-normalized-match',
+        customerName: ' 福尔达',
+        specification: 'F319951035 ',
+        libraryKey: 'other-key',
+        drawingFileCount: 1,
+      }),
+    ]).selectCanonicalDrawingItem(order)?.id,
+    currentLink.id,
+  );
+});
+
+test('pre-indexes the full drawing-link scan once for repeated normalized lookups', () => {
+  const items = Array.from({ length: 5000 }, (_, index) => item({
+    id: `drawing-${index}`,
+    customerName: `客户 ${index}`,
+    specification: `ＭＯＤＥＬ-${index}`,
+    drawingFileCount: 1,
+  }));
+  const index = new PlanningProductLinkItemIndex(items);
+
+  // Lookups must be served by the index rather than rescanning the source collection.
+  items.length = 0;
+  let matched = 0;
+  for (let offset = 0; offset < 5000; offset += 1) {
+    const canonical = index.selectCanonicalDrawingItem({
+      drawingLibraryItemId: null,
+      customerName: `  客户 ${offset}  `,
+      specification: `model-${offset}`,
+    });
+    if (canonical?.id === `drawing-${offset}`) matched += 1;
+  }
+  assert.equal(matched, 5000);
 });
 
 test('reconciliation propagates an uploaded original drawing to an existing released work order', async () => {

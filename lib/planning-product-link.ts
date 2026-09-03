@@ -35,27 +35,103 @@ export function planningProductIdentity(customerName: string, specification: str
   return `${normalizePlanningProductText(customerName)}::${normalizePlanningProductText(specification)}`;
 }
 
+type PlanningProductLinkExactFieldMatch = {
+  first: PlanningProductLinkItem;
+  count: number;
+};
+
+type PlanningProductLinkIdentityMatches = {
+  first: PlanningProductLinkItem;
+  count: number;
+  firstDrawingMatch: PlanningProductLinkItem | null;
+  drawingMatchCount: number;
+  firstByLibraryKey: Map<string, PlanningProductLinkItem>;
+  exactFields: Map<string, Map<string, PlanningProductLinkExactFieldMatch>>;
+  firstById: Map<string, PlanningProductLinkItem>;
+};
+
+export class PlanningProductLinkItemIndex {
+  private readonly matchesByIdentity = new Map<string, PlanningProductLinkIdentityMatches>();
+  private readonly firstById = new Map<string, PlanningProductLinkItem>();
+
+  constructor(items: readonly PlanningProductLinkItem[]) {
+    for (const item of items) {
+      const identity = planningProductIdentity(item.customerName, item.specification);
+      let matches = this.matchesByIdentity.get(identity);
+      if (!matches) {
+        matches = {
+          first: item,
+          count: 0,
+          firstDrawingMatch: null,
+          drawingMatchCount: 0,
+          firstByLibraryKey: new Map(),
+          exactFields: new Map(),
+          firstById: new Map(),
+        };
+        this.matchesByIdentity.set(identity, matches);
+      }
+
+      matches.count += 1;
+      if (item.drawingFileCount > 0) {
+        matches.drawingMatchCount += 1;
+        matches.firstDrawingMatch ||= item;
+      }
+      if (!matches.firstByLibraryKey.has(item.libraryKey)) {
+        matches.firstByLibraryKey.set(item.libraryKey, item);
+      }
+      if (!matches.firstById.has(item.id)) matches.firstById.set(item.id, item);
+      if (!this.firstById.has(item.id)) this.firstById.set(item.id, item);
+
+      let specifications = matches.exactFields.get(item.customerName);
+      if (!specifications) {
+        specifications = new Map();
+        matches.exactFields.set(item.customerName, specifications);
+      }
+      const exactFields = specifications.get(item.specification);
+      if (exactFields) exactFields.count += 1;
+      else specifications.set(item.specification, { first: item, count: 1 });
+    }
+  }
+
+  selectCanonicalDrawingItem(
+    order: Pick<PlanningProductLinkOrder, 'drawingLibraryItemId' | 'customerName' | 'specification'>,
+  ): PlanningProductLinkItem | null {
+    const identity = planningProductIdentity(order.customerName, order.specification);
+    const matches = this.matchesByIdentity.get(identity);
+    if (!matches) return null;
+    if (matches.count === 1) return matches.first;
+
+    const expectedKey = drawingLibraryKey(order.customerName, order.specification);
+    const exactKey = matches.firstByLibraryKey.get(expectedKey) || null;
+    if (
+      matches.drawingMatchCount === 1
+      && matches.firstDrawingMatch
+      && (!exactKey || exactKey.drawingFileCount === 0)
+    ) {
+      return matches.firstDrawingMatch;
+    }
+    if (exactKey) return exactKey;
+
+    const exactFields = matches.exactFields
+      .get(order.customerName)
+      ?.get(order.specification);
+    if (exactFields?.count === 1) return exactFields.first;
+
+    return order.drawingLibraryItemId === null
+      ? null
+      : matches.firstById.get(order.drawingLibraryItemId) || null;
+  }
+
+  findItemById(id: string): PlanningProductLinkItem | null {
+    return this.firstById.get(id) || null;
+  }
+}
+
 export function selectCanonicalDrawingItem(
   order: Pick<PlanningProductLinkOrder, 'drawingLibraryItemId' | 'customerName' | 'specification'>,
   items: PlanningProductLinkItem[],
 ): PlanningProductLinkItem | null {
-  const identity = planningProductIdentity(order.customerName, order.specification);
-  const matches = items.filter(item => planningProductIdentity(item.customerName, item.specification) === identity);
-  if (matches.length === 0) return null;
-  if (matches.length === 1) return matches[0];
-
-  const withDrawing = matches.filter(item => item.drawingFileCount > 0);
-  const expectedKey = drawingLibraryKey(order.customerName, order.specification);
-  const exactKey = matches.find(item => item.libraryKey === expectedKey) || null;
-  if (withDrawing.length === 1 && (!exactKey || exactKey.drawingFileCount === 0)) return withDrawing[0];
-  if (exactKey) return exactKey;
-
-  const exactFields = matches.filter(item => (
-    item.customerName === order.customerName && item.specification === order.specification
-  ));
-  if (exactFields.length === 1) return exactFields[0];
-
-  return matches.find(item => item.id === order.drawingLibraryItemId) || null;
+  return new PlanningProductLinkItemIndex(items).selectCanonicalDrawingItem(order);
 }
 
 export async function reconcileProductionPlanDrawingLinks(
@@ -123,13 +199,14 @@ export async function reconcileProductionPlanDrawingLinks(
     specification: item.specification,
     drawingFileCount: item._count.files,
   }));
+  const itemIndex = new PlanningProductLinkItemIndex(items);
 
   let linkedOrders = 0;
   let unchangedOrders = 0;
   let unresolvedOrders = 0;
   const canonicalByPlanOrderId = new Map<string, PlanningProductLinkItem>();
   for (const order of orders) {
-    const canonical = selectCanonicalDrawingItem(order, items);
+    const canonical = itemIndex.selectCanonicalDrawingItem(order);
     if (!canonical) {
       unresolvedOrders += 1;
       continue;
@@ -175,7 +252,7 @@ export async function reconcileProductionPlanDrawingLinks(
         where: { id: { in: workOrderIds }, deletedAt: null },
         data: { drawingLibraryItemId },
       });
-      const canonical = items.find(item => item.id === drawingLibraryItemId);
+      const canonical = itemIndex.findItemById(drawingLibraryItemId);
       if (!canonical?.drawingFileCount) continue;
       await tx.workOrder.updateMany({
         where: {
