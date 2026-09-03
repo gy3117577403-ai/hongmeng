@@ -12,6 +12,7 @@ import {
   loadShipmentHistoryOverview,
   loadShipmentWarningOverview,
   reconcileDailyShipmentCarryover,
+  reconcileDailyShipmentCutoverWindow,
   recordDailyShipment,
   releaseDailyShipmentReservation,
   reverseDailyShipment,
@@ -19,6 +20,117 @@ import {
 } from '../lib/daily-shipment-service';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
+
+test('cutover repair is idempotent, includes archived released batches, and scopes today and warning by due date', {
+  skip: !runDatabaseIntegration,
+}, async () => {
+  const prefix = `ship-cutover-${randomUUID().slice(0, 8)}`;
+  await cleanup(prefix);
+  try {
+    const actor = await prisma.user.create({
+      data: {
+        username: `${prefix}-user`,
+        passwordHash: 'integration-test-only',
+        displayName: 'Shipment Cutover',
+        laborRole: LaborAccessRole.ADMIN,
+      },
+    });
+    async function createBatch(dueDate: string, suffix: string, releaseState: 'active' | 'archived') {
+      const quantity = 10;
+      const workOrder = await prisma.workOrder.create({
+        data: {
+          code: `${prefix}-WO-${suffix}`,
+          customerName: `客户-${suffix}`,
+          productName: `产品-${suffix}`,
+          specification: `规格-${suffix}`,
+          stage: 'completed',
+          progress: 100,
+          status: 'processing',
+          uncompletedQty: String(quantity),
+          productionTargetQty: quantity,
+          completedQty: String(quantity),
+          processName: suffix === 'internal' ? 'frontend' : '包装',
+        },
+      });
+      const order = await prisma.productionPlanOrder.create({
+        data: {
+          sourceOrderNo: `${prefix}-SO-${suffix}`,
+          sourceLineNo: 1,
+          customerName: `客户-${suffix}`,
+          productName: `产品-${suffix}`,
+          specification: `规格-${suffix}`,
+          orderQuantity: quantity,
+          orderDate: new Date('2026-08-01T00:00:00.000Z'),
+          customerDueDate: new Date(`${dueDate}T00:00:00.000Z`),
+          customerDueDateConfirmed: true,
+          priority: 'normal',
+          createdById: actor.id,
+          updatedById: actor.id,
+        },
+      });
+      return prisma.productionPlanBatch.create({
+        data: {
+          planOrderId: order.id,
+          batchNo: 1,
+          quantity,
+          weekStartDate: new Date('2026-08-31T00:00:00.000Z'),
+          weekEndDate: new Date('2026-09-06T00:00:00.000Z'),
+          plannedCompletionDate: new Date(`${dueDate}T00:00:00.000Z`),
+          releaseState,
+          workOrderId: workOrder.id,
+        },
+      });
+    }
+
+    const beforeCutover = await createBatch('2026-08-31', 'before', 'active');
+    const septemberFirst = await createBatch('2026-09-01', 'first', 'active');
+    const septemberThird = await createBatch('2026-09-03', 'internal', 'archived');
+    const septemberFourth = await createBatch('2026-09-04', 'fourth', 'active');
+
+    const firstRepair = await reconcileDailyShipmentCutoverWindow({
+      startDate: '2026-09-01',
+      endDate: '2026-09-06',
+      actorUserId: actor.id,
+    });
+    assert.equal(firstRepair.changedCount, 3);
+    const replay = await reconcileDailyShipmentCutoverWindow({
+      startDate: '2026-09-01',
+      endDate: '2026-09-06',
+      actorUserId: actor.id,
+    });
+    assert.equal(replay.changedCount, 0);
+    assert.equal(replay.unchangedCount, 3);
+
+    const firstItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({
+      where: { productionPlanBatchId: septemberFirst.id },
+    });
+    await recordDailyShipment({
+      actorUserId: actor.id,
+      itemId: firstItem.id,
+      itemVersion: firstItem.version,
+      idempotencyKey: key(prefix),
+      quantity: 10,
+      shippedAt: '2026-09-01T08:00:00.000Z',
+    });
+
+    const workbench = await loadDailyShipmentWorkbench({ shipDate: '2026-09-03' });
+    assert.deepEqual(workbench.displayItems.map(item => item.batchId).sort(), [septemberFirst.id, septemberThird.id].sort());
+    assert.equal(workbench.displayItems.find(item => item.batchId === septemberFirst.id)?.status, 'SHIPPED');
+    assert.equal(workbench.displayItems.find(item => item.batchId === septemberThird.id)?.currentProcess, '待生产反馈');
+    assert.ok(!workbench.displayItems.some(item => item.batchId === beforeCutover.id));
+    assert.ok(!workbench.displayItems.some(item => item.batchId === septemberFourth.id));
+
+    const warning = await loadShipmentWarningOverview({ anchorDate: '2026-09-03' });
+    const warningIds = warning.groups.flatMap(group => group.items).map(item => item.batchId);
+    assert.ok(warningIds.includes(septemberFirst.id));
+    assert.ok(warningIds.includes(septemberThird.id));
+    assert.ok(warningIds.includes(septemberFourth.id));
+    assert.ok(!warningIds.includes(beforeCutover.id));
+    assert.equal(warning.summary.completedCount, 1);
+  } finally {
+    await cleanup(prefix);
+  }
+});
 
 function key(prefix: string): string {
   return `${prefix}-${randomUUID()}`;
