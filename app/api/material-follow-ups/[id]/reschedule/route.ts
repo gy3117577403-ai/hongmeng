@@ -10,6 +10,7 @@ import {
 import { logOp } from '@/lib/logs';
 import { materialFollowUpDetailInclude, serializeMaterialFollowUpTask } from '@/lib/material-follow-up';
 import { prisma } from '@/lib/prisma';
+import { syncProductionBatchToDueShipmentPlan } from '@/lib/daily-shipment-sync';
 import {
   chinaDate,
   chinaWeekRange,
@@ -143,17 +144,32 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       if (customerDueDate) {
         await tx.productionPlanOrder.update({
           where: { id: lockedBatch.planOrderId },
-          data: { customerDueDate, updatedById: actor.id },
+          data: {
+            customerDueDate,
+            customerDueDateConfirmed: true,
+            deliveryBaselineDate: lockedBatch.planOrder.deliveryBaselineDate
+              || (lockedBatch.planOrder.customerDueDateConfirmed ? lockedBatch.planOrder.customerDueDate : customerDueDate),
+            deliveryVersion: { increment: 1 },
+            updatedById: actor.id,
+          },
         });
         const linkedBatches = await tx.productionPlanBatch.findMany({
           where: { planOrderId: lockedBatch.planOrderId, deletedAt: null, workOrderId: { not: null } },
-          select: { workOrderId: true },
+          select: { id: true, workOrderId: true },
         });
         const linkedWorkOrderIds = linkedBatches.map(item => item.workOrderId).filter((id): id is string => Boolean(id));
         if (linkedWorkOrderIds.length) await tx.workOrder.updateMany({
           where: { id: { in: linkedWorkOrderIds }, completedAt: null, deletedAt: null },
           data: { deliveryDay: chinaDate(customerDueDate) },
         });
+        for (const linkedBatch of linkedBatches) {
+          await syncProductionBatchToDueShipmentPlan(tx, {
+            batchId: linkedBatch.id,
+            actorId: actor.id,
+            reason: 'due_date_change',
+            now,
+          });
+        }
       }
       await tx.productionPlanChange.create({
         data: {

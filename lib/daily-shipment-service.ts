@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  DailyShipmentAssociationType,
   DailyShipmentItemStatus,
   DailyShipmentPlanStatus,
   DailyShipmentPriority,
@@ -97,6 +98,7 @@ const batchInclude = {
 } satisfies Prisma.ProductionPlanBatchInclude;
 
 const itemInclude = {
+  plan: { select: { shipDate: true } },
   productionPlanBatch: { include: { planOrder: true } },
   workOrder: { select: workOrderSelect },
   carryoverSourceItem: {
@@ -361,6 +363,10 @@ function serializeItem(item: Prisma.DailyShipmentPlanItemGetPayload<{ include: t
       now,
     }),
     shipmentPriority: item.shipmentPriority,
+    associationType: item.associationType,
+    planShipDate: dateKey(item.plan.shipDate),
+    dueDateSnapshot: item.dueDateSnapshot ? dateKey(item.dueDateSnapshot) : null,
+    deliveryVersionSnapshot: item.deliveryVersionSnapshot,
     note: item.note,
     sortOrder: item.sortOrder,
     isCarryover: Boolean(item.carryoverSourceItemId),
@@ -817,6 +823,8 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
       reservations: (reservationsByBatch.get(batch.id) || []).sort((first, second) => (
         first.shipDate.localeCompare(second.shipDate) || first.itemId.localeCompare(second.itemId)
       )),
+      eligibleForSelectedDate: batch.planOrder.customerDueDateConfirmed
+        && dateKey(batch.planOrder.customerDueDate) === parsedDate.key,
     };
   });
 
@@ -977,12 +985,30 @@ export async function addDailyShipmentItems(input: {
     await lock(tx, `daily-shipment-plan:${parsedDate.key}`);
 
     let plan = await tx.dailyShipmentPlan.findUnique({ where: { shipDate: parsedDate.value } });
-    if (plan && plan.status !== DailyShipmentPlanStatus.DRAFT) {
-      throw new DailyShipmentServiceError('该日计划已确认，不能继续添加订单', 'SHIPMENT_PLAN_LOCKED', 409);
+    if (plan && !isOpenShipmentPlanStatus(plan.status)) {
+      throw new DailyShipmentServiceError('该日出货计划已关闭，不能继续补单', 'SHIPMENT_PLAN_LOCKED', 409);
     }
     if (!plan) {
       plan = await tx.dailyShipmentPlan.create({
-        data: { shipDate: parsedDate.value, createdById: actorId, updatedById: actorId },
+        data: {
+          shipDate: parsedDate.value,
+          status: DailyShipmentPlanStatus.CONFIRMED,
+          confirmedAt: new Date(),
+          confirmedById: actorId,
+          createdById: actorId,
+          updatedById: actorId,
+        },
+      });
+    } else if (plan.status === DailyShipmentPlanStatus.DRAFT) {
+      plan = await tx.dailyShipmentPlan.update({
+        where: { id: plan.id },
+        data: {
+          status: DailyShipmentPlanStatus.CONFIRMED,
+          confirmedAt: plan.confirmedAt || new Date(),
+          confirmedById: plan.confirmedById || actorId,
+          updatedById: actorId,
+          version: { increment: 1 },
+        },
       });
     }
 
@@ -1007,6 +1033,23 @@ export async function addDailyShipmentItems(input: {
         'SHIPMENT_BATCH_NOT_FOUND',
         404,
       );
+    }
+    for (const batch of batches) {
+      if (!batch.planOrder.customerDueDateConfirmed) {
+        throw new DailyShipmentServiceError(
+          `${batch.planOrder.sourceOrderNo} 尚未确认客户交期，不能加入日出货计划`,
+          'SHIPMENT_DUE_DATE_UNCONFIRMED',
+          409,
+        );
+      }
+      const dueDate = dateKey(batch.planOrder.customerDueDate);
+      if (dueDate !== parsedDate.key) {
+        throw new DailyShipmentServiceError(
+          `${batch.planOrder.sourceOrderNo} 的客户交期为 ${dueDate}，只能归入该日出货计划`,
+          'SHIPMENT_DUE_DATE_MISMATCH',
+          409,
+        );
+      }
     }
     const batchMap = new Map(batches.map(batch => [batch.id, batch]));
     const existing = await tx.dailyShipmentPlanItem.findMany({
@@ -1036,6 +1079,20 @@ export async function addDailyShipmentItems(input: {
         throw new DailyShipmentServiceError(
           `${batch.planOrder.sourceOrderNo} 已在当天计划中`,
           'SHIPMENT_ITEM_DUPLICATE',
+          409,
+        );
+      }
+      const otherOpenItem = existing.find(item => (
+        item.planId !== plan!.id
+        && item.productionPlanBatchId === itemInput.productionPlanBatchId
+        && item.status !== DailyShipmentItemStatus.CANCELLED
+        && item.status !== DailyShipmentItemStatus.CARRIED_OVER
+        && shipmentReservationQuantity(item) > 0
+      ));
+      if (otherOpenItem) {
+        throw new DailyShipmentServiceError(
+          `${batch.planOrder.sourceOrderNo} 已有有效出货安排，请先刷新或通过交期变更同步`,
+          'SHIPMENT_BATCH_ALREADY_SCHEDULED',
           409,
         );
       }
@@ -1074,6 +1131,10 @@ export async function addDailyShipmentItems(input: {
             note: itemInput.note,
             status: DailyShipmentItemStatus.PLANNED,
             shipmentPriority: itemInput.shipmentPriority,
+            associationType: DailyShipmentAssociationType.MANUAL,
+            associationKey: `daily-shipment-open:${batch.id}`,
+            dueDateSnapshot: parsedDate.value,
+            deliveryVersionSnapshot: batch.planOrder.deliveryVersion,
             sortOrder: sortOrderBase + index,
             sourceSnapshot: jsonValue(sourceSnapshot),
             version: { increment: 1 },
@@ -1090,6 +1151,10 @@ export async function addDailyShipmentItems(input: {
             plannedQuantity: itemInput.plannedQuantity,
             plannedShipAt: itemInput.plannedShipAt,
             shipmentPriority: itemInput.shipmentPriority,
+            associationType: DailyShipmentAssociationType.MANUAL,
+            associationKey: `daily-shipment-open:${batch.id}`,
+            dueDateSnapshot: parsedDate.value,
+            deliveryVersionSnapshot: batch.planOrder.deliveryVersion,
             note: itemInput.note,
             sortOrder: sortOrderBase + index,
             sourceSnapshot: jsonValue(sourceSnapshot),
@@ -1256,7 +1321,12 @@ export async function cancelDailyShipmentItem(input: {
     }
     const changed = await tx.dailyShipmentPlanItem.updateMany({
       where: { id: item.id, version },
-      data: { status: DailyShipmentItemStatus.CANCELLED, version: { increment: 1 }, updatedById: actorId },
+      data: {
+        status: DailyShipmentItemStatus.CANCELLED,
+        associationKey: null,
+        version: { increment: 1 },
+        updatedById: actorId,
+      },
     });
     if (changed.count !== 1) {
       throw new DailyShipmentServiceError('计划项已被其他人修改，请刷新后重试', 'SHIPMENT_CONCURRENCY_CONFLICT', 409);
@@ -1366,6 +1436,7 @@ export async function releaseDailyShipmentReservation(input: {
       where: { id: item.id, version, status: DailyShipmentItemStatus.PLANNED },
       data: {
         status: DailyShipmentItemStatus.CANCELLED,
+        associationKey: null,
         version: { increment: 1 },
         updatedById: actorId,
       },
@@ -1767,10 +1838,12 @@ export async function recordDailyShipment(input: {
       },
     });
     const nextShippedQuantity = itemShippedQuantity + quantity;
+    const nextStatus = shipmentItemStatus(item.plannedQuantity, nextShippedQuantity);
     const changed = await tx.dailyShipmentPlanItem.updateMany({
       where: { id: item.id, version },
       data: {
-        status: shipmentItemStatus(item.plannedQuantity, nextShippedQuantity),
+        status: nextStatus,
+        ...(nextStatus === DailyShipmentItemStatus.SHIPPED ? { associationKey: null } : {}),
         version: { increment: 1 },
         updatedById: actorId,
       },
@@ -1856,10 +1929,14 @@ export async function reverseDailyShipment(input: {
       },
     });
     const nextShippedQuantity = Math.max(0, currentShippedQuantity - quantity);
+    const nextStatus = shipmentItemStatus(original.item.plannedQuantity, nextShippedQuantity);
     const changed = await tx.dailyShipmentPlanItem.updateMany({
       where: { id: original.itemId, version },
       data: {
-        status: shipmentItemStatus(original.item.plannedQuantity, nextShippedQuantity),
+        status: nextStatus,
+        ...(nextStatus === DailyShipmentItemStatus.SHIPPED
+          ? { associationKey: null }
+          : { associationKey: `daily-shipment-open:${original.item.productionPlanBatchId}` }),
         version: { increment: 1 },
         updatedById: actorId,
       },

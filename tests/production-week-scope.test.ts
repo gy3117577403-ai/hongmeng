@@ -615,6 +615,7 @@ test('releasing without product time still creates a warehouse task and a pendin
     },
   };
   const tx = {
+    $executeRaw: async () => 0,
     productionPlanBatch: {
       findUnique: async () => batch,
       update: async () => ({}),

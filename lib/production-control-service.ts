@@ -6,6 +6,7 @@ import { assertProductionScopeRead, resolveProductionEntityScope, type Productio
 import { canAdjustProductionDates, canManageProductionControl, ProductionControlError, productionDateKey, productionReason, serializeProductionControl } from '@/lib/production-control';
 import { loadProductionWipSourceGate, lockProductionWorkOrder } from '@/lib/production-pause-guard';
 import { productionPlanningDateBoundary } from '@/lib/production-planning-date';
+import { syncProductionBatchToDueShipmentPlan } from '@/lib/daily-shipment-sync';
 
 export type ProductionControlActor = ProductionScopeSubject & { id: string; username: string; displayName?: string | null };
 export type ProductionControlAction = 'note' | 'pause' | 'resume' | 'adjust_date';
@@ -194,6 +195,14 @@ export async function mutateProductionControl(actor: ProductionControlActor, wor
               await tx.productionControlEvent.create({ data: { workOrderId: sibling.id, action, reason,
                 actorId: actor.id, actorName, requestId: `${requestId}:${sibling.id}`, requestHash,
                 beforeData: snapshot(serializeProductionControl(sibling)), afterData: { customerDueDate: nextDate, confirmation, sourceWorkOrderId: root.id } } });
+            }
+            for (const linkedBatch of linked) {
+              await syncProductionBatchToDueShipmentPlan(tx, {
+                batchId: linkedBatch.id,
+                actorId: actor.id,
+                reason: 'due_date_change',
+                now,
+              });
             }
             impact = { affectedWorkOrderIds: open.map(item => item.id), confirmation };
             await tx.productionPlanChange.create({ data: { planOrderId: batch.planOrderId, action: 'adjust_customer_due_date', reason,

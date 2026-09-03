@@ -320,6 +320,7 @@ export default function DailyShipmentWorkbench({
 
   const plan = data?.plan || null;
   const editable = !plan || plan.status === 'DRAFT';
+  const canSupplement = !plan || plan.status === 'DRAFT' || plan.status === 'CONFIRMED';
   const filteredItems = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('zh-CN');
     return (plan?.items || []).filter(item => {
@@ -335,6 +336,7 @@ export default function DailyShipmentWorkbench({
   const filteredCandidates = useMemo(() => {
     const term = candidateSearch.trim().toLocaleLowerCase('zh-CN');
     return (data?.candidates || []).filter(candidate => {
+      if (!candidate.eligibleForSelectedDate) return false;
       if (candidateFilter === 'ready' && candidate.completedQuantity <= candidate.shippedQuantity) return false;
       if (candidateFilter === 'available' && candidate.availableQuantity <= 0) return false;
       if (candidateFilter === 'scheduled' && candidate.scheduledQuantity <= 0) return false;
@@ -358,7 +360,7 @@ export default function DailyShipmentWorkbench({
   }
 
   function toggleCandidate(candidate: DailyShipmentCandidateDTO): void {
-    if (!editable || candidate.availableQuantity <= 0) return;
+    if (!canSupplement || candidate.availableQuantity <= 0) return;
     setCandidateDrafts(current => {
       if (current[candidate.batchId]) {
         const next = { ...current };
@@ -554,7 +556,7 @@ export default function DailyShipmentWorkbench({
           {plan?.confirmedBy && <em>{plan.confirmedBy.name} 已确认</em>}
         </div>
         <div className="shipment-top-actions">
-          <button type="button" className="secondary" disabled={!editable || loading} onClick={openDrawer}><Plus size={17} />添加本周订单</button>
+          <button type="button" className="secondary" disabled={!canSupplement || loading} onClick={openDrawer}><Plus size={17} />手工补单</button>
           {!data && <span className="shipment-action-skeleton" role="status" aria-label="正在同步计划状态" />}
           {data && editable && <button type="button" className="primary" disabled={!plan?.items.length || busy} onClick={() => openDialog({ kind: 'confirm' })}><Check size={17} />确认计划</button>}
           {data && plan?.status === 'CONFIRMED' && <button type="button" className="primary" disabled={!allShipped || busy} onClick={() => openDialog({ kind: 'close' })}><PackageCheck size={17} />关闭计划</button>}
@@ -647,7 +649,7 @@ export default function DailyShipmentWorkbench({
           <div><Truck size={30} /></div>
           <strong>{plan?.items.length ? '没有匹配的出货订单' : `${shortDate(selectedDate)} 暂无出货计划`}</strong>
           <span>{plan?.items.length ? '调整搜索词或进度筛选条件。' : '从本周已排产订单中选择一批或多批，生成当日出货预览。'}</span>
-          {!plan?.items.length && <button type="button" disabled={!editable} onClick={openDrawer}><Plus size={17} />添加本周订单</button>}
+          {!plan?.items.length && <button type="button" disabled={!canSupplement} onClick={openDrawer}><Plus size={17} />手工补单</button>}
         </div>}
       </section>
     </div>
@@ -655,7 +657,7 @@ export default function DailyShipmentWorkbench({
     {drawerOpen && <div className="shipment-candidate-layer open">
       <button type="button" className="shipment-drawer-scrim" aria-label="关闭本周订单抽屉" onClick={() => { if (!busy) { setDrawerOpen(false); setError(''); } }} />
       <aside role="dialog" aria-modal="true" aria-label="添加本周订单">
-        <header><div><span>本周订单</span><h2>添加到 {shortDate(selectedDate)} 出货计划</h2><p>支持多选和跨日拆分，累计计划量不能超过生产批次数量。</p></div><button type="button" aria-label="关闭" disabled={busy} onClick={() => { setDrawerOpen(false); setError(''); }}><X size={20} /></button></header>
+        <header><div><span>交期同日订单</span><h2>补充到 {shortDate(selectedDate)} 出货计划</h2><p>只显示客户交期与当天一致的已下达批次，未来交期不会提前混入。</p></div><button type="button" aria-label="关闭" disabled={busy} onClick={() => { setDrawerOpen(false); setError(''); }}><X size={20} /></button></header>
         <div className="shipment-candidate-tools">
           <label><Search size={16} /><input value={candidateSearch} onChange={event => setCandidateSearch(event.target.value)} placeholder="搜索订单、客户、产品或业务员" /></label>
           <nav>{(['all', 'ready', 'available', 'scheduled'] as const).map(filter => <button type="button" className={candidateFilter === filter ? 'active' : ''} key={filter} onClick={() => setCandidateFilter(filter)}>{filter === 'all' ? '全部' : filter === 'ready' ? '可出货' : filter === 'available' ? '可排计划' : '已拆分'}</button>)}</nav>
@@ -668,7 +670,7 @@ export default function DailyShipmentWorkbench({
             const blockingReservations = candidate.reservations.filter(reservation => reservation.reservedQuantity > 0);
             const primaryReservation = blockingReservations[0];
             return <article className={`${selected ? 'selected' : ''} ${candidate.availableQuantity <= 0 ? 'unavailable' : ''}`} key={candidate.batchId}>
-              <button type="button" className="shipment-candidate-select" aria-pressed={selected} disabled={!editable || candidate.availableQuantity <= 0} onClick={() => toggleCandidate(candidate)}><i>{selected && <Check size={13} />}</i><span><strong>{candidate.workOrderCode}</strong><small>{candidate.customerName} · {candidate.productName}</small><em>{candidate.specification} · 第 {candidate.batchNo} 批</em></span></button>
+              <button type="button" className="shipment-candidate-select" aria-pressed={selected} disabled={!canSupplement || candidate.availableQuantity <= 0} onClick={() => toggleCandidate(candidate)}><i>{selected && <Check size={13} />}</i><span><strong>{candidate.workOrderCode}</strong><small>{candidate.customerName} · {candidate.productName}</small><em>{candidate.specification} · 第 {candidate.batchNo} 批</em></span></button>
               <dl><div><dt>批次数量</dt><dd>{numberText(candidate.batchQuantity)}</dd></div><div><dt>已排计划</dt><dd>{numberText(candidate.scheduledQuantity)}</dd></div><div><dt>剩余可排</dt><dd>{numberText(candidate.availableQuantity)}</dd></div><div><dt>已完工</dt><dd>{numberText(candidate.completedQuantity)}</dd></div></dl>
               <div className="shipment-candidate-progress"><span><b>{candidate.currentProcess}</b><em>{numberText(candidate.productionProgress)}%</em></span><div><i style={{ width: `${Math.min(100, candidate.productionProgress)}%` }} /></div>{candidate.scheduledDates.length > 0 && <small>已安排：{candidate.scheduledDates.map(shortDate).join('、')}</small>}</div>
               {candidate.availableQuantity <= 0 && <div className="shipment-reservation-notice">
@@ -684,7 +686,7 @@ export default function DailyShipmentWorkbench({
               </div>}
             </article>;
           })}
-          {!filteredCandidates.length && <div className="shipment-candidate-empty"><PackageCheck size={26} /><strong>没有匹配的本周订单</strong><span>当前周未下达生产，或订单已全部分配完毕。</span></div>}
+          {!filteredCandidates.length && <div className="shipment-candidate-empty"><PackageCheck size={26} /><strong>没有可补充的同日交期订单</strong><span>当天交期批次已自动关联，或尚未下达生产。</span></div>}
         </div>
         <footer><span>已选 <b>{selectedCandidateIds.length}</b> 批 · 共 <b>{numberText(selectedCandidateQuantity)}</b> 件</span><div><button type="button" disabled={busy} onClick={() => { setDrawerOpen(false); setError(''); }}>取消</button><button type="button" className="primary" disabled={busy || selectedCandidateIds.length === 0} onClick={addSelectedCandidates}>{busy ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}加入当日计划</button></div></footer>
       </aside>

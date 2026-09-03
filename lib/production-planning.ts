@@ -23,6 +23,7 @@ import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
 import { overrideLegacyMaterialProductionHolds, synchronizeMaterialProductionHold } from '@/lib/production-plan-holds';
 import { serializeMaterialExecutionControl } from '@/lib/material-execution-control';
+import { syncProductionBatchToDueShipmentPlan } from '@/lib/daily-shipment-sync';
 import type {
   ProductionPlanBatchDTO,
   ProductionPlanChangeDTO,
@@ -1816,6 +1817,12 @@ export async function releaseProductionPlanBatch(
       activatedAt: planActive ? now : batch.activatedAt,
       activatedById: planActive ? input.actorId : batch.activatedById,
     },
+  });
+  await syncProductionBatchToDueShipmentPlan(tx, {
+    batchId: batch.id,
+    actorId: input.actorId,
+    reason: 'release',
+    now,
   });
   await synchronizeMaterialProductionHold(tx, {
     workOrderId: workOrder.id,

@@ -1,6 +1,7 @@
 export type DailyShipmentPlanStatus = 'DRAFT' | 'CONFIRMED' | 'CLOSED' | 'CLOSED_WITH_CARRYOVER' | 'CANCELLED';
 export type DailyShipmentItemStatus = 'PLANNED' | 'PARTIALLY_SHIPPED' | 'SHIPPED' | 'CARRIED_OVER' | 'CANCELLED';
 export type DailyShipmentPriority = 'URGENT' | 'PRIORITY' | 'NORMAL';
+export type DailyShipmentAssociationType = 'AUTO_DUE_DATE' | 'MANUAL' | 'CARRYOVER' | 'DUE_DATE_CHANGE';
 export type ShipmentProgressState = 'SHIPPED' | 'PARTIAL' | 'OVERDUE' | 'READY' | 'IN_PRODUCTION' | 'NOT_STARTED' | 'CARRIED_OVER';
 
 export type DailyShipmentEventDTO = {
@@ -43,6 +44,10 @@ export type DailyShipmentItemDTO = {
   actualShipAt: string | null;
   progressState: ShipmentProgressState;
   shipmentPriority: DailyShipmentPriority;
+  associationType: DailyShipmentAssociationType;
+  planShipDate: string;
+  dueDateSnapshot: string | null;
+  deliveryVersionSnapshot: number | null;
   note: string | null;
   sortOrder: number;
   isCarryover: boolean;
@@ -77,6 +82,7 @@ export type DailyShipmentCandidateDTO = {
   productionStage: string;
   currentProcess: string;
   lastProgressAt: string | null;
+  eligibleForSelectedDate: boolean;
   scheduledDates: string[];
   reservations: Array<{
     itemId: string;

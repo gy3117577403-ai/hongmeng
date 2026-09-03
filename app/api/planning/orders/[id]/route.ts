@@ -4,6 +4,7 @@ import { canAdjustProductionDates, serializeProductionControl } from '@/lib/prod
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { syncProductionBatchToDueShipmentPlan } from '@/lib/daily-shipment-sync';
 import {
   parseProductionPlanOrderInput,
   planOrderSnapshot,
@@ -165,6 +166,13 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
             beforeData: JSON.parse(JSON.stringify(serializeProductionControl(order))) as Prisma.InputJsonValue,
             afterData: JSON.parse(JSON.stringify({ ...serializeProductionControl(next), confirmation: String(body.confirmation).trim() })) as Prisma.InputJsonValue,
           } });
+        }
+        for (const batch of released) {
+          await syncProductionBatchToDueShipmentPlan(tx, {
+            batchId: batch.id,
+            actorId: user.id,
+            reason: 'due_date_change',
+          });
         }
       }
       if (canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds) {
