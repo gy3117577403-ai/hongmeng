@@ -244,14 +244,38 @@ function PrioritySelector({ value, onChange, disabled = false, compact = false }
 
 function OrderIdentity({ item }: { item: Pick<DailyShipmentItemDTO, 'workOrderCode' | 'sourceOrderNo' | 'customerName' | 'productName' | 'specification' | 'batchNo' | 'isCarryover' | 'carryoverDayCount' | 'carriedOverToDate'> }) {
   return <div className="shipment-order-identity">
-    <strong>{item.workOrderCode}</strong>
-    <span>{item.customerName} · {item.productName}</span>
-    <small>{item.sourceOrderNo} · {item.specification} · 第 {item.batchNo} 批</small>
+    <strong className="shipment-customer-name">{item.customerName}</strong>
+    <span className="shipment-product-spec">{item.productName} · {item.specification}</span>
+    <div className="shipment-order-meta">
+      <CompactOrderCode value={item.workOrderCode} />
+      <small>{item.sourceOrderNo} · 第 {item.batchNo} 批</small>
+    </div>
     {(item.isCarryover || item.carriedOverToDate) && <div className="shipment-lineage-badges">
       {item.isCarryover && <b>上日遗留{item.carryoverDayCount > 1 ? ` · 连续 ${item.carryoverDayCount} 天` : ''}</b>}
       {item.carriedOverToDate && <em>已结转至 {shortDate(item.carriedOverToDate)}</em>}
     </div>}
   </div>;
+}
+
+function CompactOrderCode({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const compact = value.length > 25 ? `${value.slice(0, 10)}…${value.slice(-11)}` : value;
+  async function copy(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      // The full code remains available through focus/hover even if clipboard access is denied.
+    }
+  }
+  return <button
+    type="button"
+    className="shipment-order-code"
+    data-full-code={value}
+    aria-label={`工单号 ${value}，点击复制`}
+    onClick={() => { void copy(); }}
+  >{copied ? '已复制' : compact}</button>;
 }
 
 function ShipmentMetricValue({ loaded, value, unit, detail }: { loaded: boolean; value: React.ReactNode; unit: string; detail?: string }) {
@@ -276,14 +300,21 @@ function WarningPanel({ data, date, loading, onDateChange, onRefresh, onOpenDate
   onRefresh: () => void;
   onOpenDate: (date: string) => void;
 }) {
-  const [riskOnly, setRiskOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'risk' | 'pending' | 'completed' | 'unlinked'>('all');
   const [query, setQuery] = useState('');
+  useEffect(() => {
+    setStatusFilter('all');
+    setQuery('');
+  }, [date]);
   if (!data) return <InsightLoading label="正在加载未来 3 天预警" />;
   const term = query.trim().toLocaleLowerCase('zh-CN');
   const visibleGroups = data.groups.map(group => ({
     ...group,
     items: group.items.filter(item => {
-      if (riskOnly && item.completedQuantity >= item.pendingQuantity) return false;
+      if (statusFilter === 'risk' && (item.pendingQuantity <= 0 || item.completedQuantity - item.shippedQuantity >= item.pendingQuantity)) return false;
+      if (statusFilter === 'pending' && item.shipmentState === 'SHIPPED') return false;
+      if (statusFilter === 'completed' && item.shipmentState !== 'SHIPPED') return false;
+      if (statusFilter === 'unlinked' && item.associationHealthy) return false;
       if (!term) return true;
       return [item.workOrderCode, item.sourceOrderNo, item.customerName, item.productName, item.specification]
         .some(value => value.toLocaleLowerCase('zh-CN').includes(term));
@@ -294,43 +325,45 @@ function WarningPanel({ data, date, loading, onDateChange, onRefresh, onOpenDate
     : days === 0 ? '今日到期' : days === 1 ? '明日到期' : `距交期 ${days} 天`;
   return <>
     <section className="shipment-insight-head shipment-glass-surface">
-      <div><CalendarClock size={22} /><span><small>预警窗口</small><strong>{data.anchorDate} — {data.rangeEndDate}</strong></span></div>
+      <div><CalendarClock size={22} /><span><small>交期预警窗口</small><strong>{data.rangeStartDate} — {data.rangeEndDate}</strong></span></div>
       <div className="shipment-insight-date"><label htmlFor="shipment-warning-date">基准日</label><input id="shipment-warning-date" type="date" value={date} onChange={event => onDateChange(event.target.value)} /></div>
       <button type="button" onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={17} />刷新</button>
     </section>
     <section className="shipment-insight-kpis shipment-glass-surface" aria-label="交期预警指标">
-      <article><span>预警总数</span><strong>{data.summary.itemCount}<small>批</small></strong><BellRing /></article>
+      <article><span>窗口订单</span><strong>{data.summary.itemCount}<small>批</small></strong><BellRing /></article>
       <article className="risk"><span>已逾期</span><strong>{data.summary.overdueCount}<small>批</small></strong><ShieldAlert /></article>
       <article className="pending"><span>今日到期</span><strong>{data.summary.todayCount}<small>批</small></strong><CalendarCheck2 /></article>
       <article className="priority-priority"><span>明日到期</span><strong>{data.summary.tomorrowCount}<small>批</small></strong><Clock3 /></article>
       <article><span>2 天后</span><strong>{data.summary.twoDaysCount}<small>批</small></strong><CalendarClock /></article>
       <article><span>3 天后</span><strong>{data.summary.threeDaysCount}<small>批</small></strong><CalendarClock /></article>
       <article className="risk"><span>生产风险</span><strong>{data.summary.productionRiskCount}<small>批</small></strong><AlertTriangle /></article>
-      <article className="ready"><span>可按时出货</span><strong>{data.summary.readyCount}<small>批</small></strong><CheckCircle2 /></article>
+      <article className="ready"><span>已完成出货</span><strong>{data.summary.completedCount}<small>批</small></strong><CheckCircle2 /></article>
     </section>
     <section className="shipment-insight-banner warning shipment-glass-surface">
-      <AlertTriangle size={19} /><div><strong>未来 3 天与历史逾期共 {data.summary.itemCount} 批，待出 {numberText(data.summary.pendingQuantity)} 件</strong><span>未来订单只在预警中提前展示，不会进入今日出货清单。</span></div>
-      <button type="button" className={riskOnly ? 'active' : ''} onClick={() => setRiskOnly(value => !value)}>{riskOnly ? '显示全部' : '只看生产风险'}</button>
+      <AlertTriangle size={19} /><div><strong>{shortDate(data.rangeStartDate)} 起至未来 3 天共 {data.summary.itemCount} 批，待出 {numberText(data.summary.pendingQuantity)} 件</strong><span>已完成、未完成与历史预期订单统一保留；启用日前订单不计入。</span></div>
+      <nav className="shipment-warning-filters" aria-label="预警状态筛选">
+        {([['all', '全部'], ['pending', `未完成 ${data.summary.incompleteCount}`], ['completed', `已完成 ${data.summary.completedCount}`], ['risk', '生产风险'], ['unlinked', `待关联 ${data.summary.associationIssueCount}`]] as const).map(([value, label]) => <button type="button" key={value} className={statusFilter === value ? 'active' : ''} onClick={() => setStatusFilter(value)}>{label}</button>)}
+      </nav>
     </section>
     <section className="shipment-insight-toolbar shipment-glass-surface">
-      <div><span>未来 3 天交期预警</span><strong>{data.anchorDate.slice(5)} — {data.rangeEndDate.slice(5)} · 含今日</strong></div>
+      <div><span>交期预警</span><strong>{data.rangeStartDate.slice(5)} — {data.rangeEndDate.slice(5)} · 含逾期与未来 3 天</strong></div>
       <label><Search size={16} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索工单、产品、客户" /></label>
       <b>{visibleGroups.reduce((sum, group) => sum + group.items.length, 0)} / {data.summary.itemCount} 批</b>
     </section>
     <section className="shipment-insight-table shipment-glass-surface">
       <div className="shipment-table-scroll hm-scroll-region" tabIndex={0}>
-        <table><thead><tr><th>预警</th><th>订单 / 产品</th><th>客户交期</th><th>待出数量</th><th>生产完成</th><th>当前工序</th><th>出货关联</th><th>操作</th></tr></thead>
+        <table><thead><tr><th>预警</th><th>客户 / 产品规格</th><th>客户交期</th><th>待出数量</th><th>生产状态</th><th>出货状态</th><th>日计划关联</th><th>操作</th></tr></thead>
           <tbody>{visibleGroups.map(group => <Fragment key={group.level}>
             <tr className="shipment-group-row"><td colSpan={8}><strong>{group.label}</strong><span>{group.items.length} 批 · 待出 {numberText(group.items.reduce((sum, item) => sum + item.pendingQuantity, 0))} 件</span></td></tr>
             {group.items.map(item => <tr key={item.batchId}>
               <td><span className={`shipment-warning-badge level-${item.warningLevel.toLocaleLowerCase()}`}>{warningLabel(item.daysUntilDue)}</span></td>
-              <td><div className="shipment-order-identity"><strong>{item.workOrderCode}</strong><span>{item.customerName} · {item.productName}</span><small>{item.specification}</small></div></td>
+              <td><div className="shipment-order-identity"><strong className="shipment-customer-name">{item.customerName}</strong><span className="shipment-product-spec">{item.productName} · {item.specification}</span><div className="shipment-order-meta"><CompactOrderCode value={item.workOrderCode} /><small>{item.sourceOrderNo}</small></div></div></td>
               <td><div className="shipment-due"><strong>{item.customerDueDate.slice(5)}</strong><span>原客户交期</span></div></td>
               <td><div className="shipment-plan-quantity"><strong>{numberText(item.pendingQuantity)} 件</strong><small>计划 {numberText(item.batchQuantity)} · 已出 {numberText(item.shippedQuantity)}</small></div></td>
               <td><div className="shipment-production"><span><b>{productionStageText(item.productionStage)}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}%</small></div></td>
-              <td><div className="shipment-current-process"><strong>{item.currentProcess}</strong><span>{item.completedQuantity >= item.pendingQuantity ? '已具备出货量' : '仍需继续生产'}</span></div></td>
-              <td><div className={`shipment-association ${item.associationHealthy ? 'healthy' : 'issue'}`}><strong>{item.associationHealthy ? '已自动关联' : '关联待修复'}</strong><span>{item.associatedPlanDate || '尚未生成日计划'}</span></div></td>
-              <td><button type="button" className="shipment-table-action" onClick={() => onOpenDate(item.daysUntilDue < 0 ? data.anchorDate : item.customerDueDate)}>查看日计划</button></td>
+              <td><div className="shipment-current-process"><strong>{item.shipmentState === 'SHIPPED' ? '已完成出货' : item.shipmentState === 'PARTIAL' ? '部分已发' : item.shipmentState === 'OVERDUE' ? '逾期未出' : '等待出货'}</strong><span>{item.currentProcess}</span></div></td>
+              <td><div className={`shipment-association ${item.associationHealthy ? 'healthy' : 'issue'}`}><strong>{item.associationHealthy ? (item.planningState === 'CARRIED_OVER' ? '已顺延关联' : '关联正常') : '关联待修复'}</strong><span>{item.associatedPlanDate || '历史预期 · 尚未生成'}</span></div></td>
+              <td><button type="button" className="shipment-table-action" onClick={() => onOpenDate(item.associatedPlanDate || (item.daysUntilDue < 0 ? data.anchorDate : item.customerDueDate))}>查看日计划</button></td>
             </tr>)}</Fragment>)}</tbody>
         </table>
       </div>
@@ -550,7 +583,7 @@ export default function DailyShipmentWorkbench({
   const canSupplement = !plan || plan.status === 'DRAFT' || plan.status === 'CONFIRMED';
   const filteredItems = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('zh-CN');
-    return (plan?.items || []).filter(item => {
+    return (data?.displayItems || []).filter(item => {
       if (priorityFilter !== 'all' && item.shipmentPriority !== priorityFilter) return false;
       if (stateFilter !== 'all' && item.progressState !== stateFilter) return false;
       if (carryoverOnly && !item.isCarryover) return false;
@@ -558,7 +591,7 @@ export default function DailyShipmentWorkbench({
       return [item.workOrderCode, item.sourceOrderNo, item.customerName, item.productName, item.specification, item.currentProcess]
         .some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(term));
     });
-  }, [carryoverOnly, plan, priorityFilter, search, stateFilter]);
+  }, [carryoverOnly, data, priorityFilter, search, stateFilter]);
 
   const filteredCandidates = useMemo(() => {
     const term = candidateSearch.trim().toLocaleLowerCase('zh-CN');
@@ -743,7 +776,7 @@ export default function DailyShipmentWorkbench({
   }
 
   const allShipped = Boolean(plan?.items.length) && plan!.items.every(item => item.pendingQuantity === 0);
-  const planStatus = data ? (plan ? PLAN_STATUS_TEXT[plan.status] : '未创建') : '同步中';
+  const planStatus = data ? (plan ? PLAN_STATUS_TEXT[plan.status] : data.displayItems.length ? '自动汇总' : '未创建') : '同步中';
 
   return <main className="shipment-shell hm-workbench-root hm-workbench-navigation-overlay">
     <AppWorkbenchHeader
@@ -806,7 +839,7 @@ export default function DailyShipmentWorkbench({
         </div>
         <div className="shipment-plan-context" aria-busy={!data}>
           <CalendarCheck2 size={17} />
-          <span><small>当日计划</small><strong>{planStatus}</strong></span>
+          <span><small>交期清单</small><strong>{planStatus}</strong></span>
           {plan?.confirmedBy && <em>{plan.confirmedBy.name} 已确认</em>}
         </div>
         <div className="shipment-top-actions">
@@ -842,9 +875,10 @@ export default function DailyShipmentWorkbench({
         <div><strong>未完成订单已结转</strong><span>{data.summary.carriedOut.itemCount} 批 · {numberText(data.summary.carriedOut.quantity)} 件已同步到次日计划</span></div>
       </section>}
       {data?.carryoverReconciliation?.blockedReason && <div className="shipment-error compact" role="alert"><AlertTriangle size={16} /><span>{data.carryoverReconciliation.blockedReason}</span></div>}
+      {data?.repairSummary?.failed.length ? <div className="shipment-error compact" role="alert"><AlertTriangle size={16} /><span>{data.repairSummary.failed.length} 个交期订单自动关联待重试；当前页面保留已同步数据。</span></div> : null}
 
       <section className="shipment-list-toolbar">
-        <div><span>当日出货清单</span><strong>{shortDate(selectedDate)} · {planStatus}</strong></div>
+        <div><span>交期累计清单</span><strong>{data ? `${shortDate(data.range.startDate)}—${shortDate(data.range.endDate)} · ${planStatus}` : `${shortDate(selectedDate)} · ${planStatus}`}</strong></div>
         <label><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索工单、客户、产品或规格" /></label>
         <select value={priorityFilter} onChange={event => { setPriorityFilter(event.target.value as typeof priorityFilter); setCarryoverOnly(false); }} aria-label="筛选出货优先级">
           <option value="all">全部优先级</option>
@@ -863,7 +897,7 @@ export default function DailyShipmentWorkbench({
           <option value="CARRIED_OVER">已结转</option>
         </select>
         {carryoverOnly && <button type="button" className="shipment-filter-chip" onClick={() => setCarryoverOnly(false)}>仅看遗留 <X size={12} /></button>}
-        <b>{data ? `${filteredItems.length} / ${plan?.items.length ?? 0} 批` : '— / — 批'}</b>
+        <b>{data ? `${filteredItems.length} / ${data.displayItems.length} 批` : '— / — 批'}</b>
       </section>
 
       {error && !dialog && !drawerOpen && <div className="shipment-error" role="alert"><AlertTriangle size={17} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误"><X size={16} /></button></div>}
@@ -873,12 +907,12 @@ export default function DailyShipmentWorkbench({
         {!data && <div className="shipment-initial-loading"><LoaderCircle className="spin" /><strong>正在加载日出货计划</strong><span>同步本周订单、生产进度与出货记录…</span></div>}
         {data && filteredItems.length > 0 && <div className="shipment-table-scroll hm-scroll-region" tabIndex={0}>
           <table>
-            <thead><tr><th>优先级</th><th>订单 / 产品</th><th>计划出货</th><th>生产进度</th><th>出货进度</th><th>时间跟踪</th><th>客户交期</th><th>操作</th></tr></thead>
+            <thead><tr><th>优先级</th><th>客户 / 产品规格</th><th>计划出货</th><th>生产进度</th><th>出货进度</th><th>时间跟踪</th><th>客户交期</th><th>操作</th></tr></thead>
             <tbody>{filteredItems.map((item, index) => {
               const availableToShip = candidateAvailableToShip(item, data.candidates);
-              const startsCompletedSection = item.status === 'SHIPPED' && (index === 0 || filteredItems[index - 1]?.status !== 'SHIPPED');
+              const startsDueDate = index === 0 || filteredItems[index - 1]?.customerDueDate !== item.customerDueDate;
               return <Fragment key={item.id}>
-                {startsCompletedSection && <tr className="shipment-completed-divider"><td colSpan={8}><div><CheckCircle2 size={14} /><strong>已完成</strong><span>{filteredItems.filter(candidate => candidate.status === 'SHIPPED').length} 批已完成出货，保留在当日记录中</span></div></td></tr>}
+                {startsDueDate && <tr className="shipment-completed-divider shipment-due-divider"><td colSpan={8}><div><CalendarClock size={14} /><strong>{item.customerDueDate === selectedDate ? '今日到期' : `${shortDate(item.customerDueDate)} 交期`}</strong><span>{item.customerDueDate < selectedDate ? `已纳入 ${shortDate(selectedDate)} 日清单，未出余额自动顺延` : '客户交期与所选日期一致'}</span></div></td></tr>}
                 <tr className={`shipment-row-priority-${item.shipmentPriority.toLocaleLowerCase()} ${item.isCarryover ? 'is-carryover' : ''} ${item.status === 'SHIPPED' ? 'is-completed' : ''}`}>
                 <td><div className={`shipment-priority-badge priority-${item.shipmentPriority.toLocaleLowerCase()}`}><b>{PRIORITY_META[item.shipmentPriority].label}</b><small>{item.isCarryover ? '上日遗留' : item.status === 'SHIPPED' ? '已完成' : PRIORITY_META[item.shipmentPriority].description.split(' · ')[1]}</small></div></td>
                 <td><OrderIdentity item={item} /></td>
@@ -888,9 +922,9 @@ export default function DailyShipmentWorkbench({
                 <td><div className="shipment-time-track"><span><small>计划</small><b>{timeText(item.plannedShipAt)}</b></span><span className={item.actualShipAt ? 'actual' : 'missing'}><small>实发</small><b>{item.actualShipAt ? timeText(item.actualShipAt) : item.progressState === 'OVERDUE' ? '超时未出' : '尚未出货'}</b></span></div></td>
                 <td><div className="shipment-due"><strong>{item.customerDueDate.slice(5)}</strong><span>{item.priority === 'urgent' || item.priority === 'insert' ? '优先订单' : '正常交期'}</span></div></td>
                 <td><div className="shipment-row-actions">
-                  {editable && <button type="button" title="修改计划" onClick={() => openDialog({ kind: 'edit', item })}><Pencil size={15} /></button>}
-                  {editable && <button type="button" className="danger" title="取消计划项" onClick={() => openDialog({ kind: 'cancel', item })}><X size={15} /></button>}
-                  {plan?.status === 'CONFIRMED' && item.status !== 'CARRIED_OVER' && item.pendingQuantity > 0 && <button type="button" className="ship" disabled={availableToShip <= 0} title={availableToShip > 0 ? '登记实际出货' : '暂无已完工可出货数量'} onClick={() => openDialog({ kind: 'ship', item })}><Truck size={15} />实发</button>}
+                  {editable && item.isOperationalOnSelectedDate && <button type="button" title="修改计划" onClick={() => openDialog({ kind: 'edit', item })}><Pencil size={15} /></button>}
+                  {editable && item.isOperationalOnSelectedDate && <button type="button" className="danger" title="取消计划项" onClick={() => openDialog({ kind: 'cancel', item })}><X size={15} /></button>}
+                  {plan?.status === 'CONFIRMED' && item.isOperationalOnSelectedDate && item.pendingQuantity > 0 && <button type="button" className="ship" disabled={availableToShip <= 0} title={availableToShip > 0 ? '登记实际出货' : '暂无已完工可出货数量'} onClick={() => openDialog({ kind: 'ship', item })}><Truck size={15} />实发</button>}
                   {item.events.length > 0 && <button type="button" className="history" onClick={() => openDialog({ kind: 'events', item })}><History size={15} />{item.events.length}</button>}
                 </div></td>
                 </tr>
@@ -900,9 +934,9 @@ export default function DailyShipmentWorkbench({
         </div>}
         {data && filteredItems.length === 0 && <div className="shipment-empty">
           <div><Truck size={30} /></div>
-          <strong>{plan?.items.length ? '没有匹配的出货订单' : `${shortDate(selectedDate)} 暂无出货计划`}</strong>
-          <span>{plan?.items.length ? '调整搜索词或进度筛选条件。' : '从本周已排产订单中选择一批或多批，生成当日出货预览。'}</span>
-          {!plan?.items.length && <button type="button" disabled={!canSupplement} onClick={openDrawer}><Plus size={17} />手工补单</button>}
+          <strong>{data.displayItems.length ? '没有匹配的出货订单' : `${shortDate(selectedDate)} 暂无交期订单`}</strong>
+          <span>{data.displayItems.length ? '调整搜索词或进度筛选条件。' : `${shortDate(data.range.startDate)} 至 ${shortDate(data.range.endDate)} 没有符合规则的确认交期订单。`}</span>
+          {!data.displayItems.length && <button type="button" disabled={!canSupplement} onClick={openDrawer}><Plus size={17} />手工补单</button>}
         </div>}
       </section>
       </>}
