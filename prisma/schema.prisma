@@ -431,6 +431,15 @@ enum DailyShipmentPriority {
   @@map("daily_shipment_priority")
 }
 
+enum DailyShipmentAssociationType {
+  AUTO_DUE_DATE
+  MANUAL
+  CARRYOVER
+  DUE_DATE_CHANGE
+
+  @@map("daily_shipment_association_type")
+}
+
 enum ShipmentEventType {
   SHIPMENT
   REVERSAL
@@ -1640,41 +1649,48 @@ model DailyShipmentPlan {
 }
 
 model DailyShipmentPlanItem {
-  id                    String                  @id @default(uuid())
-  planId                String                  @map("plan_id")
-  productionPlanBatchId String                  @map("production_plan_batch_id")
-  workOrderId           String                  @map("work_order_id")
-  plannedQuantity       Int                     @map("planned_quantity")
-  plannedShipAt         DateTime                @map("planned_ship_at")
-  status                DailyShipmentItemStatus @default(PLANNED)
-  shipmentPriority      DailyShipmentPriority   @default(NORMAL) @map("shipment_priority")
-  sortOrder             Int                     @default(0) @map("sort_order")
-  note                  String?
-  sourceSnapshot        Json                    @map("source_snapshot")
-  carryoverSourceItemId String?                 @unique @map("carryover_source_item_id")
-  carryoverSourceDate   DateTime?               @map("carryover_source_date") @db.Date
-  carryoverDayCount     Int                     @default(0) @map("carryover_day_count")
-  carryoverQuantity     Int                     @default(0) @map("carryover_quantity")
-  version               Int                     @default(0)
-  createdById           String                  @map("created_by_id")
-  updatedById           String                  @map("updated_by_id")
-  createdAt             DateTime                @default(now()) @map("created_at")
-  updatedAt             DateTime                @updatedAt @map("updated_at")
-  plan                  DailyShipmentPlan       @relation(fields: [planId], references: [id], onDelete: Restrict)
-  productionPlanBatch   ProductionPlanBatch     @relation(fields: [productionPlanBatchId], references: [id], onDelete: Restrict)
-  workOrder             WorkOrder               @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
-  createdBy             User                    @relation("DailyShipmentItemCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
-  updatedBy             User                    @relation("DailyShipmentItemUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
-  events                ShipmentEvent[]
-  revisions             DailyShipmentRevision[]
-  carryoverSourceItem   DailyShipmentPlanItem?  @relation("DailyShipmentCarryoverChain", fields: [carryoverSourceItemId], references: [id], onDelete: Restrict)
-  carryoverTargetItem   DailyShipmentPlanItem?  @relation("DailyShipmentCarryoverChain")
+  id                      String                       @id @default(uuid())
+  planId                  String                       @map("plan_id")
+  productionPlanBatchId   String                       @map("production_plan_batch_id")
+  workOrderId             String                       @map("work_order_id")
+  plannedQuantity         Int                          @map("planned_quantity")
+  plannedShipAt           DateTime                     @map("planned_ship_at")
+  status                  DailyShipmentItemStatus      @default(PLANNED)
+  shipmentPriority        DailyShipmentPriority        @default(NORMAL) @map("shipment_priority")
+  associationType         DailyShipmentAssociationType @default(MANUAL) @map("association_type")
+  associationKey          String?                      @unique @map("association_key")
+  dueDateSnapshot         DateTime?                    @map("due_date_snapshot") @db.Date
+  deliveryVersionSnapshot Int?                         @map("delivery_version_snapshot")
+  sortOrder               Int                          @default(0) @map("sort_order")
+  note                    String?
+  sourceSnapshot          Json                         @map("source_snapshot")
+  carryoverSourceItemId   String?                      @unique @map("carryover_source_item_id")
+  carryoverSourceDate     DateTime?                    @map("carryover_source_date") @db.Date
+  carryoverDayCount       Int                          @default(0) @map("carryover_day_count")
+  carryoverQuantity       Int                          @default(0) @map("carryover_quantity")
+  version                 Int                          @default(0)
+  createdById             String                       @map("created_by_id")
+  updatedById             String                       @map("updated_by_id")
+  createdAt               DateTime                     @default(now()) @map("created_at")
+  updatedAt               DateTime                     @updatedAt @map("updated_at")
+  plan                    DailyShipmentPlan            @relation(fields: [planId], references: [id], onDelete: Restrict)
+  productionPlanBatch     ProductionPlanBatch          @relation(fields: [productionPlanBatchId], references: [id], onDelete: Restrict)
+  workOrder               WorkOrder                    @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  createdBy               User                         @relation("DailyShipmentItemCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy               User                         @relation("DailyShipmentItemUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  events                  ShipmentEvent[]
+  revisions               DailyShipmentRevision[]
+  carryoverSourceItem     DailyShipmentPlanItem?       @relation("DailyShipmentCarryoverChain", fields: [carryoverSourceItemId], references: [id], onDelete: Restrict)
+  carryoverTargetItem     DailyShipmentPlanItem?       @relation("DailyShipmentCarryoverChain")
 
   @@unique([planId, productionPlanBatchId])
   @@index([productionPlanBatchId, status])
   @@index([workOrderId, status])
   @@index([plannedShipAt, status])
+  @@index([status, plannedShipAt])
   @@index([shipmentPriority, status, plannedShipAt])
+  @@index([associationType, status])
+  @@index([dueDateSnapshot, status])
   @@index([carryoverSourceDate])
   @@map("daily_shipment_plan_items")
 }
@@ -3727,7 +3743,7 @@ model SamplePhoto {
   size               Int
   objectKey          String              @unique @map("object_key")
   sha256             String
-  duplicateOfId       String?             @map("duplicate_of_id")
+  duplicateOfId      String?             @map("duplicate_of_id")
   captureSource      String?             @map("capture_source")
   sourceOriginalName String?             @map("source_original_name")
   sortOrder          Int                 @default(0) @map("sort_order")
