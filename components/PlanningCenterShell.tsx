@@ -64,6 +64,7 @@ import {
   type PlanningReadinessFilter,
 } from '@/lib/planning-readiness';
 import { resolvePlanningFlow } from '@/lib/planning-flow';
+import { planningProcessDisplay } from '@/lib/planning-process-display';
 import { buildPlanningDrawingLibraryHref, buildPlanningReturnPath } from '@/lib/planning-navigation';
 import { auxiliaryValueAfterLoad, type ClientLoadWarning } from '@/lib/client-load-resilience';
 import {
@@ -2332,6 +2333,10 @@ export default function PlanningCenterShell({
                 <thead><tr><th className="production-list-sequence">序号</th><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>生产资料</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>打印</th><th className="planning-control-note">备注</th><th className="planning-control-actions">操作</th></tr></thead>
                 <tbody>{scheduleRows.map(({ order, batch }, rowIndex) => {
                   const flow = planningFlow(order, batch);
+                  const processDisplay = planningProcessDisplay({
+                    processStatus: batch.processStatus || 'not_created',
+                    productTimeProfileVersion: order.currentProductTimeVersion,
+                  });
                   const processFinishedAt = batch.processCompletedAt || batch.processConfirmedAt;
                   const flowFinishedAt = batch.workOrderCompletedAt;
                   const workflowParams = workflowCenterParams(batch, periods);
@@ -2369,7 +2374,7 @@ export default function PlanningCenterShell({
                       {activeHold && <span className="planning-status status-frozen" title={activeHold.reason}><strong><LockKeyhole size={12} />生产冻结</strong><small>{activeHold.reason}</small></span>}
                       {batch.warehouseStatus !== 'completed' && <small className="planning-material-warning">仅提示，不影响开工/报工</small>}
                     </div></td>
-                    <td><span className={`planning-status status-${batch.processStatus}`}><strong>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</strong>{processFinishedAt && <small>{flowTime(processFinishedAt)}</small>}</span></td>
+                    <td><span className={`planning-status status-${batch.processStatus} readiness-${processDisplay.readiness}`}><strong>{processDisplay.label}</strong>{processDisplay.detail && <small>{processDisplay.detail}</small>}{processFinishedAt && <small>{flowTime(processFinishedAt)}</small>}</span></td>
                     <td><a className={`planning-flow-link tone-${flow.tone}`} href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState} title="查看该批次完整流程"><strong>{flow.label}</strong>{flowFinishedAt && <small>{flowTime(flowFinishedAt)}</small>}</a></td>
                     <td><div className={`planning-print-status ${printState.tone}`}><span><strong>{printState.label}</strong>{printState.time && <small>{flowTime(printState.time)}</small>}{batch.travelerPrintMaterials && <span className="planning-print-materials">{(['TRAVELER', 'QUALITY_WARNING', 'SOP', 'DRAWING'] as const).map(material => {
                       const item = batch.travelerPrintMaterials?.[material];

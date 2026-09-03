@@ -11,6 +11,7 @@ import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { allocateBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import { PlanningProductLinkItemIndex } from '@/lib/planning-product-link';
 import { assertProductionMayBeScheduled, lockProductionWorkOrder } from '@/lib/production-pause-guard';
 import { serializeProductionControl, PRODUCTION_CONTROL_SELECT } from '@/lib/production-control';
 import {
@@ -564,18 +565,48 @@ export async function resolvePlanningReferences(
 }> {
   const itemId = text(input.drawingLibraryItemId, 80);
   const key = drawingLibraryKey(input.customerName, input.specification);
-  const drawing = await tx.drawingLibraryItem.findFirst({
-    where: {
-      deletedAt: null,
-      ...(itemId
-        ? { id: itemId }
-        : {
-            OR: [
-              { libraryKey: key },
-              { customerName: input.customerName, specification: input.specification },
-            ],
-          }),
-    },
+  let resolvedItemId = itemId || null;
+  if (!resolvedItemId) {
+    const loadCandidates = (broad: boolean) => tx.drawingLibraryItem.findMany({
+      where: {
+        deletedAt: null,
+        ...(broad ? {} : {
+          OR: [
+            { libraryKey: key },
+            { specification: { equals: input.specification, mode: 'insensitive' as const } },
+          ],
+        }),
+      },
+      select: {
+        id: true,
+        libraryKey: true,
+        customerName: true,
+        specification: true,
+        _count: {
+          select: {
+            files: { where: { deletedAt: null, isCurrent: true, category: { code: 'drawing' } } },
+          },
+        },
+      },
+      take: broad ? 5000 : 100,
+    });
+    let rawCandidates = await loadCandidates(false);
+    if (!rawCandidates.length) rawCandidates = await loadCandidates(true);
+    const canonical = new PlanningProductLinkItemIndex(rawCandidates.map(candidate => ({
+      id: candidate.id,
+      libraryKey: candidate.libraryKey,
+      customerName: candidate.customerName,
+      specification: candidate.specification,
+      drawingFileCount: candidate._count.files,
+    }))).selectCanonicalDrawingItem({
+      drawingLibraryItemId: null,
+      customerName: input.customerName,
+      specification: input.specification,
+    });
+    resolvedItemId = canonical?.id || null;
+  }
+  const drawing = resolvedItemId ? await tx.drawingLibraryItem.findFirst({
+    where: { deletedAt: null, id: resolvedItemId },
     select: {
       id: true,
       customerName: true,
@@ -606,7 +637,7 @@ export async function resolvePlanningReferences(
         },
       },
     },
-  });
+  }) : null;
   const profile = drawing?.productTimeProfiles[0] || null;
   const resourceFiles = drawing?.files || [];
   const drawingFiles = resourceFiles.filter(file => file.category.code === 'drawing');
