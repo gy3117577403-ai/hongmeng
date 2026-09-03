@@ -28,7 +28,6 @@ import {
   transferDailyShipmentReservation,
   updateDailyShipmentItem,
 } from '@/lib/daily-shipment-service';
-import { canRunGetReconciliation } from '@/lib/get-reconciliation-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -78,7 +77,10 @@ export async function GET(request: NextRequest) {
     const shipDate = request.nextUrl.searchParams.get('date') || chinaDateKey(new Date());
     const view = request.nextUrl.searchParams.get('view') || 'today';
     if (view === 'warning') {
-      return NextResponse.json({ ok: true, data: await loadShipmentWarningOverview({ anchorDate: shipDate }) });
+      return NextResponse.json({ ok: true, data: await loadShipmentWarningOverview({
+        anchorDate: shipDate,
+        actorUserId: user.id,
+      }) });
     }
     if (view === 'carryover') {
       return NextResponse.json({ ok: true, data: await loadShipmentCarryoverOverview({ asOfDate: shipDate }) });
@@ -93,9 +95,7 @@ export async function GET(request: NextRequest) {
     }
     const data = await loadDailyShipmentWorkbench({
       shipDate,
-      ...(canRunGetReconciliation(user.access, ['PLANNING'])
-        ? { actorUserId: user.id }
-        : {}),
+      actorUserId: user.id,
     });
     return NextResponse.json({ ok: true, data });
   } catch (error) {

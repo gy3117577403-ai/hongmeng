@@ -21,6 +21,6 @@ export default async function DailyPlansPage({ searchParams }: { searchParams?: 
     ? searchParams!.view as ShipmentView
     : 'today';
 
-  const initialData = await loadDailyShipmentWorkbench({ shipDate: initialDate });
+  const initialData = await loadDailyShipmentWorkbench({ shipDate: initialDate, actorUserId: user.id });
   return <DailyShipmentWorkbench user={user} initialDate={initialDate} initialData={initialData} initialView={initialView} />;
 }

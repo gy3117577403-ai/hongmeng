@@ -4,6 +4,7 @@ import { chinaDateKey } from '@/lib/china-date';
 import {
   DailyShipmentServiceError,
   reconcileAllDailyShipmentCarryovers,
+  reconcileDailyShipmentCutoverWindow,
 } from '@/lib/daily-shipment-service';
 import { backgroundMaintenanceGate } from '@/lib/maintenance-single-flight';
 
@@ -26,10 +27,16 @@ export async function POST(req: NextRequest) {
     const flight = await backgroundMaintenanceGate.run({
       requestId,
       phase: 'daily_shipment_carryover',
-    }, () => reconcileAllDailyShipmentCarryovers({
-      targetShipDate: chinaDateKey(new Date()),
-      limit: 200,
-    }));
+    }, async () => {
+      const targetShipDate = chinaDateKey(new Date());
+      const repair = await reconcileDailyShipmentCutoverWindow({
+        startDate: '2026-09-01',
+        endDate: targetShipDate,
+        pageSize: 200,
+      });
+      const carryover = await reconcileAllDailyShipmentCarryovers({ targetShipDate, limit: 200 });
+      return { repair, carryover };
+    });
     if (!flight.started) {
       const response = NextResponse.json({
         ok: false,
@@ -44,7 +51,7 @@ export async function POST(req: NextRequest) {
       return response;
     }
     const result = flight.value;
-    const log = result.blocked.length ? console.warn : console.info;
+    const log = result.repair.failed.length || result.carryover.blocked.length ? console.warn : console.info;
     log('daily shipment carryover maintenance', JSON.stringify({ requestId, ...result }));
     const response = NextResponse.json({ ok: true, requestId, result });
     response.headers.set('Cache-Control', 'private, no-store');

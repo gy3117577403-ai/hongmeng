@@ -56,6 +56,7 @@ export type DailyShipmentItemDTO = {
   carryoverDayCount: number;
   carryoverQuantity: number;
   carriedOverToDate: string | null;
+  isOperationalOnSelectedDate?: boolean;
   events: DailyShipmentEventDTO[];
 };
 
@@ -104,6 +105,7 @@ export type DailyShipmentCandidateDTO = {
 export type DailyShipmentWorkbenchDTO = {
   selectedDate: string;
   generatedAt: string;
+  range: { cutoverDate: string | null; startDate: string; endDate: string };
   week: {
     startDate: string;
     endDate: string;
@@ -125,6 +127,7 @@ export type DailyShipmentWorkbenchDTO = {
     closedBy: { id: string; name: string } | null;
     items: DailyShipmentItemDTO[];
   } | null;
+  displayItems: DailyShipmentItemDTO[];
   summary: {
     itemCount: number;
     plannedQuantity: number;
@@ -147,6 +150,15 @@ export type DailyShipmentWorkbenchDTO = {
     quantity: number;
     autoClosed: boolean;
     blockedReason: string | null;
+  } | null;
+  repairSummary: {
+    startDate: string;
+    endDate: string;
+    scannedCount: number;
+    changedCount: number;
+    unchangedCount: number;
+    skippedCount: number;
+    failed: Array<{ batchId: string; reason: string }>;
   } | null;
   candidates: DailyShipmentCandidateDTO[];
 };
@@ -172,6 +184,9 @@ export type ShipmentWarningItemDTO = {
   productionProgress: number;
   productionStage: string;
   currentProcess: string;
+  productionState: 'NOT_STARTED' | 'IN_PRODUCTION' | 'COMPLETED';
+  shipmentState: 'EXPECTED_NOT_PLANNED' | 'PENDING' | 'PARTIAL' | 'SHIPPED' | 'OVERDUE';
+  planningState: 'PLAN_CREATED' | 'EXPECTED_NOT_PLANNED' | 'CARRIED_OVER';
   associationType: DailyShipmentAssociationType | null;
   associatedPlanDate: string | null;
   associationHealthy: boolean;
@@ -179,11 +194,16 @@ export type ShipmentWarningItemDTO = {
 
 export type ShipmentWarningOverviewDTO = {
   anchorDate: string;
+  cutoverDate: string | null;
+  rangeStartDate: string;
   rangeEndDate: string;
   generatedAt: string;
   summary: {
     itemCount: number;
     pendingQuantity: number;
+    completedCount: number;
+    incompleteCount: number;
+    expectedNotPlannedCount: number;
     overdueCount: number;
     todayCount: number;
     tomorrowCount: number;
@@ -200,6 +220,7 @@ export type ShipmentWarningOverviewDTO = {
     pendingQuantity: number;
     items: ShipmentWarningItemDTO[];
   }>;
+  repairSummary: DailyShipmentWorkbenchDTO['repairSummary'];
 };
 
 export type ShipmentCarryoverLineageDTO = {
