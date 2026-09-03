@@ -1099,7 +1099,7 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
     grouped.push(item);
     itemsByBatch.set(item.productionPlanBatchId, grouped);
   }
-  const displayItems = [...itemsByBatch.values()].flatMap(items => {
+  const cutoverDisplayItems = [...itemsByBatch.values()].flatMap(items => {
     const canonical = items.find(item => (
       item.status === DailyShipmentItemStatus.PLANNED
       || item.status === DailyShipmentItemStatus.PARTIALLY_SHIPPED
@@ -1145,6 +1145,16 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
     || shipmentPriorityRank(first.shipmentPriority) - shipmentPriorityRank(second.shipmentPriority)
     || first.workOrderCode.localeCompare(second.workOrderCode)
   ));
+  // The cutover is intentionally forward-only. Historical plans keep their
+  // original per-day behavior so legacy carry-over evidence remains readable.
+  const displayItems = displayWindow.cutoverApplied
+    ? cutoverDisplayItems
+    : serializedItems.map(item => ({
+      ...item,
+      isOperationalOnSelectedDate: item.planShipDate === parsedDate.key
+        && item.status !== DailyShipmentItemStatus.SHIPPED
+        && item.status !== DailyShipmentItemStatus.CARRIED_OVER,
+    }));
   const displayedOperationalItems = displayItems.filter(item => (
     item.status !== DailyShipmentItemStatus.CARRIED_OVER
     && item.status !== DailyShipmentItemStatus.SHIPPED
