@@ -155,6 +155,10 @@ server_pid=$!
       /api/internal/production-planning-maintenance; then
       maintenance_failed_step=production_planning_maintenance
     elif ! run_maintenance_step \
+      daily_shipment_carryover \
+      /api/internal/daily-shipment-maintenance; then
+      maintenance_failed_step=daily_shipment_carryover
+    elif ! run_maintenance_step \
       production_automatic_finalize \
       '/api/internal/production-planning-maintenance?phase=automatic_start_finalize&release=0&limit=2'; then
       maintenance_failed_step=production_automatic_finalize

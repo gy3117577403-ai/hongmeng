@@ -508,26 +508,37 @@ export async function reconcileDailyShipmentCarryover(input: {
         },
       },
     });
-    if (targetPlan && (
-      targetPlan.status === DailyShipmentPlanStatus.CLOSED
-      || targetPlan.status === DailyShipmentPlanStatus.CLOSED_WITH_CARRYOVER
-      || targetPlan.status === DailyShipmentPlanStatus.CANCELLED
-    )) {
-      const blockedReason = `${targetDate.key} 的出货计划已关闭，无法接收上日遗留`;
-      if (input.strict) {
-        throw new DailyShipmentServiceError(blockedReason, 'SHIPMENT_CARRYOVER_TARGET_LOCKED', 409);
-      }
-      return { ...emptyResult, targetPlanId: targetPlan.id, blockedReason };
-    }
     if (!targetPlan) {
       targetPlan = await tx.dailyShipmentPlan.create({
         data: {
           shipDate: targetDate.value,
+          status: DailyShipmentPlanStatus.CONFIRMED,
+          confirmedAt: new Date(),
+          confirmedById: actorId,
           createdById: actorId,
           updatedById: actorId,
         },
         include: {
           items: { include: { events: { select: { eventType: true, quantity: true } } } },
+        },
+      });
+    } else if (targetPlan.status !== DailyShipmentPlanStatus.CONFIRMED) {
+      targetPlan = await tx.dailyShipmentPlan.update({
+        where: { id: targetPlan.id },
+        data: {
+          status: DailyShipmentPlanStatus.CONFIRMED,
+          confirmedAt: targetPlan.confirmedAt || new Date(),
+          confirmedById: targetPlan.confirmedById || actorId,
+          closedAt: null,
+          closedById: null,
+          updatedById: actorId,
+          version: { increment: 1 },
+        },
+        include: {
+          items: {
+            include: { events: { select: { eventType: true, quantity: true } } },
+            orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+          },
         },
       });
     }
@@ -536,6 +547,10 @@ export async function reconcileDailyShipmentCarryover(input: {
     const transfers: Array<{ sourceItemId: string; targetItemId: string; quantity: number }> = [];
     for (let index = 0; index < pendingItems.length; index += 1) {
       const { item: sourceItem, pendingQuantity } = pendingItems[index];
+      await tx.dailyShipmentPlanItem.update({
+        where: { id: sourceItem.id },
+        data: { associationKey: null, updatedById: actorId },
+      });
       const existing = targetPlan.items.find(item => item.productionPlanBatchId === sourceItem.productionPlanBatchId);
       const carriedShipAt = carryoverPlannedShipAt(sourceItem.plannedShipAt, targetDate.key);
       let targetItemId: string;
@@ -550,6 +565,10 @@ export async function reconcileDailyShipmentCarryover(input: {
             plannedShipAt: revived || carriedShipAt < existing.plannedShipAt ? carriedShipAt : existing.plannedShipAt,
             status: shipmentItemStatus(nextPlannedQuantity, existingShipped),
             shipmentPriority: moreUrgentPriority(existing.shipmentPriority, sourceItem.shipmentPriority),
+            associationType: DailyShipmentAssociationType.CARRYOVER,
+            associationKey: `daily-shipment-open:${sourceItem.productionPlanBatchId}`,
+            dueDateSnapshot: sourceItem.dueDateSnapshot,
+            deliveryVersionSnapshot: sourceItem.deliveryVersionSnapshot,
             ...(!existing.carryoverSourceItemId ? { carryoverSourceItemId: sourceItem.id } : {}),
             carryoverSourceDate: sourcePlan.shipDate,
             carryoverDayCount: Math.max(carryoverDayDelta, sourceItem.carryoverDayCount + carryoverDayDelta),
@@ -570,6 +589,10 @@ export async function reconcileDailyShipmentCarryover(input: {
             plannedShipAt: carriedShipAt,
             status: DailyShipmentItemStatus.PLANNED,
             shipmentPriority: sourceItem.shipmentPriority,
+            associationType: DailyShipmentAssociationType.CARRYOVER,
+            associationKey: `daily-shipment-open:${sourceItem.productionPlanBatchId}`,
+            dueDateSnapshot: sourceItem.dueDateSnapshot,
+            deliveryVersionSnapshot: sourceItem.deliveryVersionSnapshot,
             sortOrder: currentSortOrder + index + 1,
             note: sourceItem.note,
             sourceSnapshot: jsonValue(sourceItem.sourceSnapshot),
@@ -587,6 +610,7 @@ export async function reconcileDailyShipmentCarryover(input: {
         where: { id: sourceItem.id },
         data: {
           status: DailyShipmentItemStatus.CARRIED_OVER,
+          associationKey: null,
           version: { increment: 1 },
           updatedById: actorId,
         },
@@ -645,6 +669,74 @@ export async function reconcileDailyShipmentCarryover(input: {
   });
 }
 
+export type DailyShipmentCarryoverMaintenanceResult = {
+  targetDate: string;
+  sourcePlanCount: number;
+  movedItemCount: number;
+  movedQuantity: number;
+  autoClosedPlanCount: number;
+  blocked: Array<{ planId: string; reason: string }>;
+};
+
+/**
+ * Reconciles every still-open plan before the target day, oldest first. The
+ * operation is safe to replay: each source item can have only one carryover
+ * target and each source/target revision has a deterministic idempotency key.
+ */
+export async function reconcileAllDailyShipmentCarryovers(input: {
+  targetShipDate: unknown;
+  actorUserId?: string | null;
+  limit?: number;
+}): Promise<DailyShipmentCarryoverMaintenanceResult> {
+  const targetDate = parseShipmentDate(input.targetShipDate);
+  const actorId = input.actorUserId || (await prisma.user.findFirst({
+    where: { isActive: true, accountStatus: 'ACTIVE' },
+    orderBy: [{ createdAt: 'asc' }, { username: 'asc' }],
+    select: { id: true },
+  }))?.id;
+  if (!actorId) {
+    throw new DailyShipmentServiceError('系统缺少可记录自动顺延的操作账号', 'SHIPMENT_ACTOR_MISSING', 409);
+  }
+  const sourcePlans = await prisma.dailyShipmentPlan.findMany({
+    where: {
+      shipDate: { lt: targetDate.value },
+      status: DailyShipmentPlanStatus.CONFIRMED,
+    },
+    orderBy: [{ shipDate: 'asc' }, { id: 'asc' }],
+    take: Math.max(1, Math.min(500, input.limit ?? 200)),
+    select: { id: true },
+  });
+  const result: DailyShipmentCarryoverMaintenanceResult = {
+    targetDate: targetDate.key,
+    sourcePlanCount: sourcePlans.length,
+    movedItemCount: 0,
+    movedQuantity: 0,
+    autoClosedPlanCount: 0,
+    blocked: [],
+  };
+  for (const sourcePlan of sourcePlans) {
+    try {
+      const reconciled = await reconcileDailyShipmentCarryover({
+        targetShipDate: targetDate.key,
+        actorUserId: actorId,
+        sourcePlanId: sourcePlan.id,
+      });
+      result.movedItemCount += reconciled.itemCount;
+      result.movedQuantity += reconciled.quantity;
+      if (reconciled.autoClosed) result.autoClosedPlanCount += 1;
+      if (reconciled.blockedReason) {
+        result.blocked.push({ planId: sourcePlan.id, reason: reconciled.blockedReason });
+      }
+    } catch (error) {
+      result.blocked.push({
+        planId: sourcePlan.id,
+        reason: error instanceof Error ? error.message : '未知顺延错误',
+      });
+    }
+  }
+  return result;
+}
+
 export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; actorUserId?: string }) {
   const parsedDate = parseShipmentDate(input.shipDate);
   const week = shipmentWeek(parsedDate.key);
@@ -652,19 +744,21 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
   const now = new Date();
   let carryoverReconciliation: DailyShipmentCarryoverResult | null = null;
   if (input.actorUserId && parsedDate.key === chinaDateKey(now)) {
-    const latestUnresolvedPlan = await prisma.dailyShipmentPlan.findFirst({
-      where: {
-        shipDate: { lt: parsedDate.value },
-        status: DailyShipmentPlanStatus.CONFIRMED,
-      },
-      orderBy: { shipDate: 'desc' },
-      select: { id: true },
-    });
-    carryoverReconciliation = await reconcileDailyShipmentCarryover({
+    const maintenance = await reconcileAllDailyShipmentCarryovers({
       targetShipDate: parsedDate.key,
       actorUserId: input.actorUserId,
-      ...(latestUnresolvedPlan ? { sourcePlanId: latestUnresolvedPlan.id } : {}),
     });
+    carryoverReconciliation = {
+      sourcePlanId: null,
+      targetPlanId: null,
+      targetDate: maintenance.targetDate,
+      itemCount: maintenance.movedItemCount,
+      quantity: maintenance.movedQuantity,
+      autoClosed: maintenance.autoClosedPlanCount > 0,
+      blockedReason: maintenance.blocked.length
+        ? `${maintenance.blocked.length} 张历史出货计划顺延待重试`
+        : null,
+    };
   }
   if (isCurrentProductionCarryoverTarget(week.startDate) && input.actorUserId) {
     await reconcileCurrentProductionCarryovers({ targetWeekStart: week.startDate, actorId: input.actorUserId });
@@ -1514,16 +1608,29 @@ export async function transferDailyShipmentReservation(input: {
     }
 
     let targetPlan = await tx.dailyShipmentPlan.findUnique({ where: { shipDate: targetDate.value } });
-    if (targetPlan && !isOpenShipmentPlanStatus(targetPlan.status)) {
-      throw new DailyShipmentServiceError(
-        `${targetDate.key} 的出货计划已关闭，不能接收历史占用`,
-        'SHIPMENT_CARRYOVER_TARGET_LOCKED',
-        409,
-      );
-    }
     if (!targetPlan) {
       targetPlan = await tx.dailyShipmentPlan.create({
-        data: { shipDate: targetDate.value, createdById: actorId, updatedById: actorId },
+        data: {
+          shipDate: targetDate.value,
+          status: DailyShipmentPlanStatus.CONFIRMED,
+          confirmedAt: new Date(),
+          confirmedById: actorId,
+          createdById: actorId,
+          updatedById: actorId,
+        },
+      });
+    } else if (targetPlan.status !== DailyShipmentPlanStatus.CONFIRMED) {
+      targetPlan = await tx.dailyShipmentPlan.update({
+        where: { id: targetPlan.id },
+        data: {
+          status: DailyShipmentPlanStatus.CONFIRMED,
+          confirmedAt: targetPlan.confirmedAt || new Date(),
+          confirmedById: targetPlan.confirmedById || actorId,
+          closedAt: null,
+          closedById: null,
+          updatedById: actorId,
+          version: { increment: 1 },
+        },
       });
     }
     const existingTarget = await tx.dailyShipmentPlanItem.findUnique({
@@ -1570,6 +1677,10 @@ export async function transferDailyShipmentReservation(input: {
       Math.round((targetDate.value.getTime() - sourceItem.plan.shipDate.getTime()) / 86_400_000),
     );
     const targetShipAt = carryoverPlannedShipAt(sourceItem.plannedShipAt, targetDate.key);
+    await tx.dailyShipmentPlanItem.update({
+      where: { id: sourceItem.id },
+      data: { associationKey: null, updatedById: actorId },
+    });
     let targetItemId: string;
     if (existingTarget) {
       const updatedTarget = await tx.dailyShipmentPlanItem.update({
@@ -1581,6 +1692,10 @@ export async function transferDailyShipmentReservation(input: {
             : existingTarget.plannedShipAt,
           status: shipmentItemStatus(nextTargetQuantity, existingTargetShipped),
           shipmentPriority: moreUrgentPriority(existingTarget.shipmentPriority, sourceItem.shipmentPriority),
+          associationType: DailyShipmentAssociationType.CARRYOVER,
+          associationKey: `daily-shipment-open:${sourceItem.productionPlanBatchId}`,
+          dueDateSnapshot: sourceItem.dueDateSnapshot,
+          deliveryVersionSnapshot: sourceItem.deliveryVersionSnapshot,
           ...(!existingTarget.carryoverSourceItemId ? { carryoverSourceItemId: sourceItem.id } : {}),
           carryoverSourceDate: existingTarget.carryoverSourceDate && existingTarget.carryoverSourceDate < sourceItem.plan.shipDate
             ? existingTarget.carryoverSourceDate
@@ -1607,6 +1722,10 @@ export async function transferDailyShipmentReservation(input: {
           plannedShipAt: targetShipAt,
           status: DailyShipmentItemStatus.PLANNED,
           shipmentPriority: sourceItem.shipmentPriority,
+          associationType: DailyShipmentAssociationType.CARRYOVER,
+          associationKey: `daily-shipment-open:${sourceItem.productionPlanBatchId}`,
+          dueDateSnapshot: sourceItem.dueDateSnapshot,
+          deliveryVersionSnapshot: sourceItem.deliveryVersionSnapshot,
           sortOrder: (currentSort._max.sortOrder ?? -1) + 1,
           note: sourceItem.note,
           sourceSnapshot: jsonValue(sourceItem.sourceSnapshot),
@@ -1628,6 +1747,7 @@ export async function transferDailyShipmentReservation(input: {
       where: { id: sourceItem.id, version },
       data: {
         status: sourceNextStatus,
+        associationKey: null,
         version: { increment: 1 },
         updatedById: actorId,
       },
