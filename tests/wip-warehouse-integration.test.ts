@@ -7,6 +7,7 @@ import { chinaWeekRange } from '../lib/production-planning';
 import { loadProductionExecution, resolveProductionWeek } from '../lib/production-execution';
 import { loadWipContinuations } from '../lib/wip-continuations';
 import {
+  assignWipAllocationWorkers,
   enterWipWarehouse,
   listWipWarehouse,
   loadWipWeekLaborMetrics,
@@ -54,6 +55,17 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
   const laterWeekEnd = plusDays(currentWeek.end, 14);
   const actor = await prisma.user.create({
     data: { username: prefix, displayName: '半成品集成测试', passwordHash: 'integration-test-only' },
+  });
+  const worker = await prisma.employee.create({
+    data: {
+      employeeNo: `${prefix}-EMP`,
+      name: '半成品作业员',
+      department: '生产部',
+      position: '装配',
+      team: '集成测试班组',
+      isActive: true,
+      attendanceEnabled: true,
+    },
   });
   const workOrder = await prisma.workOrder.create({
     data: {
@@ -183,6 +195,15 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
       productionScope: scope,
     });
     assert.equal(allocation.plannedStandardMilliseconds, 12_000n);
+    const assignedWorkers = await assignWipAllocationWorkers({
+      allocationId: allocation.id,
+      employeeIds: [worker.id],
+      actorId: actor.id,
+      actorName: actor.displayName,
+      idempotencyKey: `${prefix}:workers`,
+      productionScope: scope,
+    });
+    assert.deepEqual(assignedWorkers.map(item => item.employeeId), [worker.id]);
 
     const correctionLot = await enterWipWarehouse({
       batchId: batch.id,
@@ -329,6 +350,12 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
     });
     assert.equal(rescheduled.quantity, 4);
     assert.equal(rescheduled.plannedStandardMilliseconds, 8_000n);
+    const workerHistory = await prisma.wipWeekAllocationWorker.findMany({
+      where: { allocationId: { in: [allocation.id, rescheduled.id] } },
+      orderBy: [{ allocationId: 'asc' }, { createdAt: 'asc' }],
+    });
+    assert.equal(workerHistory.filter(item => item.allocationId === allocation.id && item.status === 'CANCELLED').length, 1);
+    assert.equal(workerHistory.filter(item => item.allocationId === rescheduled.id && item.status === 'ACTIVE').length, 1);
 
     const [
       targetContinuations,
@@ -368,6 +395,7 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
     assert.equal(targetProjection.remainingQty, 4);
     assert.equal(targetProjection.remainingStandardMilliseconds, 8_000);
     assert.deepEqual(targetProjection.steps.map(step => step.processName), ['剩余工序']);
+    assert.deepEqual(targetProjection.workers.map(item => item.name), ['半成品作业员']);
 
     const resolvedAfterNextWeek = await resolveProductionWeek(null, null, 'afterNext');
     const targetProjectionFromChinaBoundary = await loadWipContinuations({
@@ -456,6 +484,9 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
   } finally {
     await prisma.processWipCredit.deleteMany({ where: { completionId: { in: completionIds } } });
     await prisma.processCompletion.deleteMany({ where: { id: { in: completionIds } } });
+    await prisma.wipWeekAllocationWorker.deleteMany({
+      where: { allocation: { lot: { productionPlanBatchId: batch.id } } },
+    });
     await prisma.wipWeekAllocation.deleteMany({
       where: { lot: { productionPlanBatchId: batch.id } },
     });
@@ -463,6 +494,7 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
     await prisma.operationLog.deleteMany({ where: { userId: actor.id } });
     await prisma.productionPlanOrder.delete({ where: { id: order.id } });
     await prisma.workOrder.delete({ where: { id: workOrder.id } });
+    await prisma.employee.delete({ where: { id: worker.id } });
     await prisma.user.delete({ where: { id: actor.id } });
   }
 });

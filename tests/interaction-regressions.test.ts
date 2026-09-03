@@ -142,6 +142,25 @@ test('WIP rescheduling uses an interactive impact modal and exposes target-week 
   assert.match(component, /data\.weeks\.map\(week/);
 });
 
+test('WIP mobile reporting uses Chinese source choices and target-week worker assignments', () => {
+  const mobile = readFileSync(resolve(repositoryRoot, 'components/FieldReportMobile.tsx'), 'utf8');
+  const warehouse = readFileSync(resolve(repositoryRoot, 'components/WipWarehouseShell.tsx'), 'utf8');
+  const production = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
+  const service = readFileSync(resolve(repositoryRoot, 'lib/wip-warehouse.ts'), 'utf8');
+  const migration = readFileSync(resolve(repositoryRoot, 'prisma/migrations/202609030003_wip_worker_assignments/migration.sql'), 'utf8');
+
+  assert.match(mobile, /<strong>报工来源<\/strong>/);
+  assert.match(mobile, /原订单未转出数量/);
+  assert.match(mobile, /半成品批次 \{allocation\.lotNo\}/);
+  assert.doesNotMatch(mobile, /半成品批次（报半成品时必须明确选择）/);
+  assert.match(warehouse, /action:\s*'assign_workers'/);
+  assert.match(warehouse, /保存人员安排/);
+  assert.match(production, /production-wip-worker-summary/);
+  assert.match(production, /wipContinuation\.workers/);
+  assert.match(service, /eventType:\s*'ASSIGN_WORKERS'/);
+  assert.match(migration, /CREATE TABLE "wip_week_allocation_workers"/);
+});
+
 test('WIP continuation is projected into planning, production execution and process reporting', () => {
   const planningApi = readFileSync(resolve(repositoryRoot, 'app/api/planning/orders/route.ts'), 'utf8');
   const planningUi = readFileSync(resolve(repositoryRoot, 'components/PlanningCenterShell.tsx'), 'utf8');

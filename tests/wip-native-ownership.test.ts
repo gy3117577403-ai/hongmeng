@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { Prisma } from '@prisma/client';
 import {
   loadOutstandingWipByProcess,
+  nativeCheckpointCompletedQuantity,
   nativeExecutableQuantity,
   outstandingWipQuantity,
   wipOwnershipKey,
@@ -32,6 +33,26 @@ test('outstanding ownership retains unreported quantity and ignores over-credit 
   assert.equal(outstandingWipQuantity({ remainingQty: 100, creditedQuantities: [25, 15] }), 60);
   assert.equal(outstandingWipQuantity({ remainingQty: 100, creditedQuantities: [70, 50] }), 0);
   assert.equal(outstandingWipQuantity({ remainingQty: 100, creditedQuantities: [] }), 100);
+});
+
+test('a completed first WIP transfer is not reused as the checkpoint of a later transfer', () => {
+  assert.equal(nativeCheckpointCompletedQuantity({
+    stepGoodOutputQuantity: 40,
+    finalGoodOutputQuantity: 10,
+    outstandingWipQuantity: 0,
+  }), 30, 'only intermediate native progress remains available at an upstream step');
+
+  assert.equal(nativeCheckpointCompletedQuantity({
+    stepGoodOutputQuantity: 10,
+    finalGoodOutputQuantity: 10,
+    outstandingWipQuantity: 0,
+  }), 0, 'final output from the earlier WIP lot cannot complete the new lot');
+
+  assert.equal(nativeCheckpointCompletedQuantity({
+    stepGoodOutputQuantity: 40,
+    finalGoodOutputQuantity: 5,
+    outstandingWipQuantity: 10,
+  }), 25, 'finished output and still-owned WIP are each deducted exactly once');
 });
 
 test('WIP ownership keys bind work-order and process identities', () => {

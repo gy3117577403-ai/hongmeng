@@ -1803,6 +1803,14 @@ export type ProductionPlanningWipContinuationDTO = {
   reason: string;
   materialWarning: string | null;
   team: { id: string; code: string; name: string } | null;
+  workers: Array<{
+    assignmentId: string;
+    employeeId: string;
+    employeeNo: string;
+    name: string;
+    team: string | null;
+    position: string | null;
+  }>;
   scheduledBy: { id: string; displayName: string };
   scheduledAt: string;
   steps: Array<{

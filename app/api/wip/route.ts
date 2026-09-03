@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   ProductionAccessScopeError,
@@ -8,6 +9,7 @@ import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { canManageWipWarehouse } from '@/lib/wip-access';
 import { serializeWipApiValue } from '@/lib/wip-api-serialization';
 import {
+  assignWipAllocationWorkers,
   enterWipWarehouse,
   listWipWarehouse,
   previewWipAllocationUnschedule,
@@ -30,6 +32,20 @@ function errorResponse(error: unknown): NextResponse {
       { ok: false, error: error.message, code: error.code },
       { status: error.status },
     );
+  }
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === 'P2002') {
+      return NextResponse.json(
+        { ok: false, error: '容器码或有效人员安排已经存在，请刷新后重新核对', code: 'WIP_UNIQUE_CONFLICT' },
+        { status: 409 },
+      );
+    }
+    if (error.code === 'P2034') {
+      return NextResponse.json(
+        { ok: false, error: '半成品数量刚刚被其他操作更新，请刷新后按最新剩余数量重试', code: 'WIP_CONCURRENT_CHANGE' },
+        { status: 409 },
+      );
+    }
   }
   console.error('wip warehouse request failed', error);
   return NextResponse.json(
@@ -115,6 +131,15 @@ export async function POST(req: NextRequest) {
         targetWeekStartDate: body.targetWeekStartDate,
         teamId: body.teamId,
         reason: body.reason,
+        idempotencyKey: body.idempotencyKey,
+      });
+      return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });
+    }
+    if (action === 'assign_workers') {
+      const data = await assignWipAllocationWorkers({
+        ...common,
+        allocationId: body.allocationId,
+        employeeIds: body.employeeIds,
         idempotencyKey: body.idempotencyKey,
       });
       return NextResponse.json({ ok: true, data: serializeWipApiValue(data) });

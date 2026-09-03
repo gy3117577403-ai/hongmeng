@@ -10,6 +10,7 @@ export type ProductionDataInvalidationKind =
   | 'wip-entered'
   | 'wip-scheduled'
   | 'wip-rescheduled'
+  | 'wip-workers-assigned'
   | 'wip-unscheduled'
   | 'wip-returned';
 
@@ -29,6 +30,7 @@ export function normalizeProductionDataInvalidation(value: unknown): ProductionD
     || source.kind === 'wip-entered'
     || source.kind === 'wip-scheduled'
     || source.kind === 'wip-rescheduled'
+    || source.kind === 'wip-workers-assigned'
     || source.kind === 'wip-unscheduled'
     || source.kind === 'wip-returned'
     ? source.kind

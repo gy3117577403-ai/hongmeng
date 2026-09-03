@@ -48,6 +48,24 @@ export function nativeExecutableQuantity(input: {
 }
 
 /**
+ * Returns the already-completed checkpoint quantity that still belongs to the
+ * native order. Finished output and unfinished WIP are separate ownership
+ * pools and must never be reused as the progress of a newly created WIP lot.
+ */
+export function nativeCheckpointCompletedQuantity(input: {
+  stepGoodOutputQuantity: number;
+  finalGoodOutputQuantity: number;
+  outstandingWipQuantity: number;
+}): number {
+  return Math.max(
+    0,
+    Math.trunc(input.stepGoodOutputQuantity || 0)
+      - Math.max(0, Math.trunc(input.finalGoodOutputQuantity || 0))
+      - Math.max(0, Math.trunc(input.outstandingWipQuantity || 0)),
+  );
+}
+
+/**
  * Returns per-process WIP ownership. Source ownership is intentionally not
  * filtered by the target allocation team: a target team visibility boundary
  * cannot make the same quantity executable again on the original order.

@@ -9188,6 +9188,61 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   text-align: center;
 }
 
+.hm-production-workbench .production-wip-worker-summary {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  padding: 5px;
+  border: 1px solid #ddd6fe;
+  border-radius: 7px;
+  background: #faf5ff;
+  text-align: center;
+}
+
+.hm-production-workbench .production-wip-worker-summary > span {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.hm-production-workbench .production-wip-worker-summary b,
+.hm-production-workbench .production-wip-worker-summary em,
+.hm-production-workbench .production-wip-worker-summary i {
+  overflow: hidden;
+  color: #5b21b6;
+  font-size: 9px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-wip-worker-summary small {
+  max-width: 100%;
+  overflow: hidden;
+  color: #7c3aed;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-wip-worker-summary > a {
+  min-height: 24px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #a78bfa;
+  border-radius: 5px;
+  background: #fff;
+  color: #6d28d9;
+  font-size: 8px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .hm-production-workbench .production-arrangement-add {
   min-height: 28px;
   padding: 0 7px;

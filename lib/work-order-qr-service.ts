@@ -220,6 +220,13 @@ export type FieldReportTicketView = {
     targetWeekStartDate: string;
     targetWeekEndDate: string;
     quantity: number;
+    workers: Array<{
+      employeeId: string;
+      employeeNo: string;
+      name: string;
+      team: string | null;
+      position: string | null;
+    }>;
     steps: Array<{ stepId: string; remainingQty: number }>;
   }>;
   access: {
@@ -1206,6 +1213,13 @@ export async function loadFieldReportTicket(
       targetWeekEndDate: true,
       quantity: true,
       lot: { select: { id: true, lotNo: true, containerCode: true } },
+      workers: {
+        where: { status: 'ACTIVE' },
+        orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }],
+        select: {
+          employee: { select: { id: true, employeeNo: true, name: true, team: true, position: true } },
+        },
+      },
       steps: {
         select: {
           plannedQty: true,
@@ -1324,6 +1338,13 @@ export async function loadFieldReportTicket(
       targetWeekStartDate: allocation.targetWeekStartDate.toISOString().slice(0, 10),
       targetWeekEndDate: allocation.targetWeekEndDate.toISOString().slice(0, 10),
       quantity: allocation.quantity,
+      workers: allocation.workers.map(worker => ({
+        employeeId: worker.employee.id,
+        employeeNo: worker.employee.employeeNo,
+        name: worker.employee.name,
+        team: worker.employee.team,
+        position: worker.employee.position,
+      })),
       steps: allocation.steps.map(step => ({
         stepId: step.lotStep.stepId,
         remainingQty: Math.max(0, step.plannedQty - step.completedQty),

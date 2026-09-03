@@ -75,6 +75,14 @@ export type WipContinuationProjection = {
   reason: string;
   materialWarning: string | null;
   team: { id: string; code: string; name: string } | null;
+  workers: Array<{
+    assignmentId: string;
+    employeeId: string;
+    employeeNo: string;
+    name: string;
+    team: string | null;
+    position: string | null;
+  }>;
   scheduledBy: { id: string; displayName: string };
   scheduledAt: string;
   steps: WipContinuationStep[];
@@ -275,6 +283,22 @@ export async function loadWipContinuations(input: {
         scheduledAt: true,
         scheduledBy: { select: { id: true, displayName: true } },
         team: { select: { id: true, code: true, name: true } },
+        workers: {
+          where: { status: 'ACTIVE' },
+          orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            employeeId: true,
+            employee: {
+              select: {
+                employeeNo: true,
+                name: true,
+                team: true,
+                position: true,
+              },
+            },
+          },
+        },
         lot: {
           select: {
             id: true,
@@ -387,6 +411,14 @@ export async function loadWipContinuations(input: {
       reason: record.reason,
       materialWarning: record.lot.materialStatusSnapshot,
       team: record.team,
+      workers: historical ? [] : record.workers.map(worker => ({
+        assignmentId: worker.id,
+        employeeId: worker.employeeId,
+        employeeNo: worker.employee.employeeNo,
+        name: worker.employee.name,
+        team: worker.employee.team,
+        position: worker.employee.position,
+      })),
       scheduledBy: record.scheduledBy,
       scheduledAt: record.scheduledAt.toISOString(),
       steps: visibleSteps.map(step => {

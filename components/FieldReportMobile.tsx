@@ -344,6 +344,20 @@ export default function FieldReportMobile({
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    if (!sheetOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !saving) setSheetOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [saving, sheetOpen]);
+
   const routeSteps: ProcessCompletionContext['routeSteps'] = payload?.context?.routeSteps
     || payload?.ticket.route?.steps.map(step => ({
       id: step.id,
@@ -388,7 +402,20 @@ export default function FieldReportMobile({
   const selectedSupplement = payload?.context?.step.supplementObligation
     || stepSupplementSnapshot(selectedStepSnapshot);
   const currentEmployeeId = payload?.currentEmployee?.id || '';
-  const preferredIds = new Set(payload?.context?.workerPreset?.employees.map(employee => employee.id) || []);
+  const availableWipAllocations = (payload?.ticket.wipAllocations || []).filter(allocation => (
+    Boolean(form?.workDate)
+    && allocation.targetWeekStartDate <= form!.workDate
+    && allocation.targetWeekEndDate >= form!.workDate
+    && (reportMode === 'batch'
+      ? batchItems.some(item => allocation.steps.some(step => step.stepId === item.stepId && step.remainingQty > 0))
+      : allocation.steps.some(step => step.stepId === payload?.context?.step.id && step.remainingQty > 0))
+  ));
+  const selectedWipAllocation = availableWipAllocations.find(allocation => allocation.id === form?.wipAllocationId) || null;
+  const assignedWipWorkerIds = selectedWipAllocation?.workers.map(worker => worker.employeeId) || [];
+  const preferredIds = new Set([
+    ...(payload?.context?.workerPreset?.employees.map(employee => employee.id) || []),
+    ...assignedWipWorkerIds,
+  ]);
   const selectedEmployees = payload?.context && form
     ? payload.context.employees.filter(employee => form.employeeIds.includes(employee.id))
     : [];
@@ -419,14 +446,6 @@ export default function FieldReportMobile({
   const hasReportableQuantity = Boolean(payload?.context && (
     payload.context.reportableQty > 0
     || (actionReporting && payload.context.reportableUnitQty > 0)
-  ));
-  const availableWipAllocations = (payload?.ticket.wipAllocations || []).filter(allocation => (
-    Boolean(form?.workDate)
-    && allocation.targetWeekStartDate <= form!.workDate
-    && allocation.targetWeekEndDate >= form!.workDate
-    && (reportMode === 'batch'
-      ? batchItems.some(item => allocation.steps.some(step => step.stepId === item.stepId && step.remainingQty > 0))
-      : allocation.steps.some(step => step.stepId === payload?.context?.step.id && step.remainingQty > 0))
   ));
   const batchSelectedSteps = routeSteps.filter(step => selectedStepIds.includes(step.id));
   const invalidBatchItems = batchItems.some(item => {
@@ -1016,9 +1035,16 @@ export default function FieldReportMobile({
         <header><span><small>{reportMode === 'batch' ? '批量工序报工' : hasReportableQuantity && ticket.access.canReport ? payload.context.reportingPolicy === 'strict_sequence' ? '严格按流程报工' : '工序自由报工' : '报工记录与纠错'}</small><strong id="field-report-sheet-title">{reportMode === 'batch' ? `${batchItems.length} 道工序` : payload.context.step.processName}</strong><em>{reportMode === 'batch' ? '一次提交 · 分别记账' : `第 ${payload.context.step.position} 道`}</em></span><button type="button" disabled={saving} aria-label="关闭报工窗口" onClick={() => setSheetOpen(false)}><X size={22} /></button></header>
         <div className="field-report-sheet-scroll">
           {reportMode === 'batch' && <section className="field-report-batch-summary"><ListChecks size={22} /><span><strong>{batchItems.map(item => item.processName).join('、')}</strong><small>系统将按工艺顺序提交，连续工序自动正常流转，跨序工序进入待前序覆盖。</small></span></section>}
-          {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-date-card"><CalendarDays size={24} /><label><span>生产日期</span><input type="date" max={todayKey()} value={form.workDate} disabled={saving} onChange={event => setForm({ ...form, workDate: event.target.value })} /></label><strong>请务必核对</strong></section>}
+          {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-date-card"><CalendarDays size={24} /><label><span>生产日期</span><input type="date" max={todayKey()} value={form.workDate} disabled={saving} onChange={event => setForm({ ...form, workDate: event.target.value, wipAllocationId: '' })} /></label><strong>请务必核对</strong></section>}
 
-          {availableWipAllocations.length > 0 && <section className="field-report-date-card field-report-wip-card"><PackageCheck size={24} /><label><span>半成品批次（报半成品时必须明确选择）</span><select value={form.wipAllocationId} disabled={saving} onChange={event => setForm({ ...form, wipAllocationId: event.target.value })}><option value="">普通来源数量（不消耗半成品排程）</option>{availableWipAllocations.map(allocation => <option key={allocation.id} value={allocation.id}>{allocation.lotNo}{allocation.containerCode ? ` · ${allocation.containerCode}` : ''} · {allocation.targetWeekStartDate} · {allocation.quantity} 件</option>)}</select></label><strong>同一产品二维码继续使用</strong></section>}
+          {availableWipAllocations.length > 0 && <section className="field-report-source-card">
+            <header><PackageCheck size={23} /><span><strong>报工来源</strong><small>请选择“原订单”或具体“半成品批次”，系统按所选来源扣减数量</small></span></header>
+            <div className="field-report-source-options" role="radiogroup" aria-label="选择报工来源">
+              <button type="button" role="radio" aria-checked={!form.wipAllocationId} className={!form.wipAllocationId ? 'selected native' : 'native'} disabled={saving} onClick={() => setForm({ ...form, wipAllocationId: '' })}><CircleDot size={18} /><span><strong>原订单未转出数量</strong><small>不消耗任何半成品批次</small></span><em>原订单</em></button>
+              {availableWipAllocations.map(allocation => <button type="button" role="radio" aria-checked={form.wipAllocationId === allocation.id} className={form.wipAllocationId === allocation.id ? 'selected wip' : 'wip'} disabled={saving} key={allocation.id} onClick={() => setForm({ ...form, wipAllocationId: allocation.id })}><CircleDot size={18} /><span><strong>半成品批次 {allocation.lotNo}</strong><small>{allocation.containerCode ? `容器 ${allocation.containerCode} · ` : ''}{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate} · {allocation.quantity} 件</small><small>{allocation.workers.length ? `计划人员：${allocation.workers.map(worker => worker.name).join('、')}` : '人员待安排，现场仍可核对实际作业人'}</small></span><em>半成品</em></button>)}
+            </div>
+            <footer>同一个产品二维码继续使用，页面只展示中文业务选项</footer>
+          </section>}
 
           {advanceReporting && <section className="field-report-advance"><AlertTriangle size={21} /><span><strong>本次属于提前报工</strong><small>允许先报当前工序，数量不会变成负数；前序补齐后系统自动覆盖并恢复正常流转。</small></span></section>}
           {selectedSupplement && <section className="field-report-advance supplement"><GitPullRequestArrow size={21} /><span><strong>NEW · 剩余数量实际报工</strong><small>{selectedSupplement.systemCoveredQty > 0 ? `系统已承接 ${quantity(selectedSupplement.systemCoveredQty)}，本次只记录剩余 ${quantity(selectedSupplement.actualRequiredQty)} 的实际人员与工时；` : ''}原后序已报完成保持不变。</small></span></section>}
@@ -1086,7 +1112,7 @@ export default function FieldReportMobile({
           {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-workers">
             <header><span><strong>作业人员</strong><small>本人已锁定，协作人员可继续添加；工时自动平均分配。</small></span><em>{form.employeeIds.length} 人</em></header>
             {payload.currentEmployee && <div className="field-report-self"><UserRoundCheck size={20} /><span><small>登录身份自动带入</small><strong>{payload.currentEmployee.employeeNo} · {payload.currentEmployee.name}</strong></span><b>本人</b></div>}
-            {payload.context.workerPreset && <div className="field-report-preset"><Users size={18} /><span><strong>本周预选人员</strong><small>{payload.context.workerPreset.employees.map(employee => employee.name).join('、') || '暂无'}</small></span><button type="button" disabled={saving || !payload.context.workerPreset.employees.length} onClick={() => setForm({ ...form, employeeIds: [...new Set([currentEmployeeId, ...payload.context!.workerPreset!.employees.map(employee => employee.id)])] })}>一键添加</button></div>}
+            {selectedWipAllocation?.workers.length ? <div className="field-report-preset wip"><Users size={18} /><span><strong>半成品计划人员</strong><small>{selectedWipAllocation.workers.map(worker => worker.name).join('、')}</small></span><button type="button" disabled={saving} onClick={() => setForm({ ...form, employeeIds: [...new Set([currentEmployeeId, ...selectedWipAllocation.workers.map(worker => worker.employeeId)])] })}>一键添加</button></div> : payload.context.workerPreset && <div className="field-report-preset"><Users size={18} /><span><strong>本周预选人员</strong><small>{payload.context.workerPreset.employees.map(employee => employee.name).join('、') || '暂无'}</small></span><button type="button" disabled={saving || !payload.context.workerPreset.employees.length} onClick={() => setForm({ ...form, employeeIds: [...new Set([currentEmployeeId, ...payload.context!.workerPreset!.employees.map(employee => employee.id)])] })}>一键添加</button></div>}
             <label className="field-report-worker-search"><Search size={17} /><input value={employeeSearch} disabled={saving} onChange={event => setEmployeeSearch(event.target.value)} placeholder="搜索姓名、工号或班组" /></label>
             <div className="field-report-worker-grid">{visibleEmployees.filter(employee => employee.id !== currentEmployeeId).map(employee => {
               const checked = form.employeeIds.includes(employee.id);

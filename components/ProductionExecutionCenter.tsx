@@ -3921,7 +3921,18 @@ function ProductionDispatchRow({
         <span>{arrangement.employees.slice(0, 3).map(employee => <b title={`${employee.employeeNo} · ${employee.name}`} key={employee.employeeId}>{employee.name}</b>)}{arrangement.employees.length > 3 && <em>+{arrangement.employees.length - 3}</em>}</span>
         <small>{arrangement.shiftCode === 'NIGHT' ? '夜班' : '白班'}{arrangement.remainingQty > 0 ? ` · 余 ${formatProductionQuantity(arrangement.remainingQty)}` : ' · 已完成'}{adjustable && <Pencil size={11} aria-hidden="true" />}</small>
       </button>;})}
-      {!visibleArrangements.length && <span className="production-arrangement-empty">{isWipContinuation ? wipContinuation?.team?.name || '班组待安排' : '待主管安排'}</span>}
+      {!visibleArrangements.length && (isWipContinuation && wipContinuation
+        ? <div className="production-wip-worker-summary">
+          <span title={wipContinuation.workers.length ? wipContinuation.workers.map(worker => `${worker.employeeNo} · ${worker.name}`).join('、') : '尚未安排人员'}>
+            {wipContinuation.workers.length
+              ? wipContinuation.workers.slice(0, 3).map(worker => <b key={worker.assignmentId}>{worker.name}</b>)
+              : <em>人员待安排</em>}
+            {wipContinuation.workers.length > 3 && <i>+{wipContinuation.workers.length - 3}</i>}
+          </span>
+          <small>{wipContinuation.team?.name || '班组待安排'} · 半成品计划</small>
+          {canManageWip && !readOnly && !isWipHistoricalContinuation && <Link href={`/workspace/wip?view=scheduled&week=${encodeURIComponent(wipContinuation.targetWeekStartDate)}&allocationId=${encodeURIComponent(wipContinuation.allocationId)}`}>{wipContinuation.workers.length ? '调整人员' : '安排人员'}</Link>}
+        </div>
+        : <span className="production-arrangement-empty">待主管安排</span>)}
     </div>
 
     <div className={`production-dispatch-progress ${laborWarning ? 'incomplete' : ''}`.trim()} title={laborWarning || `${isMovedOutSource ? '整单累计' : '总'}标准工时 ${totalLaborText}`}>

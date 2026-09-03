@@ -36,6 +36,7 @@ function continuation(input: Partial<WipContinuationProjection> & Pick<
     reason: '跨周续作',
     materialWarning: null,
     team: null,
+    workers: [],
     scheduledBy: { id: 'actor-1', displayName: '计划员' },
     scheduledAt: '2026-09-01T08:00:00.000Z',
     steps: [],

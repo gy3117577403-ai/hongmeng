@@ -22,6 +22,13 @@ import {
   assertProductionTeam,
 } from '@/lib/production-access-scope';
 import { lockProductionWorkOrder } from '@/lib/production-work-order-lock';
+import {
+  loadOutstandingWipByProcess,
+  nativeCheckpointCompletedQuantity,
+  nativeExecutableQuantity,
+  wipOwnershipKey,
+} from '@/lib/wip-native-ownership';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 
 const OPEN_LOT_STATUSES: SemiFinishedScheduleStatus[] = [
   SemiFinishedScheduleStatus.UNSCHEDULED,
@@ -72,6 +79,13 @@ function requiredReason(value: unknown): string {
 function idempotencyKey(value: unknown, prefix: string): string {
   const key = cleanText(value, 120);
   return key || `${prefix}:${randomUUID()}`;
+}
+
+function cleanEmployeeIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .map(item => cleanText(item, 80))
+    .filter(Boolean))];
 }
 
 function bigintNumber(value: bigint): number {
@@ -182,10 +196,6 @@ const batchEntrySelect = Prisma.validator<Prisma.ProductionPlanBatchSelect>()({
       },
     },
   },
-  semiFinishedLots: {
-    where: { scheduleStatus: { in: OPEN_LOT_STATUSES } },
-    select: { id: true, quantity: true },
-  },
 });
 
 type BatchEntryRecord = Prisma.ProductionPlanBatchGetPayload<{ select: typeof batchEntrySelect }>;
@@ -229,13 +239,27 @@ async function entryPreviewWithDb(
   if (!['confirmed', 'in_progress'].includes(batch.workOrder.processRoute.status)) {
     throw new WipWarehouseError('工艺路线尚未确认，无法固定剩余工序和工时快照', 'WIP_ROUTE_NOT_CONFIRMED', 409);
   }
-  const occupiedQuantity = batch.semiFinishedLots.reduce((sum, lot) => sum + lot.quantity, 0);
-  const finalGoodQuantity = batch.workOrder.processRoute.steps.length
-    ? batch.workOrder.processRoute.steps[batch.workOrder.processRoute.steps.length - 1].goodOutputQty
+  const routeSteps = batch.workOrder.processRoute.steps;
+  const terminalStep = routeSteps.at(-1);
+  const finalGoodQuantity = terminalStep?.goodOutputQty || 0;
+  const terminalOwnership = terminalStep
+    ? await loadOutstandingWipByProcess(db, [{
+        workOrderId: batch.workOrder.id,
+        productionPlanBatchId: batch.id,
+        stepId: terminalStep.id,
+      }])
+    : new Map<string, number>();
+  const outstandingWipQuantity = terminalStep
+    ? terminalOwnership.get(wipOwnershipKey(batch.workOrder.id, batch.id, terminalStep.id)) || 0
     : 0;
-  // Open WIP lots and final-good output are disjoint states. Subtract both so
-  // an already-finished slice cannot be entered again as a new WIP lot.
-  const availableQuantity = Math.max(0, batch.quantity - occupiedQuantity - finalGoodQuantity);
+  // WIP reports update the canonical terminal step. Subtract only unfinished
+  // WIP ownership here; subtracting the original lot quantity would count a
+  // completed WIP slice twice and incorrectly block a later partial entry.
+  const availableQuantity = nativeExecutableQuantity({
+    batchQuantity: batch.quantity,
+    processedQuantity: finalGoodQuantity,
+    outstandingWipQuantity,
+  });
   const quantity = positiveInteger(quantityInput, '转仓数量');
   if (quantity > availableQuantity) {
     throw new WipWarehouseError(
@@ -250,9 +274,15 @@ async function entryPreviewWithDb(
   const stepData: Array<Record<string, unknown>> = [];
   let totalRemaining = 0n;
   for (const step of batch.workOrder.processRoute.steps) {
-    // Existing open lots consume the first deterministic slice. This prevents
-    // the same reported quantity from being used as the checkpoint for two lots.
-    const completedWithinLot = Math.min(quantity, Math.max(0, step.goodOutputQty - occupiedQuantity));
+    // Select only the still-native slice. Final output is already finished and
+    // active WIP still owns a separate slice; neither may become the completion
+    // checkpoint of a newly entered lot. This also keeps a completed first WIP
+    // transfer from making a later partial transfer look fully completed.
+    const completedWithinLot = Math.min(quantity, nativeCheckpointCompletedQuantity({
+      stepGoodOutputQuantity: step.goodOutputQty,
+      finalGoodOutputQuantity: finalGoodQuantity,
+      outstandingWipQuantity,
+    }));
     const remainingQty = Math.max(0, quantity - completedWithinLot);
     if (remainingQty === 0) {
       completedSteps.push({ id: step.id, processName: step.processName, position: step.position });
@@ -354,19 +384,56 @@ export async function enterWipWarehouse(input: {
   assertProductionScopeWrite(input.productionScope);
   const reason = requiredReason(input.reason);
   const requestKey = idempotencyKey(input.idempotencyKey, 'wip-enter');
+  const normalizedRequest = {
+    batchId: cleanText(input.batchId, 80),
+    quantity: positiveInteger(input.quantity, '转仓数量'),
+    reasonCode: cleanText(input.reasonCode, 40) || 'PRODUCTION_INTERRUPTED',
+    reason,
+    locationCode: cleanText(input.locationCode, 80) || null,
+    containerCode: cleanText(input.containerCode, 80) || null,
+  };
   return prisma.$transaction(async tx => {
     const replay = await tx.wipEvent.findUnique({
       where: { idempotencyKey: requestKey },
-      select: { lot: { select: { id: true, lotNo: true } } },
+      select: { eventType: true, beforeData: true, lot: { select: { id: true, lotNo: true } } },
     });
-    if (replay) return replay.lot;
-    const initial = await entryPreviewWithDb(tx, input.batchId, input.quantity);
+    if (replay) {
+      const storedRequest = replay.beforeData && typeof replay.beforeData === 'object' && !Array.isArray(replay.beforeData)
+        ? (replay.beforeData as Record<string, unknown>).request
+        : null;
+      if (replay.eventType !== 'ENTER_WAREHOUSE' || JSON.stringify(storedRequest) !== JSON.stringify(normalizedRequest)) {
+        throw new WipWarehouseError(
+          '本次提交编号已经用于其他半成品操作，请返回后重新发起',
+          'WIP_IDEMPOTENCY_CONFLICT',
+          409,
+        );
+      }
+      return replay.lot;
+    }
+    const initial = await entryPreviewWithDb(tx, normalizedRequest.batchId, normalizedRequest.quantity);
     await lockProductionWorkOrder(tx, initial.batch.workOrder!.id);
-    const { batch, preview, stepData } = await entryPreviewWithDb(tx, input.batchId, input.quantity);
+    const replayAfterLock = await tx.wipEvent.findUnique({
+      where: { idempotencyKey: requestKey },
+      select: { eventType: true, beforeData: true, lot: { select: { id: true, lotNo: true } } },
+    });
+    if (replayAfterLock) {
+      const storedRequest = replayAfterLock.beforeData && typeof replayAfterLock.beforeData === 'object' && !Array.isArray(replayAfterLock.beforeData)
+        ? (replayAfterLock.beforeData as Record<string, unknown>).request
+        : null;
+      if (replayAfterLock.eventType !== 'ENTER_WAREHOUSE' || JSON.stringify(storedRequest) !== JSON.stringify(normalizedRequest)) {
+        throw new WipWarehouseError(
+          '本次提交编号已经用于其他半成品操作，请返回后重新发起',
+          'WIP_IDEMPOTENCY_CONFLICT',
+          409,
+        );
+      }
+      return replayAfterLock.lot;
+    }
+    const { batch, preview, stepData } = await entryPreviewWithDb(tx, normalizedRequest.batchId, normalizedRequest.quantity);
     const now = new Date();
-    const containerCode = cleanText(input.containerCode, 80) || null;
-    const locationCode = cleanText(input.locationCode, 80) || null;
-    const reasonCode = cleanText(input.reasonCode, 40) || 'PRODUCTION_INTERRUPTED';
+    const containerCode = normalizedRequest.containerCode;
+    const locationCode = normalizedRequest.locationCode;
+    const reasonCode = normalizedRequest.reasonCode;
     const lot = await tx.semiFinishedLot.create({
       data: {
         lotNo: lotNumber(now),
@@ -414,6 +481,7 @@ export async function enterWipWarehouse(input: {
         lotId: lot.id,
         eventType: 'ENTER_WAREHOUSE',
         reason,
+        beforeData: { request: normalizedRequest },
         afterData: {
           sourceWeekStartDate: preview.sourceWeekStartDate,
           quantity: preview.quantity,
@@ -667,6 +735,177 @@ export async function scheduleWipLot(input: {
   });
 }
 
+export async function assignWipAllocationWorkers(input: {
+  allocationId: unknown;
+  employeeIds: unknown;
+  actorId: string;
+  actorName: string;
+  idempotencyKey?: unknown;
+  productionScope: ProductionEntityScope;
+}) {
+  assertProductionScopeWrite(input.productionScope);
+  const allocationId = cleanText(input.allocationId, 80);
+  if (!allocationId) {
+    throw new WipWarehouseError('请选择需要安排人员的半成品批次', 'WIP_ALLOCATION_REQUIRED');
+  }
+  const employeeIds = cleanEmployeeIds(input.employeeIds);
+  if (employeeIds.length > 30) {
+    throw new WipWarehouseError('单个半成品安排最多选择 30 名作业人员', 'WIP_WORKER_LIMIT');
+  }
+  const requestKey = idempotencyKey(input.idempotencyKey, 'wip-workers');
+  const request = { allocationId, employeeIds };
+  return prisma.$transaction(async tx => {
+    const replay = await tx.wipEvent.findUnique({
+      where: { idempotencyKey: requestKey },
+      select: { eventType: true, afterData: true },
+    });
+    if (replay) {
+      const replayRequest = replay.afterData && typeof replay.afterData === 'object' && !Array.isArray(replay.afterData)
+        ? (replay.afterData as Record<string, unknown>).request
+        : null;
+      if (replay.eventType !== 'ASSIGN_WORKERS' || JSON.stringify(replayRequest) !== JSON.stringify(request)) {
+        throw new WipWarehouseError(
+          '本次提交编号已经用于其他人员安排，请重新打开人员选择窗口',
+          'WIP_IDEMPOTENCY_CONFLICT',
+          409,
+        );
+      }
+      return tx.wipWeekAllocationWorker.findMany({
+        where: { allocationId, status: 'ACTIVE' },
+        include: { employee: { select: { id: true, employeeNo: true, name: true, team: true, position: true } } },
+        orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }],
+      });
+    }
+    const beforeLock = await tx.wipWeekAllocation.findUnique({
+      where: { id: allocationId },
+      select: { lot: { select: { workOrderId: true } } },
+    });
+    if (!beforeLock) throw new WipWarehouseError('半成品安排不存在', 'WIP_ALLOCATION_NOT_FOUND', 404);
+    await lockProductionWorkOrder(tx, beforeLock.lot.workOrderId);
+    const replayAfterLock = await tx.wipEvent.findUnique({
+      where: { idempotencyKey: requestKey },
+      select: { eventType: true, afterData: true },
+    });
+    if (replayAfterLock) {
+      const replayRequest = replayAfterLock.afterData && typeof replayAfterLock.afterData === 'object' && !Array.isArray(replayAfterLock.afterData)
+        ? (replayAfterLock.afterData as Record<string, unknown>).request
+        : null;
+      if (replayAfterLock.eventType !== 'ASSIGN_WORKERS' || JSON.stringify(replayRequest) !== JSON.stringify(request)) {
+        throw new WipWarehouseError(
+          '本次提交编号已经用于其他人员安排，请重新打开人员选择窗口',
+          'WIP_IDEMPOTENCY_CONFLICT',
+          409,
+        );
+      }
+      return tx.wipWeekAllocationWorker.findMany({
+        where: { allocationId, status: 'ACTIVE' },
+        include: { employee: { select: { id: true, employeeNo: true, name: true, team: true, position: true } } },
+        orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }],
+      });
+    }
+    const allocation = await tx.wipWeekAllocation.findUnique({
+      where: { id: allocationId },
+      select: {
+        id: true,
+        lotId: true,
+        status: true,
+        targetWeekStartDate: true,
+        lot: { select: { lotNo: true, workOrderId: true } },
+        workers: {
+          where: { status: 'ACTIVE' },
+          select: { id: true, employeeId: true },
+          orderBy: { position: 'asc' },
+        },
+      },
+    });
+    if (!allocation || !['ACTIVE', 'IN_PROGRESS'].includes(allocation.status)) {
+      throw new WipWarehouseError('该半成品安排已完成、取消或改排，不能再修改人员', 'WIP_WORKERS_NOT_EDITABLE', 409);
+    }
+    const employees = employeeIds.length
+      ? await tx.employee.findMany({
+          where: { id: { in: employeeIds }, ...productionEmployeeWhere() },
+          select: { id: true, employeeNo: true, name: true, team: true, position: true },
+        })
+      : [];
+    if (employees.length !== employeeIds.length) {
+      throw new WipWarehouseError(
+        '部分人员已停用、未启用考勤或不属于生产部门，请刷新人员列表',
+        'WIP_WORKER_INVALID',
+        409,
+      );
+    }
+    const employeeById = new Map(employees.map(employee => [employee.id, employee] as const));
+    const now = new Date();
+    if (allocation.workers.length) {
+      await tx.wipWeekAllocationWorker.updateMany({
+        where: { allocationId, status: 'ACTIVE' },
+        data: {
+          status: 'CANCELLED',
+          activeKey: null,
+          cancelledById: input.actorId,
+          cancelledAt: now,
+        },
+      });
+    }
+    for (const [position, employeeId] of employeeIds.entries()) {
+      await tx.wipWeekAllocationWorker.create({
+        data: {
+          allocationId,
+          employeeId,
+          position,
+          activeKey: `${allocationId}:${employeeId}`,
+          assignedById: input.actorId,
+        },
+      });
+    }
+    await tx.wipWeekAllocation.update({
+      where: { id: allocationId },
+      data: { version: { increment: 1 } },
+    });
+    await tx.wipEvent.create({
+      data: {
+        lotId: allocation.lotId,
+        allocationId,
+        eventType: 'ASSIGN_WORKERS',
+        reason: employeeIds.length ? '安排半成品作业人员' : '清空半成品作业人员',
+        beforeData: { employeeIds: allocation.workers.map(worker => worker.employeeId) },
+        afterData: {
+          request,
+          workers: employeeIds.map(employeeId => {
+            const employee = employeeById.get(employeeId)!;
+            return { employeeId, employeeNo: employee.employeeNo, name: employee.name };
+          }),
+        },
+        actorId: input.actorId,
+        idempotencyKey: requestKey,
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.actorId,
+        action: 'assign_wip_workers',
+        targetType: 'wip_week_allocation',
+        targetId: allocationId,
+        detail: {
+          lotNo: allocation.lot.lotNo,
+          targetWeekStartDate: chinaDate(allocation.targetWeekStartDate),
+          employeeIds,
+          actorName: input.actorName,
+        },
+      },
+    });
+    return tx.wipWeekAllocationWorker.findMany({
+      where: { allocationId, status: 'ACTIVE' },
+      include: { employee: { select: { id: true, employeeNo: true, name: true, team: true, position: true } } },
+      orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }],
+    });
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 8_000,
+    timeout: 25_000,
+  });
+}
+
 export async function rescheduleWipAllocation(input: {
   allocationId: unknown;
   targetWeekStartDate: unknown;
@@ -717,6 +956,11 @@ export async function rescheduleWipAllocation(input: {
         lot: true,
         team: { select: { id: true, code: true, name: true, legacyTeamName: true } },
         steps: { orderBy: { createdAt: 'asc' } },
+        workers: {
+          where: { status: 'ACTIVE' },
+          orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }, { id: 'asc' }],
+          select: { employeeId: true, position: true },
+        },
       },
     });
     if (
@@ -764,6 +1008,16 @@ export async function rescheduleWipAllocation(input: {
     if (sourceUpdate.count !== 1) {
       throw new WipWarehouseError('原排程已被其他操作改排，请刷新后查看最新安排', 'WIP_ALLOCATION_CHANGED', 409);
     }
+    const changedAt = new Date();
+    await tx.wipWeekAllocationWorker.updateMany({
+      where: { allocationId: source.id, status: 'ACTIVE' },
+      data: {
+        status: 'CANCELLED',
+        activeKey: null,
+        cancelledById: input.actorId,
+        cancelledAt: changedAt,
+      },
+    });
     const target = await tx.wipWeekAllocation.create({
       data: {
         lotId: source.lotId,
@@ -779,6 +1033,19 @@ export async function rescheduleWipAllocation(input: {
         steps: { create: stepCreates },
       },
     });
+    if (source.workers.length) {
+      await tx.wipWeekAllocationWorker.createMany({
+        data: source.workers.map((worker, position) => ({
+          allocationId: target.id,
+          employeeId: worker.employeeId,
+          position: worker.position ?? position,
+          status: 'ACTIVE',
+          activeKey: `${target.id}:${worker.employeeId}`,
+          assignedById: input.actorId,
+          assignedAt: changedAt,
+        })),
+      });
+    }
     await tx.wipInventoryMovement.create({
       data: {
         lotId: source.lotId,
@@ -979,6 +1246,15 @@ export async function unscheduleWipAllocation(input: {
     await tx.wipWeekAllocationStep.updateMany({
       where: { allocationId: allocation.id },
       data: { status: WipRequirementStatus.CANCELLED },
+    });
+    await tx.wipWeekAllocationWorker.updateMany({
+      where: { allocationId: allocation.id, status: 'ACTIVE' },
+      data: {
+        status: 'CANCELLED',
+        activeKey: null,
+        cancelledById: input.actorId,
+        cancelledAt: new Date(),
+      },
     });
     await tx.wipInventoryMovement.create({
       data: {
@@ -1198,6 +1474,15 @@ export async function returnWipLotToOrder(input: {
       where: { allocation: { lotId: lot.id }, status: { not: WipRequirementStatus.CANCELLED } },
       data: { status: WipRequirementStatus.CANCELLED },
     });
+    await tx.wipWeekAllocationWorker.updateMany({
+      where: { allocation: { lotId: lot.id }, status: 'ACTIVE' },
+      data: {
+        status: 'CANCELLED',
+        activeKey: null,
+        cancelledById: input.actorId,
+        cancelledAt: now,
+      },
+    });
     await tx.semiFinishedLotStep.updateMany({
       where: { lotId: lot.id },
       data: { status: WipRequirementStatus.CANCELLED },
@@ -1290,6 +1575,11 @@ const listLotInclude = Prisma.validator<Prisma.SemiFinishedLotInclude>()({
     include: {
       team: { select: { id: true, name: true } },
       scheduledBy: { select: { id: true, displayName: true } },
+      workers: {
+        where: { status: 'ACTIVE' },
+        include: { employee: { select: { id: true, employeeNo: true, name: true, team: true, position: true } } },
+        orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }],
+      },
       steps: {
         include: {
           lotStep: { select: { stepId: true, processName: true, position: true } },
@@ -1305,6 +1595,7 @@ function serializeAllocation(allocation: Prisma.WipWeekAllocationGetPayload<{
   include: {
     team: { select: { id: true; name: true } };
     scheduledBy: { select: { id: true; displayName: true } };
+    workers: { include: { employee: { select: { id: true; employeeNo: true; name: true; team: true; position: true } } } };
     steps: { include: { lotStep: { select: { stepId: true; processName: true; position: true } } } };
   };
 }>) {
@@ -1326,6 +1617,15 @@ function serializeAllocation(allocation: Prisma.WipWeekAllocationGetPayload<{
     scheduledBy: allocation.scheduledBy,
     scheduledAt: allocation.scheduledAt.toISOString(),
     supersededAt: allocation.supersededAt?.toISOString() || null,
+    workers: allocation.workers.map(worker => ({
+      assignmentId: worker.id,
+      employeeId: worker.employee.id,
+      employeeNo: worker.employee.employeeNo,
+      name: worker.employee.name,
+      team: worker.employee.team,
+      position: worker.employee.position,
+      assignedAt: worker.assignedAt.toISOString(),
+    })),
     steps: allocation.steps.map(step => ({
       id: step.id,
       lotStepId: step.lotStepId,
@@ -1419,7 +1719,7 @@ export async function listWipWarehouse(input: {
   assertProductionScopeRead(input.productionScope);
   const keyword = cleanText(input.keyword, 80);
   const selectedBatchId = cleanText(input.batchId, 80);
-  const [lots, candidates, teams] = await Promise.all([
+  const [lots, candidates, teams, employees] = await Promise.all([
     prisma.semiFinishedLot.findMany({
       where: {
         // Returning a lot to its source order is a soft-close: keep the lot,
@@ -1463,11 +1763,27 @@ export async function listWipWarehouse(input: {
       select: { id: true, code: true, name: true },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     }),
+    prisma.employee.findMany({
+      where: productionEmployeeWhere(),
+      select: { id: true, employeeNo: true, name: true, team: true, position: true },
+      orderBy: [{ employeeNo: 'asc' }, { name: 'asc' }],
+      take: 500,
+    }),
   ]);
 
+  const candidateTerminalPairs = candidates.flatMap(batch => {
+    const terminalStep = batch.workOrder?.processRoute?.steps.at(-1);
+    return terminalStep && batch.workOrder
+      ? [{ workOrderId: batch.workOrder.id, productionPlanBatchId: batch.id, stepId: terminalStep.id }]
+      : [];
+  });
+  const candidateOutstandingByProcess = await loadOutstandingWipByProcess(prisma, candidateTerminalPairs);
   const candidateRows = candidates.map(batch => {
-    const occupied = batch.semiFinishedLots.reduce((sum, lot) => sum + lot.quantity, 0);
-    const finalGood = batch.workOrder?.processRoute?.steps.at(-1)?.goodOutputQty || 0;
+    const terminalStep = batch.workOrder?.processRoute?.steps.at(-1);
+    const finalGood = terminalStep?.goodOutputQty || 0;
+    const outstandingWip = terminalStep && batch.workOrder
+      ? candidateOutstandingByProcess.get(wipOwnershipKey(batch.workOrder.id, batch.id, terminalStep.id)) || 0
+      : 0;
     return {
       id: batch.id,
       batchNo: batch.batchNo,
@@ -1477,7 +1793,11 @@ export async function listWipWarehouse(input: {
       productName: batch.planOrder.productName,
       specification: batch.planOrder.specification,
       quantity: batch.quantity,
-      availableQuantity: Math.max(0, batch.quantity - occupied - finalGood),
+      availableQuantity: nativeExecutableQuantity({
+        batchQuantity: batch.quantity,
+        processedQuantity: finalGood,
+        outstandingWipQuantity: outstandingWip,
+      }),
       weekStartDate: chinaDate(batch.weekStartDate),
       weekEndDate: chinaDate(batch.weekEndDate),
       routeStatus: batch.workOrder!.processRoute!.status,
@@ -1527,6 +1847,7 @@ export async function listWipWarehouse(input: {
       lotCount: weekPlan.get(week.startDate)?.lotCount.size || 0,
     })),
     teams,
+    employees,
     candidates: candidateRows,
     lots: serializedLots,
   };

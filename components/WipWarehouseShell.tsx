@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Search,
   Undo2,
+  Users,
   Warehouse,
   X,
 } from 'lucide-react';
@@ -59,6 +60,15 @@ type Allocation = {
   scheduledBy: { id: string; displayName: string };
   scheduledAt: string;
   supersededAt: string | null;
+  workers: Array<{
+    assignmentId: string;
+    employeeId: string;
+    employeeNo: string;
+    name: string;
+    team: string | null;
+    position: string | null;
+    assignedAt: string;
+  }>;
   steps: Array<{
     id: string;
     stepId: string;
@@ -130,6 +140,7 @@ type WipPayload = {
     lotCount: number;
   }>;
   teams: Array<{ id: string; code: string; name: string }>;
+  employees: Array<{ id: string; employeeNo: string; name: string; team: string | null; position: string | null }>;
   candidates: Candidate[];
   lots: Lot[];
 };
@@ -213,6 +224,7 @@ const emptyData: WipPayload = {
   summary: { lotCount: 0, totalQuantity: 0, unscheduledQuantity: 0, scheduledQuantity: 0, totalRemainingHours: 0 },
   weeks: [],
   teams: [],
+  employees: [],
   candidates: [],
   lots: [],
 };
@@ -294,6 +306,7 @@ export default function WipWarehouseShell({
     containerCode: '',
   });
   const [entryPreview, setEntryPreview] = useState<EntryPreview | null>(null);
+  const [entryRequestKey, setEntryRequestKey] = useState('');
   const [scheduleDraft, setScheduleDraft] = useState({ quantity: '', week: '', teamId: '', reason: '安排剩余半成品工序到目标生产周' });
   const [rescheduleAllocation, setRescheduleAllocation] = useState<Allocation | null>(null);
   const [rescheduleDraft, setRescheduleDraft] = useState<RescheduleDraft>({
@@ -305,7 +318,15 @@ export default function WipWarehouseShell({
   const [rescheduleResult, setRescheduleResult] = useState<RescheduleResult | null>(null);
   const [rescheduleError, setRescheduleError] = useState('');
   const [reversalDraft, setReversalDraft] = useState<ReversalDraft | null>(null);
+  const [workerDraft, setWorkerDraft] = useState<{
+    allocation: Allocation;
+    employeeIds: string[];
+    keyword: string;
+    requestKey: string;
+    error: string;
+  } | null>(null);
   const rescheduleDialogRef = useRef<HTMLElement | null>(null);
+  const simpleModalOpen = Boolean(entryCandidate || workerDraft || reversalDraft);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -334,7 +355,8 @@ export default function WipWarehouseShell({
       if (initialBatchId && body.data.candidates[0] && !entryCandidate) {
         const candidate = body.data.candidates[0];
         setEntryCandidate(candidate);
-        setEntryDraft(current => ({ ...current, quantity: String(candidate.availableQuantity) }));
+        setEntryRequestKey(newRequestKey('wip-enter-ui'));
+        setEntryDraft(current => ({ ...current, quantity: '' }));
       } else if (initialBatchId && body.data.candidates.length === 0) {
         setError('该工单当前暂无可转数量：可能已全部转入半成品仓，或末道工序已全部完工。');
       }
@@ -373,6 +395,23 @@ export default function WipWarehouseShell({
       previousFocus?.focus({ preventScroll: true });
     };
   }, [rescheduleAllocation, saving]);
+  useEffect(() => {
+    if (!simpleModalOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || saving) return;
+      setEntryCandidate(null);
+      setEntryPreview(null);
+      setWorkerDraft(null);
+      setReversalDraft(null);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [saving, simpleModalOpen]);
 
   const lotView = ['scheduled', 'unscheduled'].includes(initialView) ? initialView : 'all';
   const visibleLots = useMemo(() => data.lots.filter(lot => {
@@ -396,17 +435,27 @@ export default function WipWarehouseShell({
     () => selectedLot?.allocations.filter(allocation => ['SUPERSEDED', 'CANCELLED'].includes(allocation.status)) || [],
     [selectedLot],
   );
+  const visibleWorkerOptions = useMemo(() => {
+    const key = workerDraft?.keyword.trim().toLowerCase() || '';
+    if (!key) return data.employees;
+    return data.employees.filter(employee => (
+      `${employee.employeeNo} ${employee.name} ${employee.team || ''} ${employee.position || ''}`
+        .toLowerCase()
+        .includes(key)
+    ));
+  }, [data.employees, workerDraft?.keyword]);
 
   function openEntry(candidate: Candidate): void {
     setEntryCandidate(candidate);
     setEntryPreview(null);
     setEntryDraft({
-      quantity: String(candidate.availableQuantity),
+      quantity: '',
       reasonCode: 'PRODUCTION_INTERRUPTED',
       reason: '本周无法继续剩余工序，转入半成品仓等待重新安排',
       locationCode: '',
       containerCode: '',
     });
+    setEntryRequestKey(newRequestKey('wip-enter-ui'));
   }
 
   async function post<T>(body: Record<string, unknown>): Promise<T> {
@@ -451,12 +500,13 @@ export default function WipWarehouseShell({
         reason: entryDraft.reason,
         locationCode: entryDraft.locationCode,
         containerCode: entryDraft.containerCode,
-        idempotencyKey: newRequestKey('wip-enter-ui'),
+        idempotencyKey: entryRequestKey || newRequestKey('wip-enter-ui'),
       });
       publishProductionDataInvalidation({ kind: 'wip-entered', entityId: entryCandidate.workOrderId });
       setEntryCandidate(null);
       setEntryPreview(null);
-      setToast('已转入半成品仓；历史报工和原周已完工工时保持不变');
+      const remaining = Math.max(0, entryCandidate.availableQuantity - entryPreview.quantity);
+      setToast(`本次已转入 ${entryPreview.quantity} 件；原订单仍可转 ${remaining} 件`);
       await load(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '转入半成品仓失败');
@@ -485,6 +535,43 @@ export default function WipWarehouseShell({
       await load(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '半成品排程失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openWorkerAssignment(allocation: Allocation): void {
+    setWorkerDraft({
+      allocation,
+      employeeIds: allocation.workers.map(worker => worker.employeeId),
+      keyword: '',
+      requestKey: newRequestKey('wip-workers-ui'),
+      error: '',
+    });
+  }
+
+  async function saveWorkerAssignment(): Promise<void> {
+    if (!workerDraft) return;
+    setSaving(true);
+    setWorkerDraft(current => current ? { ...current, error: '' } : null);
+    try {
+      await post({
+        action: 'assign_workers',
+        allocationId: workerDraft.allocation.id,
+        employeeIds: workerDraft.employeeIds,
+        idempotencyKey: workerDraft.requestKey,
+      });
+      publishProductionDataInvalidation({ kind: 'wip-workers-assigned', entityId: workerDraft.allocation.id });
+      setToast(workerDraft.employeeIds.length
+        ? `已为半成品批次安排 ${workerDraft.employeeIds.length} 名作业人员`
+        : '已清空半成品批次的人员安排');
+      setWorkerDraft(null);
+      await load(true);
+    } catch (reason) {
+      setWorkerDraft(current => current ? {
+        ...current,
+        error: reason instanceof Error ? reason.message : '半成品人员安排失败',
+      } : null);
     } finally {
       setSaving(false);
     }
@@ -719,7 +806,7 @@ export default function WipWarehouseShell({
             <label>原因<input maxLength={300} value={scheduleDraft.reason} onChange={event => setScheduleDraft({ ...scheduleDraft, reason: event.target.value })} /></label>
             <button type="button" disabled={saving || !scheduleDraft.week || !Number(scheduleDraft.quantity)} onClick={() => void scheduleLot()}>{saving ? <LoaderCircle className="spin" size={16} /> : <CalendarClock size={16} />}确认排入目标周</button>
           </section>}
-          <section className="wip-allocation-list wip-effective-arrangements"><header><span><small>当前有效口径</small><strong>当前安排</strong></span><em>{currentAllocations.length}</em></header>{currentAllocations.map(allocation => <article className={`effective ${initialAllocationId === allocation.id ? 'focused' : ''}`} key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity.toLocaleString()} 件 · 剩余 {Math.max(0, allocation.quantity - allocation.completedQty).toLocaleString()} 件</strong><span>{allocation.team?.name || '未指定班组'} · 剩余 {(allocation.plannedHours - allocation.completedHours).toFixed(2)} 小时</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i>{['ACTIVE', 'IN_PROGRESS'].includes(allocation.status) && data.permissions.canWrite && <nav className="wip-allocation-actions"><button type="button" disabled={saving} onClick={() => openReschedule(allocation)}>改排剩余部分</button><button type="button" className="danger" disabled={saving} onClick={() => openUnschedule(allocation)}><Undo2 size={12} />撤销周安排</button></nav>}</article>)}{!currentAllocations.length && <p className="wip-empty compact">当前没有有效周次安排，可在上方排入目标周。</p>}</section>
+          <section className="wip-allocation-list wip-effective-arrangements"><header><span><small>当前有效口径</small><strong>当前安排</strong></span><em>{currentAllocations.length}</em></header>{currentAllocations.map(allocation => <article className={`effective ${initialAllocationId === allocation.id ? 'focused' : ''}`} key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity.toLocaleString()} 件 · 剩余 {Math.max(0, allocation.quantity - allocation.completedQty).toLocaleString()} 件</strong><span>{allocation.team?.name || '未指定班组'} · 剩余 {(allocation.plannedHours - allocation.completedHours).toFixed(2)} 小时</span><span className={allocation.workers.length ? 'wip-worker-summary assigned' : 'wip-worker-summary'}><Users size={13} />{allocation.workers.length ? allocation.workers.map(worker => worker.name).join('、') : '人员待安排'}</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i>{['ACTIVE', 'IN_PROGRESS'].includes(allocation.status) && data.permissions.canWrite && <nav className="wip-allocation-actions"><button type="button" className="worker" disabled={saving} onClick={() => openWorkerAssignment(allocation)}><Users size={12} />{allocation.workers.length ? '调整人员' : '安排人员'}</button><button type="button" disabled={saving} onClick={() => openReschedule(allocation)}>改排剩余部分</button><button type="button" className="danger" disabled={saving} onClick={() => openUnschedule(allocation)}><Undo2 size={12} />撤销周安排</button></nav>}</article>)}{!currentAllocations.length && <p className="wip-empty compact">当前没有有效周次安排，可在上方排入目标周。</p>}</section>
           {historicalAllocations.length > 0 && <details className="wip-allocation-history"><summary><span><History size={14} />历史安排</span><em>{historicalAllocations.length} 条</em></summary><div>{historicalAllocations.map(allocation => <article key={allocation.id}><div><small>{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate}</small><strong>{allocation.quantity.toLocaleString()} 件 · 已完成 {allocation.completedQty.toLocaleString()} 件</strong><span>{allocation.reason}</span></div><i className={allocation.status.toLowerCase()}>{statusLabel(allocation.status)}</i></article>)}</div></details>}
         </> : <div className="wip-detail-empty"><PackageOpen size={36} /><strong>选择半成品批次</strong><span>查看剩余工序、标准工时和跨周安排。</span></div>}
       </aside>
@@ -728,10 +815,25 @@ export default function WipWarehouseShell({
     {entryCandidate && <div className="wip-modal-backdrop" role="presentation"><section className="wip-entry-modal" role="dialog" aria-modal="true" aria-labelledby="wip-entry-title">
       <header><span><small>{entryCandidate.weekStartDate} 来源周 · {entryCandidate.workOrderCode}</small><strong id="wip-entry-title">转入半成品仓</strong><em>{entryCandidate.specification}</em></span><button type="button" disabled={saving} onClick={() => { setEntryCandidate(null); setEntryPreview(null); }}><X /></button></header>
       <div className="wip-entry-body">
-        <section className="wip-entry-fields"><div><label>转仓数量<input type="number" min="1" max={entryCandidate.availableQuantity} value={entryDraft.quantity} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, quantity: event.target.value })} /></label><label>原因类别<select value={entryDraft.reasonCode} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, reasonCode: event.target.value })}><option value="PRODUCTION_INTERRUPTED">本周无法继续</option><option value="MATERIAL_WAIT">等待物料</option><option value="CAPACITY_BALANCE">产能平衡</option><option value="OTHER">其他</option></select></label></div><label>转仓原因<textarea maxLength={300} value={entryDraft.reason} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, reason: event.target.value })} /></label><div><label>库位（可选）<input value={entryDraft.locationCode} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, locationCode: event.target.value })} /></label><label>容器码（多批建议填写）<input value={entryDraft.containerCode} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, containerCode: event.target.value })} /></label></div></section>
+        <section className="wip-entry-fields"><div><label>本次转入数量<span className="wip-entry-quantity-input"><input type="number" min="1" max={entryCandidate.availableQuantity} value={entryDraft.quantity} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, quantity: event.target.value })} /><button type="button" disabled={Boolean(entryPreview)} onClick={() => setEntryDraft({ ...entryDraft, quantity: String(entryCandidate.availableQuantity) })}>全部剩余</button></span><small>当前最多可转 {entryCandidate.availableQuantity.toLocaleString()} 件，提交后仍可继续分批转入</small></label><label>原因类别<select value={entryDraft.reasonCode} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, reasonCode: event.target.value })}><option value="PRODUCTION_INTERRUPTED">本周无法继续</option><option value="MATERIAL_WAIT">等待物料</option><option value="CAPACITY_BALANCE">产能平衡</option><option value="OTHER">其他</option></select></label></div><label>转仓原因<textarea maxLength={300} value={entryDraft.reason} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, reason: event.target.value })} /></label><div><label>库位（可选）<input value={entryDraft.locationCode} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, locationCode: event.target.value })} /></label><label>容器码（多批建议填写）<input value={entryDraft.containerCode} disabled={Boolean(entryPreview)} onChange={event => setEntryDraft({ ...entryDraft, containerCode: event.target.value })} /></label></div></section>
         {entryPreview ? <section className="wip-entry-preview"><header><CheckCircle2 /><span><strong>转仓影响已核对</strong><small>不会撤回或迁移任何已报工事实</small></span></header><div><span><small>保留在来源周</small><strong>{entryPreview.completedSteps.length ? entryPreview.completedSteps.map(step => step.processName).join('、') : '尚无整道完成工序'}</strong></span><span><small>进入半成品仓</small><strong>{entryPreview.remainingSteps.map(step => step.processName).join('、')}</strong></span><span><small>暂不计周计划</small><strong>{entryPreview.quantity} 件 · {entryPreview.remainingHours} 小时</strong></span></div>{entryPreview.materialWarning && <p><AlertTriangle />{entryPreview.materialWarning}</p>}</section> : <section className="wip-entry-rule"><AlertTriangle /><span><strong>转仓不是撤单或暂停</strong><small>产品仍可正常开工和二维码报工。只有进入半成品仓的剩余数量需要按目标周执行；物料未齐或料错本身不会冻结。</small></span></section>}
       </div>
       <footer><span>{entryPreview ? '确认后生成独立半成品批次和完整审计记录' : '先预检剩余工序、数量和工时'}</span>{entryPreview ? <><button type="button" className="secondary" disabled={saving} onClick={() => setEntryPreview(null)}>返回修改</button><button type="button" disabled={saving} onClick={() => void commitEntry()}>{saving ? <LoaderCircle className="spin" /> : <PackageOpen />}确认转入</button></> : <button type="button" disabled={saving || !Number(entryDraft.quantity) || entryDraft.reason.trim().length < 2} onClick={() => void previewEntry()}>{saving ? <LoaderCircle className="spin" /> : <ArrowRight />}预检影响</button>}</footer>
+    </section></div>}
+
+    {workerDraft && selectedLot && <div className="wip-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setWorkerDraft(null); }}><section className="wip-worker-modal" role="dialog" aria-modal="true" aria-labelledby="wip-worker-title">
+      <header><span><small>半成品人员安排</small><strong id="wip-worker-title">选择目标周作业人员</strong><em>{selectedLot.lotNo} · {workerDraft.allocation.targetWeekStartDate} 至 {workerDraft.allocation.targetWeekEndDate}</em></span><button type="button" disabled={saving} aria-label="关闭人员安排" onClick={() => setWorkerDraft(null)}><X size={20} /></button></header>
+      <div className="wip-worker-body">
+        <section className="wip-worker-current"><Users size={22} /><span><strong>已选择 {workerDraft.employeeIds.length} 人</strong><small>{workerDraft.employeeIds.length ? data.employees.filter(employee => workerDraft.employeeIds.includes(employee.id)).map(employee => employee.name).join('、') : '尚未安排具体人员，扫码报工时只能现场手动选择'}</small></span>{workerDraft.employeeIds.length > 0 && <button type="button" disabled={saving} onClick={() => setWorkerDraft({ ...workerDraft, employeeIds: [] })}>清空</button>}</section>
+        <label className="wip-worker-search"><Search size={17} /><input value={workerDraft.keyword} disabled={saving} onChange={event => setWorkerDraft({ ...workerDraft, keyword: event.target.value })} placeholder="搜索姓名、工号、班组或岗位" /></label>
+        <div className="wip-worker-grid">{visibleWorkerOptions.map(employee => {
+          const checked = workerDraft.employeeIds.includes(employee.id);
+          return <label className={checked ? 'selected' : ''} key={employee.id}><input type="checkbox" checked={checked} disabled={saving} onChange={() => setWorkerDraft({ ...workerDraft, employeeIds: checked ? workerDraft.employeeIds.filter(id => id !== employee.id) : [...workerDraft.employeeIds, employee.id] })} /><span><strong>{employee.name}</strong><small>{employee.employeeNo} · {employee.team || employee.position || '生产人员'}</small></span></label>;
+        })}</div>
+        {!visibleWorkerOptions.length && <p className="wip-empty compact">没有符合条件的在职生产人员。</p>}
+        {workerDraft.error && <p className="wip-reschedule-error" role="alert"><AlertTriangle size={15} />{workerDraft.error}</p>}
+      </div>
+      <footer><span>保存后会显示在生产执行和手机扫码报工页面；实际报工人员仍由现场核对</span><button type="button" disabled={saving} onClick={() => setWorkerDraft(null)}>取消</button><button type="button" className="primary" disabled={saving} onClick={() => void saveWorkerAssignment()}>{saving ? <><LoaderCircle className="spin" size={16} />正在保存</> : <><Users size={16} />保存人员安排</>}</button></footer>
     </section></div>}
 
     {rescheduleAllocation && selectedLot && <div className="wip-modal-backdrop wip-reschedule-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeReschedule(); }}><section ref={rescheduleDialogRef} className="wip-reschedule-modal" role="dialog" aria-modal="true" aria-labelledby="wip-reschedule-title" tabIndex={-1} data-testid="wip-reschedule-dialog">
