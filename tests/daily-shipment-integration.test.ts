@@ -6,9 +6,11 @@ import { prisma } from '../lib/prisma';
 import {
   addDailyShipmentItems,
   closeDailyShipmentPlan,
-  confirmDailyShipmentPlan,
   DailyShipmentServiceError,
   loadDailyShipmentWorkbench,
+  loadShipmentCarryoverOverview,
+  loadShipmentHistoryOverview,
+  loadShipmentWarningOverview,
   reconcileDailyShipmentCarryover,
   recordDailyShipment,
   releaseDailyShipmentReservation,
@@ -42,7 +44,7 @@ async function cleanup(prefix: string): Promise<void> {
   await prisma.user.deleteMany({ where: { username: { startsWith: prefix } } });
 }
 
-test('daily shipment persists split plans, enforces completed goods, replays safely, and retains reversal evidence', {
+test('daily shipment stays on the exact due date, enforces completed goods, replays safely, and retains reversal evidence', {
   skip: !runDatabaseIntegration,
 }, async () => {
   const prefix = `ship-it-${randomUUID().slice(0, 8)}`;
@@ -81,7 +83,7 @@ test('daily shipment persists split plans, enforces completed goods, replays saf
         specification: 'SPEC-IT',
         orderQuantity: 12,
         orderDate: new Date('2020-01-01T04:00:00.000Z'),
-        customerDueDate: new Date('2020-01-12T04:00:00.000Z'),
+        customerDueDate: new Date('2020-01-07T04:00:00.000Z'),
         priority: 'normal',
         createdById: actor.id,
         updatedById: actor.id,
@@ -100,78 +102,53 @@ test('daily shipment persists split plans, enforces completed goods, replays saf
       },
     });
 
-    const mondayKey = key(prefix);
-    const monday = await addDailyShipmentItems({
+    const tuesdayKey = key(prefix);
+    const tuesday = await addDailyShipmentItems({
       actorUserId: actor.id,
-      shipDate: '2020-01-06',
-      idempotencyKey: mondayKey,
+      shipDate: '2020-01-07',
+      idempotencyKey: tuesdayKey,
       items: [{
         productionPlanBatchId: batch.id,
-        plannedQuantity: 6,
-        plannedShipAt: '2020-01-06T16:00',
+        plannedQuantity: 12,
+        plannedShipAt: '2020-01-07T16:00',
       }],
     });
     const replay = await addDailyShipmentItems({
       actorUserId: actor.id,
-      shipDate: '2020-01-06',
-      idempotencyKey: mondayKey,
-      items: [{
-        productionPlanBatchId: batch.id,
-        plannedQuantity: 6,
-        plannedShipAt: '2020-01-06T16:00',
-      }],
-    });
-    assert.equal(replay.planId, monday.planId);
-    assert.equal(replay.replayed, true);
-
-    const tuesday = await addDailyShipmentItems({
-      actorUserId: actor.id,
       shipDate: '2020-01-07',
-      idempotencyKey: key(prefix),
+      idempotencyKey: tuesdayKey,
       items: [{
         productionPlanBatchId: batch.id,
-        plannedQuantity: 6,
+        plannedQuantity: 12,
         plannedShipAt: '2020-01-07T16:00',
       }],
     });
+    assert.equal(replay.planId, tuesday.planId);
+    assert.equal(replay.replayed, true);
+
+    const mondayWorkbench = await loadDailyShipmentWorkbench({ shipDate: '2020-01-06' });
+    assert.equal(mondayWorkbench.summary.itemCount, 0);
+    const warning = await loadShipmentWarningOverview({ anchorDate: '2020-01-06' });
+    const warningItem = warning.groups.flatMap(group => group.items).find(item => item.batchId === batch.id);
+    assert.equal(warningItem?.daysUntilDue, 1);
+    assert.equal(warningItem?.associatedPlanDate, '2020-01-07');
+
     await assert.rejects(
       addDailyShipmentItems({
         actorUserId: actor.id,
-        shipDate: '2020-01-08',
+        shipDate: '2020-01-06',
         idempotencyKey: key(prefix),
         items: [{
           productionPlanBatchId: batch.id,
           plannedQuantity: 1,
-          plannedShipAt: '2020-01-08T16:00',
+          plannedShipAt: '2020-01-06T16:00',
         }],
       }),
-      (error: unknown) => error instanceof DailyShipmentServiceError && error.code === 'SHIPMENT_BATCH_PLAN_EXCEEDED',
+      (error: unknown) => error instanceof DailyShipmentServiceError && error.code === 'SHIPMENT_DUE_DATE_MISMATCH',
     );
 
-    let mondayPlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: monday.planId } });
-    await confirmDailyShipmentPlan({
-      actorUserId: actor.id,
-      planId: monday.planId,
-      planVersion: mondayPlan.version,
-      idempotencyKey: key(prefix),
-    });
-    let mondayItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: monday.planId } });
-    await recordDailyShipment({
-      actorUserId: actor.id,
-      itemId: mondayItem.id,
-      itemVersion: mondayItem.version,
-      idempotencyKey: key(prefix),
-      quantity: 6,
-      shippedAt: '2020-01-06T09:00:00.000Z',
-    });
-
     let tuesdayPlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: tuesday.planId } });
-    await confirmDailyShipmentPlan({
-      actorUserId: actor.id,
-      planId: tuesday.planId,
-      planVersion: tuesdayPlan.version,
-      idempotencyKey: key(prefix),
-    });
+    assert.equal(tuesdayPlan.status, 'CONFIRMED');
     let tuesdayItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: tuesday.planId } });
     await assert.rejects(
       recordDailyShipment({
@@ -179,7 +156,7 @@ test('daily shipment persists split plans, enforces completed goods, replays saf
         itemId: tuesdayItem.id,
         itemVersion: tuesdayItem.version,
         idempotencyKey: key(prefix),
-        quantity: 5,
+        quantity: 11,
         shippedAt: '2020-01-07T09:00:00.000Z',
       }),
       (error: unknown) => error instanceof DailyShipmentServiceError && error.code === 'SHIPMENT_COMPLETED_QUANTITY_EXCEEDED',
@@ -216,7 +193,7 @@ test('daily shipment persists split plans, enforces completed goods, replays saf
       itemId: tuesdayItem.id,
       itemVersion: tuesdayItem.version,
       idempotencyKey: key(prefix),
-      quantity: 4,
+      quantity: 10,
       shippedAt: '2020-01-07T09:15:00.000Z',
     });
     tuesdayPlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: tuesday.planId } });
@@ -229,11 +206,11 @@ test('daily shipment persists split plans, enforces completed goods, replays saf
 
     const closedWorkbench = await loadDailyShipmentWorkbench({ shipDate: '2020-01-07' });
     assert.equal(closedWorkbench.plan?.status, 'CLOSED');
-    assert.equal(closedWorkbench.summary.plannedQuantity, 6);
-    assert.equal(closedWorkbench.summary.shippedQuantity, 6);
+    assert.equal(closedWorkbench.summary.plannedQuantity, 12);
+    assert.equal(closedWorkbench.summary.shippedQuantity, 12);
     assert.equal(closedWorkbench.summary.readyQuantity, 0);
     assert.equal(closedWorkbench.plan?.items[0]?.events.length, 3);
-    assert.deepEqual(closedWorkbench.week.days.map(day => day.itemCount), [1, 1, 0, 0, 0, 0, 0]);
+    assert.deepEqual(closedWorkbench.week.days.map(day => day.itemCount), [0, 1, 0, 0, 0, 0, 0]);
 
     tuesdayItem = await prisma.dailyShipmentPlanItem.findUniqueOrThrow({ where: { id: tuesdayItem.id } });
     const secondShipment = await prisma.shipmentEvent.findFirstOrThrow({
@@ -244,7 +221,7 @@ test('daily shipment persists split plans, enforces completed goods, replays saf
       eventId: secondShipment.id,
       itemVersion: tuesdayItem.version,
       idempotencyKey: key(prefix),
-      quantity: 4,
+      quantity: 10,
       reversedAt: '2020-01-07T09:20:00.000Z',
       reason: 'Reverse the later shipment completely',
     });
@@ -262,9 +239,13 @@ test('daily shipment persists split plans, enforces completed goods, replays saf
     const reopenedWorkbench = await loadDailyShipmentWorkbench({ shipDate: '2020-01-07' });
     assert.equal(reopenedWorkbench.plan?.status, 'CONFIRMED');
     assert.equal(reopenedWorkbench.summary.shippedQuantity, 0);
-    assert.equal(reopenedWorkbench.summary.readyQuantity, 6);
+    assert.equal(reopenedWorkbench.summary.readyQuantity, 12);
     assert.equal(reopenedWorkbench.plan?.items[0]?.actualShipAt, null);
     assert.equal(reopenedWorkbench.plan?.items[0]?.events.length, 5);
+    const history = await loadShipmentHistoryOverview({ from: '2020-01-07', to: '2020-01-07' });
+    const ownHistory = history.events.filter(event => event.workOrderCode === `${prefix}-WO`);
+    assert.equal(ownHistory.length, 5);
+    assert.equal(ownHistory.reduce((sum, event) => sum + event.netQuantity, 0), 0);
   } finally {
     await cleanup(prefix);
   }
@@ -309,7 +290,7 @@ test('daily shipment carries only pending quantity into the next day and keeps p
         specification: 'SPEC-ROLL',
         orderQuantity: 20,
         orderDate: new Date('2020-01-01T04:00:00.000Z'),
-        customerDueDate: new Date('2020-01-12T04:00:00.000Z'),
+        customerDueDate: new Date('2020-01-06T04:00:00.000Z'),
         priority: 'urgent',
         createdById: actor.id,
         updatedById: actor.id,
@@ -339,12 +320,7 @@ test('daily shipment carries only pending quantity into the next day and keeps p
       }],
     });
     let sourcePlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: monday.planId } });
-    await confirmDailyShipmentPlan({
-      actorUserId: actor.id,
-      planId: sourcePlan.id,
-      planVersion: sourcePlan.version,
-      idempotencyKey: key(prefix),
-    });
+    assert.equal(sourcePlan.status, 'CONFIRMED');
     let sourceItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: sourcePlan.id } });
     await recordDailyShipment({
       actorUserId: actor.id,
@@ -381,6 +357,10 @@ test('daily shipment carries only pending quantity into the next day and keeps p
     assert.equal(targetWorkbench.summary.carryover.quantity, 13);
     assert.equal(targetWorkbench.summary.urgent.quantity, 13);
     assert.equal(targetWorkbench.candidates[0]?.scheduledQuantity, 20);
+    const carryoverOverview = await loadShipmentCarryoverOverview({ asOfDate: '2020-01-07' });
+    const carryoverItem = carryoverOverview.items.find(entry => entry.item.batchId === batch.id);
+    assert.equal(carryoverItem?.item.pendingQuantity, 13);
+    assert.equal(carryoverItem?.lineage.length, 2);
 
     const replay = await reconcileDailyShipmentCarryover({
       targetShipDate: '2020-01-07',
@@ -432,7 +412,7 @@ test('historical reservations expose their source and can be released or transfe
         specification: 'SPEC-RES',
         orderQuantity: 20,
         orderDate: new Date('2020-01-01T04:00:00.000Z'),
-        customerDueDate: new Date('2020-01-12T04:00:00.000Z'),
+        customerDueDate: new Date('2020-01-06T04:00:00.000Z'),
         priority: 'urgent',
         createdById: actor.id,
         updatedById: actor.id,
@@ -479,6 +459,14 @@ test('historical reservations expose their source and can be released or transfe
     assert.equal(released.candidates[0]?.availableQuantity, 20);
     assert.equal(released.candidates[0]?.reservations.length, 0);
 
+    await prisma.productionPlanOrder.update({
+      where: { id: planOrder.id },
+      data: {
+        customerDueDate: new Date('2020-01-07T04:00:00.000Z'),
+        deliveryVersion: { increment: 1 },
+      },
+    });
+
     const confirmedResult = await addDailyShipmentItems({
       actorUserId: actor.id,
       shipDate: '2020-01-07',
@@ -491,12 +479,7 @@ test('historical reservations expose their source and can be released or transfe
       }],
     });
     let confirmedPlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: confirmedResult.planId } });
-    await confirmDailyShipmentPlan({
-      actorUserId: actor.id,
-      planId: confirmedPlan.id,
-      planVersion: confirmedPlan.version,
-      idempotencyKey: key(prefix),
-    });
+    assert.equal(confirmedPlan.status, 'CONFIRMED');
     let confirmedItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: confirmedPlan.id } });
     await recordDailyShipment({
       actorUserId: actor.id,

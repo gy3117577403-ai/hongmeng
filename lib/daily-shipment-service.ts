@@ -1034,6 +1034,251 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
   };
 }
 
+export async function loadShipmentWarningOverview(input: { anchorDate: unknown }) {
+  const anchor = parseShipmentDate(input.anchorDate);
+  const rangeEndKey = shiftShipmentDateKey(anchor.key, 3);
+  const rangeEnd = parseShipmentDate(rangeEndKey);
+  const now = new Date();
+  const batches = await prisma.productionPlanBatch.findMany({
+    where: {
+      deletedAt: null,
+      workOrderId: { not: null },
+      releaseState: { in: ['active', 'preparation'] },
+      planOrder: {
+        deletedAt: null,
+        customerDueDateConfirmed: true,
+        customerDueDate: { lte: rangeEnd.value },
+        status: { notIn: ['cancelled', 'paused'] },
+      },
+      workOrder: { is: { deletedAt: null } },
+    },
+    include: {
+      planOrder: true,
+      workOrder: { select: workOrderSelect },
+      dailyShipmentItems: {
+        include: {
+          plan: { select: { shipDate: true } },
+          events: { select: { eventType: true, quantity: true } },
+        },
+        orderBy: [{ plannedShipAt: 'desc' }, { createdAt: 'desc' }],
+      },
+    },
+    orderBy: [
+      { planOrder: { customerDueDate: 'asc' } },
+      { batchNo: 'asc' },
+      { createdAt: 'asc' },
+    ],
+    take: 1000,
+  });
+  const items = batches.flatMap(batch => {
+    const shippedQuantity = netShipmentQuantity(batch.dailyShipmentItems.flatMap(item => item.events));
+    const pendingQuantity = Math.max(0, batch.quantity - shippedQuantity);
+    if (pendingQuantity <= 0 || !batch.workOrder) return [];
+    const dueDate = dateKey(batch.planOrder.customerDueDate);
+    const daysUntilDue = Math.round(
+      (parseShipmentDate(dueDate).value.getTime() - anchor.value.getTime()) / 86_400_000,
+    );
+    const warningLevel = daysUntilDue < 0
+      ? 'OVERDUE'
+      : daysUntilDue === 0
+        ? 'TODAY'
+        : `T${Math.min(3, daysUntilDue)}`;
+    const openItem = batch.dailyShipmentItems.find(item => (
+      item.status === DailyShipmentItemStatus.PLANNED
+      || item.status === DailyShipmentItemStatus.PARTIALLY_SHIPPED
+    )) || null;
+    const associatedPlanDate = openItem ? dateKey(openItem.plan.shipDate) : null;
+    const expectedPlanDate = daysUntilDue < 0 ? anchor.key : dueDate;
+    const completedQuantity = completedGoodQuantity(batch.workOrder);
+    return [{
+      batchId: batch.id,
+      workOrderId: batch.workOrder.id,
+      workOrderCode: batch.workOrder.businessCode || batch.workOrder.code,
+      sourceOrderNo: batch.planOrder.sourceOrderNo,
+      customerName: batch.planOrder.customerName,
+      productName: batch.planOrder.productName,
+      specification: batch.planOrder.specification,
+      priority: batch.planOrder.priority,
+      customerDueDate: dueDate,
+      daysUntilDue,
+      warningLevel,
+      batchQuantity: batch.quantity,
+      shippedQuantity,
+      pendingQuantity,
+      completedQuantity,
+      productionProgress: workOrderProgress(batch.workOrder, batch.quantity),
+      productionStage: batch.workOrder.stage,
+      currentProcess: currentProcess(batch.workOrder),
+      associationType: openItem?.associationType || null,
+      associatedPlanDate,
+      associationHealthy: associatedPlanDate === expectedPlanDate,
+    }];
+  });
+  const groupMeta = [
+    { level: 'OVERDUE', label: '已逾期' },
+    { level: 'TODAY', label: '今日到期' },
+    { level: 'T1', label: '明日到期' },
+    { level: 'T2', label: '距交期 2 天' },
+    { level: 'T3', label: '距交期 3 天' },
+  ] as const;
+  const groups = groupMeta.map(meta => {
+    const grouped = items.filter(item => item.warningLevel === meta.level);
+    return {
+      ...meta,
+      itemCount: grouped.length,
+      pendingQuantity: grouped.reduce((sum, item) => sum + item.pendingQuantity, 0),
+      items: grouped,
+    };
+  });
+  const count = (level: typeof groupMeta[number]['level']) => items.filter(item => item.warningLevel === level).length;
+  return {
+    anchorDate: anchor.key,
+    rangeEndDate: rangeEndKey,
+    generatedAt: now.toISOString(),
+    summary: {
+      itemCount: items.length,
+      pendingQuantity: items.reduce((sum, item) => sum + item.pendingQuantity, 0),
+      overdueCount: count('OVERDUE'),
+      todayCount: count('TODAY'),
+      tomorrowCount: count('T1'),
+      twoDaysCount: count('T2'),
+      threeDaysCount: count('T3'),
+      productionRiskCount: items.filter(item => item.completedQuantity < item.pendingQuantity).length,
+      readyCount: items.filter(item => item.completedQuantity >= item.pendingQuantity).length,
+      associationIssueCount: items.filter(item => !item.associationHealthy).length,
+    },
+    groups,
+  };
+}
+
+export async function loadShipmentCarryoverOverview(input: { asOfDate: unknown }) {
+  const asOf = parseShipmentDate(input.asOfDate);
+  const now = new Date();
+  const activeItems = await prisma.dailyShipmentPlanItem.findMany({
+    where: {
+      associationType: DailyShipmentAssociationType.CARRYOVER,
+      status: { in: [DailyShipmentItemStatus.PLANNED, DailyShipmentItemStatus.PARTIALLY_SHIPPED] },
+      plan: { shipDate: { lte: asOf.value } },
+    },
+    include: itemInclude,
+    orderBy: [{ carryoverDayCount: 'desc' }, { plannedShipAt: 'asc' }, { createdAt: 'asc' }],
+    take: 1000,
+  });
+  const batchIds = [...new Set(activeItems.map(item => item.productionPlanBatchId))];
+  const historyItems = batchIds.length ? await prisma.dailyShipmentPlanItem.findMany({
+    where: { productionPlanBatchId: { in: batchIds } },
+    select: {
+      id: true,
+      productionPlanBatchId: true,
+      plannedQuantity: true,
+      status: true,
+      plan: { select: { shipDate: true } },
+      events: { select: { eventType: true, quantity: true } },
+    },
+    orderBy: [{ plannedShipAt: 'asc' }, { createdAt: 'asc' }],
+  }) : [];
+  const items = activeItems.map(item => ({
+    item: serializeItem(item, now),
+    originalDueDate: item.dueDateSnapshot
+      ? dateKey(item.dueDateSnapshot)
+      : dateKey(item.productionPlanBatch.planOrder.customerDueDate),
+    currentPlanDate: dateKey(item.plan.shipDate),
+    lineage: historyItems
+      .filter(history => history.productionPlanBatchId === item.productionPlanBatchId)
+      .map(history => {
+        const shippedQuantity = netShipmentQuantity(history.events);
+        return {
+          date: dateKey(history.plan.shipDate),
+          plannedQuantity: history.plannedQuantity,
+          shippedQuantity,
+          pendingQuantity: Math.max(0, history.plannedQuantity - shippedQuantity),
+          status: history.status,
+        };
+      }),
+  }));
+  return {
+    asOfDate: asOf.key,
+    generatedAt: now.toISOString(),
+    summary: {
+      itemCount: items.length,
+      pendingQuantity: items.reduce((sum, entry) => sum + entry.item.pendingQuantity, 0),
+      oneDayCount: items.filter(entry => entry.item.carryoverDayCount === 1).length,
+      twoDayCount: items.filter(entry => entry.item.carryoverDayCount === 2).length,
+      threePlusDayCount: items.filter(entry => entry.item.carryoverDayCount >= 3).length,
+      readyCount: items.filter(entry => entry.item.completedQuantity >= entry.item.pendingQuantity).length,
+      productionRiskCount: items.filter(entry => entry.item.completedQuantity < entry.item.pendingQuantity).length,
+      maxDayCount: items.reduce((maximum, entry) => Math.max(maximum, entry.item.carryoverDayCount), 0),
+    },
+    items,
+  };
+}
+
+export async function loadShipmentHistoryOverview(input: { from: unknown; to: unknown }) {
+  const from = parseShipmentDate(input.from);
+  const to = parseShipmentDate(input.to);
+  if (from.key > to.key) {
+    throw new DailyShipmentServiceError('出货历史的开始日期不能晚于结束日期', 'SHIPMENT_HISTORY_RANGE_INVALID');
+  }
+  const toExclusive = parseShipmentDate(shiftShipmentDateKey(to.key, 1));
+  const events = await prisma.shipmentEvent.findMany({
+    where: {
+      shippedAt: {
+        gte: new Date(`${from.key}T00:00:00+08:00`),
+        lt: new Date(`${toExclusive.key}T00:00:00+08:00`),
+      },
+    },
+    include: {
+      actor: { select: actorSelect },
+      item: {
+        include: {
+          plan: { select: { shipDate: true } },
+          productionPlanBatch: { include: { planOrder: true } },
+          workOrder: { select: { id: true, code: true, businessCode: true } },
+        },
+      },
+    },
+    orderBy: [{ shippedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+    take: 2000,
+  });
+  const serialized = events.map(event => ({
+    id: event.id,
+    eventType: event.eventType,
+    quantity: event.quantity,
+    netQuantity: event.eventType === ShipmentEventType.REVERSAL ? -event.quantity : event.quantity,
+    shippedAt: event.shippedAt.toISOString(),
+    reason: event.reason,
+    actor: { id: event.actor.id, name: event.actor.displayName || event.actor.username },
+    itemId: event.itemId,
+    workOrderCode: event.item.workOrder.businessCode || event.item.workOrder.code,
+    sourceOrderNo: event.item.productionPlanBatch.planOrder.sourceOrderNo,
+    customerName: event.item.productionPlanBatch.planOrder.customerName,
+    productName: event.item.productionPlanBatch.planOrder.productName,
+    specification: event.item.productionPlanBatch.planOrder.specification,
+    planShipDate: dateKey(event.item.plan.shipDate),
+    customerDueDate: event.item.dueDateSnapshot
+      ? dateKey(event.item.dueDateSnapshot)
+      : dateKey(event.item.productionPlanBatch.planOrder.customerDueDate),
+  }));
+  const shipments = serialized.filter(event => event.eventType === ShipmentEventType.SHIPMENT);
+  const reversals = serialized.filter(event => event.eventType === ShipmentEventType.REVERSAL);
+  const shippedQuantity = shipments.reduce((sum, event) => sum + event.quantity, 0);
+  const reversedQuantity = reversals.reduce((sum, event) => sum + event.quantity, 0);
+  return {
+    from: from.key,
+    to: to.key,
+    generatedAt: new Date().toISOString(),
+    summary: {
+      eventCount: serialized.length,
+      shipmentCount: shipments.length,
+      shippedQuantity,
+      reversalCount: reversals.length,
+      reversedQuantity,
+      netQuantity: Math.max(0, shippedQuantity - reversedQuantity),
+    },
+    events: serialized,
+  };
+}
+
 export async function addDailyShipmentItems(input: {
   actorUserId: string;
   shipDate: unknown;

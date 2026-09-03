@@ -1,4 +1,4 @@
-import DailyShipmentWorkbench from '@/components/daily-shipments/DailyShipmentWorkbench';
+import DailyShipmentWorkbench, { type ShipmentView } from '@/components/daily-shipments/DailyShipmentWorkbench';
 import { chinaDateKey } from '@/lib/china-date';
 import { loadDailyShipmentWorkbench } from '@/lib/daily-shipment-service';
 import { requirePageAccess } from '@/lib/page-access';
@@ -7,7 +7,7 @@ import './daily-shipment-workbench.css';
 
 export const dynamic = 'force-dynamic';
 
-export default async function DailyPlansPage({ searchParams }: { searchParams?: { date?: string } }) {
+export default async function DailyPlansPage({ searchParams }: { searchParams?: { date?: string; view?: string } }) {
   const user = await requirePageAccess('/workspace/daily-plans');
 
   let initialDate = chinaDateKey(new Date());
@@ -17,6 +17,10 @@ export default async function DailyPlansPage({ searchParams }: { searchParams?: 
     // Invalid URL dates fall back to today's Shanghai business date.
   }
 
+  const initialView: ShipmentView = ['today', 'warning', 'carryover', 'history'].includes(searchParams?.view || '')
+    ? searchParams!.view as ShipmentView
+    : 'today';
+
   const initialData = await loadDailyShipmentWorkbench({ shipDate: initialDate });
-  return <DailyShipmentWorkbench user={user} initialDate={initialDate} initialData={initialData} />;
+  return <DailyShipmentWorkbench user={user} initialDate={initialDate} initialData={initialData} initialView={initialView} />;
 }

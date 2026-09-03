@@ -31,13 +31,19 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import {
   fetchDailyShipmentWorkbench,
+  fetchShipmentCarryoverOverview,
+  fetchShipmentHistoryOverview,
+  fetchShipmentWarningOverview,
   mutateDailyShipment,
   type DailyShipmentCandidateDTO,
   type DailyShipmentEventDTO,
   type DailyShipmentItemDTO,
   type DailyShipmentPriority,
   type DailyShipmentWorkbenchDTO,
+  type ShipmentCarryoverOverviewDTO,
+  type ShipmentHistoryOverviewDTO,
   type ShipmentProgressState,
+  type ShipmentWarningOverviewDTO,
 } from '@/lib/daily-shipment-client';
 import type { CurrentUserDTO } from '@/types';
 
@@ -48,6 +54,7 @@ type CandidateDraft = {
   note: string;
 };
 type CandidateReservation = DailyShipmentCandidateDTO['reservations'][number];
+export type ShipmentView = 'today' | 'warning' | 'carryover' | 'history';
 type DialogState =
   | { kind: 'edit'; item: DailyShipmentItemDTO }
   | { kind: 'cancel'; item: DailyShipmentItemDTO }
@@ -88,6 +95,20 @@ const PRIORITY_META: Record<DailyShipmentPriority, { label: string; description:
 };
 
 const PRIORITY_VALUES: DailyShipmentPriority[] = ['URGENT', 'PRIORITY', 'NORMAL'];
+
+const ASSOCIATION_TEXT: Record<DailyShipmentItemDTO['associationType'], string> = {
+  AUTO_DUE_DATE: '交期自动关联',
+  MANUAL: '手工补单',
+  CARRYOVER: '顺延转入',
+  DUE_DATE_CHANGE: '交期变更同步',
+};
+
+const VIEW_META: Record<ShipmentView, { label: string; description: string }> = {
+  today: { label: '当日出货计划', description: '只看所选日期应发与顺延单' },
+  warning: { label: '未来 3 天预警', description: '提前提醒，不混入当日计划' },
+  carryover: { label: '连续顺延', description: '未出余额持续滚动' },
+  history: { label: '出货历史', description: '实发与撤销完整留痕' },
+};
 
 function chinaDateKey(value = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -239,18 +260,177 @@ function ShipmentMetricValue({ loaded, value, unit, detail }: { loaded: boolean;
   </strong>;
 }
 
+function InsightLoading({ label }: { label: string }) {
+  return <section className="shipment-insight-loading" role="status">
+    <LoaderCircle className="spin" size={30} />
+    <strong>{label}</strong>
+    <span>正在同步交期、生产进度和实际出货流水…</span>
+  </section>;
+}
+
+function WarningPanel({ data, date, loading, onDateChange, onRefresh, onOpenDate }: {
+  data: ShipmentWarningOverviewDTO | null;
+  date: string;
+  loading: boolean;
+  onDateChange: (date: string) => void;
+  onRefresh: () => void;
+  onOpenDate: (date: string) => void;
+}) {
+  const [riskOnly, setRiskOnly] = useState(false);
+  const [query, setQuery] = useState('');
+  if (!data) return <InsightLoading label="正在加载未来 3 天预警" />;
+  const term = query.trim().toLocaleLowerCase('zh-CN');
+  const visibleGroups = data.groups.map(group => ({
+    ...group,
+    items: group.items.filter(item => {
+      if (riskOnly && item.completedQuantity >= item.pendingQuantity) return false;
+      if (!term) return true;
+      return [item.workOrderCode, item.sourceOrderNo, item.customerName, item.productName, item.specification]
+        .some(value => value.toLocaleLowerCase('zh-CN').includes(term));
+    }),
+  })).filter(group => group.items.length > 0);
+  const warningLabel = (days: number) => days < 0
+    ? `已逾期 ${Math.abs(days)} 天`
+    : days === 0 ? '今日到期' : days === 1 ? '明日到期' : `距交期 ${days} 天`;
+  return <>
+    <section className="shipment-insight-head shipment-glass-surface">
+      <div><CalendarClock size={22} /><span><small>预警窗口</small><strong>{data.anchorDate} — {data.rangeEndDate}</strong></span></div>
+      <div className="shipment-insight-date"><label htmlFor="shipment-warning-date">基准日</label><input id="shipment-warning-date" type="date" value={date} onChange={event => onDateChange(event.target.value)} /></div>
+      <button type="button" onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={17} />刷新</button>
+    </section>
+    <section className="shipment-insight-kpis shipment-glass-surface" aria-label="交期预警指标">
+      <article><span>预警总数</span><strong>{data.summary.itemCount}<small>批</small></strong><BellRing /></article>
+      <article className="risk"><span>已逾期</span><strong>{data.summary.overdueCount}<small>批</small></strong><ShieldAlert /></article>
+      <article className="pending"><span>今日到期</span><strong>{data.summary.todayCount}<small>批</small></strong><CalendarCheck2 /></article>
+      <article className="priority-priority"><span>明日到期</span><strong>{data.summary.tomorrowCount}<small>批</small></strong><Clock3 /></article>
+      <article><span>2 天后</span><strong>{data.summary.twoDaysCount}<small>批</small></strong><CalendarClock /></article>
+      <article><span>3 天后</span><strong>{data.summary.threeDaysCount}<small>批</small></strong><CalendarClock /></article>
+      <article className="risk"><span>生产风险</span><strong>{data.summary.productionRiskCount}<small>批</small></strong><AlertTriangle /></article>
+      <article className="ready"><span>可按时出货</span><strong>{data.summary.readyCount}<small>批</small></strong><CheckCircle2 /></article>
+    </section>
+    <section className="shipment-insight-banner warning shipment-glass-surface">
+      <AlertTriangle size={19} /><div><strong>未来 3 天与历史逾期共 {data.summary.itemCount} 批，待出 {numberText(data.summary.pendingQuantity)} 件</strong><span>未来订单只在预警中提前展示，不会进入今日出货清单。</span></div>
+      <button type="button" className={riskOnly ? 'active' : ''} onClick={() => setRiskOnly(value => !value)}>{riskOnly ? '显示全部' : '只看生产风险'}</button>
+    </section>
+    <section className="shipment-insight-toolbar shipment-glass-surface">
+      <div><span>未来 3 天交期预警</span><strong>{data.anchorDate.slice(5)} — {data.rangeEndDate.slice(5)} · 含今日</strong></div>
+      <label><Search size={16} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索工单、产品、客户" /></label>
+      <b>{visibleGroups.reduce((sum, group) => sum + group.items.length, 0)} / {data.summary.itemCount} 批</b>
+    </section>
+    <section className="shipment-insight-table shipment-glass-surface">
+      <div className="shipment-table-scroll hm-scroll-region" tabIndex={0}>
+        <table><thead><tr><th>预警</th><th>订单 / 产品</th><th>客户交期</th><th>待出数量</th><th>生产完成</th><th>当前工序</th><th>出货关联</th><th>操作</th></tr></thead>
+          <tbody>{visibleGroups.map(group => <Fragment key={group.level}>
+            <tr className="shipment-group-row"><td colSpan={8}><strong>{group.label}</strong><span>{group.items.length} 批 · 待出 {numberText(group.items.reduce((sum, item) => sum + item.pendingQuantity, 0))} 件</span></td></tr>
+            {group.items.map(item => <tr key={item.batchId}>
+              <td><span className={`shipment-warning-badge level-${item.warningLevel.toLocaleLowerCase()}`}>{warningLabel(item.daysUntilDue)}</span></td>
+              <td><div className="shipment-order-identity"><strong>{item.workOrderCode}</strong><span>{item.customerName} · {item.productName}</span><small>{item.specification}</small></div></td>
+              <td><div className="shipment-due"><strong>{item.customerDueDate.slice(5)}</strong><span>原客户交期</span></div></td>
+              <td><div className="shipment-plan-quantity"><strong>{numberText(item.pendingQuantity)} 件</strong><small>计划 {numberText(item.batchQuantity)} · 已出 {numberText(item.shippedQuantity)}</small></div></td>
+              <td><div className="shipment-production"><span><b>{productionStageText(item.productionStage)}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}%</small></div></td>
+              <td><div className="shipment-current-process"><strong>{item.currentProcess}</strong><span>{item.completedQuantity >= item.pendingQuantity ? '已具备出货量' : '仍需继续生产'}</span></div></td>
+              <td><div className={`shipment-association ${item.associationHealthy ? 'healthy' : 'issue'}`}><strong>{item.associationHealthy ? '已自动关联' : '关联待修复'}</strong><span>{item.associatedPlanDate || '尚未生成日计划'}</span></div></td>
+              <td><button type="button" className="shipment-table-action" onClick={() => onOpenDate(item.daysUntilDue < 0 ? data.anchorDate : item.customerDueDate)}>查看日计划</button></td>
+            </tr>)}</Fragment>)}</tbody>
+        </table>
+      </div>
+    </section>
+  </>;
+}
+
+function CarryoverPanel({ data, date, loading, onDateChange, onRefresh, onShip }: {
+  data: ShipmentCarryoverOverviewDTO | null;
+  date: string;
+  loading: boolean;
+  onDateChange: (date: string) => void;
+  onRefresh: () => void;
+  onShip: (item: DailyShipmentItemDTO) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  if (!data) return <InsightLoading label="正在加载连续顺延清单" />;
+  const term = query.trim().toLocaleLowerCase('zh-CN');
+  const visible = data.items.filter(entry => !term || [entry.item.workOrderCode, entry.item.sourceOrderNo, entry.item.customerName, entry.item.productName, entry.item.specification]
+    .some(value => value.toLocaleLowerCase('zh-CN').includes(term)));
+  return <>
+    <section className="shipment-insight-head shipment-glass-surface">
+      <div><RotateCcw size={22} /><span><small>顺延基准</small><strong>截至 {data.asOfDate}</strong></span></div>
+      <div className="shipment-insight-date"><label htmlFor="shipment-carryover-date">截止日</label><input id="shipment-carryover-date" type="date" value={date} onChange={event => onDateChange(event.target.value)} /></div>
+      <button type="button" onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={17} />刷新</button>
+    </section>
+    <section className="shipment-insight-kpis shipment-glass-surface" aria-label="连续顺延指标">
+      <article className="carryover"><span>顺延中</span><strong>{data.summary.itemCount}<small>批</small></strong><RotateCcw /></article>
+      <article><span>顺延数量</span><strong>{numberText(data.summary.pendingQuantity)}<small>件</small></strong><Truck /></article>
+      <article><span>顺延 1 天</span><strong>{data.summary.oneDayCount}<small>批</small></strong><Clock3 /></article>
+      <article className="carryover"><span>顺延 2 天</span><strong>{data.summary.twoDayCount}<small>批</small></strong><Clock3 /></article>
+      <article className="risk"><span>3 天以上</span><strong>{data.summary.threePlusDayCount}<small>批</small></strong><ShieldAlert /></article>
+      <article className="ready"><span>已完工待出</span><strong>{data.summary.readyCount}<small>批</small></strong><CheckCircle2 /></article>
+      <article className="risk"><span>生产未完成</span><strong>{data.summary.productionRiskCount}<small>批</small></strong><AlertTriangle /></article>
+      <article><span>最长顺延</span><strong>{data.summary.maxDayCount}<small>天</small></strong><CalendarClock /></article>
+    </section>
+    <section className="shipment-insight-banner carryover shipment-glass-surface"><BellRing size={19} /><div><strong>{data.summary.itemCount} 批未出订单已连续滚动到当前日</strong><span>自动顺延只移动未出数量，原日期实发流水永久保留；生产结单状态不受影响。</span></div></section>
+    <section className="shipment-insight-toolbar shipment-glass-surface"><div><span>连续顺延清单</span><strong>只展示当前仍有待出数量的有效任务</strong></div><label><Search size={16} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索工单、产品、客户" /></label><b>{visible.length} / {data.items.length} 批</b></section>
+    <section className="shipment-insight-table shipment-glass-surface"><div className="shipment-table-scroll hm-scroll-region" tabIndex={0}><table><thead><tr><th>顺延状态</th><th>订单 / 产品</th><th>原客户交期</th><th>当前计划日</th><th>未出数量</th><th>生产 / 可出</th><th>顺延轨迹</th><th>操作</th></tr></thead><tbody>{visible.map(entry => <Fragment key={entry.item.id}><tr>
+      <td><span className={`shipment-carryover-badge ${entry.item.carryoverDayCount >= 3 ? 'critical' : ''}`}>{entry.item.carryoverDayCount >= 3 ? '连续' : '顺延'} {entry.item.carryoverDayCount} 天</span></td>
+      <td><OrderIdentity item={entry.item} /></td><td><div className="shipment-due"><strong>{entry.originalDueDate.slice(5)}</strong><span>原始交期</span></div></td><td><div className="shipment-due current"><strong>{entry.currentPlanDate.slice(5)}</strong><span>当前待发日</span></div></td>
+      <td><div className="shipment-plan-quantity"><strong>{numberText(entry.item.pendingQuantity)} 件</strong><small>原计划 {numberText(entry.item.batchQuantity)} 件</small></div></td>
+      <td><div className="shipment-production"><span><b>{entry.item.currentProcess}</b><em>{numberText(entry.item.completedQuantity)} / {numberText(entry.item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, entry.item.productionProgress)}%` }} /></div><small>{entry.item.completedQuantity >= entry.item.pendingQuantity ? '已具备出货量' : '等待生产完成'}</small></div></td>
+      <td><button type="button" className="shipment-trace-button" aria-expanded={expandedId === entry.item.id} onClick={() => setExpandedId(current => current === entry.item.id ? null : entry.item.id)}><History size={15} />{expandedId === entry.item.id ? '收起轨迹' : `查看 ${entry.lineage.length} 日轨迹`}</button></td>
+      <td><button type="button" className="shipment-table-action primary" disabled={entry.item.completedQuantity <= 0 || entry.item.pendingQuantity <= 0} onClick={() => onShip(entry.item)}><Truck size={15} />发送出货</button></td>
+    </tr>{expandedId === entry.item.id && <tr className="shipment-lineage-row"><td colSpan={8}><div>{entry.lineage.map((node, index) => <Fragment key={`${node.date}-${index}`}><span className={node.status.toLocaleLowerCase()}><b>{node.date.slice(5)}</b><em>计划 {numberText(node.plannedQuantity)} · 已出 {numberText(node.shippedQuantity)} · 未出 {numberText(node.pendingQuantity)}</em></span>{index < entry.lineage.length - 1 && <ArrowRight size={15} />}</Fragment>)}</div></td></tr>}</Fragment>)}</tbody></table></div></section>
+  </>;
+}
+
+function HistoryPanel({ data, from, to, loading, onRangeChange, onRefresh }: {
+  data: ShipmentHistoryOverviewDTO | null;
+  from: string;
+  to: string;
+  loading: boolean;
+  onRangeChange: (next: { from?: string; to?: string }) => void;
+  onRefresh: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  if (!data) return <InsightLoading label="正在加载出货历史" />;
+  const term = query.trim().toLocaleLowerCase('zh-CN');
+  const visible = data.events.filter(event => !term || [event.workOrderCode, event.sourceOrderNo, event.customerName, event.productName, event.specification, event.actor.name]
+    .some(value => value.toLocaleLowerCase('zh-CN').includes(term)));
+  return <>
+    <section className="shipment-insight-head shipment-glass-surface"><div><History size={22} /><span><small>出货历史</small><strong>{data.from} — {data.to}</strong></span></div><div className="shipment-history-range"><label>开始日<input type="date" value={from} onChange={event => onRangeChange({ from: event.target.value })} /></label><label>结束日<input type="date" value={to} onChange={event => onRangeChange({ to: event.target.value })} /></label></div><button type="button" onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={17} />刷新</button></section>
+    <section className="shipment-insight-kpis shipment-history-kpis shipment-glass-surface"><article><span>流水记录</span><strong>{data.summary.eventCount}<small>笔</small></strong><History /></article><article className="shipped"><span>实发笔数</span><strong>{data.summary.shipmentCount}<small>笔</small></strong><Truck /></article><article className="shipped"><span>实发数量</span><strong>{numberText(data.summary.shippedQuantity)}<small>件</small></strong><Send /></article><article className="risk"><span>撤销笔数</span><strong>{data.summary.reversalCount}<small>笔</small></strong><RotateCcw /></article><article className="risk"><span>撤销数量</span><strong>{numberText(data.summary.reversedQuantity)}<small>件</small></strong><RotateCcw /></article><article className="ready"><span>净出货</span><strong>{numberText(data.summary.netQuantity)}<small>件</small></strong><CheckCircle2 /></article></section>
+    <section className="shipment-insight-banner history shipment-glass-surface"><ShieldAlert size={19} /><div><strong>实发与撤销均保留独立流水</strong><span>撤销不删除原记录，净出货数量按实发减撤销计算。</span></div></section>
+    <section className="shipment-insight-toolbar shipment-glass-surface"><div><span>出货流水明细</span><strong>{data.from.slice(5)} — {data.to.slice(5)}</strong></div><label><Search size={16} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索工单、客户、产品或操作人" /></label><b>{visible.length} / {data.events.length} 笔</b></section>
+    <section className="shipment-insight-table shipment-history-table shipment-glass-surface"><div className="shipment-table-scroll hm-scroll-region" tabIndex={0}><table><thead><tr><th>流水类型</th><th>订单 / 产品</th><th>出货时间</th><th>数量</th><th>计划日</th><th>客户交期</th><th>操作人</th><th>备注</th></tr></thead><tbody>{visible.map(event => <tr key={event.id}><td><span className={`shipment-event-badge ${event.eventType.toLocaleLowerCase()}`}>{event.eventType === 'SHIPMENT' ? '实际出货' : '撤销实发'}</span></td><td><div className="shipment-order-identity"><strong>{event.workOrderCode}</strong><span>{event.customerName} · {event.productName}</span><small>{event.specification}</small></div></td><td><div className="shipment-time-track"><span className="actual"><b>{fullTimeText(event.shippedAt)}</b></span></div></td><td><strong className={event.netQuantity < 0 ? 'shipment-negative' : 'shipment-positive'}>{event.netQuantity > 0 ? '+' : ''}{numberText(event.netQuantity)} 件</strong></td><td>{event.planShipDate}</td><td>{event.customerDueDate}</td><td>{event.actor.name}</td><td>{event.reason || '—'}</td></tr>)}</tbody></table></div></section>
+  </>;
+}
+
 export default function DailyShipmentWorkbench({
   user,
   initialDate,
   initialData,
+  initialView = 'today',
+  initialWarningData = null,
+  initialCarryoverData = null,
+  initialHistoryData = null,
 }: {
   user: CurrentUserDTO;
   initialDate: string;
   initialData: DailyShipmentWorkbenchDTO;
+  initialView?: ShipmentView;
+  initialWarningData?: ShipmentWarningOverviewDTO | null;
+  initialCarryoverData?: ShipmentCarryoverOverviewDTO | null;
+  initialHistoryData?: ShipmentHistoryOverviewDTO | null;
 }) {
+  const [activeView, setActiveView] = useState<ShipmentView>(initialView);
   const [selectedDate, setSelectedDate] = useState(initialDate);
   const [data, setData] = useState<DailyShipmentWorkbenchDTO | null>(initialData);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [insightRefreshToken, setInsightRefreshToken] = useState(0);
+  const [warningData, setWarningData] = useState<ShipmentWarningOverviewDTO | null>(initialWarningData);
+  const [carryoverData, setCarryoverData] = useState<ShipmentCarryoverOverviewDTO | null>(initialCarryoverData);
+  const [historyData, setHistoryData] = useState<ShipmentHistoryOverviewDTO | null>(initialHistoryData);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [historyFrom, setHistoryFrom] = useState(`${initialDate.slice(0, 8)}01`);
+  const [historyTo, setHistoryTo] = useState(initialDate);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -267,16 +447,22 @@ export default function DailyShipmentWorkbench({
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const cacheRef = useRef(new Map<string, DailyShipmentWorkbenchDTO>([[initialDate, initialData]]));
-  const initialRequestRef = useRef(true);
 
   useEffect(() => {
-    if (initialRequestRef.current && selectedDate === initialDate && refreshToken === 0) {
-      initialRequestRef.current = false;
-      return undefined;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('date', selectedDate);
+      window.history.replaceState(window.history.state, '', url);
+    } catch {
+      // URL synchronization is optional in restricted browser shells.
     }
-    initialRequestRef.current = false;
     const controller = new AbortController();
     const cached = cacheRef.current.get(selectedDate);
+    if (cached && refreshToken === 0) {
+      setData(cached);
+      setLoading(false);
+      return () => controller.abort();
+    }
     setData(current => {
       if (cached) return cached;
       return current?.selectedDate === selectedDate ? current : null;
@@ -291,15 +477,56 @@ export default function DailyShipmentWorkbench({
     }).finally(() => {
       if (!controller.signal.aborted) setLoading(false);
     });
+    return () => controller.abort();
+  }, [initialDate, selectedDate, refreshToken]);
+
+  useEffect(() => {
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('date', selectedDate);
+      url.searchParams.set('view', activeView);
       window.history.replaceState(window.history.state, '', url);
     } catch {
       // URL synchronization is optional in restricted browser shells.
     }
+    if (activeView === 'today') {
+      setInsightLoading(false);
+      return undefined;
+    }
+    const hasInitialInsight = activeView === 'warning'
+      ? Boolean(initialWarningData)
+      : activeView === 'carryover'
+        ? Boolean(initialCarryoverData)
+        : Boolean(initialHistoryData);
+    const initialInsightMatches = activeView === 'history'
+      ? historyFrom === initialHistoryData?.from && historyTo === initialHistoryData?.to
+      : selectedDate === initialDate;
+    if (insightRefreshToken === 0 && hasInitialInsight && initialInsightMatches) {
+      setInsightLoading(false);
+      return undefined;
+    }
+    if (activeView === 'history' && historyFrom > historyTo) {
+      setHistoryData(null);
+      setError('出货历史的开始日期不能晚于结束日期');
+      setInsightLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setInsightLoading(true);
+    setError('');
+    const request = activeView === 'warning'
+      ? fetchShipmentWarningOverview(selectedDate, controller.signal).then(setWarningData)
+      : activeView === 'carryover'
+        ? fetchShipmentCarryoverOverview(selectedDate, controller.signal).then(setCarryoverData)
+        : fetchShipmentHistoryOverview(historyFrom, historyTo, controller.signal).then(setHistoryData);
+    void request.catch(reason => {
+      if ((reason as Error).name !== 'AbortError') {
+        setError(reason instanceof Error ? reason.message : '出货视图加载失败');
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setInsightLoading(false);
+    });
     return () => controller.abort();
-  }, [initialDate, selectedDate, refreshToken]);
+  }, [activeView, historyFrom, historyTo, initialCarryoverData, initialDate, initialHistoryData, initialWarningData, insightRefreshToken, selectedDate]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -396,6 +623,7 @@ export default function DailyShipmentWorkbench({
       if (!options?.keepDrawer) setDrawerOpen(false);
       setToast(successMessage);
       setRefreshToken(value => value + 1);
+      setInsightRefreshToken(value => value + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '操作失败');
     } finally {
@@ -528,6 +756,32 @@ export default function DailyShipmentWorkbench({
     />
 
     <div className="shipment-main">
+      <nav className="shipment-view-tabs shipment-glass-surface" aria-label="日出货计划视图">
+        {(['today', 'warning', 'carryover', 'history'] as const).map(view => {
+          const Icon = view === 'today' ? CalendarCheck2 : view === 'warning' ? BellRing : view === 'carryover' ? RotateCcw : History;
+          const count = view === 'today'
+            ? data?.summary.itemCount
+            : view === 'warning'
+              ? warningData?.summary.itemCount
+              : view === 'carryover'
+                ? carryoverData?.summary.itemCount
+                : historyData?.summary.eventCount;
+          return <button
+            type="button"
+            key={view}
+            className={activeView === view ? 'active' : ''}
+            aria-current={activeView === view ? 'page' : undefined}
+            onClick={() => { setActiveView(view); setError(''); setDrawerOpen(false); }}
+          >
+            <Icon size={18} />
+            <span><strong>{VIEW_META[view].label}</strong><small>{VIEW_META[view].description}</small></span>
+            {typeof count === 'number' && <b>{count}</b>}
+          </button>;
+        })}
+        <div className="shipment-view-rule"><CheckCircle2 size={16} /><span>生产结单与出货状态独立</span></div>
+      </nav>
+
+      {activeView === 'today' && <>
       <section className="shipment-topbar">
         <div id="shipment-navigation-trigger" className="shipment-navigation-trigger" aria-label="平台导航入口" />
         <div className="shipment-date-navigator">
@@ -562,7 +816,6 @@ export default function DailyShipmentWorkbench({
           {data && plan?.status === 'CONFIRMED' && <button type="button" className="primary" disabled={!allShipped || busy} onClick={() => openDialog({ kind: 'close' })}><PackageCheck size={17} />关闭计划</button>}
           <details><summary aria-label="更多操作"><Menu size={17} />更多</summary><div>
             <button type="button" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} />刷新数据</button>
-            {plan?.status === 'CONFIRMED' && !allShipped && <button type="button" onClick={() => openDialog({ kind: 'rollover' })}><RotateCcw size={15} />结转未完成订单</button>}
           </div></details>
         </div>
       </section>
@@ -629,7 +882,7 @@ export default function DailyShipmentWorkbench({
                 <tr className={`shipment-row-priority-${item.shipmentPriority.toLocaleLowerCase()} ${item.isCarryover ? 'is-carryover' : ''} ${item.status === 'SHIPPED' ? 'is-completed' : ''}`}>
                 <td><div className={`shipment-priority-badge priority-${item.shipmentPriority.toLocaleLowerCase()}`}><b>{PRIORITY_META[item.shipmentPriority].label}</b><small>{item.isCarryover ? '上日遗留' : item.status === 'SHIPPED' ? '已完成' : PRIORITY_META[item.shipmentPriority].description.split(' · ')[1]}</small></div></td>
                 <td><OrderIdentity item={item} /></td>
-                <td><div className="shipment-plan-quantity"><strong>{numberText(item.plannedQuantity)} 件</strong><span>{timeText(item.plannedShipAt)}</span>{item.note && <small title={item.note}>{item.note}</small>}</div></td>
+                <td><div className="shipment-plan-quantity"><strong>{numberText(item.plannedQuantity)} 件</strong><span>{timeText(item.plannedShipAt)}</span><em className={`shipment-source-chip source-${item.associationType.toLocaleLowerCase()}`}>{ASSOCIATION_TEXT[item.associationType]}</em>{item.note && <small title={item.note}>{item.note}</small>}</div></td>
                 <td><div className="shipment-production"><span><b>{item.currentProcess}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}% · {productionStageText(item.productionStage)}</small></div></td>
                 <td><div className="shipment-delivery-progress"><span className={`state-${item.progressState.toLocaleLowerCase()}`}>{STATE_TEXT[item.progressState]}</span><strong>{numberText(item.shippedQuantity)} / {numberText(item.plannedQuantity)} 件</strong><small>待出 {numberText(item.pendingQuantity)} 件</small></div></td>
                 <td><div className="shipment-time-track"><span><small>计划</small><b>{timeText(item.plannedShipAt)}</b></span><span className={item.actualShipAt ? 'actual' : 'missing'}><small>实发</small><b>{item.actualShipAt ? timeText(item.actualShipAt) : item.progressState === 'OVERDUE' ? '超时未出' : '尚未出货'}</b></span></div></td>
@@ -652,9 +905,36 @@ export default function DailyShipmentWorkbench({
           {!plan?.items.length && <button type="button" disabled={!canSupplement} onClick={openDrawer}><Plus size={17} />手工补单</button>}
         </div>}
       </section>
+      </>}
+
+      {activeView !== 'today' && error && <div className="shipment-error" role="alert"><AlertTriangle size={17} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误"><X size={16} /></button></div>}
+      {activeView === 'warning' && <WarningPanel
+        data={warningData}
+        date={selectedDate}
+        loading={insightLoading}
+        onDateChange={setSelectedDate}
+        onRefresh={() => setInsightRefreshToken(value => value + 1)}
+        onOpenDate={date => { setSelectedDate(date); setActiveView('today'); }}
+      />}
+      {activeView === 'carryover' && <CarryoverPanel
+        data={carryoverData}
+        date={selectedDate}
+        loading={insightLoading}
+        onDateChange={setSelectedDate}
+        onRefresh={() => setInsightRefreshToken(value => value + 1)}
+        onShip={item => openDialog({ kind: 'ship', item })}
+      />}
+      {activeView === 'history' && <HistoryPanel
+        data={historyData}
+        from={historyFrom}
+        to={historyTo}
+        loading={insightLoading}
+        onRangeChange={next => { if (next.from !== undefined) setHistoryFrom(next.from); if (next.to !== undefined) setHistoryTo(next.to); }}
+        onRefresh={() => setInsightRefreshToken(value => value + 1)}
+      />}
     </div>
 
-    {drawerOpen && <div className="shipment-candidate-layer open">
+    {activeView === 'today' && drawerOpen && <div className="shipment-candidate-layer open">
       <button type="button" className="shipment-drawer-scrim" aria-label="关闭本周订单抽屉" onClick={() => { if (!busy) { setDrawerOpen(false); setError(''); } }} />
       <aside role="dialog" aria-modal="true" aria-label="添加本周订单">
         <header><div><span>交期同日订单</span><h2>补充到 {shortDate(selectedDate)} 出货计划</h2><p>只显示客户交期与当天一致的已下达批次，未来交期不会提前混入。</p></div><button type="button" aria-label="关闭" disabled={busy} onClick={() => { setDrawerOpen(false); setError(''); }}><X size={20} /></button></header>

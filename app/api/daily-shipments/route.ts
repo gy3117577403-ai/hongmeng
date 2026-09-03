@@ -18,6 +18,9 @@ import {
   confirmDailyShipmentPlan,
   DailyShipmentServiceError,
   loadDailyShipmentWorkbench,
+  loadShipmentCarryoverOverview,
+  loadShipmentHistoryOverview,
+  loadShipmentWarningOverview,
   recordDailyShipment,
   releaseDailyShipmentReservation,
   rollOverDailyShipmentPlan,
@@ -73,6 +76,21 @@ export async function GET(request: NextRequest) {
   try {
     const user = await requireUser();
     const shipDate = request.nextUrl.searchParams.get('date') || chinaDateKey(new Date());
+    const view = request.nextUrl.searchParams.get('view') || 'today';
+    if (view === 'warning') {
+      return NextResponse.json({ ok: true, data: await loadShipmentWarningOverview({ anchorDate: shipDate }) });
+    }
+    if (view === 'carryover') {
+      return NextResponse.json({ ok: true, data: await loadShipmentCarryoverOverview({ asOfDate: shipDate }) });
+    }
+    if (view === 'history') {
+      const from = request.nextUrl.searchParams.get('from') || shipDate.slice(0, 8) + '01';
+      const to = request.nextUrl.searchParams.get('to') || shipDate;
+      return NextResponse.json({ ok: true, data: await loadShipmentHistoryOverview({ from, to }) });
+    }
+    if (view !== 'today') {
+      throw new DailyShipmentServiceError('不支持的出货视图', 'SHIPMENT_VIEW_INVALID');
+    }
     const data = await loadDailyShipmentWorkbench({
       shipDate,
       ...(canRunGetReconciliation(user.access, ['PLANNING'])

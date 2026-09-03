@@ -151,6 +151,117 @@ export type DailyShipmentWorkbenchDTO = {
   candidates: DailyShipmentCandidateDTO[];
 };
 
+export type ShipmentWarningLevel = 'OVERDUE' | 'TODAY' | 'T1' | 'T2' | 'T3';
+
+export type ShipmentWarningItemDTO = {
+  batchId: string;
+  workOrderId: string;
+  workOrderCode: string;
+  sourceOrderNo: string;
+  customerName: string;
+  productName: string;
+  specification: string;
+  priority: string;
+  customerDueDate: string;
+  daysUntilDue: number;
+  warningLevel: ShipmentWarningLevel;
+  batchQuantity: number;
+  shippedQuantity: number;
+  pendingQuantity: number;
+  completedQuantity: number;
+  productionProgress: number;
+  productionStage: string;
+  currentProcess: string;
+  associationType: DailyShipmentAssociationType | null;
+  associatedPlanDate: string | null;
+  associationHealthy: boolean;
+};
+
+export type ShipmentWarningOverviewDTO = {
+  anchorDate: string;
+  rangeEndDate: string;
+  generatedAt: string;
+  summary: {
+    itemCount: number;
+    pendingQuantity: number;
+    overdueCount: number;
+    todayCount: number;
+    tomorrowCount: number;
+    twoDaysCount: number;
+    threeDaysCount: number;
+    productionRiskCount: number;
+    readyCount: number;
+    associationIssueCount: number;
+  };
+  groups: Array<{
+    level: ShipmentWarningLevel;
+    label: string;
+    itemCount: number;
+    pendingQuantity: number;
+    items: ShipmentWarningItemDTO[];
+  }>;
+};
+
+export type ShipmentCarryoverLineageDTO = {
+  date: string;
+  plannedQuantity: number;
+  shippedQuantity: number;
+  pendingQuantity: number;
+  status: DailyShipmentItemStatus;
+};
+
+export type ShipmentCarryoverOverviewDTO = {
+  asOfDate: string;
+  generatedAt: string;
+  summary: {
+    itemCount: number;
+    pendingQuantity: number;
+    oneDayCount: number;
+    twoDayCount: number;
+    threePlusDayCount: number;
+    readyCount: number;
+    productionRiskCount: number;
+    maxDayCount: number;
+  };
+  items: Array<{
+    item: DailyShipmentItemDTO;
+    originalDueDate: string;
+    currentPlanDate: string;
+    lineage: ShipmentCarryoverLineageDTO[];
+  }>;
+};
+
+export type ShipmentHistoryOverviewDTO = {
+  from: string;
+  to: string;
+  generatedAt: string;
+  summary: {
+    eventCount: number;
+    shipmentCount: number;
+    shippedQuantity: number;
+    reversalCount: number;
+    reversedQuantity: number;
+    netQuantity: number;
+  };
+  events: Array<{
+    id: string;
+    eventType: 'SHIPMENT' | 'REVERSAL';
+    quantity: number;
+    netQuantity: number;
+    shippedAt: string;
+    reason: string | null;
+    actor: { id: string; name: string };
+    itemId: string;
+    workOrderCode: string;
+    sourceOrderNo: string;
+    customerName: string;
+    productName: string;
+    specification: string;
+    planShipDate: string;
+    customerDueDate: string;
+  }>;
+};
+
 type ApiEnvelope<T> = { ok: boolean; data?: T; error?: string; message?: string; code?: string };
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -168,6 +279,28 @@ export async function fetchDailyShipmentWorkbench(date: string, signal?: AbortSi
     signal,
   });
   return parseResponse<DailyShipmentWorkbenchDTO>(response);
+}
+
+export async function fetchShipmentWarningOverview(date: string, signal?: AbortSignal): Promise<ShipmentWarningOverviewDTO> {
+  const query = new URLSearchParams({ view: 'warning', date });
+  const response = await fetch(`/api/daily-shipments?${query.toString()}`, { cache: 'no-store', signal });
+  return parseResponse<ShipmentWarningOverviewDTO>(response);
+}
+
+export async function fetchShipmentCarryoverOverview(date: string, signal?: AbortSignal): Promise<ShipmentCarryoverOverviewDTO> {
+  const query = new URLSearchParams({ view: 'carryover', date });
+  const response = await fetch(`/api/daily-shipments?${query.toString()}`, { cache: 'no-store', signal });
+  return parseResponse<ShipmentCarryoverOverviewDTO>(response);
+}
+
+export async function fetchShipmentHistoryOverview(
+  from: string,
+  to: string,
+  signal?: AbortSignal,
+): Promise<ShipmentHistoryOverviewDTO> {
+  const query = new URLSearchParams({ view: 'history', from, to });
+  const response = await fetch(`/api/daily-shipments?${query.toString()}`, { cache: 'no-store', signal });
+  return parseResponse<ShipmentHistoryOverviewDTO>(response);
 }
 
 export async function mutateDailyShipment(
