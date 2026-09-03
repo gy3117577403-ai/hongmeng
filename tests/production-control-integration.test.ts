@@ -130,6 +130,26 @@ test('production control PostgreSQL: facts, replay, pauses, branches, dates, per
     await prisma.dailyProcessTask.deleteMany({ where: { workOrderId: { in: ids } } });
     if (planId) await prisma.dailyProductionPlan.delete({ where: { id: planId } });
     await prisma.productionControlEvent.deleteMany({ where: { workOrderId: { in: ids } } });
+    const shipmentItems = await prisma.dailyShipmentPlanItem.findMany({
+      where: { workOrderId: { in: ids } },
+      select: { id: true, planId: true },
+    });
+    const shipmentItemIds = shipmentItems.map(item => item.id);
+    const shipmentPlanIds = [...new Set(shipmentItems.map(item => item.planId))];
+    if (shipmentItemIds.length) {
+      await prisma.shipmentEvent.deleteMany({ where: { itemId: { in: shipmentItemIds } } });
+    }
+    if (shipmentPlanIds.length) {
+      await prisma.dailyShipmentRevision.deleteMany({ where: { planId: { in: shipmentPlanIds } } });
+    }
+    if (shipmentItemIds.length) {
+      await prisma.dailyShipmentPlanItem.deleteMany({ where: { id: { in: shipmentItemIds } } });
+    }
+    if (shipmentPlanIds.length) {
+      await prisma.dailyShipmentPlan.deleteMany({
+        where: { id: { in: shipmentPlanIds }, items: { none: {} } },
+      });
+    }
     await prisma.productionPlanOrder.deleteMany({ where: { sourceOrderNo: prefix } });
     const branches = await prisma.workOrder.findMany({ where: { id: { in: ids }, parentWorkOrderId: { not: null } }, select: { id: true } });
     for (const branch of branches) {
