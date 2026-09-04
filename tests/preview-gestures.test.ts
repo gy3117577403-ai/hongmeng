@@ -15,6 +15,7 @@ test('document rotations preserve mixed-page direction and use sparse relative q
 test('document settings identify stable file endpoints without confusing other resource namespaces', () => {
   assert.equal(documentDisplaySettingsUrl('/api/drawing-library/files/a/content?reload=1'), '/api/drawing-library/files/a/display-settings');
   assert.equal(documentDisplaySettingsUrl('/api/resource-files/b/content'), '/api/resource-files/b/display-settings');
+  assert.equal(documentDisplaySettingsUrl('/api/sample-photos/c/content'), '/api/sample-photos/c/display-settings');
   assert.equal(documentDisplaySettingsUrl('/api/connector-assembly-manual-assets/a/content'), null);
   assert.deepEqual(orientationFromPrintSnapshot({}, 'a'), { revision: 0, pageRotations: {} });
   assert.deepEqual(orientationFromPrintSnapshot({ documentOrientations: { a: { revision: 2, pageRotations: { '2': 270 } } } }, 'a'), { revision: 2, pageRotations: { '2': 270 } });

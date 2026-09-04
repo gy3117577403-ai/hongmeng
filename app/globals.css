@@ -6981,6 +6981,59 @@ input:focus-visible {
   background-size: 18px 18px;
 }
 
+/* Shared dashboard viewer geometry: consumers must not re-implement this
+   contract in page-local CSS. The scroll surface owns centering and the stage
+   owns scrolling, so fit/reset never creates a padded phantom overflow area. */
+.dashboard-preview-viewer .viewer-stage {
+  display: block;
+  padding: 0;
+  overflow: auto;
+}
+
+.drawing-preview-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 8px;
+  background: #f3f6fa;
+}
+
+.drawing-preview-mode button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  color: #64748b;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.drawing-preview-mode button.active {
+  color: #d94f00;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 10%);
+}
+
+.drawing-preview-mode button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.dashboard-preview-viewer .viewer-scroll-surface {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+}
+
+.dashboard-preview-viewer .viewer-gesture-content {
+  transform-origin: center center;
+}
+
 .pdf-stage canvas {
   display: block;
   max-width: none;

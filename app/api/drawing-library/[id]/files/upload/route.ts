@@ -8,6 +8,7 @@ import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link
 import { prisma } from '@/lib/prisma';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { safeFilename, validateFileContent } from '@/lib/validation';
+import { inspectMediaImage } from '@/lib/media-assets';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,6 +42,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const body = Buffer.from(await up.arrayBuffer());
     const err = validateFileContent(up.name, up.type, up.size, body);
     if (err) return NextResponse.json({ ok: false, error: err }, { status: 400 });
+    const mimeType = up.type || 'application/octet-stream';
+    const imageMetadata = await inspectMediaImage(body, mimeType).catch(() => null);
+    if (mimeType.startsWith('image/') && !imageMetadata) return NextResponse.json({ ok: false, error: '图片像素过大、已损坏或格式不受支持' }, { status: 400 });
+    const sha256 = crypto.createHash('sha256').update(body).digest('hex');
 
     const [item, category] = await Promise.all([
       prisma.drawingLibraryItem.findFirst({ where: { id: params.id, deletedAt: null } }),
@@ -51,7 +56,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (!item || !category) return NextResponse.json({ ok: false, error: '图纸资料记录或分类不存在' }, { status: 404 });
 
     const key = `drawing-library/${item.id}/${category.code}/${ymd(new Date())}/${crypto.randomUUID()}-${safeFilename(up.name)}`;
-    await putObject({ key, body, contentType: up.type || 'application/octet-stream', originalName: up.name });
+    await putObject({ key, body, contentType: mimeType, originalName: up.name });
 
     let result;
     try {
@@ -62,15 +67,27 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           select: { version: true },
         });
         const version = `V1.${files.reduce((n, existing) => Math.max(n, versionMinor(existing.version)), -1) + 1}`;
+        const mediaAsset = await tx.mediaAsset.create({ data: {
+          originalObjectKey: key,
+          sha256,
+          mimeType,
+          byteSize: up.size,
+          originalWidth: imageMetadata?.width || null,
+          originalHeight: imageMetadata?.height || null,
+          exifOrientation: imageMetadata?.orientation || null,
+        } });
         const created = await tx.drawingLibraryFile.create({
           data: {
             libraryItemId: item.id,
             categoryId: category.id,
             originalName: up.name,
             displayName,
-            mimeType: up.type || 'application/octet-stream',
+            mimeType,
             size: up.size,
             objectKey: key,
+            mediaAssetId: mediaAsset.id,
+            sha256,
+            sourceType: 'MANUAL_UPLOAD',
             version,
             uploadedById: user.id,
             remark,

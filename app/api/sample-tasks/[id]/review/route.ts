@@ -68,7 +68,7 @@ function finiteNumber(value: unknown, min: number, max: number, integer = false)
 
 const ENTRY_TEXT_FIELDS: Record<string, readonly string[]> = {
   PROCESS_TIME: ['unitLabel', 'remark'],
-  STRIPPING: ['model', 'outerPeelMm', 'innerPeelMm', 'insertionLengthMm', 'positionLabel', 'remark'],
+  STRIPPING: ['model', 'outerPeelMm', 'innerPeelMm', 'insertionLengthMm', 'positionLabel', 'remark', 'publicationDecision'],
   MATERIAL: ['name', 'specification', 'length', 'quantity', 'unit', 'tolerance', 'position', 'remark'],
   NOTICE: ['category', 'severity', 'content', 'processName', 'remark'],
   CUSTOM: ['value', 'unit', 'remark'],
@@ -86,6 +86,12 @@ async function sanitizeEntryEdit(
   for (const key of ENTRY_TEXT_FIELDS[kind] || []) {
     if (!own(patch, key)) continue;
     next[key] = cleanSampleText(patch[key], key === 'content' || key === 'remark' ? 1000 : 180);
+  }
+
+  if (kind === 'STRIPPING' && own(patch, 'publicationDecision')) {
+    next.publicationDecision = patch.publicationDecision === 'REPLACE_CURRENT' || patch.publicationDecision === 'RECORD_ONLY'
+      ? patch.publicationDecision
+      : 'APPEND';
   }
 
   if (kind === 'PROCESS_TIME') {
@@ -162,6 +168,12 @@ function processSeconds(payloadValue: Prisma.JsonValue): number | null {
     .filter(value => Number.isFinite(value) && value > 0);
   if (!measurements.length) return null;
   return measurements.reduce((sum, value) => sum + value, 0) / measurements.length;
+}
+
+function validStrippingDecimal(value: unknown): boolean {
+  if (value === null || value === undefined || value === '') return true;
+  const text = String(value).normalize('NFKC').replace(/，/g, '.').replace(/\s+/g, '');
+  return /^\d{1,6}(?:\.\d{1,3})?$/.test(text) && Number(text) <= 100_000;
 }
 
 function photoCategoryCode(category: string): string {
@@ -493,7 +505,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           issues.push({ itemType: 'entry', itemId: entry.id, title: entry.label || entry.kind, message: '记录不属于可确认状态，请先编辑或重新提交。' });
           continue;
         }
-        if (entry.reviewStatus !== 'PENDING' || entry.kind !== 'PROCESS_TIME') continue;
+        if (entry.reviewStatus !== 'PENDING') continue;
+        if (entry.kind === 'STRIPPING') {
+          const payload = jsonRecord(entry.payload);
+          const model = cleanSampleText(payload.model, 160);
+          const dimensions = [payload.outerPeelMm, payload.innerPeelMm, payload.insertionLengthMm];
+          const hasDimension = dimensions.some(value => cleanSampleText(value, 30));
+          if (!model) issues.push({ itemType: 'entry', itemId: entry.id, title: entry.label || '剥皮参数', message: '缺少连接器型号，不能发布为正式参数。' });
+          if (!hasDimension) issues.push({ itemType: 'entry', itemId: entry.id, title: model || entry.label || '剥皮参数', message: '外剥、内剥、入长至少填写一项。' });
+          if (dimensions.some(value => !validStrippingDecimal(value))) issues.push({ itemType: 'entry', itemId: entry.id, title: model || entry.label || '剥皮参数', message: '剥皮尺寸必须是 0 到 100000 之间、最多三位小数的数字。' });
+          continue;
+        }
+        if (entry.kind !== 'PROCESS_TIME') continue;
         const payload = jsonRecord(entry.payload);
         const processDefinitionId = cleanSampleText(payload.processDefinitionId, 80);
         const processName = cleanSampleText(payload.processName, 60);
@@ -594,7 +617,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         if (entry.reviewStatus !== 'PENDING') continue;
         const resolvedProcessPayload = resolvedProcessPayloads.get(entry.id);
         const resolvedPayload = resolvedProcessPayload || entry.payload;
-        const publishMode = hasMeaningfulBusinessValue(entry.kind, entry.label, resolvedPayload) ? 'APPEND' : 'RECORD_ONLY';
+        const resolvedRecord = jsonRecord(resolvedPayload);
+        const publishMode = entry.kind === 'STRIPPING' && resolvedRecord.publicationDecision === 'RECORD_ONLY'
+          ? 'RECORD_ONLY'
+          : entry.kind === 'STRIPPING' && resolvedRecord.publicationDecision === 'REPLACE_CURRENT'
+            ? 'REPLACE_MATCHING'
+            : hasMeaningfulBusinessValue(entry.kind, entry.label, resolvedPayload) ? 'APPEND' : 'RECORD_ONLY';
         const publication = await publishSampleEntry(tx, task, { ...entry, payload: resolvedPayload }, actor, publishMode);
         const updated = await tx.sampleDataEntry.updateMany({
           where: { id: entry.id, taskId: task.id, version: entry.version, submissionRevision, reviewStatus: 'PENDING', deletedAt: null },

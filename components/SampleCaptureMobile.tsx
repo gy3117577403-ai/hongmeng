@@ -1017,7 +1017,10 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
             <label><span>内剥（mm）</span><input inputMode="decimal" disabled={readOnly} value={row.innerPeelMm} placeholder="0" onChange={event => updateStrippingRow(row.rowId, { innerPeelMm: event.target.value })} /></label>
             <label><span>入长（mm）</span><input inputMode="decimal" disabled={readOnly} value={row.insertionLengthMm} placeholder="0" onChange={event => updateStrippingRow(row.rowId, { insertionLengthMm: event.target.value })} /></label>
           </div>
-          {(row.positionLabel || row.remark) && <small>历史扩展信息已保留，审核端仍可查看。</small>}
+          <div className="sample-stripping-context-fields">
+            <label><span>位置 / 端位</span><input disabled={readOnly} value={row.positionLabel} placeholder="例如 A端、B端或左侧" onChange={event => updateStrippingRow(row.rowId, { positionLabel: event.target.value })} /></label>
+            <label><span>参数备注</span><input disabled={readOnly} value={row.remark} placeholder="例如 线材/端子差异" onChange={event => updateStrippingRow(row.rowId, { remark: event.target.value })} /></label>
+          </div>
           {strippingErrors[row.rowId] && <p className="sample-row-error" role="alert">{strippingErrors[row.rowId]}</p>}
         </article>)}
       </div>

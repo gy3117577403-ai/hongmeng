@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { DocumentOrientationControls, DocumentPreviewFrame, requestPreviewLeave, useDocumentOrientation, type DocumentOrientationController } from '@/components/DocumentOrientation';
 import { usePreviewGestures } from '@/components/usePreviewGestures';
+import type { PreviewFitMode } from '@/lib/preview-gestures';
 
 type ImageViewerProps = {
   fileId: string;
@@ -18,6 +19,8 @@ type ImageViewerProps = {
   onAddToToc?: (title: string, page: number) => Promise<boolean>;
   onCopyPageLink?: (page: number) => Promise<void> | void;
   gestureResetKey?: string;
+  initialFitMode?: Exclude<PreviewFitMode, 'manual'>;
+  showFullscreen?: boolean;
 };
 
 export function ImageViewer(props: ImageViewerProps) {
@@ -37,12 +40,14 @@ function ImageFileViewer({
   onAddToToc,
   onCopyPageLink,
   gestureResetKey,
+  initialFitMode = dashboardMode ? 'fit-height' : 'fit-window',
+  showFullscreen = true,
 }: ImageViewerProps) {
   const [fullscreen, setFullscreen] = useState(false);
   const source = contentUrl || `/api/resource-files/${fileId}/content`;
   const fallbackDownloadUrl = downloadUrl || `/api/resource-files/${fileId}/download`;
   const orientation = useDocumentOrientation(source);
-  const common = { source, title, dashboardMode, downloadUrl: fallbackDownloadUrl, readingMode, page, pageCount, onPageChange, onAddToToc, onCopyPageLink, gestureResetKey };
+  const common = { source, title, dashboardMode, downloadUrl: fallbackDownloadUrl, readingMode, page, pageCount, onPageChange, onAddToToc, onCopyPageLink, gestureResetKey, initialFitMode, showFullscreen };
 
   return (
     <DocumentPreviewFrame orientation={orientation} fullscreen={fullscreen} title={title} onClose={() => setFullscreen(false)}>
@@ -67,6 +72,8 @@ function ImageCanvas({
   onAddToToc,
   onCopyPageLink,
   gestureResetKey,
+  initialFitMode,
+  showFullscreen,
 }: {
   orientation: DocumentOrientationController;
   source: string;
@@ -83,6 +90,8 @@ function ImageCanvas({
   onAddToToc?: (title: string, page: number) => Promise<boolean>;
   onCopyPageLink?: (page: number) => Promise<void> | void;
   gestureResetKey?: string;
+  initialFitMode: Exclude<PreviewFitMode, 'manual'>;
+  showFullscreen: boolean;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
@@ -101,7 +110,7 @@ function ImageCanvas({
     resetKey: `${gestureResetKey || source}|${reloadKey}`,
     controlledRotation: orientation.draft[1] || 0,
     memoryKey: orientation.key,
-    initialFitMode: dashboardMode ? 'fit-height' : 'fit-window',
+    initialFitMode,
     scrollWheel: dashboardMode,
   });
 
@@ -158,9 +167,43 @@ function ImageCanvas({
 
   const displayScale = gestures.zoom / Math.max(0.001, gestures.committedZoom);
   const scrollSurfaceStyle = dashboardMode ? {
-    width: `${Math.max(box.width, gestures.rotatedSize.width * gestures.zoom + 40)}px`,
-    height: `${Math.max(box.height, gestures.rotatedSize.height * gestures.zoom + 40)}px`,
+    width: `${Math.max(box.width, gestures.rotatedSize.width * gestures.zoom)}px`,
+    height: `${Math.max(box.height, gestures.rotatedSize.height * gestures.zoom)}px`,
   } : undefined;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+      if ((event.key === 'Escape' || event.key === 'Esc') && fullscreen && onClose) {
+        event.preventDefault();
+        onClose();
+      } else if (event.key === '+' || event.key === '=') {
+        event.preventDefault();
+        gestures.zoomBy(1.15);
+      } else if (event.key === '-') {
+        event.preventDefault();
+        gestures.zoomBy(1 / 1.15);
+      } else if (event.key === '0') {
+        event.preventDefault();
+        gestures.reset();
+      } else if (event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        orientation.rotate(event.shiftKey ? -90 : 90, pageCount);
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        gestures.setFitMode('fit-window');
+      } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+        const node = stageRef.current;
+        if (!node) return;
+        event.preventDefault();
+        const amount = event.shiftKey ? 120 : 48;
+        node.scrollBy({ left: event.key === 'ArrowLeft' ? -amount : event.key === 'ArrowRight' ? amount : 0, top: event.key === 'ArrowUp' ? -amount : event.key === 'ArrowDown' ? amount : 0 });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [fullscreen, gestures, onClose, orientation, pageCount]);
 
   return (
     <div className={`${fullscreen ? 'image-viewer fullscreen-viewer' : 'image-viewer'}${readingMode ? ' reading-viewer' : ''}${dashboardMode ? ' dashboard-preview-viewer' : ''}`}>
@@ -175,10 +218,10 @@ function ImageCanvas({
             <button type="button" aria-label="缩小" title="缩小" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)}>−</button>
             <span className="viewer-zoom-value" aria-live="polite">{Math.round(gestures.zoom * 100)}%</span>
             <button type="button" aria-label="放大" title="放大" disabled={loading} onClick={() => gestures.zoomBy(1.15)}>＋</button>
-            <button className={gestures.fitMode === 'fit-height' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-height')}>适高</button>
+            <button className={gestures.fitMode === 'fit-window' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>适窗</button>
 
-            {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
-            <details className="viewer-more"><summary aria-label="更多预览操作" title="更多预览操作">更多</summary><div><button type="button" onClick={() => gestures.setFitMode('fit-width')}>适应宽度</button><button type="button" onClick={() => gestures.setFitMode('fit-window')}>适应整页</button><button type="button" onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={() => requestPreviewLeave(() => window.location.assign(source))}>系统打开</button></div></details>
+            {showFullscreen ? (fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>) : null}
+            <details className="viewer-more"><summary aria-label="更多预览操作" title="更多预览操作">更多</summary><div><button type="button" onClick={() => gestures.setFitMode('fit-height')}>适应高度</button><button type="button" onClick={() => gestures.setFitMode('fit-width')}>适应宽度</button><button type="button" onClick={() => gestures.setFitMode('fit-window')}>适应整页</button><button type="button" onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" onClick={gestures.recenter}>居中</button><button type="button" onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={() => requestPreviewLeave(() => window.location.assign(source))}>系统打开</button></div></details>
           </> : <>
           {pageCount > 1 && <button type="button" disabled={page <= 1} onClick={() => changePage(page - 1)}>上一页</button>}
           {pageCount > 1 && <span className="image-page-count">{page} / {pageCount}</span>}
@@ -186,7 +229,7 @@ function ImageCanvas({
           <button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>适应窗口</button>
 
 
-          {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
+          {showFullscreen ? (fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>) : null}
           {onAddToToc && <button className="viewer-toc-action" type="button" disabled={loading} aria-expanded={tocOpen} onClick={openQuickToc}>添加至目录</button>}
           {readingMode ? (
             <details className="viewer-more"><summary>更多</summary><div><button type="button" onClick={() => gestures.zoomBy(1 / 1.15)}>缩小</button><button type="button" onClick={() => gestures.zoomBy(1.15)}>放大</button><button type="button" onClick={() => gestures.setFitMode('fit-width')}>适宽</button><button type="button" onClick={() => gestures.setFitMode('fit-window')}>整页</button><button type="button" onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={gestures.rotation === 0} onClick={() => orientation.restoreOriginal()}>重置旋转</button><button type="button" onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={() => requestPreviewLeave(() => window.location.assign(source))}>系统打开</button>{onCopyPageLink && <button type="button" onClick={() => void onCopyPageLink(page)}>复制当前页链接</button>}</div></details>
@@ -203,6 +246,10 @@ function ImageCanvas({
         onPointerUp={gestures.onPointerUp}
         onPointerCancel={gestures.onPointerCancel}
         onDoubleClick={gestures.onDoubleClick}
+        tabIndex={0}
+        role="region"
+        aria-label={`${title} 图片预览，可使用加减号缩放、R 旋转、0 重置`}
+        aria-busy={loading}
       >
         {loading && <ViewerState title="图片加载中" detail="正在读取同源文件流" />}
         {error && <ViewerState title="图片加载失败" detail="图片加载失败，可重新加载或下载原图" error onReload={() => setReloadKey(value => value + 1)} downloadUrl={downloadUrl} />}

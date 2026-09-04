@@ -43,6 +43,7 @@ function entry(kind: SampleDataEntryDTO['kind'], payload: Record<string, unknown
 function task(entries: SampleDataEntryDTO[] = []): SampleTaskDTO {
   return {
     id: 'task-1',
+    dataPurpose: 'PRODUCTION',
     code: 'YP-20260902-ABC123',
     qrCode: 'opaque-qr-code',
     captureUrl: '/sample-capture/opaque-qr-code',

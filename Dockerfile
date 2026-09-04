@@ -1,5 +1,5 @@
 FROM node:20-alpine AS base
-ARG APP_VERSION=v1.34.120
+ARG APP_VERSION=v1.34.121
 ARG APP_REVISION=local
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 APP_VERSION=$APP_VERSION APP_REVISION=$APP_REVISION
@@ -15,7 +15,7 @@ RUN cp -r .next/static .next/standalone/.next/static && if [ -d public ]; then c
 RUN node -e "const fs = require('node:fs'); fs.writeFileSync('.next/standalone/.release-image.json', JSON.stringify({ version: process.env.APP_VERSION, revision: process.env.APP_REVISION }) + '\\n')"
 
 FROM base AS runner
-ARG APP_VERSION=v1.34.120
+ARG APP_VERSION=v1.34.121
 ARG APP_REVISION=local
 LABEL org.opencontainers.image.title="hongmeng-workorder-resource" \
       org.opencontainers.image.version=$APP_VERSION \
@@ -42,7 +42,7 @@ CMD ["./docker-entrypoint.sh"]
 # one content layer instead of many independent application COPY layers. Preserve
 # the verified runner filesystem, then re-declare the OCI runtime configuration.
 FROM scratch AS final
-ARG APP_VERSION=v1.34.120
+ARG APP_VERSION=v1.34.121
 ARG APP_REVISION=local
 LABEL org.opencontainers.image.title="hongmeng-workorder-resource" \
       org.opencontainers.image.version=$APP_VERSION \

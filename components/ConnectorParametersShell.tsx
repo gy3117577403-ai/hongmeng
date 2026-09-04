@@ -45,6 +45,7 @@ const emptyForm: ParameterForm = {
 const actionText: Record<string, string> = {
   create_connector_parameter: '新增连接器参数',
   update_connector_parameter: '编辑连接器参数',
+  revise_connector_parameter: '修订已发布连接器参数',
   delete_connector_parameter: '删除连接器参数',
   restore_connector_parameter: '恢复连接器参数',
   import_connector_parameters: '导入连接器参数',
@@ -116,9 +117,10 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [items, setItems] = useState<ConnectorParameterDTO[]>([]);
   const [files, setFiles] = useState<ConnectorParameterFileDTO[]>([]);
   const [deletedItems, setDeletedItems] = useState<ConnectorParameterDTO[]>([]);
-  const [stats, setStats] = useState<ConnectorParameterStatsDTO>({ total: 0, missingOuter: 0, missingInner: 0, missingInsertion: 0, missingAny: 0, highlighted: 0, fileCount: 0 });
+  const [stats, setStats] = useState<ConnectorParameterStatsDTO>({ total: 0, missingOuter: 0, missingInner: 0, missingInsertion: 0, missingAny: 0, highlighted: 0, fileCount: 0, linked: 0, sampleSynced: 0, history: 0 });
   const [keyword, setKeyword] = useState('');
   const [filter, setFilter] = useState('all');
+  const [view, setView] = useState<'all' | 'linked' | 'sample' | 'history'>('all');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -183,6 +185,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const formDirty = !!modal && JSON.stringify(form) !== JSON.stringify(formFrom(modal.item));
   const currentQuery = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+    if (view !== 'all') params.set('view', view);
     if (keyword.trim()) params.set('keyword', keyword.trim());
     if (filter === 'outer') params.set('missing', 'outer');
     if (filter === 'inner') params.set('missing', 'inner');
@@ -190,7 +193,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     if (filter === 'any') params.set('missing', 'any');
     if (filter === 'highlighted') params.set('highlighted', 'true');
     return params;
-  }, [filter, keyword, page]);
+  }, [filter, keyword, page, view]);
 
   const loadData = useCallback(async () => {
     loadControllerRef.current?.abort();
@@ -436,7 +439,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
         return;
       }
       setModal(null);
-      setMsg(isEdit ? '参数已更新' : '参数已新增');
+      setMsg(isEdit ? (d.revised ? '已创建新修订并同步更新关联产品；旧版本已保留' : '参数已更新') : '参数已新增');
       await loadData();
     } catch {
       setFormError('网络异常，保存失败');
@@ -817,6 +820,19 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
         <input ref={fileImportRef} hidden type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={e => importFile(e.target.files)} />
         <input ref={sourceFileRef} hidden type="file" accept=".pdf,.jpg,.jpeg,.png,.csv,.xlsx,.xls,application/pdf,image/*,text/csv" onChange={e => uploadSourceFile(e.target.files)} />
 
+        <nav className="connector-scope-tabs" aria-label="连接器参数来源范围">
+          {([
+            ['all', '全部参数', stats.total],
+            ['linked', '已关联产品', stats.linked || 0],
+            ['sample', '样品同步', stats.sampleSynced || 0],
+            ['history', '历史版本', stats.history || 0],
+          ] as const).map(([key, label, count]) => (
+            <button key={key} className={view === key ? 'active' : ''} type="button" aria-pressed={view === key} onClick={() => { setView(key); setPage(1); }}>
+              <span>{label}</span><b>{count}</b>
+            </button>
+          ))}
+        </nav>
+
         <section className="hm-parameters-query" aria-label="连接器参数搜索与筛选">
           <label className="hm-parameters-search" htmlFor="connector-parameter-search">
             <span>搜索参数</span>
@@ -910,6 +926,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                     <th>备注</th>
                     <th>重点</th>
                     <th>更新时间</th>
+                    <th>关联产品</th>
                     <th>说明书</th>
                     <th>操作</th>
                   </tr>
@@ -919,13 +936,24 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                     <tr key={item.id} className={`${item.isHighlighted ? 'highlighted' : ''} ${selectedSet.has(item.id) ? 'selected' : ''}`}>
                       <td className="sticky-cell select-cell"><input type="checkbox" checked={selectedSet.has(item.id)} onChange={() => toggleSelected(item.id)} aria-label={`选择 ${item.model || item.rowNo || '参数'}`} /></td>
                       <td className="sticky-cell row-no" title={blank(item.rowNo)}>{blank(item.rowNo)}</td>
-                      <td className="sticky-cell model-cell" title={blank(item.model)}>{highlightText(item.model)}</td>
+                      <td className="sticky-cell model-cell" title={blank(item.model)}>
+                        <strong>{highlightText(item.model)}</strong>
+                        <small>{item.sourceType === 'SAMPLE_REVIEW' ? '样品同步' : item.sourceType === 'MANUAL_CORRECTION' ? '人工修订' : '手工/导入'} · R{item.revision}</small>
+                      </td>
                       <td className={isMissingCell('outer', item.outerPeelMm) ? 'missing-cell' : ''} title={blank(item.outerPeelMm)}>{highlightText(item.outerPeelMm)}</td>
                       <td className={isMissingCell('inner', item.innerPeelMm) ? 'missing-cell' : ''} title={blank(item.innerPeelMm)}>{highlightText(item.innerPeelMm)}</td>
                       <td className={isMissingCell('insertion', item.insertionLengthMm) ? 'missing-cell' : ''} title={blank(item.insertionLengthMm)}>{highlightText(item.insertionLengthMm)}</td>
                       <td className="remark-cell" title={blank(item.remark)}>{highlightText(item.remark)}</td>
                       <td>{item.isHighlighted ? <span className="connector-highlight-tag">重点</span> : ''}</td>
                       <td>{dt(item.updatedAt)}</td>
+                      <td className="connector-product-links">
+                        {(item.productBindings || []).filter(binding => binding.isCurrent).slice(0, 2).map(binding => (
+                          <a key={binding.id} href={`/drawing-library?itemId=${encodeURIComponent(binding.drawingLibraryItemId)}`} title={`${binding.customerName} · ${binding.specification}`}>
+                            <strong>{binding.specification}</strong><small>{binding.positionLabel || binding.productName || binding.customerName}</small>
+                          </a>
+                        ))}
+                        {!(item.productBindings || []).some(binding => binding.isCurrent) && <span>未关联</span>}
+                      </td>
                       <td><button className="connector-manual-count" type="button" disabled={!item.manualCount} onClick={() => openManuals(item)}>{item.manualCount ? `说明书 ${item.manualCount}` : '暂无说明书'}</button></td>
                       <td>
                         <div className="connector-row-actions">
@@ -953,7 +981,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                   ))}
                   {!items.length && (
                     <tr>
-                      <td colSpan={11}>
+                      <td colSpan={12}>
                         <div className="connector-empty-state">
                           <strong>{loading ? '正在加载参数' : hasActiveFilters ? '没有符合条件的参数' : '参数库中还没有记录'}</strong>
                           <p>{loading ? '数据返回后会保持当前表格位置。' : hasActiveFilters ? '尝试清除关键词或数据状态筛选。' : '可以新增单条参数，或先预览再批量导入。'}</p>
@@ -1051,6 +1079,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
               <button type="button" aria-label="关闭参数编辑窗口" title="关闭" onClick={closeParameterModal}>×</button>
             </div>
             <p id="connector-parameter-dialog-help" className="hm-parameters-form-help">至少填写一项记录内容；序号必须为整数。保存时继续使用现有服务端校验。</p>
+            {modal.mode === 'edit' && ((modal.item?.productBindings || []).some(binding => binding.isCurrent) || modal.item?.lockedAt) && <p className="connector-revision-warning">此参数已经发布到产品。修改型号或剥皮数值会创建新修订并同步更新当前产品关联，旧版本不会被覆盖；仅修改“重点”标记不会升版。</p>}
             <section className="hm-parameters-form-section" aria-labelledby="parameter-basic-heading">
               <h2 id="parameter-basic-heading">基础识别信息</h2>
               <div className="connector-form-grid basic">

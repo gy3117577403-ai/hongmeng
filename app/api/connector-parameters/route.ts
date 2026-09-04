@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { parseConnectorParameterInput, serializeConnectorParameter } from '@/lib/connector-parameters';
+import { connectorParameterTechnicalFingerprint, parseConnectorParameterInput, serializeConnectorParameter } from '@/lib/connector-parameters';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { connectorParameterSnapshot, snapshotChange } from '@/lib/change-snapshots';
@@ -19,6 +19,7 @@ function whereFrom(req: NextRequest) {
   const missing = sp.get('missing') || '';
   const highlighted = sp.get('highlighted') === 'true';
   const deleted = sp.get('deleted') === 'true';
+  const view = sp.get('view') || 'all';
   const AND: Prisma.ConnectorParameterWhereInput[] = [{ deletedAt: deleted ? { not: null } : null }];
 
   if (keyword) {
@@ -33,6 +34,20 @@ function whereFrom(req: NextRequest) {
     });
   }
   if (highlighted) AND.push({ isHighlighted: true });
+  if (view === 'linked') AND.push({ productBindings: { some: { isCurrent: true, status: 'PUBLISHED' } } });
+  if (view === 'sample') AND.push({
+    OR: [
+      { sourceType: 'SAMPLE_REVIEW' },
+      { productBindings: { some: { sourceType: 'SAMPLE_REVIEW' } } },
+    ],
+  });
+  if (view === 'history') AND.push({
+    OR: [
+      { status: { not: 'PUBLISHED' } },
+      { supersedesParameterId: { not: null } },
+      { productBindings: { some: { isCurrent: false } } },
+    ],
+  });
   if (missing === 'outer') AND.push(missingWhere('outerPeelMm'));
   if (missing === 'inner') AND.push(missingWhere('innerPeelMm'));
   if (missing === 'insertion') AND.push(missingWhere('insertionLengthMm'));
@@ -57,7 +72,7 @@ function orderBy(sort: string): Prisma.ConnectorParameterOrderByWithRelationInpu
 
 async function stats() {
   const base = { deletedAt: null };
-  const [total, missingOuter, missingInner, missingInsertion, missingAny, highlighted, fileCount] = await Promise.all([
+  const [total, missingOuter, missingInner, missingInsertion, missingAny, highlighted, fileCount, linked, sampleSynced, history] = await Promise.all([
     prisma.connectorParameter.count({ where: base }),
     prisma.connectorParameter.count({ where: { ...base, ...missingWhere('outerPeelMm') } }),
     prisma.connectorParameter.count({ where: { ...base, ...missingWhere('innerPeelMm') } }),
@@ -65,8 +80,11 @@ async function stats() {
     prisma.connectorParameter.count({ where: { ...base, OR: [missingWhere('outerPeelMm'), missingWhere('innerPeelMm'), missingWhere('insertionLengthMm')] } }),
     prisma.connectorParameter.count({ where: { ...base, isHighlighted: true } }),
     prisma.connectorParameterFile.count({ where: { deletedAt: null } }),
+    prisma.connectorParameter.count({ where: { ...base, productBindings: { some: { isCurrent: true, status: 'PUBLISHED' } } } }),
+    prisma.connectorParameter.count({ where: { ...base, OR: [{ sourceType: 'SAMPLE_REVIEW' }, { productBindings: { some: { sourceType: 'SAMPLE_REVIEW' } } }] } }),
+    prisma.connectorParameter.count({ where: { ...base, OR: [{ status: { not: 'PUBLISHED' } }, { supersedesParameterId: { not: null } }, { productBindings: { some: { isCurrent: false } } }] } }),
   ]);
-  return { total, missingOuter, missingInner, missingInsertion, missingAny, highlighted, fileCount };
+  return { total, missingOuter, missingInner, missingInsertion, missingAny, highlighted, fileCount, linked, sampleSynced, history };
 }
 
 export async function GET(req: NextRequest) {
@@ -79,7 +97,14 @@ export async function GET(req: NextRequest) {
       prisma.connectorParameter.count({ where }),
       prisma.connectorParameter.findMany({
         where,
-        include: { _count: { select: { assemblyManualBindings: { where: { manual: { deletedAt: null } } } } } },
+        include: {
+          _count: { select: { assemblyManualBindings: { where: { manual: { deletedAt: null } } } } },
+          productBindings: {
+            include: { drawingLibraryItem: { select: { id: true, customerName: true, productName: true, specification: true } } },
+            orderBy: [{ isCurrent: 'desc' }, { publishedAt: 'desc' }],
+            take: 12,
+          },
+        },
         orderBy: orderBy(req.nextUrl.searchParams.get('sort') || ''),
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -112,6 +137,8 @@ export async function POST(req: NextRequest) {
     const item = await prisma.connectorParameter.create({
       data: {
         ...parsed.data,
+        technicalFingerprint: connectorParameterTechnicalFingerprint(parsed.data),
+        sourceType: 'MANUAL',
         createdBy: userName,
         updatedBy: userName,
       },

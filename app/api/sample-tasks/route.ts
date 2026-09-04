@@ -99,6 +99,7 @@ export async function POST(req: NextRequest) {
     const dueDate = parseOptionalSampleDate(body.dueDate);
     const sampleQuantity = parseOptionalNonNegativeInteger(body.sampleQuantity);
     const customerLevel = sampleCustomerLevel(body.customerLevelCode);
+    const dataPurpose = body.dataPurpose === 'TEST' || body.dataPurpose === 'TRAINING' ? body.dataPurpose : 'PRODUCTION';
 
     if (!drawingLibraryItemId && (!customerName || !specification)) {
       return NextResponse.json({ ok: false, error: '请选择现有产品，或填写客户和产品规格建立样品主档' }, { status: 400 });
@@ -109,6 +110,9 @@ export async function POST(req: NextRequest) {
     }
     if (!customerLevel) {
       return NextResponse.json({ ok: false, error: '客户等级只能选择 A、B、C、D' }, { status: 400 });
+    }
+    if (dataPurpose !== 'PRODUCTION' && user.laborRole !== 'ADMIN') {
+      return NextResponse.json({ ok: false, error: '只有系统管理员可以创建测试或培训样品任务' }, { status: 403 });
     }
 
     const taskId = await prisma.$transaction(async tx => {
@@ -162,6 +166,7 @@ export async function POST(req: NextRequest) {
           sampleQuantity,
           dueDate,
           priority: customerLevel.priority,
+          dataPurpose,
           planRemark: cleanSampleText(body.planRemark, 1000),
           createdById: actor.id,
           createdByName: actor.name,
@@ -190,6 +195,7 @@ export async function POST(req: NextRequest) {
             drawingLibraryItemId: item.id,
             assigneeCount: employees.length,
             customerLevelCode: customerLevel.code,
+            dataPurpose,
           },
         },
       });

@@ -11,7 +11,7 @@ export async function GET(_req: Request, { params }: { params: { photoId: string
   try {
     await requireUser();
     const photo = await prisma.samplePhoto.findFirst({
-      where: { id: params.photoId, deletedAt: null },
+      where: { id: params.photoId, deletedAt: null, task: { deletedAt: null } },
       select: { objectKey: true, mimeType: true, size: true },
     });
     if (!photo) return NextResponse.json({ ok: false, error: '照片不存在' }, { status: 404 });

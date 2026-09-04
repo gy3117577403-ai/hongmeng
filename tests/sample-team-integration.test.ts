@@ -299,12 +299,42 @@ test(
       assert.equal(completions, 0);
       assert.equal(laborClaims, 0);
 
+      const replacementEntry = await prisma.sampleDataEntry.create({
+        data: {
+          taskId: task.id,
+          kind: 'STRIPPING',
+          label: 'A端',
+          payload: { model: 'HV-01', outerPeelMm: '20', innerPeelMm: '8', positionLabel: 'A端' },
+          reviewStatus: 'PENDING',
+        },
+      });
+      entryIds.push(replacementEntry.id);
+      await assert.rejects(
+        prisma.$transaction(tx => publishSampleEntry(tx, task, replacementEntry, actorSnapshot, 'APPEND')),
+        /已经存在不同的当前剥皮参数/,
+      );
+      const replacement = await prisma.$transaction(tx => publishSampleEntry(tx, task, replacementEntry, actorSnapshot, 'REPLACE_MATCHING'));
+      const bindingVersions = await prisma.productConnectorParameterBinding.findMany({
+        where: { drawingLibraryItemId: item.id, positionKey: 'a端' },
+        include: { connectorParameter: true },
+        orderBy: { version: 'asc' },
+      });
+      assert.equal(replacement.reviewStatus, 'PUBLISHED');
+      assert.equal(bindingVersions.length, 2);
+      assert.equal(bindingVersions[0]?.isCurrent, false);
+      assert.equal(bindingVersions[0]?.status, 'SUPERSEDED');
+      assert.equal(bindingVersions[1]?.isCurrent, true);
+      assert.equal(bindingVersions[1]?.connectorParameter.outerPeelMm, '20');
+
       if (connectorBinding) connectorParameterIds.push(connectorBinding.connectorParameterId);
     } finally {
       await prisma.$transaction(async tx => {
+        const boundParameters = await tx.productConnectorParameterBinding.findMany({ where: { drawingLibraryItemId: item.id }, select: { connectorParameterId: true } });
+        await tx.samplePublicationLink.deleteMany({ where: { sampleTaskId: task.id } });
         await tx.productConnectorParameterBinding.deleteMany({ where: { drawingLibraryItemId: item.id } });
-        if (connectorParameterIds.length) {
-          await tx.connectorParameter.deleteMany({ where: { id: { in: connectorParameterIds } } });
+        const parameterIds = [...new Set([...connectorParameterIds, ...boundParameters.map(binding => binding.connectorParameterId)])];
+        if (parameterIds.length) {
+          await tx.connectorParameter.deleteMany({ where: { id: { in: parameterIds } } });
         }
         await tx.productDataRecord.deleteMany({ where: { drawingLibraryItemId: item.id } });
         const profiles = await tx.productTimeProfile.findMany({

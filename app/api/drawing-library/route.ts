@@ -38,7 +38,7 @@ function itemInclude() {
       orderBy: [{ kind: 'asc' as const }, { version: 'desc' as const }],
     },
     connectorBindings: {
-      where: { isCurrent: true },
+      where: { isCurrent: true, status: 'PUBLISHED', retiredAt: null },
       include: { connectorParameter: true },
       orderBy: [{ version: 'desc' as const }],
     },

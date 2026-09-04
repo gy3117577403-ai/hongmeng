@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Trash2,
   Upload,
   UserRound,
   X,
@@ -35,6 +36,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ModuleModeDrawer, ModuleModeTrigger, useModuleModeDrawer } from '@/components/layout/ModuleModeDrawer';
+import { SamplePhotoViewerDialog } from '@/components/SamplePhotoViewerDialog';
 import { writeClipboardText } from '@/lib/client-platform';
 import {
   SAMPLE_CUSTOMER_LEVELS,
@@ -53,6 +55,15 @@ import type {
 type CenterMode = 'planning' | 'execution' | 'materials';
 type TaskViewFilter = 'ALL' | 'TODAY' | 'OVERDUE' | 'PLANNED' | 'IN_PROGRESS' | 'PENDING_REVIEW' | 'COMPLETED' | 'CANCELLED';
 type DetailTab = 'overview' | 'data' | 'materials' | 'photos' | 'review' | 'published';
+type SampleDeletePreview = {
+  task: { id: string; code: string; customerName: string; productName: string | null; specification: string; status: string; version: number; dataPurpose: string; completedAt: string | null; archivedAt: string | null };
+  impact: { entryCount: number; photoCount: number; submissionCount: number; publishedDrawingFileCount: number; productDataRecordCount: number; connectorBindingCount: number; affectedProductTimeProfileCount: number; objectDeletionCount: number };
+  blockers: string[];
+  canDelete: boolean;
+  previewToken: string;
+  publishedOutputsRetained: boolean;
+};
+type SampleTrashItem = { task: SampleTaskDTO; deletedAt: string; deletedBy: string | null; deleteReason: string | null; deleteBatchId: string | null };
 type ContextPayload = {
   members: Array<{
     id: string;
@@ -75,6 +86,7 @@ type ContextPayload = {
 };
 
 type PlanForm = {
+  dataPurpose: 'PRODUCTION' | 'TEST' | 'TRAINING';
   drawingLibraryItemId: string;
   customerName: string;
   productName: string;
@@ -157,6 +169,7 @@ const emptySummary: SampleTeamSummaryDTO = {
 };
 
 const emptyPlanForm: PlanForm = {
+  dataPurpose: 'PRODUCTION',
   drawingLibraryItemId: '',
   customerName: '',
   productName: '',
@@ -233,6 +246,7 @@ const payloadLabels: Record<string, string> = {
   outerPeelMm: '外剥皮',
   innerPeelMm: '内剥皮',
   insertionLengthMm: '入长',
+  publicationDecision: '发布处理',
   positionLabel: '部位',
   name: '辅料名称',
   specification: '规格',
@@ -380,6 +394,17 @@ export default function SampleTeamCenter({
   const [reviewComment, setReviewComment] = useState('');
   const [reviewIssues, setReviewIssues] = useState<ReviewIssue[]>([]);
   const [reviewSaving, setReviewSaving] = useState(false);
+  const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
+  const [deletePreview, setDeletePreview] = useState<SampleDeletePreview | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteCode, setDeleteCode] = useState('');
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashItems, setTrashItems] = useState<SampleTrashItem[]>([]);
+  const [trashBusy, setTrashBusy] = useState(false);
+  const [restoreItem, setRestoreItem] = useState<SampleTrashItem | null>(null);
+  const [restoreReason, setRestoreReason] = useState('');
+  const [restoreCode, setRestoreCode] = useState('');
   const reviewIssuesRef = useRef<HTMLDivElement | null>(null);
   const importFileRef = useRef<HTMLInputElement | null>(null);
   const reviewMutationRef = useRef<{ decision: 'CONFIRM' | 'EDIT' | 'REJECT'; key: string } | null>(null);
@@ -568,6 +593,7 @@ export default function SampleTeamCenter({
   function openEdit(task: SampleTaskDTO) {
     const level = sampleCustomerLevelOrDefault(task.customerLevelCode);
     setForm({
+      dataPurpose: task.dataPurpose,
       drawingLibraryItemId: task.drawingLibraryItemId,
       customerName: task.customerName,
       productName: task.productName || '',
@@ -655,6 +681,94 @@ export default function SampleTeamCenter({
       setRefreshToken(value => value + 1);
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : '任务操作失败');
+    }
+  }
+
+  async function openDeleteTask(task: SampleTaskDTO) {
+    setDeleteReason('');
+    setDeleteCode('');
+    setDeleteBusy(true);
+    try {
+      const response = await fetch(`/api/sample-tasks/${task.id}/delete`, { cache: 'no-store' });
+      const body = await responseJson(response);
+      if (!response.ok) throw new Error(body.error || '删除影响加载失败');
+      setDeletePreview(body.preview as SampleDeletePreview);
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : '删除影响加载失败');
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  async function confirmDeleteTask() {
+    if (!deletePreview || deleteBusy) return;
+    setDeleteBusy(true);
+    try {
+      const response = await fetch(`/api/sample-tasks/${deletePreview.task.id}/delete`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason: deleteReason,
+          confirmationCode: deleteCode,
+          previewToken: deletePreview.previewToken,
+          expectedVersion: deletePreview.task.version,
+          confirmed: true,
+          clientMutationId: browserMutationId(),
+        }),
+      });
+      const body = await responseJson(response);
+      if (!response.ok) throw new Error(body.error || '样品任务删除失败');
+      setDeletePreview(null);
+      setMessage(`${body.code || '样品任务'}已移入回收站，正式发布资料和对象文件均保留`);
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : '样品任务删除失败');
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  async function loadTrash() {
+    setTrashOpen(true);
+    setTrashBusy(true);
+    setRestoreItem(null);
+    try {
+      const response = await fetch('/api/sample-tasks/trash', { cache: 'no-store' });
+      const body = await responseJson(response);
+      if (!response.ok) throw new Error(body.error || '样品回收站加载失败');
+      setTrashItems(Array.isArray(body.items) ? body.items as SampleTrashItem[] : []);
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : '样品回收站加载失败');
+    } finally {
+      setTrashBusy(false);
+    }
+  }
+
+  function chooseRestoreItem(item: SampleTrashItem) {
+    setRestoreItem(item);
+    setRestoreReason('');
+    setRestoreCode('');
+  }
+
+  async function confirmRestoreTask() {
+    if (!restoreItem || trashBusy) return;
+    setTrashBusy(true);
+    try {
+      const response = await fetch(`/api/sample-tasks/${restoreItem.task.id}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: restoreReason, confirmationCode: restoreCode, expectedVersion: restoreItem.task.version, confirmed: true }),
+      });
+      const body = await responseJson(response);
+      if (!response.ok) throw new Error(body.error || '样品任务恢复失败');
+      setTrashItems(current => current.filter(item => item.task.id !== restoreItem.task.id));
+      setRestoreItem(null);
+      setMessage(`${body.task?.code || '样品任务'}已恢复`);
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : '样品任务恢复失败');
+    } finally {
+      setTrashBusy(false);
     }
   }
 
@@ -791,7 +905,7 @@ export default function SampleTeamCenter({
 
   function renderPhotoRecord(photo: SamplePhotoDTO, photoIndex: number) {
     return <article className={`review-${photo.reviewStatus.toLowerCase()}`} key={photo.id}>
-      <a href={photo.contentUrl} target="_blank" rel="noreferrer"><Image unoptimized priority={photoIndex === 0} width={220} height={132} src={photo.contentUrl} alt={photo.caption || photo.originalName} /></a>
+      <button className="sample-photo-preview-trigger" type="button" aria-label={`全屏查看${photo.caption || photo.originalName}`} onClick={() => setPhotoViewerIndex(Math.max(0, selected?.photos.findIndex(item => item.id === photo.id) ?? photoIndex))}><Image unoptimized priority={photoIndex === 0} width={220} height={132} src={photo.contentUrl} alt={photo.caption || photo.originalName} /></button>
       <div><header><strong>{photoCategoryLabels[photo.category]}</strong><em>{reviewStatusLabels[photo.reviewStatus]}</em></header><p>{photo.caption || photo.originalName}</p><small>{photo.uploadedBy || '未记录'} · {dateTimeText(photo.createdAt)}</small>{photo.reviewComment && <span>审核意见：{photo.reviewComment}</span>}</div>
     </article>;
   }
@@ -916,6 +1030,7 @@ export default function SampleTeamCenter({
             {mode === 'planning' && <a className="hm-workbench-button" href="/api/sample-tasks/import/template" download><Download size={15} />下载导入模板</a>}
             {mode === 'planning' && <button className="hm-workbench-button" type="button" onClick={openImport}><Upload size={15} />批量导入</button>}
             {mode === 'planning' && <button className="hm-workbench-button primary" type="button" onClick={openCreate}><Plus size={15} />新建样品计划</button>}
+            {mode === 'planning' && user.laborRole === 'ADMIN' && <button className="hm-workbench-button" type="button" onClick={() => void loadTrash()}><Trash2 size={15} />回收站</button>}
             <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>
           </div>
         </header>
@@ -948,7 +1063,7 @@ export default function SampleTeamCenter({
                 const overdue = taskMatchesView(task, 'OVERDUE', todayKey);
                 return <button className={`sample-task-card ${selected?.id === task.id ? 'active' : ''} status-${task.status.toLowerCase()}`} aria-pressed={selected?.id === task.id} type="button" key={task.id} onClick={() => setSelectedId(task.id)}>
                   <span className="sample-task-color" style={{ background: sampleCustomerLevelOrDefault(task.customerLevelCode).color }} />
-                  <header className="sample-task-card-head"><div><em style={sampleCustomerLevelStyle(task.customerLevelCode)}>{taskLevelText(task)}</em><strong title={task.customerName}>{task.customerName}</strong></div><small>{task.code}</small></header>
+                  <header className="sample-task-card-head"><div><em style={sampleCustomerLevelStyle(task.customerLevelCode)}>{taskLevelText(task)}</em>{task.dataPurpose !== 'PRODUCTION' && <em className="sample-data-purpose">{task.dataPurpose === 'TEST' ? '测试' : '培训'}</em>}<strong title={task.customerName}>{task.customerName}</strong></div><small>{task.code}</small></header>
                   <h3 title={task.specification}>{task.specification}</h3>
                   <p>{task.productName || '未设置品名'}</p>
                   <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{dateText(task.dueDate)}</span><span><UserRound size={12} />{task.assignees.map(item => item.name).join('、') || '未指派'}</span></div>
@@ -968,6 +1083,7 @@ export default function SampleTeamCenter({
                   {mode !== 'materials' && selected.status === 'PLANNED' && <button className="primary" type="button" onClick={() => void taskAction(selected, 'START')}>开始任务</button>}
                   {mode !== 'materials' && selected.status === 'IN_PROGRESS' && selected.counts.data + selected.counts.photos === 0 && <button type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>无资料完成</button>}
                   {mode === 'planning' && selected.status === 'COMPLETED' && <button type="button" onClick={() => void taskAction(selected, selected.archivedAt ? 'UNARCHIVE' : 'ARCHIVE')}>{selected.archivedAt ? '取消归档' : '归档'}</button>}
+                  {mode === 'planning' && user.laborRole === 'ADMIN' && selected.status === 'COMPLETED' && <button className="danger" type="button" disabled={deleteBusy} onClick={() => void openDeleteTask(selected)}><Trash2 size={15} />删除</button>}
                 </div>
               </header>
 
@@ -1094,6 +1210,38 @@ export default function SampleTeamCenter({
         </section>
       </div>}
 
+      {photoViewerIndex !== null && selected?.photos[photoViewerIndex] && <SamplePhotoViewerDialog photos={selected.photos} index={photoViewerIndex} onIndexChange={setPhotoViewerIndex} onClose={() => setPhotoViewerIndex(null)} />}
+
+      {deletePreview && <div className="sample-modal-backdrop sample-delete-backdrop" role="presentation">
+        <section className="sample-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="sample-delete-title" aria-describedby="sample-delete-description">
+          <header><div><span>管理员安全删除</span><h2 id="sample-delete-title">{deletePreview.task.code}</h2></div><button type="button" aria-label="关闭" disabled={deleteBusy} onClick={() => setDeletePreview(null)}><X /></button></header>
+          <div className="sample-delete-body hm-scroll-region" tabIndex={0}>
+            <div className="sample-delete-warning"><AlertTriangle size={20} /><span><strong>只从样品计划移入回收站</strong><small id="sample-delete-description">已审核图纸、正式参数、提交历史和对象存储文件默认保留；这不是物理删除。</small></span></div>
+            <section className="sample-delete-identity"><span><small>客户</small><strong>{deletePreview.task.customerName}</strong></span><span><small>规格型号</small><strong>{deletePreview.task.specification}</strong></span><span><small>数据用途</small><strong>{deletePreview.task.dataPurpose === 'TEST' ? '测试数据' : deletePreview.task.dataPurpose === 'TRAINING' ? '培训数据' : '正式业务'}</strong></span></section>
+            <section className="sample-delete-impact" aria-label="删除影响"><article><small>采集数据</small><strong>{deletePreview.impact.entryCount}</strong></article><article><small>照片</small><strong>{deletePreview.impact.photoCount}</strong></article><article><small>提交包</small><strong>{deletePreview.impact.submissionCount}</strong></article><article><small>已发布图纸</small><strong>{deletePreview.impact.publishedDrawingFileCount}</strong></article><article><small>正式资料</small><strong>{deletePreview.impact.productDataRecordCount}</strong></article><article><small>连接器绑定</small><strong>{deletePreview.impact.connectorBindingCount}</strong></article><article><small>工时草稿</small><strong>{deletePreview.impact.affectedProductTimeProfileCount}</strong></article><article><small>物理删对象</small><strong>{deletePreview.impact.objectDeletionCount}</strong></article></section>
+            {!!deletePreview.blockers.length && <div className="sample-delete-blockers" role="alert">{deletePreview.blockers.map(item => <p key={item}>{item}</p>)}</div>}
+            <label><span>删除原因（必填）</span><textarea autoFocus maxLength={500} value={deleteReason} onChange={event => setDeleteReason(event.target.value)} placeholder="例如：重复建立的样品测试任务，正式发布资料保留" /></label>
+            <label><span>输入完整任务编号确认</span><input value={deleteCode} onChange={event => setDeleteCode(event.target.value)} placeholder={deletePreview.task.code} autoComplete="off" /></label>
+          </div>
+          <footer><span>可在“回收站”恢复；恢复不会改写审核结论。</span><div><button type="button" disabled={deleteBusy} onClick={() => setDeletePreview(null)}>取消</button><button className="danger" type="button" disabled={deleteBusy || !deletePreview.canDelete || !deleteReason.trim() || deleteCode !== deletePreview.task.code} onClick={() => void confirmDeleteTask()}>{deleteBusy ? <><Loader2 className="spin" size={15} />处理中</> : <><Trash2 size={15} />移入回收站</>}</button></div></footer>
+        </section>
+      </div>}
+
+      {trashOpen && <div className="sample-modal-backdrop sample-trash-backdrop" role="presentation">
+        <section className="sample-trash-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-trash-title">
+          <header><div><span>管理员工具</span><h2 id="sample-trash-title">样品任务回收站</h2></div><button type="button" aria-label="关闭" disabled={trashBusy} onClick={() => setTrashOpen(false)}><X /></button></header>
+          <div className="sample-trash-body">
+            <section className="sample-trash-list hm-scroll-region" tabIndex={0}>
+              {trashBusy && !trashItems.length ? <div className="sample-trash-empty"><Loader2 className="spin" /><strong>正在加载回收站</strong></div> : trashItems.map(item => <button className={restoreItem?.task.id === item.task.id ? 'active' : ''} type="button" key={item.task.id} onClick={() => chooseRestoreItem(item)}><span><strong>{item.task.specification}</strong><small>{item.task.customerName} · {item.task.code}</small></span><em>{dateTimeText(item.deletedAt)}<small>{item.deletedBy || '未记录删除人'}</small></em></button>)}
+              {!trashBusy && !trashItems.length && <div className="sample-trash-empty"><Trash2 /><strong>回收站为空</strong><p>删除的已完成任务会出现在这里。</p></div>}
+            </section>
+            <section className="sample-trash-restore">
+              {restoreItem ? <><div className="sample-delete-warning"><Info size={20} /><span><strong>恢复 {restoreItem.task.code}</strong><small>任务、提交历史和照片会重新出现在样品计划；已退役的正式下游资料不会被自动恢复。</small></span></div><dl><div><dt>规格型号</dt><dd>{restoreItem.task.specification}</dd></div><div><dt>原删除原因</dt><dd>{restoreItem.deleteReason || '未记录'}</dd></div><div><dt>删除人</dt><dd>{restoreItem.deletedBy || '未记录'}</dd></div></dl><label><span>恢复原因（必填）</span><textarea maxLength={500} value={restoreReason} onChange={event => setRestoreReason(event.target.value)} placeholder="说明为什么需要恢复" /></label><label><span>输入完整任务编号确认</span><input value={restoreCode} onChange={event => setRestoreCode(event.target.value)} placeholder={restoreItem.task.code} autoComplete="off" /></label><button className="primary" type="button" disabled={trashBusy || !restoreReason.trim() || restoreCode !== restoreItem.task.code} onClick={() => void confirmRestoreTask()}>{trashBusy ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}确认恢复</button></> : <div className="sample-trash-empty"><FolderKanban /><strong>选择一个任务查看</strong><p>恢复操作同样需要填写原因并输入完整任务编号。</p></div>}
+            </section>
+          </div>
+        </section>
+      </div>}
+
       {(createOpen || editOpen) && <div className="sample-modal-backdrop sample-plan-backdrop" role="presentation">
         <section className="sample-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-plan-dialog-title">
           <header><div><span>{editOpen ? '编辑样品计划' : '新增样品计划'}</span><h2 id="sample-plan-dialog-title">{editOpen ? selected?.code : '建立任务与产品关联'}</h2></div><button type="button" aria-label="关闭" onClick={() => { if (!saving) { setCreateOpen(false); setEditOpen(false); } }}><X /></button></header>
@@ -1134,6 +1282,7 @@ export default function SampleTeamCenter({
                 <label><span>样品数量</span><input type="number" min="1" step="1" value={form.sampleQuantity} onChange={event => setForm(current => ({ ...current, sampleQuantity: event.target.value }))} placeholder="填写样品数量" /></label>
                 <label><span>计划日期</span><input type="date" value={form.dueDate} onChange={event => setForm(current => ({ ...current, dueDate: event.target.value }))} /></label>
               </div>
+              {!editOpen && user.laborRole === 'ADMIN' && <label className="sample-data-purpose-field"><span>数据用途</span><select value={form.dataPurpose} onChange={event => setForm(current => ({ ...current, dataPurpose: event.target.value as PlanForm['dataPurpose'] }))}><option value="PRODUCTION">正式业务数据</option><option value="TEST">测试数据（可批量退役）</option><option value="TRAINING">培训数据</option></select><small>只有新建时可标记；正式数据不会被测试清理工具自动退役。</small></label>}
             </section>
 
             <section className="sample-plan-section">
@@ -1166,6 +1315,7 @@ export default function SampleTeamCenter({
                   <header><span>{String(index + 1).padStart(2, '0')}</span><strong>{dataKindLabels[entry.kind]}</strong></header>
                   <label><span>记录名称</span><input value={entry.label} onChange={event => updateReviewEntry(entry.id, { label: event.target.value })} /></label>
                   {entry.kind === 'PROCESS_TIME' && <><label><span>工序处理方式</span><select value={typeof entry.payload.processDefinitionId === 'string' ? entry.payload.processDefinitionId : ''} onChange={event => updateReviewEntryPayload(entry.id, 'processDefinitionId', event.target.value)}><option value="">确认时按名称自动复用或新增</option>{context.processes.map(process => <option key={process.id} value={process.id}>{process.name}{process.code ? ` · ${process.code}` : ''}</option>)}</select><small>未选择已有工序不再阻断确认；系统会按名称去重复用或写入工序库。</small></label>{!String(entry.payload.processDefinitionId || '').trim() && <div className="sample-package-edit-grid"><label><span>新工序名称</span><input value={String(entry.payload.processName || '')} onChange={event => updateReviewEntryPayload(entry.id, 'processName', event.target.value)} /></label><label><span>工序阶段</span><select value={entry.payload.stageGroup === 'backend' || entry.payload.stageGroup === 'finish' ? String(entry.payload.stageGroup) : 'frontend'} onChange={event => updateReviewEntryPayload(entry.id, 'stageGroup', event.target.value)}><option value="frontend">前工序</option><option value="backend">后工序</option><option value="finish">包装/收尾</option></select></label></div>}</>}
+                  {entry.kind === 'STRIPPING' && <label><span>正式参数处理</span><select value={entry.payload.publicationDecision === 'REPLACE_CURRENT' || entry.payload.publicationDecision === 'RECORD_ONLY' ? String(entry.payload.publicationDecision) : 'APPEND'} onChange={event => updateReviewEntryPayload(entry.id, 'publicationDecision', event.target.value)}><option value="APPEND">新增；完全相同则复用</option><option value="REPLACE_CURRENT">替换同产品、同位置当前版本</option><option value="RECORD_ONLY">仅保留样品审核记录，不进入参数库</option></select><small>同一产品、同一位置参数不同会阻断静默新增；选择“替换”后才建立新版本。</small></label>}
                   <div className="sample-package-edit-grid">{editablePayloadKeys[entry.kind].map(key => <label className={key === 'content' || key === 'remark' ? 'wide' : ''} key={key}><span>{payloadLabels[key]}</span>{key === 'timeBasis' ? <select value={entry.payload[key] === 'per_batch' ? 'per_batch' : 'per_unit'} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)}><option value="per_unit">按件</option><option value="per_batch">按批</option></select> : key === 'content' || key === 'remark' ? <textarea value={String(entry.payload[key] ?? '')} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)} /> : <input type={['recommendedSeconds', 'setupSeconds', 'occurrences'].includes(key) ? 'number' : 'text'} min={key === 'setupSeconds' ? 0 : undefined} step={key === 'occurrences' ? 1 : 'any'} value={String(entry.payload[key] ?? '')} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)} />}</label>)}</div>
                 </article>)}
                 {!reviewEntryDrafts.length && <p className="sample-package-edit-empty">本包没有可编辑的数据记录。</p>}

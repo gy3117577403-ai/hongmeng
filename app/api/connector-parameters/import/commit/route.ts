@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   ConnectorImportPreviewRow,
+  connectorParameterTechnicalFingerprint,
   connectorDuplicateKey,
   parseConnectorParameterInput,
   serializeConnectorParameter,
@@ -105,6 +106,8 @@ export async function POST(req: NextRequest) {
       const item = await prisma.connectorParameter.create({
         data: {
           ...parsed.data,
+          technicalFingerprint: connectorParameterTechnicalFingerprint(parsed.data),
+          sourceType: 'IMPORT',
           createdBy: userName,
           updatedBy: userName,
           importBatchId: batch.id,

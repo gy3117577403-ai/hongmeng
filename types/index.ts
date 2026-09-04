@@ -147,8 +147,21 @@ export type ProductConnectorParameterBindingDTO = {
   drawingLibraryItemId: string;
   connectorParameterId: string;
   positionLabel: string | null;
+  positionKey: string;
   version: number;
   isCurrent: boolean;
+  status: string;
+  sourceType: string;
+  sourceSampleTaskId: string | null;
+  sourceSubmissionId: string | null;
+  sourceDrawingFileId: string | null;
+  sourcePayloadHash: string | null;
+  parameterSnapshot: Record<string, unknown> | null;
+  supersedesBindingId: string | null;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  retiredAt: string | null;
+  retireReason: string | null;
   sourceSampleEntryId: string | null;
   publishedBy: string | null;
   publishedAt: string;
@@ -191,6 +204,7 @@ export type DrawingLibraryItemDTO = {
 };
 
 export type SampleTaskStatusDTO = 'PLANNED' | 'IN_PROGRESS' | 'SUBMITTED' | 'COMPLETED' | 'CANCELLED';
+export type SampleDataPurposeDTO = 'PRODUCTION' | 'TEST' | 'TRAINING';
 export type SampleDataStatusDTO = 'NO_DATA' | 'COLLECTING' | 'PENDING_REVIEW' | 'NEEDS_CHANGES' | 'PARTIALLY_PUBLISHED' | 'PROCESSED';
 export type SampleReviewStatusDTO = 'DRAFT' | 'PENDING' | 'CHANGES_REQUESTED' | 'APPROVED' | 'PUBLISHED' | 'VOIDED';
 export type SampleDataKindDTO = 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOTICE' | 'CUSTOM';
@@ -308,6 +322,7 @@ export type SampleTaskDTO = {
   priority: number;
   status: SampleTaskStatusDTO;
   dataStatus: SampleDataStatusDTO;
+  dataPurpose: SampleDataPurposeDTO;
   planRemark: string | null;
   version: number;
   submissionRevision: number;
@@ -3648,6 +3663,12 @@ export type ConnectorParameterDTO = {
   insertionLengthMm?: string | null;
   remark?: string | null;
   isHighlighted: boolean;
+  technicalFingerprint?: string | null;
+  sourceType: string;
+  revision: number;
+  status: string;
+  supersedesParameterId?: string | null;
+  lockedAt?: string | null;
   createdBy?: string | null;
   updatedBy?: string | null;
   createdAt: string;
@@ -3655,6 +3676,20 @@ export type ConnectorParameterDTO = {
   deletedAt?: string | null;
   importBatchId?: string | null;
   manualCount?: number;
+  productBindings?: Array<{
+    id: string;
+    drawingLibraryItemId: string;
+    customerName: string;
+    productName?: string | null;
+    specification: string;
+    positionLabel?: string | null;
+    version: number;
+    isCurrent: boolean;
+    status: string;
+    sourceType: string;
+    sourceSampleTaskId?: string | null;
+    publishedAt: string;
+  }>;
 };
 
 export type TerminalToolingBladePositionDTO = 'UPPER_OUTER' | 'UPPER_INNER' | 'LOWER_OUTER' | 'LOWER_INNER';
@@ -3983,6 +4018,9 @@ export type ConnectorParameterStatsDTO = {
   missingAny?: number;
   highlighted: number;
   fileCount: number;
+  linked?: number;
+  sampleSynced?: number;
+  history?: number;
 };
 
 export type ConnectorImportPreviewRowDTO = {

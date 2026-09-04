@@ -153,6 +153,7 @@ async function run() {
       productName: '样品采集隔离验收线束',
       specification: `T25BF2-${marker}`,
       customerLevelCode: 'A',
+      dataPurpose: 'TEST',
       sampleQuantity: 5,
       planRemark: '仅用于不可变镜像运行验收，不代表正式业务数据。',
     },
@@ -427,6 +428,55 @@ async function run() {
   assert.ok(task.archivedAt);
   assert.equal(task.acceptedSubmissionId, finalSubmit.body.submission.id);
   assert.equal(task.counts.pendingReview, 0);
+
+  const syncedParameters = await request('sample stripping parameter is visible with product association', `/api/connector-parameters?view=sample&keyword=${encodeURIComponent('QA-HV-01')}&pageSize=20`);
+  const syncedParameter = syncedParameters.body.parameters.find(parameter => parameter.model === 'QA-HV-01');
+  assert.ok(syncedParameter?.id, 'reviewed stripping parameter must enter the connector parameter library');
+  assert.equal(syncedParameter.sourceType, 'SAMPLE_REVIEW');
+  assert.ok(syncedParameter.productBindings.some(binding => binding.drawingLibraryItemId === task.drawingLibraryItemId && binding.isCurrent));
+
+  const drawingItem = await request('drawing library exposes structured parameters and published photo', `/api/drawing-library/${task.drawingLibraryItemId}`);
+  assert.ok(drawingItem.body.item.connectorParameters.some(binding => binding.connectorParameterId === syncedParameter.id));
+  const publishedPhotoId = task.photos[0]?.id;
+  const publishedDrawingFileId = task.photos[0]?.publishedFileId;
+  assert.ok(publishedPhotoId && publishedDrawingFileId, 'reviewed photo must retain source and drawing-library identities');
+
+  const displaySettings = await request('load sample photo display settings', `/api/sample-photos/${publishedPhotoId}/display-settings`);
+  assert.equal(displaySettings.body.canSave, true);
+  const savedDisplaySettings = await request('persist sample photo rotation', `/api/sample-photos/${publishedPhotoId}/display-settings`, {
+    method: 'PATCH',
+    body: { revision: displaySettings.body.revision, pageRotations: { '1': 90 } },
+  });
+  assert.deepEqual(savedDisplaySettings.body.pageRotations, { '1': 90 });
+
+  const deletePreview = await request('preview completed test sample deletion', `/api/sample-tasks/${task.id}/delete`);
+  assert.equal(deletePreview.body.preview.canDelete, true);
+  assert.equal(deletePreview.body.preview.impact.objectDeletionCount, 0);
+  const deletedTask = await request('soft delete completed test sample', `/api/sample-tasks/${task.id}/delete`, {
+    method: 'DELETE',
+    body: {
+      reason: '不可变镜像样品删除与恢复验收',
+      confirmationCode: task.code,
+      previewToken: deletePreview.body.preview.previewToken,
+      expectedVersion: deletePreview.body.preview.task.version,
+      confirmed: true,
+      clientMutationId: randomUUID(),
+    },
+  });
+  assert.equal(deletedTask.body.recoverable, true);
+  await request('deleted task source photo is no longer directly readable', `/api/sample-photos/${publishedPhotoId}/content`, { expected: 404 });
+  await request('published drawing photo remains readable after task deletion', `/api/drawing-library/files/${publishedDrawingFileId}/content`);
+  const trash = await request('sample trash lists deleted task', '/api/sample-tasks/trash');
+  const trashed = trash.body.items.find(item => item.task.id === task.id);
+  assert.ok(trashed?.task.version, 'deleted sample task must be visible in administrator trash');
+  const restored = await request('restore completed sample task', `/api/sample-tasks/${task.id}/restore`, {
+    method: 'POST',
+    body: { reason: '不可变镜像恢复验收', confirmationCode: task.code, expectedVersion: trashed.task.version, confirmed: true },
+  });
+  task = restored.body.task;
+  assert.equal(task.status, 'COMPLETED');
+  assert.equal(task.dataPurpose, 'TEST');
+  await request('restored task source photo is readable again', `/api/sample-photos/${publishedPhotoId}/content`);
 
   console.log(JSON.stringify({
     ok: true,

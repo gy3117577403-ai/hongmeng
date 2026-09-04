@@ -22,12 +22,16 @@ export async function POST(req: NextRequest) {
     const userName = user.displayName || user.username;
     const beforeItems = await prisma.connectorParameter.findMany({
       where: { id: { in: ids }, deletedAt: null },
-      take: 50,
+      include: { _count: { select: { productBindings: { where: { isCurrent: true, status: 'PUBLISHED' } }, assemblyManualBindings: true } } },
     });
     if (action === 'delete') {
+      const inUse = beforeItems.filter(item => item.lockedAt || item._count.productBindings || item._count.assemblyManualBindings);
+      if (inUse.length) {
+        return NextResponse.json({ ok: false, code: 'CONNECTOR_PARAMETER_IN_USE', error: `所选参数中有 ${inUse.length} 条已关联产品或说明书，整批未删除；请取消选择后重试。` }, { status: 409 });
+      }
       const result = await prisma.connectorParameter.updateMany({
         where: { id: { in: ids }, deletedAt: null },
-        data: { deletedAt: new Date(), updatedBy: userName },
+        data: { deletedAt: new Date(), status: 'RETIRED', updatedBy: userName },
       });
       await logOp({
         userId: user.id,

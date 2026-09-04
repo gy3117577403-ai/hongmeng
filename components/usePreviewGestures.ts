@@ -227,6 +227,19 @@ export function usePreviewGestures({
     return { x: clientX - rect.left - rect.width / 2, y: clientY - rect.top - rect.height / 2 };
   }, [stageRef]);
 
+  const centerStage = useCallback((): void => {
+    const node = stageRef.current;
+    if (!node) return;
+    if (scrollFrameRef.current !== null) window.cancelAnimationFrame(scrollFrameRef.current);
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      node.scrollTo({
+        left: Math.max(0, (node.scrollWidth - node.clientWidth) / 2),
+        top: Math.max(0, (node.scrollHeight - node.clientHeight) / 2),
+      });
+    });
+  }, [stageRef]);
+
   const applyFitMode = useCallback((mode: Exclude<PreviewFitMode, 'manual'>): void => {
     const nextZoom = previewFitZoom(mode, rotatedPreviewSize(contentSize, rotationRef.current), viewportSize);
     fitModeRef.current = mode;
@@ -236,9 +249,9 @@ export function usePreviewGestures({
     setZoom(nextZoom);
     commitZoom(nextZoom);
     setPan({ panX: 0, panY: 0 });
-    stageRef.current?.scrollTo({ left: 0, top: 0 });
+    centerStage();
     showHint(mode === 'fit-height' ? '适应高度' : mode === 'fit-window' ? '适应整页' : mode === 'fit-width' ? '适应宽度' : '原始大小');
-  }, [commitZoom, contentSize, showHint, stageRef, viewportSize]);
+  }, [centerStage, commitZoom, contentSize, showHint, viewportSize]);
 
   const reset = useCallback((): void => {
     const nextRotation = normalizePreviewRotation(controlledRotation ?? initialRotation);
@@ -252,15 +265,15 @@ export function usePreviewGestures({
     setZoom(nextZoom);
     commitZoom(nextZoom);
     setPan({ panX: 0, panY: 0 });
-    stageRef.current?.scrollTo({ left: 0, top: 0 });
+    centerStage();
     showHint(initialFitMode === 'fit-height' ? '适应高度' : '适应整页');
-  }, [commitZoom, contentSize, controlledRotation, initialFitMode, initialRotation, showHint, stageRef, viewportSize]);
+  }, [centerStage, commitZoom, contentSize, controlledRotation, initialFitMode, initialRotation, showHint, viewportSize]);
 
   const recenter = useCallback((): void => {
     panRef.current = { panX: 0, panY: 0 };
     setPan({ panX: 0, panY: 0 });
-    stageRef.current?.scrollTo({ left: 0, top: 0 });
-  }, [stageRef]);
+    centerStage();
+  }, [centerStage]);
 
   const zoomBy = useCallback((factor: number): void => {
     const node = stageRef.current;

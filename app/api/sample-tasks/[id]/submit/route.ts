@@ -62,6 +62,8 @@ function strippingRowPayload(row: DraftRow, sectionRevision: number): Prisma.Inp
   const outerPeelMm = cleanSampleText(row.outerPeelMm, 30);
   const innerPeelMm = cleanSampleText(row.innerPeelMm, 30);
   const insertionLengthMm = cleanSampleText(row.insertionLengthMm, 30);
+  const positionLabel = cleanSampleText(row.positionLabel, 160);
+  const remark = cleanSampleText(row.remark, 500);
   if (!model && !outerPeelMm && !innerPeelMm && !insertionLengthMm) return null;
   if (!model || (!outerPeelMm && !innerPeelMm && !insertionLengthMm)) throw new Error('SAMPLE_STRIPPING_ROW_INCOMPLETE');
   return {
@@ -72,6 +74,8 @@ function strippingRowPayload(row: DraftRow, sectionRevision: number): Prisma.Inp
     outerPeelMm,
     innerPeelMm,
     insertionLengthMm,
+    positionLabel,
+    remark,
   };
 }
 

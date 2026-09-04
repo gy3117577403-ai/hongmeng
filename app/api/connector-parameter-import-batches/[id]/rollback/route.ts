@@ -17,11 +17,15 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
 
     const beforeItems = await prisma.connectorParameter.findMany({
       where: { importBatchId: batch.id, deletedAt: null },
-      take: 100,
+      include: { _count: { select: { productBindings: { where: { isCurrent: true, status: 'PUBLISHED' } }, assemblyManualBindings: true } } },
     });
+    const inUse = beforeItems.filter(item => item.lockedAt || item._count.productBindings || item._count.assemblyManualBindings);
+    if (inUse.length) {
+      return NextResponse.json({ ok: false, code: 'CONNECTOR_PARAMETER_IN_USE', error: `该批次有 ${inUse.length} 条参数已关联产品或说明书，为避免破坏在用版本，本次回滚未执行。` }, { status: 409 });
+    }
     const result = await prisma.connectorParameter.updateMany({
       where: { importBatchId: batch.id, deletedAt: null },
-      data: { deletedAt: new Date(), updatedBy: userName },
+      data: { deletedAt: new Date(), status: 'RETIRED', updatedBy: userName },
     });
     const updatedBatch = await prisma.connectorParameterImportBatch.update({
       where: { id: batch.id },

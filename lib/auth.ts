@@ -284,6 +284,19 @@ export async function requireEmployeeAccountManager() {
   return user;
 }
 
+/**
+ * Destructive, system-wide operations use the labor administrator identity.
+ * ACCOUNT_ADMIN grants intentionally do not satisfy this check: those grants
+ * allow account administration, not irreversible business-data decisions.
+ */
+export async function requireSystemAdministrator() {
+  const user = await currentUser();
+  if (!user) throw new UnauthorizedError();
+  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码');
+  if (user.laborRole !== 'ADMIN') throw new ForbiddenError();
+  return user;
+}
+
 export function unauthorized() {
   const authenticated = !!verifyToken(cookies().get(SESSION_COOKIE)?.value);
   const message = authenticated ? '当前账号没有执行此操作的权限' : '未登录或登录已过期';

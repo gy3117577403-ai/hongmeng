@@ -15,6 +15,7 @@ import {
 } from '@/lib/sample-team';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { safeFilename, validateFileContent } from '@/lib/validation';
+import { inspectMediaImage } from '@/lib/media-assets';
 import { withSamplePhotoSerializableRetry } from './serializable-retry';
 
 export const runtime = 'nodejs';
@@ -162,6 +163,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const error = validateFileContent(upload.name, upload.type, upload.size, body);
     if (error) return NextResponse.json({ ok: false, error }, { status: 400 });
     if (!upload.type.startsWith('image/')) return NextResponse.json({ ok: false, error: '样品照片仅支持图片文件' }, { status: 400 });
+    const imageMetadata = await inspectMediaImage(body, upload.type).catch(() => null);
+    if (!imageMetadata) return NextResponse.json({ ok: false, error: '图片像素过大、已损坏或格式不受支持' }, { status: 400 });
     const sha256 = crypto.createHash('sha256').update(body).digest('hex');
     const requestHash = sampleRequestHash({ sha256, category, caption, captureSource, linkedEntryId, sortOrder, sourceOriginalName });
     const replay = await prisma.samplePhoto.findUnique({
@@ -234,6 +237,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         });
         if (!linkedEntry) throw new Error('SAMPLE_LINKED_ENTRY_NOT_FOUND');
       }
+      const mediaAsset = await tx.mediaAsset.create({
+        data: {
+          originalObjectKey: objectKey!,
+          sha256,
+          mimeType: upload.type || 'application/octet-stream',
+          byteSize: upload.size,
+          originalWidth: imageMetadata.width,
+          originalHeight: imageMetadata.height,
+          exifOrientation: imageMetadata.orientation,
+        },
+      });
       const photo = await tx.samplePhoto.create({
         data: {
           taskId: fresh.id,
@@ -246,6 +260,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           mimeType: upload.type || 'application/octet-stream',
           size: upload.size,
           objectKey: objectKey!,
+          mediaAssetId: mediaAsset.id,
           sha256,
           captureSource,
           sourceOriginalName,

@@ -1,4 +1,5 @@
-import type { ConnectorParameter, ConnectorParameterFile } from '@prisma/client';
+import { createHash } from 'node:crypto';
+import type { ConnectorParameter, ConnectorParameterFile, DrawingLibraryItem, ProductConnectorParameterBinding } from '@prisma/client';
 import { csv, parseCsv } from '@/lib/data-tools';
 import { ext, maxBytes, safeFilename } from '@/lib/validation';
 
@@ -127,7 +128,14 @@ export function parseConnectorParameterInput(input: ConnectorParameterInput, opt
   return { data, errors, empty: !rowHasValue };
 }
 
-export function serializeConnectorParameter(item: ConnectorParameter & { _count?: { assemblyManualBindings?: number } }) {
+type ConnectorParameterWithRelations = ConnectorParameter & {
+  _count?: { assemblyManualBindings?: number };
+  productBindings?: Array<ProductConnectorParameterBinding & {
+    drawingLibraryItem: Pick<DrawingLibraryItem, 'id' | 'customerName' | 'productName' | 'specification'>;
+  }>;
+};
+
+export function serializeConnectorParameter(item: ConnectorParameterWithRelations) {
   return {
     id: item.id,
     rowNo: item.rowNo,
@@ -137,6 +145,12 @@ export function serializeConnectorParameter(item: ConnectorParameter & { _count?
     insertionLengthMm: item.insertionLengthMm,
     remark: item.remark,
     isHighlighted: item.isHighlighted,
+    technicalFingerprint: item.technicalFingerprint,
+    sourceType: item.sourceType,
+    revision: item.revision,
+    status: item.status,
+    supersedesParameterId: item.supersedesParameterId,
+    lockedAt: item.lockedAt?.toISOString() || null,
     createdBy: item.createdBy,
     updatedBy: item.updatedBy,
     createdAt: item.createdAt.toISOString(),
@@ -144,6 +158,20 @@ export function serializeConnectorParameter(item: ConnectorParameter & { _count?
     deletedAt: item.deletedAt?.toISOString() || null,
     importBatchId: item.importBatchId || null,
     manualCount: item._count?.assemblyManualBindings || 0,
+    productBindings: (item.productBindings || []).map(binding => ({
+      id: binding.id,
+      drawingLibraryItemId: binding.drawingLibraryItemId,
+      customerName: binding.drawingLibraryItem.customerName,
+      productName: binding.drawingLibraryItem.productName,
+      specification: binding.drawingLibraryItem.specification,
+      positionLabel: binding.positionLabel,
+      version: binding.version,
+      isCurrent: binding.isCurrent,
+      status: binding.status,
+      sourceType: binding.sourceType,
+      sourceSampleTaskId: binding.sourceSampleTaskId,
+      publishedAt: binding.publishedAt.toISOString(),
+    })),
   };
 }
 
@@ -250,6 +278,17 @@ function normalizedDuplicateValue(value: unknown) {
   return String(value ?? '').trim();
 }
 
+export function connectorParameterTechnicalFingerprint(input: Pick<ConnectorParameterInput, 'model' | 'outerPeelMm' | 'innerPeelMm' | 'insertionLengthMm' | 'remark'>) {
+  const normalized = [
+    String(input.model ?? '').normalize('NFKC').trim().toLocaleUpperCase('en-US'),
+    String(input.outerPeelMm ?? '').normalize('NFKC').trim(),
+    String(input.innerPeelMm ?? '').normalize('NFKC').trim(),
+    String(input.insertionLengthMm ?? '').normalize('NFKC').trim(),
+    String(input.remark ?? '').normalize('NFKC').trim(),
+  ];
+  return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+}
+
 export function connectorDuplicateKey(input: Pick<ConnectorParameterInput, 'model' | 'outerPeelMm' | 'innerPeelMm' | 'insertionLengthMm' | 'remark'>) {
   return [
     normalizedDuplicateValue(input.model),
@@ -311,9 +350,9 @@ export function buildConnectorPreviewRows(options: {
   });
 }
 
-export function connectorParameterCsv(items: ConnectorParameter[]) {
+export function connectorParameterCsv(items: ConnectorParameterWithRelations[]) {
   return csv([
-    ['序号', '型号', '外剥皮mm', '内剥皮mm', '入长mm', '备注', '重点', '创建时间', '更新时间'],
+    ['序号', '型号', '外剥皮mm', '内剥皮mm', '入长mm', '备注', '重点', '来源', '修订', '状态', '关联产品', '关联部位', '创建时间', '更新时间'],
     ...items.map(item => [
       item.rowNo ?? '',
       item.model ?? '',
@@ -322,6 +361,11 @@ export function connectorParameterCsv(items: ConnectorParameter[]) {
       item.insertionLengthMm ?? '',
       item.remark ?? '',
       item.isHighlighted ? '是' : '否',
+      item.sourceType,
+      item.revision,
+      item.status,
+      (item.productBindings || []).filter(binding => binding.isCurrent).map(binding => `${binding.drawingLibraryItem.customerName}/${binding.drawingLibraryItem.specification}`).join('；'),
+      (item.productBindings || []).filter(binding => binding.isCurrent).map(binding => binding.positionLabel || '').filter(Boolean).join('；'),
       item.createdAt.toISOString(),
       item.updatedAt.toISOString(),
     ]),

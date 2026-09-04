@@ -37,7 +37,7 @@ export function samePageRotations(left: PageRotations, right: PageRotations): bo
 
 export function documentDisplaySettingsUrl(source: string): string | null {
   const path = source.split('?')[0];
-  return /^\/api\/(?:resource-files\/[^/]+|drawing-library\/files\/[^/]+)\/content$/.test(path)
+  return /^\/api\/(?:resource-files\/[^/]+|drawing-library\/files\/[^/]+|sample-photos\/[^/]+)\/content$/.test(path)
     ? path.replace(/\/content$/, '/display-settings') : null;
 }
 

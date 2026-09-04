@@ -149,7 +149,10 @@ export function drawingFileType(file: { mimeType: string; originalName: string; 
   return 'other';
 }
 
-export type DrawingLibraryFileWithMeta = DrawingLibraryFile & {
+type DrawingLibraryFileLegacyCompatible = Omit<DrawingLibraryFile, 'mediaAssetId' | 'sha256' | 'sourceType' | 'sourceEntityId'>
+  & Partial<Pick<DrawingLibraryFile, 'mediaAssetId' | 'sha256' | 'sourceType' | 'sourceEntityId'>>;
+
+export type DrawingLibraryFileWithMeta = DrawingLibraryFileLegacyCompatible & {
   category?: Pick<ResourceCategory, 'id' | 'name' | 'code' | 'sortOrder'> | null;
   uploadedBy?: Pick<User, 'displayName' | 'username'> | null;
   sourcePdfOverlayVersion?: Pick<PdfOverlayVersion, 'controlMode'> | null;
@@ -274,8 +277,23 @@ export function serializeDrawingLibraryItem(item: DrawingLibraryItemWithFiles, c
       drawingLibraryItemId: binding.drawingLibraryItemId,
       connectorParameterId: binding.connectorParameterId,
       positionLabel: binding.positionLabel,
+      positionKey: binding.positionKey,
       version: binding.version,
       isCurrent: binding.isCurrent,
+      status: binding.status,
+      sourceType: binding.sourceType,
+      sourceSampleTaskId: binding.sourceSampleTaskId,
+      sourceSubmissionId: binding.sourceSubmissionId,
+      sourceDrawingFileId: binding.sourceDrawingFileId,
+      sourcePayloadHash: binding.sourcePayloadHash,
+      parameterSnapshot: binding.parameterSnapshot && typeof binding.parameterSnapshot === 'object' && !Array.isArray(binding.parameterSnapshot)
+        ? binding.parameterSnapshot as Record<string, unknown>
+        : null,
+      supersedesBindingId: binding.supersedesBindingId,
+      effectiveFrom: binding.effectiveFrom.toISOString(),
+      effectiveTo: binding.effectiveTo?.toISOString() || null,
+      retiredAt: binding.retiredAt?.toISOString() || null,
+      retireReason: binding.retireReason,
       sourceSampleEntryId: binding.sourceSampleEntryId,
       publishedBy: binding.publishedByName,
       publishedAt: binding.publishedAt.toISOString(),

@@ -12,6 +12,13 @@ export async function GET() {
     const user = await requireUser();
     const items = await prisma.connectorParameter.findMany({
       where: { deletedAt: null },
+      include: {
+        productBindings: {
+          where: { isCurrent: true, status: 'PUBLISHED' },
+          include: { drawingLibraryItem: { select: { id: true, customerName: true, productName: true, specification: true } } },
+          orderBy: { publishedAt: 'asc' },
+        },
+      },
       orderBy: [{ rowNo: 'asc' }, { createdAt: 'asc' }],
     });
     await logOp({

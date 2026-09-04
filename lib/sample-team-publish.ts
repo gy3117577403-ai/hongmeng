@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { synchronizeDrawingLibraryWorkOrderStatus } from '@/lib/drawing-library-lifecycle';
-import { cleanSampleText, type SampleActor } from '@/lib/sample-team';
+import { cleanSampleText, sampleRequestHash, type SampleActor } from '@/lib/sample-team';
+import { connectorParameterTechnicalFingerprint } from '@/lib/connector-parameters';
 import type { SamplePublishModeDTO } from '@/types';
 
 type SampleEntryForPublish = Prisma.SampleDataEntryGetPayload<Record<string, never>>;
@@ -21,6 +22,73 @@ function payloadRecord(value: Prisma.JsonValue): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function normalizeConnectorModel(value: unknown): string | null {
+  const text = cleanSampleText(value, 160)?.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  return text ? text.toLocaleUpperCase('en-US') : null;
+}
+
+function normalizeDimension(value: unknown): string | null {
+  const text = cleanSampleText(value, 80)?.normalize('NFKC').replace(/，/g, '.').replace(/\s+/g, '');
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isFinite(number) && number >= 0 ? String(number) : text;
+}
+
+function normalizePosition(value: unknown): { label: string | null; key: string } {
+  const label = cleanSampleText(value, 160)?.normalize('NFKC').replace(/\s+/g, ' ').trim() || null;
+  return { label, key: label?.toLocaleLowerCase('zh-CN') || '' };
+}
+
+function sameConnectorTechnicalValues(
+  value: { model: string | null; outerPeelMm: string | null; innerPeelMm: string | null; insertionLengthMm: string | null; remark: string | null },
+  expected: { model: string; outerPeelMm: string | null; innerPeelMm: string | null; insertionLengthMm: string | null; remark: string | null },
+) {
+  return normalizeConnectorModel(value.model) === expected.model
+    && normalizeDimension(value.outerPeelMm) === expected.outerPeelMm
+    && normalizeDimension(value.innerPeelMm) === expected.innerPeelMm
+    && normalizeDimension(value.insertionLengthMm) === expected.insertionLengthMm
+    && (cleanSampleText(value.remark, 500) || null) === expected.remark;
+}
+
+async function recordEntryPublication(
+  tx: Prisma.TransactionClient,
+  task: SampleTaskForPublish,
+  entry: SampleEntryForPublish,
+  targetType: string,
+  targetId: string,
+  targetChildId?: string | null,
+) {
+  const existing = await tx.samplePublicationLink.findFirst({ where: { sampleEntryId: entry.id, targetType, targetId } });
+  if (existing) return existing;
+  return tx.samplePublicationLink.create({ data: {
+    sampleTaskId: task.id,
+    sampleEntryId: entry.id,
+    targetType,
+    targetId,
+    targetChildId: targetChildId || null,
+    sourceSnapshot: entry.payload === null ? Prisma.JsonNull : entry.payload as Prisma.InputJsonValue,
+    sourceHash: sampleRequestHash(entry.payload),
+  } });
+}
+
+async function recordPhotoPublication(
+  tx: Prisma.TransactionClient,
+  task: SampleTaskForPublish,
+  photo: SamplePhotoForPublish,
+  targetId: string,
+) {
+  const existing = await tx.samplePublicationLink.findFirst({ where: { samplePhotoId: photo.id, targetType: 'drawing_library_file', targetId } });
+  if (existing) return existing;
+  return tx.samplePublicationLink.create({ data: {
+    sampleTaskId: task.id,
+    samplePhotoId: photo.id,
+    targetType: 'drawing_library_file',
+    targetId,
+    sourceSnapshot: { category: photo.category, caption: photo.caption, originalName: photo.originalName, sha256: photo.sha256 },
+    sourceHash: sampleRequestHash({ category: photo.category, caption: photo.caption, originalName: photo.originalName, sha256: photo.sha256 }),
+  } });
 }
 
 function hasMeaningfulValue(value: unknown): boolean {
@@ -270,54 +338,144 @@ async function publishStrippingParameter(
   publishMode: SamplePublishModeDTO,
 ) {
   const payload = payloadRecord(entry.payload);
-  const model = cleanSampleText(payload.model, 160);
-  const outerPeelMm = cleanSampleText(payload.outerPeelMm, 80);
-  const innerPeelMm = cleanSampleText(payload.innerPeelMm, 80);
-  const insertionLengthMm = cleanSampleText(payload.insertionLengthMm, 80);
-  const positionLabel = cleanSampleText(payload.positionLabel, 160) || cleanSampleText(entry.label, 160);
+  const model = normalizeConnectorModel(payload.model);
+  const outerPeelMm = normalizeDimension(payload.outerPeelMm);
+  const innerPeelMm = normalizeDimension(payload.innerPeelMm);
+  const insertionLengthMm = normalizeDimension(payload.insertionLengthMm);
+  const position = normalizePosition(payload.positionLabel || entry.label);
+  const positionLabel = position.label;
   const remark = cleanSampleText(payload.remark, 500);
-  if (![model, outerPeelMm, innerPeelMm, insertionLengthMm, remark].some(Boolean)) {
-    throw new SamplePublishError('该剥皮记录没有可发布参数，可选择通过留档');
-  }
+  if (!model) throw new SamplePublishError('剥皮参数缺少连接器型号，可选择仅留档或补充后再确认', 409, 'SAMPLE_CONNECTOR_MODEL_REQUIRED');
+  if (![outerPeelMm, innerPeelMm, insertionLengthMm].some(Boolean)) throw new SamplePublishError('外剥、内剥、入长至少填写一项，可选择仅留档', 409, 'SAMPLE_CONNECTOR_DIMENSION_REQUIRED');
+  const technicalFingerprint = connectorParameterTechnicalFingerprint({ model, outerPeelMm, innerPeelMm, insertionLengthMm, remark });
+  const sourcePayloadHash = sampleRequestHash(payload);
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-connector:${task.drawingLibraryItemId}`}))`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`connector-parameter:${technicalFingerprint}`}))`;
+  const replay = await tx.productConnectorParameterBinding.findUnique({
+    where: { sourceSampleEntryId: entry.id },
+    include: { connectorParameter: true },
+  });
+  if (replay) {
+    return {
+      reviewStatus: 'PUBLISHED' as const,
+      entityType: 'connector_parameter_binding',
+      entityId: replay.id,
+      detail: { connectorParameterId: replay.connectorParameterId, version: replay.version, reused: true },
+    };
+  }
   const latest = await tx.productConnectorParameterBinding.aggregate({
     where: { drawingLibraryItemId: task.drawingLibraryItemId },
     _max: { version: true },
   });
+  const currentBindings = await tx.productConnectorParameterBinding.findMany({
+    where: { drawingLibraryItemId: task.drawingLibraryItemId, positionKey: position.key, isCurrent: true, status: 'PUBLISHED' },
+    include: { connectorParameter: true },
+    orderBy: [{ version: 'desc' }, { id: 'asc' }],
+  });
+  const expectedValues = { model, outerPeelMm, innerPeelMm, insertionLengthMm, remark };
+  const exactCurrent = currentBindings.find(binding => binding.connectorParameter.technicalFingerprint === technicalFingerprint
+    || sameConnectorTechnicalValues(binding.connectorParameter, expectedValues));
+  if (exactCurrent) {
+    return {
+      reviewStatus: 'PUBLISHED' as const,
+      entityType: 'connector_parameter_binding',
+      entityId: exactCurrent.id,
+      detail: { connectorParameterId: exactCurrent.connectorParameterId, version: exactCurrent.version, reused: true },
+    };
+  }
+  if (currentBindings.length && publishMode !== 'REPLACE_MATCHING') {
+    const label = positionLabel || '未标明位置';
+    throw new SamplePublishError(
+      `${label}已经存在不同的当前剥皮参数，请在审核编辑中选择“替换当前版本”，或补充 A/B 端等位置后再确认`,
+      409,
+      'SAMPLE_CONNECTOR_PARAMETER_CONFLICT',
+    );
+  }
+  const replaced = currentBindings[0] || null;
   if (publishMode === 'REPLACE_MATCHING') {
     await tx.productConnectorParameterBinding.updateMany({
       where: {
         drawingLibraryItemId: task.drawingLibraryItemId,
         isCurrent: true,
-        ...(positionLabel ? { positionLabel: { equals: positionLabel, mode: 'insensitive' } } : {}),
+        positionKey: position.key,
       },
-      data: { isCurrent: false },
+      data: { isCurrent: false, status: 'SUPERSEDED', effectiveTo: new Date() },
     });
   }
-  const parameter = await tx.connectorParameter.create({
-    data: {
-      model,
-      outerPeelMm,
-      innerPeelMm,
-      insertionLengthMm,
-      remark: [remark, `样品任务 ${task.code}`].filter(Boolean).join(' · ').slice(0, 500) || null,
-      createdBy: actor.name,
-      updatedBy: actor.name,
+  let parameter = await tx.connectorParameter.findFirst({
+    where: {
+      deletedAt: null,
+      status: 'PUBLISHED',
+      OR: [
+        { technicalFingerprint },
+        { model: { equals: model, mode: 'insensitive' }, outerPeelMm, innerPeelMm, insertionLengthMm, remark },
+      ],
     },
-    select: { id: true },
+    orderBy: [{ revision: 'desc' }, { createdAt: 'asc' }],
+    select: { id: true, revision: true },
   });
+  if (!parameter) {
+    const modelRevisions = await tx.connectorParameter.findMany({
+      where: { model: { equals: model, mode: 'insensitive' } },
+      select: { revision: true },
+    });
+    parameter = await tx.connectorParameter.create({
+      data: {
+        model,
+        outerPeelMm,
+        innerPeelMm,
+        insertionLengthMm,
+        remark,
+        technicalFingerprint,
+        sourceType: 'SAMPLE_REVIEW',
+        revision: modelRevisions.reduce((max, item) => Math.max(max, item.revision), 0) + 1,
+        status: 'PUBLISHED',
+        supersedesParameterId: replaced?.connectorParameterId || null,
+        lockedAt: new Date(),
+        createdBy: actor.name,
+        updatedBy: actor.name,
+      },
+      select: { id: true, revision: true },
+    });
+  } else {
+    await tx.connectorParameter.update({ where: { id: parameter.id }, data: { technicalFingerprint, lockedAt: new Date() } });
+  }
+  const parameterSnapshot = {
+    model,
+    outerPeelMm,
+    innerPeelMm,
+    insertionLengthMm,
+    remark,
+    revision: parameter.revision,
+    technicalFingerprint,
+  };
   const binding = await tx.productConnectorParameterBinding.create({
     data: {
       drawingLibraryItemId: task.drawingLibraryItemId,
       connectorParameterId: parameter.id,
       positionLabel,
+      positionKey: position.key,
       version: (latest._max.version || 0) + 1,
+      status: 'PUBLISHED',
+      sourceType: 'SAMPLE_REVIEW',
+      sourceSampleTaskId: task.id,
+      sourceSubmissionId: task.activeSubmissionId,
       sourceSampleEntryId: entry.id,
+      sourcePayloadHash,
+      parameterSnapshot,
+      supersedesBindingId: replaced?.id || null,
       publishedById: actor.id,
       publishedByName: actor.name,
     },
     select: { id: true, version: true },
   });
+  await tx.operationLog.create({ data: {
+    userId: actor.id,
+    action: replaced ? 'replace_connector_parameter_from_sample' : 'publish_connector_parameter_from_sample',
+    targetType: 'product_connector_parameter_binding',
+    targetId: binding.id,
+    detail: { taskId: task.id, taskCode: task.code, sourceEntryId: entry.id, connectorParameterId: parameter.id, technicalFingerprint, positionLabel, sourcePayloadHash, replacedBindingId: replaced?.id || null, decision: replaced ? 'REPLACE' : 'CREATE_OR_REUSE' },
+  } });
   await tx.drawingLibraryItem.update({ where: { id: task.drawingLibraryItemId }, data: { updatedAt: new Date() } });
   return {
     reviewStatus: 'PUBLISHED' as const,
@@ -337,12 +495,19 @@ export async function publishSampleEntry(
   if (publishMode === 'RECORD_ONLY') {
     return { reviewStatus: 'APPROVED' as const, entityType: null, entityId: null, detail: {} };
   }
-  if (entry.kind === 'PROCESS_TIME') return syncProcessTimeDraft(tx, task, entry, actor, publishMode);
-  if (entry.kind === 'STRIPPING') return publishStrippingParameter(tx, task, entry, actor, publishMode);
-  if (entry.kind === 'MATERIAL' || entry.kind === 'NOTICE' || entry.kind === 'CUSTOM') {
-    return publishStructuredRecord(tx, task, entry, actor, publishMode);
+  const result = entry.kind === 'PROCESS_TIME'
+    ? await syncProcessTimeDraft(tx, task, entry, actor, publishMode)
+    : entry.kind === 'STRIPPING'
+      ? await publishStrippingParameter(tx, task, entry, actor, publishMode)
+      : entry.kind === 'MATERIAL' || entry.kind === 'NOTICE' || entry.kind === 'CUSTOM'
+        ? await publishStructuredRecord(tx, task, entry, actor, publishMode)
+        : null;
+  if (!result) throw new SamplePublishError('不支持的数据类型');
+  if (result.entityId && result.entityType) {
+    const detail = result.detail as Record<string, unknown>;
+    await recordEntryPublication(tx, task, entry, result.entityType, result.entityId, typeof detail.productTimeEntryId === 'string' ? detail.productTimeEntryId : null);
   }
-  throw new SamplePublishError('不支持的数据类型');
+  return result;
 }
 
 function photoCategoryCode(category: string): string {
@@ -365,6 +530,7 @@ export async function publishSamplePhoto(
   options: { deferLifecycleSync?: boolean } = {},
 ) {
   if (photo.publishedFileId) {
+    await recordPhotoPublication(tx, task, photo, photo.publishedFileId);
     return { entityType: 'drawing_library_file', entityId: photo.publishedFileId, detail: { reused: true } };
   }
   const categoryCode = photoCategoryCode(photo.category);
@@ -376,6 +542,12 @@ export async function publishSamplePhoto(
     select: { version: true },
   });
   const version = `V1.${files.reduce((max, file) => Math.max(max, versionMinor(file.version)), -1) + 1}`;
+  const mediaAsset = await tx.mediaAsset.upsert({
+    where: { originalObjectKey: photo.objectKey },
+    create: { originalObjectKey: photo.objectKey, sha256: photo.sha256, mimeType: photo.mimeType, byteSize: photo.size },
+    update: { sha256: photo.sha256, mimeType: photo.mimeType, byteSize: photo.size },
+    select: { id: true },
+  });
   const file = await tx.drawingLibraryFile.create({
     data: {
       libraryItemId: task.drawingLibraryItemId,
@@ -386,12 +558,17 @@ export async function publishSamplePhoto(
       size: photo.size,
       version,
       objectKey: photo.objectKey,
+      mediaAssetId: mediaAsset.id,
+      sha256: photo.sha256,
+      sourceType: 'SAMPLE_PHOTO',
+      sourceEntityId: photo.id,
       uploadedById: actor.id,
       remark: [`样品任务 ${task.code}`, photo.caption].filter(Boolean).join(' · ').slice(0, 500),
     },
     select: { id: true },
   });
-  await tx.samplePhoto.update({ where: { id: photo.id }, data: { publishedFileId: file.id } });
+  await tx.samplePhoto.update({ where: { id: photo.id }, data: { publishedFileId: file.id, mediaAssetId: mediaAsset.id } });
+  await recordPhotoPublication(tx, task, photo, file.id);
   if (!options.deferLifecycleSync) {
     await finalizeSamplePhotoPublication(tx, task.drawingLibraryItemId);
   }

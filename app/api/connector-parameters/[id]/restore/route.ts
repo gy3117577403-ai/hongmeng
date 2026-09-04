@@ -15,7 +15,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     if (!existing) return NextResponse.json({ ok: false, error: '连接器参数不存在' }, { status: 404 });
     const item = await prisma.connectorParameter.update({
       where: { id: params.id },
-      data: { deletedAt: null, updatedBy: user.displayName || user.username },
+      data: { deletedAt: null, status: 'PUBLISHED', updatedBy: user.displayName || user.username },
     });
     await logOp({
       userId: user.id,

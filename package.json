@@ -1,6 +1,6 @@
 {
   "name": "hongmeng-workorder-resource",
-  "version": "1.34.120",
+  "version": "1.34.121",
   "private": true,
   "scripts": {
     "pdfjs:assets": "node scripts/prepare-pdfjs-assets.mjs",
@@ -48,6 +48,8 @@
     "connector-manuals:audit-metadata": "node scripts/audit-connector-manual-metadata.mjs",
     "test:material-follow-up-integration": "tsx --test --test-concurrency=1 tests/material-follow-up-integration.test.ts",
     "test:sample-integration": "tsx --test --test-concurrency=1 tests/sample-team-integration.test.ts",
+    "sample-test-data:dry": "tsx scripts/retire-sample-test-data.ts",
+    "sample-test-data:retire": "tsx scripts/retire-sample-test-data.ts --execute",
     "test:training-integration": "tsx --test --test-concurrency=1 tests/training-qr-integration.test.ts tests/training-plan-lifecycle-integration.test.ts tests/training-ledger-purge-integration.test.ts",
     "test:skill-integration": "tsx --test --test-concurrency=1 tests/skill-reference-integration.test.ts",
     "test:attendance-calendar-integration": "tsx --test --test-concurrency=1 tests/attendance-calendar-integration.test.ts"

@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type {
   SampleDataKindDTO,
+  SampleDataPurposeDTO,
   SampleDataStatusDTO,
   SamplePhotoCategoryDTO,
   SamplePackageDecisionDTO,
@@ -220,7 +221,10 @@ function optionalMeasuredMilliseconds(value: unknown): number | null {
 
 function optionalDecimalText(value: unknown): string | null {
   if (value === null || value === undefined || value === '') return null;
-  const text = typeof value === 'number' ? String(value) : cleanSampleText(value, 30);
+  const text = (typeof value === 'number' ? String(value) : cleanSampleText(value, 30))
+    ?.normalize('NFKC')
+    .replace(/，/g, '.')
+    .replace(/\s+/g, '');
   if (!text || !/^\d{1,6}(?:\.\d{1,3})?$/.test(text) || Number(text) > 100_000) {
     throw new Error('INVALID_SAMPLE_STRIPPING_VALUE');
   }
@@ -284,6 +288,8 @@ export function sanitizeSampleDraftSection(
         outerPeelMm: optionalDecimalText(row.outerPeelMm),
         innerPeelMm: optionalDecimalText(row.innerPeelMm),
         insertionLengthMm: optionalDecimalText(row.insertionLengthMm),
+        positionLabel: cleanSampleText(row.positionLabel, 160) || '',
+        remark: cleanSampleText(row.remark, 500) || '',
       };
     }),
   };
@@ -462,6 +468,7 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     priority: task.priority,
     status: task.status as SampleTaskStatusDTO,
     dataStatus,
+    dataPurpose: task.dataPurpose as SampleDataPurposeDTO,
     planRemark: task.planRemark,
     version: task.version,
     submissionRevision: task.submissionRevision,

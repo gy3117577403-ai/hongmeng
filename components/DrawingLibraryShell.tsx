@@ -218,6 +218,7 @@ export function DrawingLibraryShell({
   const requestedActiveItem = initialItems.find(item => item.id === requestedItemId) || null;
   const [selectedId, setSelectedId] = useState(requestedItemId ? (requestedActiveItem?.id || '') : (initialItems[0]?.id || ''));
   const [selectedFileId, setSelectedFileId] = useState('');
+  const [previewMode, setPreviewMode] = useState<'structured' | 'file'>('file');
   const lastFilesByCategory = useRef<Record<string, string>>({});
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
   const [qualityWarningMode, setQualityWarningMode] = useState(false);
@@ -287,6 +288,7 @@ export function DrawingLibraryShell({
     : [];
   const selectedQualityWarning = qualityWarnings.find(item => item.id === selectedWarningId) || qualityWarnings[0] || null;
   const activeStructuredCount = activeStructuredRecords.length + activeConnectorParameters.length;
+  const showStructuredPreview = activeStructuredCount > 0 && (previewMode === 'structured' || !selectedFile);
   const isSopCategory = activeCategory?.code === 'sop';
   const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户' || sopFilter !== 'all';
   const activeFilterLabel = filterOptions.find(([key]) => key === filter)?.[1] || '全部';
@@ -1186,7 +1188,10 @@ export function DrawingLibraryShell({
                   </div> : <>
                       <div className="drawing-preview-head">
                         <span><b>{activeCategory?.name || '资料预览'}</b><small>{selectedFile ? `${selectedFile.version || 'V1.0'} · ${bytes(selectedFile.fileSize)}` : '当前分类'}{isSopCategory && selectedFile?.controlMode ? <em className={`drawing-control-inline ${selectedFile.controlMode}`}>{selectedFile.controlMode === 'controlled' ? '受控' : '未受控'}</em> : null}</small></span>
-                        <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>
+                        {activeStructuredCount > 0 ? <span className="drawing-preview-mode" role="group" aria-label="预览内容切换">
+                          <button className={showStructuredPreview ? 'active' : ''} type="button" aria-pressed={showStructuredPreview} onClick={() => setPreviewMode('structured')}>参数数据 {activeStructuredCount}</button>
+                          <button className={!showStructuredPreview ? 'active' : ''} type="button" aria-pressed={!showStructuredPreview} disabled={!selectedFile} onClick={() => setPreviewMode('file')}>附件证据 {activeFiles.length}</button>
+                        </span> : <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>}
                       </div>
 
                       {isSopCategory ? (
@@ -1208,7 +1213,7 @@ export function DrawingLibraryShell({
                         </div>
                       ) : null}
 
-                      {!selectedFile && activeStructuredCount > 0 ? (
+                      {showStructuredPreview ? (
                         <div className="drawing-structured-records hm-scroll-region" tabIndex={0} aria-label={`${activeCategory?.name || '结构化资料'}，共 ${activeStructuredCount} 条`}>
                           {activeConnectorParameters.map(binding => (
                             <article key={binding.id}>
@@ -1220,7 +1225,7 @@ export function DrawingLibraryShell({
                                 <div><dt>入长</dt><dd>{binding.parameter.insertionLengthMm || '-'}</dd></div>
                               </dl>
                               {binding.parameter.remark && <p>{binding.parameter.remark}</p>}
-                              <footer>来源：样品审核 · {binding.publishedBy || '系统'} · {dt(binding.publishedAt)}</footer>
+                              <footer>来源：{binding.sourceType === 'SAMPLE_REVIEW' ? '样品审核' : binding.sourceType} · {binding.publishedBy || '系统'} · {dt(binding.publishedAt)}{binding.sourceSampleTaskId ? ' · 已关联样品任务' : ''}</footer>
                             </article>
                           ))}
                           {activeStructuredRecords.map(record => {
@@ -1242,7 +1247,7 @@ export function DrawingLibraryShell({
                       ) : selectedFile.fileType === 'pdf' ? (
                         <PdfViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} viewUrl={selectedFile.viewUrl} downloadUrl={selectedFile.downloadUrl} />
                       ) : selectedFile.fileType === 'image' ? (
-                        <ImageViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} downloadUrl={selectedFile.downloadUrl} />
+                        <ImageViewer dashboardMode initialFitMode="fit-window" fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} downloadUrl={selectedFile.downloadUrl} />
                       ) : (
                         <div className="drawing-file-fallback">
                           <strong title={safeDisplayFilename(selectedFile)}>{safeDisplayFilename(selectedFile)}</strong>
@@ -1267,7 +1272,7 @@ export function DrawingLibraryShell({
             <>
               <div className="drawing-files hm-scroll-region" tabIndex={0} aria-label={`当前分类文件，共 ${activeFiles.length} 个`}>
                 {activeFiles.map(file => (
-                  <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => requestPreviewLeave(() => setSelectedFileId(file.id))}>
+                  <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => requestPreviewLeave(() => { setSelectedFileId(file.id); setPreviewMode('file'); })}>
                     <b>{file.fileType === 'pdf' ? 'PDF' : file.fileType === 'image' ? 'IMG' : 'FILE'}</b>
                     <span title={safeDisplayFilename(file)}>{safeDisplayFilename(file)}</span>
                     <em>{file.version || 'V1.0'} · {bytes(file.fileSize)}{file.controlMode ? ` · ${file.controlMode === 'controlled' ? '受控' : '未受控'}` : ''}</em>

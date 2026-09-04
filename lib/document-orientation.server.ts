@@ -11,7 +11,7 @@ import { normalizePreviewRotation } from '@/lib/preview-gestures';
 import { fileType } from '@/lib/validation';
 import { canAccessApiRoute } from '@/lib/api-route-access';
 
-type Kind = 'drawing' | 'resource';
+type Kind = 'drawing' | 'resource' | 'sample';
 class DisplaySettingsError extends Error {
   constructor(message: string, readonly status = 400, readonly code = 'DOCUMENT_ORIENTATION_INVALID') { super(message); }
 }
@@ -21,6 +21,11 @@ async function sourceFile(kind: Kind, id: string) {
     const file = await prisma.drawingLibraryFile.findFirst({ where: { id, deletedAt: null, libraryItem: { deletedAt: null } } });
     if (!file) throw new DisplaySettingsError('文件不存在或已删除', 404);
     return { ...file, fileType: fileType(file.originalName, file.mimeType), drawingOwned: true, fileName: file.displayName || file.originalName };
+  }
+  if (kind === 'sample') {
+    const file = await prisma.samplePhoto.findFirst({ where: { id, deletedAt: null, task: { deletedAt: null } } });
+    if (!file) throw new DisplaySettingsError('照片不存在或已删除', 404);
+    return { ...file, fileType: 'image' as const, drawingOwned: true, fileName: file.originalName };
   }
   const file = await prisma.resourceFile.findFirst({ where: { id, deletedAt: null, status: 'uploaded', workOrder: { deletedAt: null } } });
   if (!file) throw new DisplaySettingsError('文件不存在或已删除', 404);
@@ -79,11 +84,13 @@ export async function documentDisplaySettings(req: NextRequest, kind: Kind, id: 
       if ((previous?.revision || 0) !== input.revision) throw new DisplaySettingsError('方向已被其他人修改，请先恢复服务器已保存方向再重新调整', 409, 'DOCUMENT_ORIENTATION_CONFLICT');
       const active = kind === 'drawing'
         ? await tx.drawingLibraryFile.findFirst({ where: { id, objectKey: file.objectKey, deletedAt: null, libraryItem: { deletedAt: null } }, select: { id: true } })
-        : await tx.resourceFile.findFirst({ where: { id, objectKey: file.objectKey, deletedAt: null, status: 'uploaded', workOrder: { deletedAt: null } }, select: { id: true } });
+        : kind === 'sample'
+          ? await tx.samplePhoto.findFirst({ where: { id, objectKey: file.objectKey, deletedAt: null, task: { deletedAt: null } }, select: { id: true } })
+          : await tx.resourceFile.findFirst({ where: { id, objectKey: file.objectKey, deletedAt: null, status: 'uploaded', workOrder: { deletedAt: null } }, select: { id: true } });
       if (!active) throw new DisplaySettingsError('文件已变更或删除，请刷新后重试', 409);
       const data = { pageCount: count, pageRotations: rotations, revision: (previous?.revision || 0) + 1, updatedById: user.id };
       const setting = await tx.documentDisplaySetting.upsert({ where: { objectKey: file.objectKey }, create: { objectKey: file.objectKey, ...data }, update: data });
-      await tx.operationLog.create({ data: { userId: user.id, action: 'save_document_orientation', targetType: kind === 'drawing' ? 'drawing_library_file' : 'resource_file', targetId: id, detail: { before: previous?.pageRotations || {}, after: rotations, revision: setting.revision, pageCount: count } } });
+      await tx.operationLog.create({ data: { userId: user.id, action: 'save_document_orientation', targetType: kind === 'drawing' ? 'drawing_library_file' : kind === 'sample' ? 'sample_photo' : 'resource_file', targetId: id, detail: { before: previous?.pageRotations || {}, after: rotations, revision: setting.revision, pageCount: count } } });
       return setting;
     });
     return NextResponse.json({ ok: true, revision: saved.revision, pageRotations: saved.pageRotations, updatedAt: saved.updatedAt, canSave });
