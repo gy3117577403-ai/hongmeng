@@ -6,6 +6,7 @@ import {
   loadProductionWeekNavigation,
   parseProductionExecutionView,
   productionFiltersFromSearchParams,
+  productionWeekSelector,
   resolveProductionWeek,
 } from '@/lib/production-execution';
 import {
@@ -13,6 +14,10 @@ import {
   ProductionAccessScopeError,
   resolveProductionEntityScope,
 } from '@/lib/production-access-scope';
+import {
+  productionReadCoordinator,
+  productionReadKey,
+} from '@/lib/production-read-coordinator';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,43 +44,92 @@ export async function GET(req: NextRequest) {
     const params = req.nextUrl.searchParams;
     const page = positiveInt(params.get('page'), 1);
     const includeSummary = page === 1 && params.get('includeSummary') === '1';
-    const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
+    const weekInput = [params.get('weekStart'), params.get('weekEnd'), params.get('scope')] as const;
+    const weekSelector = productionWeekSelector(...weekInput);
     const filters = productionFiltersFromSearchParams(params);
+    const keyFilters = {
+      ...filters,
+      quick: [...new Set(filters.quick || [])].sort(),
+      customers: [...(filters.customers || [])].sort(),
+    };
+    const view = parseProductionExecutionView(params.get('view'));
+    const pageSize = Math.min(500, positiveInt(params.get('pageSize'), 120));
+    const offset = nonNegativeInt(params.get('offset'));
     const preparedAt = performance.now();
-    const navigationPromise = includeSummary
-      ? loadProductionWeekNavigation(new Date(), productionScope)
-      : Promise.resolve(null);
-    const [dataResult, navigationResult] = await Promise.allSettled([
-      loadProductionExecution({
+    const readResult = await productionReadCoordinator.run({
+      requestId,
+      operation: 'execution',
+      key: productionReadKey('execution', productionScope, {
+        weekSelector,
+        filters: keyFilters,
+        view,
+        page,
+        pageSize,
+        offset,
+        includeSummary,
+      }),
+    }, async () => {
+      const week = await resolveProductionWeek(...weekInput);
+      const data = await loadProductionExecution({
         week,
         filters,
-        view: parseProductionExecutionView(params.get('view')),
+        view,
         page,
-        pageSize: Math.min(500, positiveInt(params.get('pageSize'), 120)),
-        offset: nonNegativeInt(params.get('offset')),
+        pageSize,
+        offset,
         includeSummary,
         productionScope,
-      }),
-      navigationPromise,
-    ]);
-    if (dataResult.status === 'rejected') throw dataResult.reason;
-    const data = dataResult.value;
-    const navigation = navigationResult.status === 'fulfilled' ? navigationResult.value : null;
-    const warnings: Array<{ code: string; message: string }> = [];
-    if (navigationResult.status === 'rejected') {
-      warnings.push({ code: 'PRODUCTION_WEEK_NAVIGATION_UNAVAILABLE', message: '生产周导航暂时不可用' });
-      console.error('production execution auxiliary read failed', {
-        requestId,
-        part: 'week_navigation',
-        error: navigationResult.reason,
       });
+      let navigation: Awaited<ReturnType<typeof loadProductionWeekNavigation>> | null = null;
+      const warnings: Array<{ code: string; message: string }> = [];
+      if (includeSummary) {
+        try {
+          navigation = await loadProductionWeekNavigation(new Date(), productionScope);
+        } catch (error) {
+          warnings.push({ code: 'PRODUCTION_WEEK_NAVIGATION_UNAVAILABLE', message: '生产周导航暂时不可用' });
+          console.error('production execution auxiliary read failed', {
+            requestId,
+            part: 'week_navigation',
+            error,
+          });
+        }
+      }
+      return {
+        data: navigation && data.summary
+          ? { ...data, summary: { ...data.summary, navigation } }
+          : data,
+        warnings,
+      };
+    });
+    if (!readResult.started) {
+      console.warn('production execution read rejected while busy', {
+        requestId,
+        code: 'PRODUCTION_EXECUTION_BUSY',
+        activeOperation: readResult.active.operation,
+        activeForMs: readResult.activeForMs,
+      });
+      const response = NextResponse.json({
+        ok: false,
+        error: '生产看板繁忙，请稍后重试',
+        code: 'PRODUCTION_EXECUTION_BUSY',
+        requestId,
+        retryAfterSeconds: 2,
+      }, { status: 503 });
+      response.headers.set('Cache-Control', 'private, no-store');
+      response.headers.set('Retry-After', '2');
+      response.headers.set('X-Request-Id', requestId);
+      return response;
     }
-    const responseData = navigation && data.summary
-      ? { ...data, summary: { ...data.summary, navigation } }
-      : data;
     const loadedAt = performance.now();
-    const response = NextResponse.json({ ok: true, requestId, data: responseData, warnings });
+    const response = NextResponse.json({
+      ok: true,
+      requestId,
+      data: readResult.value.data,
+      warnings: readResult.value.warnings,
+    });
     response.headers.set('Cache-Control', 'private, no-store');
+    response.headers.set('X-Request-Id', requestId);
+    response.headers.set('X-Production-Read-Mode', readResult.shared ? 'joined' : 'leader');
     response.headers.set('Server-Timing', [
       `auth;dur=${(authenticatedAt - requestStartedAt).toFixed(1)}`,
       `prepare;dur=${(preparedAt - authenticatedAt).toFixed(1)}`,

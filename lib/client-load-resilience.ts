@@ -2,6 +2,7 @@ export const AUTO_REFRESH_BASE_DELAY_MS = 60_000;
 export const AUTO_REFRESH_JITTER_MS = 30_000;
 export const AUTO_REFRESH_CHECK_INTERVAL_MS = 15_000;
 export const AUTO_REFRESH_MAX_DELAY_MS = 5 * 60_000;
+export const PRODUCTION_BUSY_RETRY_LIMIT = 1;
 
 export type CacheBoundSnapshot<T> = {
   cacheKey: string;
@@ -59,4 +60,15 @@ export function shouldStartAutoRefresh(input: {
   return input.visible
     && !input.requestInFlight
     && input.now >= input.nextAllowedAt;
+}
+
+export function productionBusyRetryDelayMs(retryAfter: string | null, randomUnit = 0): number {
+  const parsedSeconds = Number(retryAfter);
+  const seconds = Number.isFinite(parsedSeconds) && parsedSeconds > 0
+    ? Math.min(5, parsedSeconds)
+    : 2;
+  const boundedRandom = Number.isFinite(randomUnit)
+    ? Math.min(1, Math.max(0, randomUnit))
+    : 0;
+  return Math.ceil(seconds * 1000) + Math.floor(500 * boundedRandom);
 }

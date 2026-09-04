@@ -7,9 +7,11 @@ import {
   AUTO_REFRESH_CHECK_INTERVAL_MS,
   AUTO_REFRESH_JITTER_MS,
   AUTO_REFRESH_MAX_DELAY_MS,
+  PRODUCTION_BUSY_RETRY_LIMIT,
   auxiliaryValueAfterLoad,
   autoRefreshDelayMs,
   cacheBoundSnapshotValue,
+  productionBusyRetryDelayMs,
   retainCacheBoundSnapshot,
   shouldStartAutoRefresh,
 } from '../lib/client-load-resilience';
@@ -37,6 +39,14 @@ test('auto refresh does not start while hidden, before backoff expires, or while
   assert.equal(shouldStartAutoRefresh({ visible: true, requestInFlight: true, now, nextAllowedAt: now }), false);
   assert.equal(shouldStartAutoRefresh({ visible: true, requestInFlight: false, now, nextAllowedAt: now + 1 }), false);
   assert.equal(shouldStartAutoRefresh({ visible: true, requestInFlight: false, now, nextAllowedAt: now }), true);
+});
+
+test('production busy responses receive one bounded jittered retry', () => {
+  assert.equal(PRODUCTION_BUSY_RETRY_LIMIT, 1);
+  assert.equal(productionBusyRetryDelayMs('2', 0), 2_000);
+  assert.equal(productionBusyRetryDelayMs('2', 1), 2_500);
+  assert.equal(productionBusyRetryDelayMs('30', 0), 5_000);
+  assert.equal(productionBusyRetryDelayMs('invalid', 0), 2_000);
 });
 
 test('production snapshots are retained only for the exact active query key', () => {
@@ -98,4 +108,6 @@ test('production execution keeps a prior board on refresh failure and never pres
   assert.match(source, /autoRefreshDelayMs\(0, Math\.random\(\)\)/);
   assert.match(source, /autoRefreshDelayMs\(failures, Math\.random\(\)\)/);
   assert.match(source, /setInterval\(refresh, AUTO_REFRESH_CHECK_INTERVAL_MS\)/);
+  assert.match(source, /body\.code === 'PRODUCTION_EXECUTION_BUSY'/);
+  assert.match(source, /productionBusyRetryDelayMs\(response\.headers\.get\('Retry-After'\), Math\.random\(\)\)/);
 });

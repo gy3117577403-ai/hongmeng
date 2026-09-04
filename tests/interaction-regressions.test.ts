@@ -100,7 +100,8 @@ test('production execution defaults to weekly plan attainment and exposes separa
   const component = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
   const service = readFileSync(resolve(repositoryRoot, 'lib/production-execution.ts'), 'utf8');
 
-  assert.match(service, /const \[nativeOrders, weekWipContinuations, wipPlanMetrics\] = await Promise\.all/);
+  assert.match(service, /const \[nativeOrders, weekWipContinuations\] = await runTasksWithConcurrencyLimit\(2/);
+  assert.match(service, /const wipPlanMetrics = input\.includeSummary && input\.week\.weekStart/);
   assert.match(service, /input\.includeSummary && input\.week\.weekStart[\s\S]*?loadWipWeekLaborMetrics\(input\.week\.weekStart\)/);
   assert.match(service, /summary:\s*\{[\s\S]*?wipPlanMetrics,[\s\S]*?executionCountBreakdown/);
   assert.match(component, /pageParams\.set\('includeSummary', '1'\)/, 'the initial board request must include WIP metrics');

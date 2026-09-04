@@ -509,11 +509,10 @@ export async function loadProductionCarryoverCounts(
 ) {
   const target = normalizedWeek(targetWeekStart);
   const previous = addDays(target, -7);
-  const [active, older] = await Promise.all([
-    prisma.productionCarryover.count({
-      where: activeProductionCarryoverLinkWhere(target, scope),
-    }),
-    prisma.productionPlanBatch.count({
+  const active = await prisma.productionCarryover.count({
+    where: activeProductionCarryoverLinkWhere(target, scope),
+  });
+  const older = await prisma.productionPlanBatch.count({
       where: {
         deletedAt: null,
         releaseState: { in: CARRYOVER_BATCH_STATES },
@@ -524,7 +523,6 @@ export async function loadProductionCarryoverCounts(
         NOT: activeProductionCarryoverBatchWhere(target),
         ...productionBatchScopeWhere(scope),
       },
-    }),
-  ]);
+    });
   return { active, older };
 }

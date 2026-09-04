@@ -8,6 +8,7 @@ import {
   type PrismaClient,
 } from '@prisma/client';
 import { calculateTaskStandardMilliseconds } from '@/lib/daily-plan-domain';
+import { runTasksWithConcurrencyLimit } from '@/lib/promise-concurrency';
 import { prisma } from '@/lib/prisma';
 import {
   chinaDate,
@@ -1981,8 +1982,8 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
     targetCredits,
     unscheduledLots,
     priorNativePools,
-  ] = await Promise.all([
-    effectiveBatchIds.length ? prisma.semiFinishedLot.findMany({
+  ] = await runTasksWithConcurrencyLimit(2, [
+    () => effectiveBatchIds.length ? prisma.semiFinishedLot.findMany({
       where: {
         productionPlanBatchId: { in: effectiveBatchIds },
         scheduleStatus: { not: SemiFinishedScheduleStatus.CANCELLED },
@@ -2006,7 +2007,7 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
         },
       },
     }) : Promise.resolve([]),
-    prisma.wipWeekAllocation.findMany({
+    () => prisma.wipWeekAllocation.findMany({
       where: { targetWeekStartDate: week.start, status: { not: WipWeekAllocationStatus.CANCELLED } },
       select: {
         status: true,
@@ -2014,7 +2015,7 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
         completedStandardMilliseconds: true,
       },
     }),
-    effectiveWorkOrderIds.length ? prisma.processLaborPool.aggregate({
+    () => effectiveWorkOrderIds.length ? prisma.processLaborPool.aggregate({
       where: {
         workOrderId: { in: effectiveWorkOrderIds },
         workDate: { gte: week.start, lte: week.end },
@@ -2022,7 +2023,7 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
       },
       _sum: { totalStandardLaborMilliseconds: true },
     }) : Promise.resolve({ _sum: { totalStandardLaborMilliseconds: null } }),
-    effectiveWorkOrderIds.length ? prisma.processWipCredit.aggregate({
+    () => effectiveWorkOrderIds.length ? prisma.processWipCredit.aggregate({
       where: {
         status: 'ACTIVE',
         workDate: { gte: week.start, lte: week.end },
@@ -2030,21 +2031,21 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
       },
       _sum: { standardMilliseconds: true },
     }) : Promise.resolve({ _sum: { standardMilliseconds: null } }),
-    prisma.processWipCredit.aggregate({
+    () => prisma.processWipCredit.aggregate({
       where: {
         status: 'ACTIVE',
         allocationStep: { allocation: { targetWeekStartDate: week.start } },
       },
       _sum: { standardMilliseconds: true },
     }),
-    prisma.semiFinishedLot.findMany({
+    () => prisma.semiFinishedLot.findMany({
       where: { scheduleStatus: { in: [SemiFinishedScheduleStatus.UNSCHEDULED, SemiFinishedScheduleStatus.PARTIALLY_SCHEDULED] } },
       select: {
         quantity: true,
         allocations: { select: { status: true, quantity: true, completedQty: true } },
       },
     }),
-    effectiveWorkOrderIds.length ? prisma.processLaborPool.groupBy({
+    () => effectiveWorkOrderIds.length ? prisma.processLaborPool.groupBy({
       by: ['workOrderId'],
       where: {
         workOrderId: { in: effectiveWorkOrderIds },
@@ -2053,7 +2054,7 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
       },
       _sum: { totalStandardLaborMilliseconds: true },
     }) : Promise.resolve([]),
-  ]);
+  ] as const);
   const completedBeforeByWorkOrder = new Map(priorNativePools.map(pool => [
     pool.workOrderId,
     pool._sum.totalStandardLaborMilliseconds || 0n,

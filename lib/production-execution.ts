@@ -28,6 +28,7 @@ import {
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
 import { normalizePlanningSopStage } from '@/lib/planning-sop';
+import { runTasksWithConcurrencyLimit } from '@/lib/promise-concurrency';
 import { loadWipWeekLaborMetrics } from '@/lib/wip-warehouse';
 import {
   loadWipContinuations,
@@ -647,7 +648,9 @@ async function loadProductionArrangementMap(
   const orderById = new Map(orders.map(order => [order.id, order] as const));
   const grouped = tasks.reduce((map, task) => {
     const key = `${task.workOrderId}:${task.planId}`;
-    map.set(key, [...(map.get(key) || []), task]);
+    const current = map.get(key);
+    if (current) current.push(task);
+    else map.set(key, [task]);
     return map;
   }, new Map<string, typeof tasks>());
   const today = chinaYmd(now);
@@ -747,7 +750,9 @@ async function loadProductionArrangementMap(
       processNames: [...new Set(taskProgress.map(item => item.task.processName))],
       employees: [...workerById.values()],
     };
-    result.set(first.workOrderId, [...(result.get(first.workOrderId) || []), arrangement]);
+    const current = result.get(first.workOrderId);
+    if (current) current.push(arrangement);
+    else result.set(first.workOrderId, [arrangement]);
   }
   for (const arrangements of result.values()) {
     arrangements.sort((left, right) => left.workDate.localeCompare(right.workDate) || left.planId.localeCompare(right.planId));
@@ -776,6 +781,23 @@ export function parseProductionWeekScope(value?: string | null): ProductionWeekS
   return 'current';
 }
 
+export function productionWeekSelector(
+  weekStartInput?: string | null,
+  weekEndInput?: string | null,
+  scopeInput?: string | null,
+) {
+  const explicitScope = scopeInput === 'current'
+    || scopeInput === 'carryover'
+    || scopeInput === 'next'
+    || scopeInput === 'afterNext'
+    || scopeInput === 'history';
+  const scope = explicitScope ? parseProductionWeekScope(scopeInput) : (weekStartInput ? 'history' : 'current');
+  const selectedWeekStart = weekStartInput || null;
+  return scope === 'history'
+    ? { scope, weekStartInput: selectedWeekStart, weekEndInput: selectedWeekStart ? (weekEndInput || null) : null }
+    : { scope, weekStartInput: null, weekEndInput: null };
+}
+
 export function naturalProductionWeek(now = new Date()): { start: Date; end: Date } {
   const dateText = chinaYmd(now);
   const localNoon = new Date(`${dateText}T12:00:00+08:00`);
@@ -797,12 +819,8 @@ export async function resolveProductionWeek(
   weekEndInput?: string | null,
   scopeInput?: string | null,
 ): Promise<ProductionWeek> {
-  const explicitScope = scopeInput === 'current'
-    || scopeInput === 'carryover'
-    || scopeInput === 'next'
-    || scopeInput === 'afterNext'
-    || scopeInput === 'history';
-  const scope = explicitScope ? parseProductionWeekScope(scopeInput) : (weekStartInput ? 'history' : 'current');
+  const selector = productionWeekSelector(weekStartInput, weekEndInput, scopeInput);
+  const { scope } = selector;
   const natural = naturalProductionWeek();
   if (scope === 'current' || scope === 'carryover') {
     return { scope, weekStart: natural.start, weekEnd: natural.end };
@@ -811,10 +829,10 @@ export async function resolveProductionWeek(
     const offset = scope === 'afterNext' ? 14 : 7;
     return { scope, weekStart: addDays(natural.start, offset), weekEnd: addDays(natural.end, offset) };
   }
-  const requestedStart = parseWeek(weekStartInput);
-  if (weekStartInput && !requestedStart) throw new Error('周开始日期格式不正确');
+  const requestedStart = parseWeek(selector.weekStartInput);
+  if (selector.weekStartInput && !requestedStart) throw new Error('周开始日期格式不正确');
   if (requestedStart) {
-    const requestedEnd = parseWeek(weekEndInput) || addDays(requestedStart, 6);
+    const requestedEnd = parseWeek(selector.weekEndInput) || addDays(requestedStart, 6);
     return { scope: 'history', weekStart: requestedStart, weekEnd: requestedEnd };
   }
   const previous = await prisma.productionPlanBatch.findFirst({
@@ -1012,12 +1030,13 @@ export async function loadProductionWeekNavigation(
     weekStartDate: sameDayRange(weekStart),
     ...productionBatchScopeWhere(scope),
   });
-  const [currentCount, nextCount, afterNextCount, carryoverCounts, historicalBatches, navigationWip] = await Promise.all([
-    prisma.productionPlanBatch.count({ where: planningBatchWhere(natural.start) }),
-    prisma.productionPlanBatch.count({ where: planningBatchWhere(nextStart) }),
-    prisma.productionPlanBatch.count({ where: planningBatchWhere(afterNextStart) }),
-    loadProductionCarryoverCounts(natural.start, scope),
-    prisma.productionPlanBatch.findMany({
+  const [currentCount, nextCount] = await runTasksWithConcurrencyLimit(2, [
+    () => prisma.productionPlanBatch.count({ where: planningBatchWhere(natural.start) }),
+    () => prisma.productionPlanBatch.count({ where: planningBatchWhere(nextStart) }),
+  ] as const);
+  const [afterNextCount, historicalBatches] = await runTasksWithConcurrencyLimit(2, [
+    () => prisma.productionPlanBatch.count({ where: planningBatchWhere(afterNextStart) }),
+    () => prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
         planOrder: { deletedAt: null },
@@ -1028,8 +1047,11 @@ export async function loadProductionWeekNavigation(
       orderBy: { weekStartDate: 'desc' },
       take: 5000,
     }),
-    loadWipContinuations({ productionScope: scope }),
-  ]);
+  ] as const);
+  // Keep the nested carryover counts and chunked WIP reads out of the same
+  // wave; each may already use more than one database operation internally.
+  const carryoverCounts = await loadProductionCarryoverCounts(natural.start, scope);
+  const navigationWip = await loadWipContinuations({ productionScope: scope });
   const historyMap = new Map<string, ProductionWeekNavigationItem>();
   for (const batch of historicalBatches) {
     const weekStartDate = chinaYmd(batch.weekStartDate);
@@ -1684,19 +1706,19 @@ export async function loadProductionExecution(input: {
 }) {
   const now = new Date();
   const filters = input.filters || {};
-  const [nativeOrders, weekWipContinuations, wipPlanMetrics] = await Promise.all([
-    loadProductionSummaryOrders(input.week, filters.workOrderId, input.productionScope),
-    input.week.weekStart
+  const [nativeOrders, weekWipContinuations] = await runTasksWithConcurrencyLimit(2, [
+    () => loadProductionSummaryOrders(input.week, filters.workOrderId, input.productionScope),
+    () => input.week.weekStart
       ? loadWipContinuations({
           targetWeekStartDate: input.week.weekStart,
           productionScope: input.productionScope,
           includeSupersededHistory: true,
         })
       : Promise.resolve([] as WipContinuationProjection[]),
-    input.includeSummary && input.week.weekStart
-      ? loadWipWeekLaborMetrics(input.week.weekStart)
-      : Promise.resolve(null),
-  ]);
+  ] as const);
+  const wipPlanMetrics = input.includeSummary && input.week.weekStart
+    ? await loadWipWeekLaborMetrics(input.week.weekStart)
+    : null;
   let summaryOrders = nativeOrders;
   // A deep link narrows the board to one work order, but the command-center
   // summary must retain its historical scope-wide meaning.
@@ -1712,15 +1734,15 @@ export async function loadProductionExecution(input: {
   // batch. Query by durable order identity first, then apply the source/target
   // week relationship in memory; an exact sourceWeek=currentWeek predicate
   // loses historical-source carryovers such as 08-24 -> 08-31 -> 09-07.
-  const [relevantWipContinuations, relevantWipSourceLots] = relevantWipWorkOrderIds.length
-    ? await Promise.all([
-        loadWipContinuations({
-          workOrderIds: relevantWipWorkOrderIds,
-          productionScope: input.productionScope,
-        }),
-        loadWipSourceLots({ workOrderIds: relevantWipWorkOrderIds }),
-      ])
-    : [[], []] as [WipContinuationProjection[], WipSourceLotProjection[]];
+  const relevantWipContinuations = relevantWipWorkOrderIds.length
+    ? await loadWipContinuations({
+        workOrderIds: relevantWipWorkOrderIds,
+        productionScope: input.productionScope,
+      })
+    : [];
+  const relevantWipSourceLots = relevantWipWorkOrderIds.length
+    ? await loadWipSourceLots({ workOrderIds: relevantWipWorkOrderIds })
+    : [];
   const relevantWipByWorkOrder = new Map<string, WipContinuationProjection[]>();
   for (const continuation of relevantWipContinuations) {
     const current = relevantWipByWorkOrder.get(continuation.workOrderId) || [];
@@ -2104,16 +2126,16 @@ export async function summarizeProduction(week: ProductionWeek, scope?: Producti
   const now = new Date();
   const loadedOrders = (await loadProductionSummaryOrders(week, undefined, scope)).filter(isRootProductionOrder);
   const arrangementsByOrder = await loadProductionArrangementMap(loadedOrders, now, scope);
-  const [wipPlanMetrics, loadedCarryoverByOrder, continuations, sourceLots] = await Promise.all([
-    week.weekStart ? loadWipWeekLaborMetrics(week.weekStart) : Promise.resolve(null),
-    week.scope === 'current' && week.weekStart
-      ? loadProductionCarryoverMetadata(week.weekStart, loadedOrders.map(order => order.id))
-      : Promise.resolve(new Map<string, ProductionCarryoverMetadata>()),
-    week.weekStart
-      ? loadWipContinuations({ targetWeekStartDate: week.weekStart, productionScope: scope })
-      : Promise.resolve([] as WipContinuationProjection[]),
-    loadWipSourceLots({ workOrderIds: loadedOrders.map(order => order.id) }),
-  ]);
+  const wipPlanMetrics = week.weekStart
+    ? await loadWipWeekLaborMetrics(week.weekStart)
+    : null;
+  const loadedCarryoverByOrder = week.scope === 'current' && week.weekStart
+    ? await loadProductionCarryoverMetadata(week.weekStart, loadedOrders.map(order => order.id))
+    : new Map<string, ProductionCarryoverMetadata>();
+  const continuations = week.weekStart
+    ? await loadWipContinuations({ targetWeekStartDate: week.weekStart, productionScope: scope })
+    : [] as WipContinuationProjection[];
+  const sourceLots = await loadWipSourceLots({ workOrderIds: loadedOrders.map(order => order.id) });
   const continuationsByWorkOrder = new Map<string, WipContinuationProjection[]>();
   for (const continuation of continuations) {
     const current = continuationsByWorkOrder.get(continuation.workOrderId) || [];

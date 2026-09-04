@@ -20,8 +20,10 @@ import { writeClipboardText } from '@/lib/client-platform';
 import {
   AUTO_REFRESH_BASE_DELAY_MS,
   AUTO_REFRESH_CHECK_INTERVAL_MS,
+  PRODUCTION_BUSY_RETRY_LIMIT,
   autoRefreshDelayMs,
   cacheBoundSnapshotValue,
+  productionBusyRetryDelayMs,
   retainCacheBoundSnapshot,
   shouldStartAutoRefresh,
   type CacheBoundSnapshot,
@@ -1161,11 +1163,37 @@ async function fetchProductionBoardPage(
     pageParams.set('includeSummary', '1');
     pageParams.delete('offset');
   }
-  const response = await fetch(`/api/work-orders/execution?${pageParams.toString()}`, { cache: 'no-store', signal });
-  const body = await response.json().catch(() => ({}));
-  if (response.status === 401) location.href = '/login';
-  if (!response.ok) throw new Error(body.error || '生产看板加载失败');
-  return body.data as BoardPayload;
+  for (let attempt = 0; attempt <= PRODUCTION_BUSY_RETRY_LIMIT; attempt += 1) {
+    const response = await fetch(`/api/work-orders/execution?${pageParams.toString()}`, { cache: 'no-store', signal });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 401) location.href = '/login';
+    if (response.ok) return body.data as BoardPayload;
+    if (
+      response.status === 503
+      && body.code === 'PRODUCTION_EXECUTION_BUSY'
+      && attempt < PRODUCTION_BUSY_RETRY_LIMIT
+    ) {
+      const delayMs = productionBusyRetryDelayMs(response.headers.get('Retry-After'), Math.random());
+      await new Promise<void>((resolveDelay, rejectDelay) => {
+        if (signal.aborted) {
+          rejectDelay(signal.reason || new DOMException('请求已取消', 'AbortError'));
+          return;
+        }
+        const timer = window.setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
+          resolveDelay();
+        }, delayMs);
+        const onAbort = () => {
+          window.clearTimeout(timer);
+          rejectDelay(signal.reason || new DOMException('请求已取消', 'AbortError'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+      continue;
+    }
+    throw new Error(body.error || '生产看板加载失败');
+  }
+  throw new Error('生产看板加载失败');
 }
 
 function normalizedProductionUrl(value: string): string {
@@ -3405,7 +3433,6 @@ export default function ProductionExecutionCenter({
           setToast(`已将 ${count} 个更早遗留订单加入本周，原订单和资料保持不变`);
           changeWeekScope('current');
           setRefreshToken(value => value + 1);
-          setSummaryRefreshToken(value => value + 1);
         }}
       />
       <TravelerPrintDialog open={travelerPrintIds.length > 0} workOrderIds={travelerPrintIds} onClose={() => setTravelerPrintIds([])} onSuccess={message => { setToast(message); setSelected([]); }} />

@@ -1,5 +1,6 @@
 import { Prisma, WipWeekAllocationStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { runTasksWithConcurrencyLimit } from '@/lib/promise-concurrency';
 import {
   productionTeamScopeWhere,
   type ProductionEntityScope,
@@ -124,7 +125,7 @@ export async function loadWipSourceLots(input: {
   const idChunks = Array.from({ length: Math.ceil(workOrderIds.length / 1000) }, (_, index) => (
     workOrderIds.slice(index * 1000, (index + 1) * 1000)
   ));
-  const lots = (await Promise.all(idChunks.map(workOrderIdChunk => prisma.semiFinishedLot.findMany({
+  const lots = (await runTasksWithConcurrencyLimit(2, idChunks.map(workOrderIdChunk => () => prisma.semiFinishedLot.findMany({
       where: {
         workOrderId: { in: workOrderIdChunk },
         scheduleStatus: { not: 'CANCELLED' },
@@ -225,7 +226,7 @@ export async function loadWipContinuations(input: {
         workOrderIds.slice(index * 1000, (index + 1) * 1000)
       ))
     : [null];
-  const records = (await Promise.all(workOrderIdChunks.map(workOrderIdChunk => prisma.wipWeekAllocation.findMany({
+  const records = (await runTasksWithConcurrencyLimit(2, workOrderIdChunks.map(workOrderIdChunk => () => prisma.wipWeekAllocation.findMany({
       where: {
         ...(input.includeSupersededHistory ? {
           OR: [
