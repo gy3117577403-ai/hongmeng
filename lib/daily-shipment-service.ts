@@ -1249,7 +1249,11 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
     shippedTodayItems,
     summary: {
       itemCount: displayItems.length,
-      plannedQuantity: displayItems.reduce((total, item) => total + item.plannedQuantity, 0),
+      // Keep the selected day's historical plan total stable even though
+      // completed rows are rendered in a separate lane. This preserves exports
+      // and closed-plan summaries while the collaboration list stays pending-only.
+      plannedQuantity: [...displayItems, ...shippedTodayItems]
+        .reduce((total, item) => total + item.plannedQuantity, 0),
       readyQuantity: displayItems.reduce((total, item) => (
         total + Math.min(item.pendingQuantity, Math.max(0, item.completedQuantity - item.shippedQuantity))
       ), 0),
