@@ -27,6 +27,7 @@ export function canMutateAbnormalTimeEvent(
 export const DAILY_SHIPMENT_MUTATION_ACTIONS = [
   'ADD_ITEMS',
   'UPDATE_ITEM',
+  'SET_ITEM_MARK',
   'CANCEL_ITEM',
   'CONFIRM_PLAN',
   'CLOSE_PLAN',
@@ -50,6 +51,7 @@ export function dailyShipmentRequiredAction(
     case 'ADD_ITEMS':
       return 'CREATE';
     case 'UPDATE_ITEM':
+    case 'SET_ITEM_MARK':
     case 'CANCEL_ITEM':
       return 'UPDATE';
     case 'CONFIRM_PLAN':

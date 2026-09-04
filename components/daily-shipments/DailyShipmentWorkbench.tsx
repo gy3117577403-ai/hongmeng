@@ -16,6 +16,7 @@ import {
   LoaderCircle,
   LockOpen,
   Menu,
+  MessageSquareText,
   PackageCheck,
   Pencil,
   Plus,
@@ -89,8 +90,8 @@ const PLAN_STATUS_TEXT = {
 } as const;
 
 const PRIORITY_META: Record<DailyShipmentPriority, { label: string; description: string }> = {
-  URGENT: { label: '紧急', description: '红色 · 最先处理' },
-  PRIORITY: { label: '优先', description: '黄色 · 优先安排' },
+  URGENT: { label: '今日必出', description: '红色 · 当日刚性任务' },
+  PRIORITY: { label: '重点跟进', description: '黄色 · 重点协同推进' },
   NORMAL: { label: '常规', description: '蓝色 · 正常顺序' },
 };
 
@@ -104,7 +105,7 @@ const ASSOCIATION_TEXT: Record<DailyShipmentItemDTO['associationType'], string> 
 };
 
 const VIEW_META: Record<ShipmentView, { label: string; description: string }> = {
-  today: { label: '当日出货计划', description: '只看所选日期应发与顺延单' },
+  today: { label: '今日协同清单', description: '待出余额与今日完成分区' },
   warning: { label: '未来 3 天预警', description: '提前提醒，不混入当日计划' },
   carryover: { label: '连续顺延', description: '未出余额持续滚动' },
   history: { label: '出货历史', description: '实发与撤销完整留痕' },
@@ -240,6 +241,52 @@ function PrioritySelector({ value, onChange, disabled = false, compact = false }
       onClick={() => onChange(priority)}
     >{PRIORITY_META[priority].label}</button>)}
   </div>;
+}
+
+const PRODUCTION_REASON_TEXT: Record<NonNullable<DailyShipmentItemDTO['productionFollowUp']>['category'], string> = {
+  material: '缺料', quality: '品质', equipment: '设备', customer: '客户', process: '工艺', other: '其他',
+};
+
+function ShipmentMarker({ item, busy, onChange }: {
+  item: DailyShipmentItemDTO;
+  busy: boolean;
+  onChange: (priority: DailyShipmentPriority) => void;
+}) {
+  return <details className="shipment-marker">
+    <summary className={`shipment-priority-badge priority-${item.shipmentPriority.toLocaleLowerCase()}`}>
+      <b>{PRIORITY_META[item.shipmentPriority].label}</b>
+      <small>{item.isCarryover ? '上日遗留' : PRIORITY_META[item.shipmentPriority].description.split(' · ')[1]}</small>
+      <ChevronDown size={12} />
+    </summary>
+    <div className="shipment-marker-popover">
+      <header><span>协同标注</span><strong>今天怎么跟进这批订单？</strong></header>
+      {PRIORITY_VALUES.map(priority => <button
+        type="button"
+        key={priority}
+        className={`priority-${priority.toLocaleLowerCase()} ${priority === item.shipmentPriority ? 'active' : ''}`}
+        disabled={busy || priority === item.shipmentPriority}
+        onClick={event => {
+          event.currentTarget.closest('details')?.removeAttribute('open');
+          onChange(priority);
+        }}
+      ><i /><span><b>{PRIORITY_META[priority].label}</b><small>{PRIORITY_META[priority].description}</small></span>{priority === item.shipmentPriority && <Check size={14} />}</button>)}
+      <footer>{item.markerAudit ? `${item.markerAudit.actor.name} · ${timeText(item.markerAudit.updatedAt)}` : '尚无人工标注记录'}</footer>
+    </div>
+  </details>;
+}
+
+function ProductionFollowUp({ item }: { item: DailyShipmentItemDTO }) {
+  const followUp = item.productionFollowUp;
+  if (!followUp) return null;
+  return <details className="shipment-production-followup">
+    <summary title={followUp.text}><MessageSquareText size={12} /><span>生产跟进</span><b>{PRODUCTION_REASON_TEXT[followUp.category]}</b></summary>
+    <div>
+      <small>来自生产执行 · 只读同步</small>
+      <strong>{followUp.text}</strong>
+      <span>{followUp.owner ? `跟进：${followUp.owner}` : '未指定跟进人'}{followUp.updatedBy ? ` · ${followUp.updatedBy}` : ''}</span>
+      {followUp.followUpAt && <em>计划跟进 {timeText(followUp.followUpAt)}</em>}
+    </div>
+  </details>;
 }
 
 function OrderIdentity({ item }: { item: Pick<DailyShipmentItemDTO, 'workOrderCode' | 'sourceOrderNo' | 'customerName' | 'productName' | 'specification' | 'batchNo' | 'isCarryover' | 'carryoverDayCount' | 'carriedOverToDate'> }) {
@@ -675,6 +722,16 @@ export default function DailyShipmentWorkbench({
     void execute({ action: 'ADD_ITEMS', shipDate: selectedDate, items }, `已加入 ${items.length} 个订单`);
   }
 
+  function setItemMarker(item: DailyShipmentItemDTO, shipmentPriority: DailyShipmentPriority): void {
+    if (item.shipmentPriority === shipmentPriority) return;
+    void execute({
+      action: 'SET_ITEM_MARK',
+      itemId: item.id,
+      itemVersion: item.version,
+      shipmentPriority,
+    }, `已标注为“${PRIORITY_META[shipmentPriority].label}”`);
+  }
+
   function openDialog(next: DialogState): void {
     setError('');
     setDialog(next);
@@ -854,14 +911,11 @@ export default function DailyShipmentWorkbench({
       </section>
 
       <section className="shipment-kpis" aria-label="当日出货指标" aria-busy={!data}>
-        <article><span>计划订单</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.itemCount} unit="批" /><CalendarClock /></article>
-        <article><span>计划出货</span><ShipmentMetricValue loaded={Boolean(data)} value={data ? numberText(data.summary.plannedQuantity) : null} unit="件" /><Truck /></article>
-        <article className="priority-urgent"><span>紧急</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.urgent.itemCount} unit="批" detail={data ? `${numberText(data.summary.urgent.quantity)} 件` : undefined} /><ShieldAlert /></article>
-        <article className="priority-priority"><span>优先</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.priority.itemCount} unit="批" detail={data ? `${numberText(data.summary.priority.quantity)} 件` : undefined} /><Clock3 /></article>
+        <article><span>待处理</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.itemCount} unit="批" detail={data ? `${numberText(data.summary.pendingQuantity)} 件待出` : undefined} /><CalendarClock /></article>
+        <article className="priority-urgent"><span>今日必出</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.urgent.itemCount} unit="批" detail={data ? `${numberText(data.summary.urgent.quantity)} 件` : undefined} /><ShieldAlert /></article>
+        <article className="priority-priority"><span>重点跟进</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.priority.itemCount} unit="批" detail={data ? `${numberText(data.summary.priority.quantity)} 件` : undefined} /><Clock3 /></article>
         <article className="priority-normal"><span>常规</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.normal.itemCount} unit="批" detail={data ? `${numberText(data.summary.normal.quantity)} 件` : undefined} /><ListFilter /></article>
-        <article className="carryover"><span>上日遗留</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.carryover.itemCount} unit="批" detail={data ? `${numberText(data.summary.carryover.quantity)} 件` : undefined} /><BellRing /></article>
-        <article className="ready"><span>已完成</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.completed.itemCount} unit="批" detail={data ? `${numberText(data.summary.completed.quantity)} 件` : undefined} /><CheckCircle2 /></article>
-        <article className="shipped"><span>实际已出货</span><ShipmentMetricValue loaded={Boolean(data)} value={data ? numberText(data.summary.shippedQuantity) : null} unit="件" /><Send /></article>
+        <article className="shipped"><span>今日已出</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.completed.itemCount} unit="批" detail={data ? `${numberText(data.summary.completed.quantity)} 件` : undefined} /><Send /></article>
       </section>
 
       {data && data.summary.carryover.itemCount > 0 && <section className="shipment-carryover-banner incoming">
@@ -878,12 +932,12 @@ export default function DailyShipmentWorkbench({
       {data?.repairSummary?.failed.length ? <div className="shipment-error compact" role="alert"><AlertTriangle size={16} /><span>{data.repairSummary.failed.length} 个交期订单自动关联待重试；当前页面保留已同步数据。</span></div> : null}
 
       <section className="shipment-list-toolbar">
-        <div><span>交期累计清单</span><strong>{data ? `${shortDate(data.range.startDate)}—${shortDate(data.range.endDate)} · ${planStatus}` : `${shortDate(selectedDate)} · ${planStatus}`}</strong></div>
+        <div><span>今日协同清单</span><strong>{data ? `${shortDate(data.range.startDate)}—${shortDate(data.range.endDate)} · ${planStatus}` : `${shortDate(selectedDate)} · ${planStatus}`}</strong></div>
         <label><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索工单、客户、产品或规格" /></label>
         <select value={priorityFilter} onChange={event => { setPriorityFilter(event.target.value as typeof priorityFilter); setCarryoverOnly(false); }} aria-label="筛选出货优先级">
           <option value="all">全部优先级</option>
-          <option value="URGENT">紧急 · 红色</option>
-          <option value="PRIORITY">优先 · 黄色</option>
+          <option value="URGENT">今日必出 · 红色</option>
+          <option value="PRIORITY">重点跟进 · 黄色</option>
           <option value="NORMAL">常规 · 蓝色</option>
         </select>
         <select value={stateFilter} onChange={event => setStateFilter(event.target.value as typeof stateFilter)} aria-label="筛选进度状态">
@@ -907,17 +961,17 @@ export default function DailyShipmentWorkbench({
         {!data && <div className="shipment-initial-loading"><LoaderCircle className="spin" /><strong>正在加载日出货计划</strong><span>同步本周订单、生产进度与出货记录…</span></div>}
         {data && filteredItems.length > 0 && <div className="shipment-table-scroll hm-scroll-region" tabIndex={0}>
           <table>
-            <thead><tr><th>优先级</th><th>客户 / 产品规格</th><th>计划出货</th><th>生产进度</th><th>出货进度</th><th>时间跟踪</th><th>客户交期</th><th>操作</th></tr></thead>
+            <thead><tr><th>协同标注</th><th>客户 / 产品规格</th><th>计划出货</th><th>生产进度</th><th>出货进度</th><th>时间跟踪</th><th>客户交期</th><th>操作</th></tr></thead>
             <tbody>{filteredItems.map((item, index) => {
               const availableToShip = candidateAvailableToShip(item, data.candidates);
               const startsDueDate = index === 0 || filteredItems[index - 1]?.customerDueDate !== item.customerDueDate;
               return <Fragment key={item.id}>
                 {startsDueDate && <tr className="shipment-completed-divider shipment-due-divider"><td colSpan={8}><div><CalendarClock size={14} /><strong>{item.customerDueDate === selectedDate ? '今日到期' : `${shortDate(item.customerDueDate)} 交期`}</strong><span>{item.customerDueDate < selectedDate ? `已纳入 ${shortDate(selectedDate)} 日清单，未出余额自动顺延` : '客户交期与所选日期一致'}</span></div></td></tr>}
                 <tr className={`shipment-row-priority-${item.shipmentPriority.toLocaleLowerCase()} ${item.isCarryover ? 'is-carryover' : ''} ${item.status === 'SHIPPED' ? 'is-completed' : ''}`}>
-                <td><div className={`shipment-priority-badge priority-${item.shipmentPriority.toLocaleLowerCase()}`}><b>{PRIORITY_META[item.shipmentPriority].label}</b><small>{item.isCarryover ? '上日遗留' : item.status === 'SHIPPED' ? '已完成' : PRIORITY_META[item.shipmentPriority].description.split(' · ')[1]}</small></div></td>
+                <td><ShipmentMarker item={item} busy={busy} onChange={shipmentPriority => setItemMarker(item, shipmentPriority)} /></td>
                 <td><OrderIdentity item={item} /></td>
                 <td><div className="shipment-plan-quantity"><strong>{numberText(item.plannedQuantity)} 件</strong><span>{timeText(item.plannedShipAt)}</span><em className={`shipment-source-chip source-${item.associationType.toLocaleLowerCase()}`}>{ASSOCIATION_TEXT[item.associationType]}</em>{item.note && <small title={item.note}>{item.note}</small>}</div></td>
-                <td><div className="shipment-production"><span><b>{item.currentProcess}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}% · {productionStageText(item.productionStage)}</small></div></td>
+                <td><div className="shipment-production"><span><b>{item.currentProcess}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}% · {productionStageText(item.productionStage)}</small><ProductionFollowUp item={item} /></div></td>
                 <td><div className="shipment-delivery-progress"><span className={`state-${item.progressState.toLocaleLowerCase()}`}>{STATE_TEXT[item.progressState]}</span><strong>{numberText(item.shippedQuantity)} / {numberText(item.plannedQuantity)} 件</strong><small>待出 {numberText(item.pendingQuantity)} 件</small></div></td>
                 <td><div className="shipment-time-track"><span><small>计划</small><b>{timeText(item.plannedShipAt)}</b></span><span className={item.actualShipAt ? 'actual' : 'missing'}><small>实发</small><b>{item.actualShipAt ? timeText(item.actualShipAt) : item.progressState === 'OVERDUE' ? '超时未出' : '尚未出货'}</b></span></div></td>
                 <td><div className="shipment-due"><strong>{item.customerDueDate.slice(5)}</strong><span>{item.priority === 'urgent' || item.priority === 'insert' ? '优先订单' : '正常交期'}</span></div></td>
@@ -939,6 +993,24 @@ export default function DailyShipmentWorkbench({
           {!data.displayItems.length && <button type="button" disabled={!canSupplement} onClick={openDrawer}><Plus size={17} />手工补单</button>}
         </div>}
       </section>
+
+      {data && <details className="shipment-completed-panel shipment-glass-surface">
+        <summary>
+          <span><CheckCircle2 size={18} /><b>今日已出</b><small>完成后仅保留在实际出货当天，明日不再顺延</small></span>
+          <strong>{data.shippedTodayItems.length} 批 · {numberText(data.summary.completed.quantity)} 件</strong>
+          <ChevronDown size={16} />
+        </summary>
+        <div className="shipment-completed-list">
+          {data.shippedTodayItems.map(item => <article key={item.id}>
+            <i><Check size={14} /></i>
+            <OrderIdentity item={item} />
+            <div><small>实际出货</small><strong>{timeText(item.actualShipAt)}</strong></div>
+            <div><small>出货数量</small><strong>{numberText(item.shippedQuantity)} 件</strong></div>
+            <button type="button" onClick={() => openDialog({ kind: 'events', item })}><History size={14} />流水</button>
+          </article>)}
+          {!data.shippedTodayItems.length && <div className="shipment-completed-empty"><CheckCircle2 size={18} />所选日期暂无已完成出货批次</div>}
+        </div>
+      </details>}
       </>}
 
       {activeView !== 'today' && error && <div className="shipment-error" role="alert"><AlertTriangle size={17} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误"><X size={16} /></button></div>}

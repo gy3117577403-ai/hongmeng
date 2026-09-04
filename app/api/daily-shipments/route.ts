@@ -25,6 +25,7 @@ import {
   releaseDailyShipmentReservation,
   rollOverDailyShipmentPlan,
   reverseDailyShipment,
+  setDailyShipmentItemMark,
   transferDailyShipmentReservation,
   updateDailyShipmentItem,
 } from '@/lib/daily-shipment-service';
@@ -141,6 +142,15 @@ export async function POST(request: NextRequest) {
           plannedShipAt: body.plannedShipAt,
           shipmentPriority: body.shipmentPriority,
           note: body.note,
+        });
+        break;
+      case 'SET_ITEM_MARK':
+        result = await setDailyShipmentItemMark({
+          actorUserId: user.id,
+          itemId: body.itemId,
+          itemVersion: body.itemVersion,
+          idempotencyKey,
+          shipmentPriority: body.shipmentPriority,
         });
         break;
       case 'CANCEL_ITEM':

@@ -44,6 +44,7 @@ import {
   reconcileCurrentProductionCarryovers,
 } from '@/lib/production-carryovers';
 import { syncProductionBatchToDueShipmentPlan } from '@/lib/daily-shipment-sync';
+import { serializeProductionControl } from '@/lib/production-control';
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -85,6 +86,8 @@ const workOrderSelect = {
   uncompletedQty: true,
   completedQty: true,
   lastProgressAt: true,
+  operationalNote: true,
+  productionControlVersion: true,
   processRoute: {
     select: {
       id: true,
@@ -124,6 +127,12 @@ const itemInclude = {
   events: {
     include: { actor: { select: actorSelect } },
     orderBy: [{ shippedAt: 'asc' as const }, { createdAt: 'asc' as const }],
+  },
+  revisions: {
+    where: { action: 'SET_ITEM_MARK' },
+    include: { actor: { select: actorSelect } },
+    orderBy: { createdAt: 'desc' as const },
+    take: 1,
   },
 } satisfies Prisma.DailyShipmentPlanItemInclude;
 
@@ -334,6 +343,8 @@ function serializeItem(item: Prisma.DailyShipmentPlanItemGetPayload<{ include: t
   const shippedQuantity = netShipmentQuantity(item.events);
   const completedQuantity = completedGoodQuantity(item.workOrder);
   const actualShipAt = latestEffectiveShipmentAt(item.events);
+  const productionFollowUp = serializeProductionControl(item.workOrder).note;
+  const markerRevision = item.revisions[0] || null;
   return {
     id: item.id,
     version: item.version,
@@ -375,6 +386,18 @@ function serializeItem(item: Prisma.DailyShipmentPlanItemGetPayload<{ include: t
     dueDateSnapshot: item.dueDateSnapshot ? dateKey(item.dueDateSnapshot) : null,
     deliveryVersionSnapshot: item.deliveryVersionSnapshot,
     note: item.note,
+    productionFollowUp: productionFollowUp ? {
+      source: 'PRODUCTION_CONTROL' as const,
+      version: item.workOrder.productionControlVersion,
+      ...productionFollowUp,
+    } : null,
+    markerAudit: markerRevision ? {
+      updatedAt: markerRevision.createdAt.toISOString(),
+      actor: {
+        id: markerRevision.actor.id,
+        name: markerRevision.actor.displayName || markerRevision.actor.username,
+      },
+    } : null,
     sortOrder: item.sortOrder,
     isCarryover: Boolean(item.carryoverSourceItemId),
     carryoverSourceItemId: item.carryoverSourceItemId,
@@ -1147,17 +1170,25 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
   ));
   // The cutover is intentionally forward-only. Historical plans keep their
   // original per-day behavior so legacy carry-over evidence remains readable.
-  const displayItems = displayWindow.cutoverApplied
-    ? cutoverDisplayItems
-    : serializedItems.map(item => ({
+  const legacyDisplayItems = serializedItems.map(item => ({
       ...item,
       isOperationalOnSelectedDate: item.planShipDate === parsedDate.key
         && item.status !== DailyShipmentItemStatus.SHIPPED
         && item.status !== DailyShipmentItemStatus.CARRIED_OVER,
     }));
+  // The collaboration list contains only a batch's remaining balance. Fully
+  // shipped batches are deliberately split into the completion lane for the
+  // actual China business date, so they cannot be carried into tomorrow again.
+  const displayItems = (displayWindow.cutoverApplied ? cutoverDisplayItems : legacyDisplayItems)
+    .filter(item => item.status !== DailyShipmentItemStatus.SHIPPED && item.pendingQuantity > 0);
+  const shippedTodayItems = (displayWindow.cutoverApplied ? cutoverDisplayItems : legacyDisplayItems)
+    .filter(item => (
+      item.status === DailyShipmentItemStatus.SHIPPED
+      && Boolean(item.actualShipAt)
+      && chinaDateKey(new Date(item.actualShipAt!)) === parsedDate.key
+    ));
   const displayedOperationalItems = displayItems.filter(item => (
     item.status !== DailyShipmentItemStatus.CARRIED_OVER
-    && item.status !== DailyShipmentItemStatus.SHIPPED
   ));
   const prioritySummary = (priority: DailyShipmentPriority) => {
     const items = displayedOperationalItems.filter(item => item.shipmentPriority === priority);
@@ -1215,23 +1246,22 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
       items: serializedItems,
     } : null,
     displayItems,
+    shippedTodayItems,
     summary: {
       itemCount: displayItems.length,
       plannedQuantity: displayItems.reduce((total, item) => total + item.plannedQuantity, 0),
       readyQuantity: displayItems.reduce((total, item) => (
         total + Math.min(item.pendingQuantity, Math.max(0, item.completedQuantity - item.shippedQuantity))
       ), 0),
-      shippedQuantity: displayItems.reduce((total, item) => total + item.shippedQuantity, 0),
+      shippedQuantity: shippedTodayItems.reduce((total, item) => total + item.shippedQuantity, 0),
       pendingQuantity: displayedOperationalItems.reduce((total, item) => total + item.pendingQuantity, 0),
       riskItemCount: displayedOperationalItems.filter(item => ['OVERDUE', 'NOT_STARTED'].includes(item.progressState)).length,
       urgent: prioritySummary(DailyShipmentPriority.URGENT),
       priority: prioritySummary(DailyShipmentPriority.PRIORITY),
       normal: prioritySummary(DailyShipmentPriority.NORMAL),
       completed: {
-        itemCount: displayItems.filter(item => item.status === DailyShipmentItemStatus.SHIPPED).length,
-        quantity: displayItems
-          .filter(item => item.status === DailyShipmentItemStatus.SHIPPED)
-          .reduce((total, item) => total + item.shippedQuantity, 0),
+        itemCount: shippedTodayItems.length,
+        quantity: shippedTodayItems.reduce((total, item) => total + item.shippedQuantity, 0),
       },
       carryover: {
         itemCount: incomingCarryovers.length,
@@ -1885,6 +1915,65 @@ export async function updateDailyShipmentItem(input: {
   });
 }
 
+/**
+ * Updates only the collaboration marker. Unlike structural plan editing, this
+ * remains available after confirmation because it does not alter quantities,
+ * dates, shipment evidence, or production state.
+ */
+export async function setDailyShipmentItemMark(input: {
+  actorUserId: string;
+  itemId: unknown;
+  itemVersion: unknown;
+  idempotencyKey: unknown;
+  shipmentPriority: unknown;
+}): Promise<MutationResult> {
+  const actorId = requiredText(input.actorUserId, '操作人');
+  const itemId = requiredText(input.itemId, '计划项');
+  const version = shipmentVersion(input.itemVersion, '计划项版本');
+  const requestedPriority = shipmentPriority(input.shipmentPriority);
+  const key = idempotencyKey(input.idempotencyKey);
+  const payloadHash = stableHash({ itemId, version, shipmentPriority: requestedPriority });
+  return serializable(async tx => {
+    const replay = await readReplay(tx, { idempotencyKey: key, payloadHash, actorId, action: 'SET_ITEM_MARK' });
+    if (replay) return replay;
+    const item = await loadMutableItem(tx, itemId);
+    await lock(tx, `daily-shipment-batch:${item.productionPlanBatchId}`);
+    await lock(tx, `daily-shipment-plan:${dateKey(item.plan.shipDate)}`);
+    if (item.plan.status !== DailyShipmentPlanStatus.DRAFT && item.plan.status !== DailyShipmentPlanStatus.CONFIRMED) {
+      throw new DailyShipmentServiceError('已关闭的出货计划不能修改协同标注', 'SHIPMENT_PLAN_LOCKED', 409);
+    }
+    if (item.status !== DailyShipmentItemStatus.PLANNED && item.status !== DailyShipmentItemStatus.PARTIALLY_SHIPPED) {
+      throw new DailyShipmentServiceError('已结束的订单不能修改协同标注', 'SHIPMENT_ITEM_LOCKED', 409);
+    }
+    const changed = await tx.dailyShipmentPlanItem.updateMany({
+      where: { id: item.id, version },
+      data: {
+        shipmentPriority: requestedPriority,
+        version: { increment: 1 },
+        updatedById: actorId,
+      },
+    });
+    if (changed.count !== 1) {
+      throw new DailyShipmentServiceError('标注已被其他人更新，请刷新后重试', 'SHIPMENT_CONCURRENCY_CONFLICT', 409);
+    }
+    await tx.dailyShipmentPlan.update({
+      where: { id: item.planId },
+      data: { version: { increment: 1 }, updatedById: actorId },
+    });
+    await writeRevision(tx, {
+      planId: item.planId,
+      itemId: item.id,
+      action: 'SET_ITEM_MARK',
+      idempotencyKey: key,
+      payloadHash,
+      before: { shipmentPriority: item.shipmentPriority },
+      after: { shipmentPriority: requestedPriority },
+      actorId,
+    });
+    return { planId: item.planId, replayed: false };
+  });
+}
+
 export async function cancelDailyShipmentItem(input: {
   actorUserId: string;
   itemId: unknown;
@@ -2467,6 +2556,54 @@ export async function recordDailyShipment(input: {
     });
     if (changed.count !== 1) {
       throw new DailyShipmentServiceError('计划项已被其他人修改，请刷新后重试', 'SHIPMENT_CONCURRENCY_CONFLICT', 409);
+    }
+    const nextBatchShippedQuantity = batchShippedQuantity + quantity;
+    if (nextBatchShippedQuantity >= item.productionPlanBatch.quantity) {
+      const shipmentDateKey = chinaDateKey(shippedAt);
+      const staleFutureItems = await tx.dailyShipmentPlanItem.findMany({
+        where: {
+          productionPlanBatchId: item.productionPlanBatchId,
+          id: { not: item.id },
+          status: { in: [DailyShipmentItemStatus.PLANNED, DailyShipmentItemStatus.PARTIALLY_SHIPPED] },
+          plan: { shipDate: { gt: parseShipmentDate(shipmentDateKey).value } },
+        },
+        include: {
+          plan: { select: { id: true, shipDate: true } },
+          events: { select: { eventType: true, quantity: true } },
+        },
+      });
+      const touchedPlanIds = new Set<string>();
+      for (const staleItem of staleFutureItems) {
+        // Never rewrite an item that owns physical shipment evidence. Those
+        // records remain visible in history and can only be changed by reversal.
+        if (netShipmentQuantity(staleItem.events) > 0) continue;
+        await tx.dailyShipmentPlanItem.update({
+          where: { id: staleItem.id },
+          data: {
+            status: DailyShipmentItemStatus.CANCELLED,
+            associationKey: null,
+            version: { increment: 1 },
+            updatedById: actorId,
+          },
+        });
+        touchedPlanIds.add(staleItem.planId);
+        await writeRevision(tx, {
+          planId: staleItem.planId,
+          itemId: staleItem.id,
+          action: 'AUTO_CANCEL_AFTER_FULL_SHIPMENT',
+          idempotencyKey: `${key}:fully-shipped:${staleItem.id}`,
+          payloadHash: stableHash({ itemId: staleItem.id, shipmentDateKey, nextBatchShippedQuantity }),
+          before: { status: staleItem.status, planShipDate: dateKey(staleItem.plan.shipDate) },
+          after: { status: DailyShipmentItemStatus.CANCELLED, completedOn: shipmentDateKey },
+          actorId,
+        });
+      }
+      if (touchedPlanIds.size) {
+        await tx.dailyShipmentPlan.updateMany({
+          where: { id: { in: [...touchedPlanIds] } },
+          data: { version: { increment: 1 }, updatedById: actorId },
+        });
+      }
     }
     await tx.dailyShipmentPlan.update({
       where: { id: item.planId },

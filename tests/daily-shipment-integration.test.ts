@@ -16,6 +16,7 @@ import {
   recordDailyShipment,
   releaseDailyShipmentReservation,
   reverseDailyShipment,
+  setDailyShipmentItemMark,
   transferDailyShipmentReservation,
 } from '../lib/daily-shipment-service';
 
@@ -50,6 +51,17 @@ test('cutover repair is idempotent, includes archived released batches, and scop
           productionTargetQty: quantity,
           completedQty: String(quantity),
           processName: suffix === 'internal' ? 'frontend' : '包装',
+          ...(suffix === 'internal' ? {
+            operationalNote: {
+              text: '客户要求今日确认包装标签',
+              category: 'customer',
+              owner: '生产跟单员',
+              followUpAt: '2026-09-03T06:00:00.000Z',
+              updatedAt: '2026-09-03T02:30:00.000Z',
+              updatedBy: '车间主管',
+            },
+            productionControlVersion: 3,
+          } : {}),
         },
       });
       const order = await prisma.productionPlanOrder.create({
@@ -104,6 +116,28 @@ test('cutover repair is idempotent, includes archived released batches, and scop
     const firstItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({
       where: { productionPlanBatchId: septemberFirst.id },
     });
+    const futurePlan = await prisma.dailyShipmentPlan.create({
+      data: {
+        shipDate: new Date('2026-09-05T00:00:00.000Z'),
+        status: 'CONFIRMED',
+        confirmedAt: new Date('2026-09-01T00:00:00.000Z'),
+        confirmedById: actor.id,
+        createdById: actor.id,
+        updatedById: actor.id,
+      },
+    });
+    const staleFutureItem = await prisma.dailyShipmentPlanItem.create({
+      data: {
+        planId: futurePlan.id,
+        productionPlanBatchId: septemberFirst.id,
+        workOrderId: septemberFirst.workOrderId!,
+        plannedQuantity: 10,
+        plannedShipAt: new Date('2026-09-05T08:00:00.000Z'),
+        sourceSnapshot: {},
+        createdById: actor.id,
+        updatedById: actor.id,
+      },
+    });
     await recordDailyShipment({
       actorUserId: actor.id,
       itemId: firstItem.id,
@@ -112,13 +146,35 @@ test('cutover repair is idempotent, includes archived released batches, and scop
       quantity: 10,
       shippedAt: '2026-09-01T08:00:00.000Z',
     });
+    assert.equal((await prisma.dailyShipmentPlanItem.findUniqueOrThrow({ where: { id: staleFutureItem.id } })).status, 'CANCELLED');
+    assert.equal(await prisma.dailyShipmentRevision.count({
+      where: { itemId: staleFutureItem.id, action: 'AUTO_CANCEL_AFTER_FULL_SHIPMENT' },
+    }), 1);
 
     const workbench = await loadDailyShipmentWorkbench({ shipDate: '2026-09-03' });
-    assert.deepEqual(workbench.displayItems.map(item => item.batchId).sort(), [septemberFirst.id, septemberThird.id].sort());
-    assert.equal(workbench.displayItems.find(item => item.batchId === septemberFirst.id)?.status, 'SHIPPED');
+    assert.deepEqual(workbench.displayItems.map(item => item.batchId), [septemberThird.id]);
+    assert.equal(workbench.shippedTodayItems.length, 0);
     assert.equal(workbench.displayItems.find(item => item.batchId === septemberThird.id)?.currentProcess, '待生产反馈');
+    assert.equal(workbench.displayItems[0]?.productionFollowUp?.text, '客户要求今日确认包装标签');
+    assert.equal(workbench.displayItems[0]?.productionFollowUp?.source, 'PRODUCTION_CONTROL');
     assert.ok(!workbench.displayItems.some(item => item.batchId === beforeCutover.id));
     assert.ok(!workbench.displayItems.some(item => item.batchId === septemberFourth.id));
+
+    const completionDay = await loadDailyShipmentWorkbench({ shipDate: '2026-09-01' });
+    assert.equal(completionDay.displayItems.length, 0);
+    assert.deepEqual(completionDay.shippedTodayItems.map(item => item.batchId), [septemberFirst.id]);
+
+    const markItem = workbench.displayItems[0]!;
+    await setDailyShipmentItemMark({
+      actorUserId: actor.id,
+      itemId: markItem.id,
+      itemVersion: markItem.version,
+      shipmentPriority: 'URGENT',
+      idempotencyKey: key(prefix),
+    });
+    const marked = await loadDailyShipmentWorkbench({ shipDate: '2026-09-03' });
+    assert.equal(marked.displayItems[0]?.shipmentPriority, 'URGENT');
+    assert.equal(marked.displayItems[0]?.markerAudit?.actor.name, 'Shipment Cutover');
 
     const warning = await loadShipmentWarningOverview({ anchorDate: '2026-09-03' });
     const warningIds = warning.groups.flatMap(group => group.items).map(item => item.batchId);

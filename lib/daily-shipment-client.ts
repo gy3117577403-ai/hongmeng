@@ -49,6 +49,20 @@ export type DailyShipmentItemDTO = {
   dueDateSnapshot: string | null;
   deliveryVersionSnapshot: number | null;
   note: string | null;
+  productionFollowUp: {
+    source: 'PRODUCTION_CONTROL';
+    version: number;
+    text: string;
+    category: 'material' | 'quality' | 'equipment' | 'customer' | 'process' | 'other';
+    owner: string;
+    followUpAt: string | null;
+    updatedAt: string;
+    updatedBy: string;
+  } | null;
+  markerAudit: {
+    updatedAt: string;
+    actor: { id: string; name: string };
+  } | null;
   sortOrder: number;
   isCarryover: boolean;
   carryoverSourceItemId: string | null;
@@ -128,6 +142,7 @@ export type DailyShipmentWorkbenchDTO = {
     items: DailyShipmentItemDTO[];
   } | null;
   displayItems: DailyShipmentItemDTO[];
+  shippedTodayItems: DailyShipmentItemDTO[];
   summary: {
     itemCount: number;
     plannedQuantity: number;
