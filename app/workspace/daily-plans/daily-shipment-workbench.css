@@ -400,15 +400,23 @@ main.shipment-shell.hm-workbench-root.hm-workbench-root {
 .shipment-production > div, .shipment-candidate-progress > div { height: 6px; overflow: hidden; border-radius: 3px; background: #e9eef3; }
 .shipment-production > div i, .shipment-candidate-progress > div i { height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, #4d7fc0, #65a0d8); }
 .shipment-production > small { overflow: hidden; color: #7e8b9c; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.shipment-production-followup { position: relative; min-width: 0; }
-.shipment-production-followup > summary { width: fit-content; max-width: 100%; min-height: 22px; padding: 0 6px; display: flex; align-items: center; gap: 4px; overflow: hidden; border: 1px solid rgba(126, 95, 210, .2); border-radius: 11px; color: #765ac1; background: linear-gradient(145deg, rgba(246,243,255,.92), rgba(237,245,255,.8)); cursor: pointer; list-style: none; box-shadow: inset 0 1px 0 rgba(255,255,255,.9); }
-.shipment-production-followup > summary::-webkit-details-marker { display: none; }
-.shipment-production-followup > summary span { overflow: hidden; font-size: 8px; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
-.shipment-production-followup > summary b { padding-left: 4px; border-left: 1px solid rgba(118,90,193,.2); font-size: 7px; white-space: nowrap; }
-.shipment-production-followup > div { position: absolute; z-index: 35; top: calc(100% + 6px); left: 0; width: 270px; padding: 10px; display: grid; gap: 5px; border: 1px solid rgba(255,255,255,.92); border-radius: 11px; color: #526176; background: rgba(252,253,255,.94); box-shadow: 0 16px 36px rgba(28,42,62,.2), inset 0 1px 0 #fff; -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
-.shipment-production-followup > div small { color: #7b63c0; font-size: 8px; font-weight: 850; }
-.shipment-production-followup > div strong { color: #26364d; font-size: 10px; line-height: 1.55; }
-.shipment-production-followup > div span, .shipment-production-followup > div em { color: #7d8999; font-size: 8px; font-style: normal; }
+.shipment-remarks { position: relative; min-width: 0; }
+.shipment-remarks > summary { width: fit-content; max-width: 100%; min-height: 22px; padding: 0 7px; display: flex; align-items: center; gap: 4px; overflow: hidden; border: 1px solid rgba(126, 95, 210, .22); border-radius: 11px; color: #6f55b7; background: linear-gradient(145deg, rgba(248,245,255,.94), rgba(237,245,255,.82)); cursor: pointer; list-style: none; box-shadow: 0 4px 10px rgba(91,69,150,.07), inset 0 1px 0 rgba(255,255,255,.95); }
+.shipment-remarks > summary::-webkit-details-marker { display: none; }
+.shipment-remarks > summary span { overflow: hidden; font-size: 8px; font-weight: 850; text-overflow: ellipsis; white-space: nowrap; }
+.shipment-remarks > summary b { padding-left: 4px; border-left: 1px solid rgba(118,90,193,.2); font-size: 7px; white-space: nowrap; }
+.shipment-remarks.compact > summary { min-height: 20px; padding-inline: 6px; }
+.shipment-remarks-empty { color: #94a29b; font-size: 8px; }
+.shipment-remarks-popover { position: absolute; z-index: 45; top: calc(100% + 6px); left: 0; width: min(320px, 72vw); max-height: 280px; padding: 10px; display: grid; gap: 7px; overflow: auto; border: 1px solid rgba(255,255,255,.94); border-radius: 13px; color: #526176; background: rgba(252,253,255,.96); box-shadow: 0 18px 42px rgba(28,42,62,.22), inset 0 1px 0 #fff; -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+.shipment-remarks-popover > header { display: flex; align-items: center; gap: 7px; color: #7358ba; }
+.shipment-remarks-popover > header > span { min-width: 0; display: grid; gap: 1px; }
+.shipment-remarks-popover > header small { color: #765ac1; font-size: 8px; font-weight: 900; }
+.shipment-remarks-popover > header strong { color: #34445b; font-size: 9px; }
+.shipment-remarks-popover > section { padding: 7px 8px; display: grid; gap: 3px; border: 1px solid rgba(126,95,210,.12); border-radius: 9px; background: linear-gradient(145deg, rgba(248,246,255,.9), rgba(247,250,255,.76)); }
+.shipment-remarks-popover > section small { color: #765ac1; font-size: 8px; font-weight: 900; }
+.shipment-remarks-popover > section strong { color: #26364d; font-size: 10px; line-height: 1.5; white-space: normal; }
+.shipment-remarks-popover > section span,
+.shipment-remarks-popover > section em { color: #7d8999; font-size: 8px; font-style: normal; white-space: normal; }
 
 .shipment-delivery-progress { display: grid; justify-items: start; gap: 4px; }
 .shipment-delivery-progress > span { min-height: 20px; padding: 0 7px; display: inline-flex; align-items: center; border-radius: 5px; font-size: 9px; font-weight: 800; }
@@ -450,7 +458,7 @@ main.shipment-shell.hm-workbench-root.hm-workbench-root {
 .shipment-completed-panel > summary > svg { transition: transform .18s ease; }
 .shipment-completed-panel[open] > summary > svg { transform: rotate(180deg); }
 .shipment-completed-list { max-height: calc(min(210px, 28vh) - 48px); padding: 0 9px 9px; display: grid; gap: 5px; overflow: auto; }
-.shipment-completed-list article { min-height: 56px; padding: 6px 8px; display: grid; grid-template-columns: 28px minmax(260px, 1.6fr) minmax(100px, .55fr) minmax(90px, .45fr) 68px; align-items: center; gap: 9px; border: 1px solid rgba(140,177,160,.2); border-radius: 9px; background: rgba(255,255,255,.67); box-shadow: inset 0 1px 0 rgba(255,255,255,.92); }
+.shipment-completed-list article { min-height: 56px; padding: 6px 8px; display: grid; grid-template-columns: 28px minmax(250px, 1.5fr) minmax(120px, .65fr) minmax(92px, .5fr) minmax(84px, .45fr) 68px; align-items: center; gap: 9px; border: 1px solid rgba(140,177,160,.2); border-radius: 9px; background: rgba(255,255,255,.67); box-shadow: inset 0 1px 0 rgba(255,255,255,.92); }
 .shipment-completed-list article > i { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #49b982, #2b8b60); box-shadow: 0 5px 12px rgba(43,139,96,.2); }
 .shipment-completed-list article > div:not(.shipment-order-identity) { display: grid; gap: 3px; }
 .shipment-completed-list article > div > small { color: #84978e; font-size: 8px; }

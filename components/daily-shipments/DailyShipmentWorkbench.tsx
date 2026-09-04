@@ -275,16 +275,50 @@ function ShipmentMarker({ item, busy, onChange }: {
   </details>;
 }
 
-function ProductionFollowUp({ item }: { item: DailyShipmentItemDTO }) {
-  const followUp = item.productionFollowUp;
-  if (!followUp) return null;
-  return <details className="shipment-production-followup">
-    <summary title={followUp.text}><MessageSquareText size={12} /><span>生产跟进</span><b>{PRODUCTION_REASON_TEXT[followUp.category]}</b></summary>
-    <div>
-      <small>来自生产执行 · 只读同步</small>
-      <strong>{followUp.text}</strong>
-      <span>{followUp.owner ? `跟进：${followUp.owner}` : '未指定跟进人'}{followUp.updatedBy ? ` · ${followUp.updatedBy}` : ''}</span>
-      {followUp.followUpAt && <em>计划跟进 {timeText(followUp.followUpAt)}</em>}
+type ShipmentRemarkItem = {
+  note: string | null;
+  orderRemark: string | null;
+  latestProgressRemark: string | null;
+  productionFollowUp: DailyShipmentItemDTO['productionFollowUp'];
+};
+
+function ShipmentRemarks({
+  item,
+  compact = false,
+  showEmpty = false,
+}: {
+  item: ShipmentRemarkItem;
+  compact?: boolean;
+  showEmpty?: boolean;
+}) {
+  const entries: Array<{ key: string; label: string; text: string; meta?: string; followUpAt?: string | null }> = [];
+  if (item.productionFollowUp) {
+    const followUp = item.productionFollowUp;
+    entries.push({
+      key: 'production',
+      label: `生产跟进 · ${PRODUCTION_REASON_TEXT[followUp.category]}`,
+      text: followUp.text,
+      meta: `${followUp.owner ? `跟进：${followUp.owner}` : '未指定跟进人'}${followUp.updatedBy ? ` · 更新：${followUp.updatedBy}` : ''}`,
+      followUpAt: followUp.followUpAt,
+    });
+  }
+  if (item.orderRemark) entries.push({ key: 'order', label: '订单备注', text: item.orderRemark });
+  if (item.latestProgressRemark) entries.push({ key: 'progress', label: '最新生产进度', text: item.latestProgressRemark });
+  if (item.note) entries.push({ key: 'shipment', label: '日出货计划备注', text: item.note });
+  if (!entries.length) {
+    return showEmpty ? <span className="shipment-remarks-empty">无协同备注</span> : null;
+  }
+  const first = entries[0];
+  return <details className={`shipment-remarks ${compact ? 'compact' : ''}`}>
+    <summary title={`${first.label}：${first.text}`}><MessageSquareText size={12} /><span>{first.label}</span><b>{entries.length > 1 ? `${entries.length} 项` : '查看'}</b></summary>
+    <div className="shipment-remarks-popover">
+      <header><MessageSquareText size={14} /><span><small>协同备注</small><strong>按来源分别展示，不相互覆盖</strong></span></header>
+      {entries.map(entry => <section key={entry.key}>
+        <small>{entry.label}</small>
+        <strong>{entry.text}</strong>
+        {entry.meta && <span>{entry.meta}</span>}
+        {entry.followUpAt && <em>计划跟进 {timeText(entry.followUpAt)}</em>}
+      </section>)}
     </div>
   </details>;
 }
@@ -347,7 +381,7 @@ function WarningPanel({ data, date, loading, onDateChange, onRefresh, onOpenDate
   onRefresh: () => void;
   onOpenDate: (date: string) => void;
 }) {
-  const [statusFilter, setStatusFilter] = useState<'all' | 'risk' | 'pending' | 'completed' | 'unlinked'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'risk' | 'unlinked'>('all');
   const [query, setQuery] = useState('');
   useEffect(() => {
     setStatusFilter('all');
@@ -358,12 +392,11 @@ function WarningPanel({ data, date, loading, onDateChange, onRefresh, onOpenDate
   const visibleGroups = data.groups.map(group => ({
     ...group,
     items: group.items.filter(item => {
-      if (statusFilter === 'risk' && (item.pendingQuantity <= 0 || item.completedQuantity - item.shippedQuantity >= item.pendingQuantity)) return false;
-      if (statusFilter === 'pending' && item.shipmentState === 'SHIPPED') return false;
-      if (statusFilter === 'completed' && item.shipmentState !== 'SHIPPED') return false;
+      if (statusFilter === 'risk' && item.completedQuantity - item.shippedQuantity >= item.pendingQuantity) return false;
       if (statusFilter === 'unlinked' && item.associationHealthy) return false;
       if (!term) return true;
-      return [item.workOrderCode, item.sourceOrderNo, item.customerName, item.productName, item.specification]
+      return [item.workOrderCode, item.sourceOrderNo, item.customerName, item.productName, item.specification,
+        item.note || '', item.orderRemark || '', item.latestProgressRemark || '', item.productionFollowUp?.text || '']
         .some(value => value.toLocaleLowerCase('zh-CN').includes(term));
     }),
   })).filter(group => group.items.length > 0);
@@ -377,19 +410,19 @@ function WarningPanel({ data, date, loading, onDateChange, onRefresh, onOpenDate
       <button type="button" onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={17} />刷新</button>
     </section>
     <section className="shipment-insight-kpis shipment-glass-surface" aria-label="交期预警指标">
-      <article><span>窗口订单</span><strong>{data.summary.itemCount}<small>批</small></strong><BellRing /></article>
+      <article><span>待出预警</span><strong>{data.summary.itemCount}<small>批</small></strong><BellRing /></article>
       <article className="risk"><span>已逾期</span><strong>{data.summary.overdueCount}<small>批</small></strong><ShieldAlert /></article>
       <article className="pending"><span>今日到期</span><strong>{data.summary.todayCount}<small>批</small></strong><CalendarCheck2 /></article>
       <article className="priority-priority"><span>明日到期</span><strong>{data.summary.tomorrowCount}<small>批</small></strong><Clock3 /></article>
       <article><span>2 天后</span><strong>{data.summary.twoDaysCount}<small>批</small></strong><CalendarClock /></article>
       <article><span>3 天后</span><strong>{data.summary.threeDaysCount}<small>批</small></strong><CalendarClock /></article>
       <article className="risk"><span>生产风险</span><strong>{data.summary.productionRiskCount}<small>批</small></strong><AlertTriangle /></article>
-      <article className="ready"><span>已完成出货</span><strong>{data.summary.completedCount}<small>批</small></strong><CheckCircle2 /></article>
+      <article className="ready"><span>可按时出货</span><strong>{data.summary.readyCount}<small>批</small></strong><CheckCircle2 /></article>
     </section>
     <section className="shipment-insight-banner warning shipment-glass-surface">
-      <AlertTriangle size={19} /><div><strong>{shortDate(data.rangeStartDate)} 起至未来 3 天共 {data.summary.itemCount} 批，待出 {numberText(data.summary.pendingQuantity)} 件</strong><span>已完成、未完成与历史预期订单统一保留；启用日前订单不计入。</span></div>
+      <AlertTriangle size={19} /><div><strong>{shortDate(data.rangeStartDate)} 起至未来 3 天共 {data.summary.itemCount} 批，待出 {numberText(data.summary.pendingQuantity)} 件</strong><span>仅展示仍有待出数量的订单；全部出货后转入今日已出与出货历史。</span></div>
       <nav className="shipment-warning-filters" aria-label="预警状态筛选">
-        {([['all', '全部'], ['pending', `未完成 ${data.summary.incompleteCount}`], ['completed', `已完成 ${data.summary.completedCount}`], ['risk', '生产风险'], ['unlinked', `待关联 ${data.summary.associationIssueCount}`]] as const).map(([value, label]) => <button type="button" key={value} className={statusFilter === value ? 'active' : ''} onClick={() => setStatusFilter(value)}>{label}</button>)}
+        {([['all', `全部待出 ${data.summary.incompleteCount}`], ['risk', '生产风险'], ['unlinked', `待关联 ${data.summary.associationIssueCount}`]] as const).map(([value, label]) => <button type="button" key={value} className={statusFilter === value ? 'active' : ''} onClick={() => setStatusFilter(value)}>{label}</button>)}
       </nav>
     </section>
     <section className="shipment-insight-toolbar shipment-glass-surface">
@@ -404,7 +437,7 @@ function WarningPanel({ data, date, loading, onDateChange, onRefresh, onOpenDate
             <tr className="shipment-group-row"><td colSpan={8}><strong>{group.label}</strong><span>{group.items.length} 批 · 待出 {numberText(group.items.reduce((sum, item) => sum + item.pendingQuantity, 0))} 件</span></td></tr>
             {group.items.map(item => <tr key={item.batchId}>
               <td><span className={`shipment-warning-badge level-${item.warningLevel.toLocaleLowerCase()}`}>{warningLabel(item.daysUntilDue)}</span></td>
-              <td><div className="shipment-order-identity"><strong className="shipment-customer-name">{item.customerName}</strong><span className="shipment-product-spec">{item.productName} · {item.specification}</span><div className="shipment-order-meta"><CompactOrderCode value={item.workOrderCode} /><small>{item.sourceOrderNo}</small></div></div></td>
+              <td><div className="shipment-order-identity"><strong className="shipment-customer-name">{item.customerName}</strong><span className="shipment-product-spec">{item.productName} · {item.specification}</span><div className="shipment-order-meta"><CompactOrderCode value={item.workOrderCode} /><small>{item.sourceOrderNo}</small></div><ShipmentRemarks item={item} compact /></div></td>
               <td><div className="shipment-due"><strong>{item.customerDueDate.slice(5)}</strong><span>原客户交期</span></div></td>
               <td><div className="shipment-plan-quantity"><strong>{numberText(item.pendingQuantity)} 件</strong><small>计划 {numberText(item.batchQuantity)} · 已出 {numberText(item.shippedQuantity)}</small></div></td>
               <td><div className="shipment-production"><span><b>{productionStageText(item.productionStage)}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}%</small></div></td>
@@ -527,6 +560,16 @@ export default function DailyShipmentWorkbench({
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const cacheRef = useRef(new Map<string, DailyShipmentWorkbenchDTO>([[initialDate, initialData]]));
+
+  useEffect(() => {
+    const refreshProductionRemarks = () => {
+      cacheRef.current.clear();
+      setRefreshToken(value => value + 1);
+      setInsightRefreshToken(value => value + 1);
+    };
+    window.addEventListener('production-control-updated', refreshProductionRemarks);
+    return () => window.removeEventListener('production-control-updated', refreshProductionRemarks);
+  }, []);
 
   useEffect(() => {
     try {
@@ -971,7 +1014,7 @@ export default function DailyShipmentWorkbench({
                 <td><ShipmentMarker item={item} busy={busy} onChange={shipmentPriority => setItemMarker(item, shipmentPriority)} /></td>
                 <td><OrderIdentity item={item} /></td>
                 <td><div className="shipment-plan-quantity"><strong>{numberText(item.plannedQuantity)} 件</strong><span>{timeText(item.plannedShipAt)}</span><em className={`shipment-source-chip source-${item.associationType.toLocaleLowerCase()}`}>{ASSOCIATION_TEXT[item.associationType]}</em>{item.note && <small title={item.note}>{item.note}</small>}</div></td>
-                <td><div className="shipment-production"><span><b>{item.currentProcess}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}% · {productionStageText(item.productionStage)}</small><ProductionFollowUp item={item} /></div></td>
+                <td><div className="shipment-production"><span><b>{item.currentProcess}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}% · {productionStageText(item.productionStage)}</small><ShipmentRemarks item={item} /></div></td>
                 <td><div className="shipment-delivery-progress"><span className={`state-${item.progressState.toLocaleLowerCase()}`}>{STATE_TEXT[item.progressState]}</span><strong>{numberText(item.shippedQuantity)} / {numberText(item.plannedQuantity)} 件</strong><small>待出 {numberText(item.pendingQuantity)} 件</small></div></td>
                 <td><div className="shipment-time-track"><span><small>计划</small><b>{timeText(item.plannedShipAt)}</b></span><span className={item.actualShipAt ? 'actual' : 'missing'}><small>实发</small><b>{item.actualShipAt ? timeText(item.actualShipAt) : item.progressState === 'OVERDUE' ? '超时未出' : '尚未出货'}</b></span></div></td>
                 <td><div className="shipment-due"><strong>{item.customerDueDate.slice(5)}</strong><span>{item.priority === 'urgent' || item.priority === 'insert' ? '优先订单' : '正常交期'}</span></div></td>
@@ -1004,6 +1047,7 @@ export default function DailyShipmentWorkbench({
           {data.shippedTodayItems.map(item => <article key={item.id}>
             <i><Check size={14} /></i>
             <OrderIdentity item={item} />
+            <ShipmentRemarks item={item} compact showEmpty />
             <div><small>实际出货</small><strong>{timeText(item.actualShipAt)}</strong></div>
             <div><small>出货数量</small><strong>{numberText(item.shippedQuantity)} 件</strong></div>
             <button type="button" onClick={() => openDialog({ kind: 'events', item })}><History size={14} />流水</button>

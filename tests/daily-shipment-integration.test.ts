@@ -51,6 +51,8 @@ test('cutover repair is idempotent, includes archived released batches, and scop
           productionTargetQty: quantity,
           completedQty: String(quantity),
           processName: suffix === 'internal' ? 'frontend' : '包装',
+          remark: `生产订单备注-${suffix}`,
+          latestProgressRemark: `最新生产进度-${suffix}`,
           ...(suffix === 'internal' ? {
             operationalNote: {
               text: '客户要求今日确认包装标签',
@@ -76,6 +78,7 @@ test('cutover repair is idempotent, includes archived released batches, and scop
           customerDueDate: new Date(`${dueDate}T00:00:00.000Z`),
           customerDueDateConfirmed: true,
           priority: 'normal',
+          remark: `计划订单备注-${suffix}`,
           createdById: actor.id,
           updatedById: actor.id,
         },
@@ -157,12 +160,16 @@ test('cutover repair is idempotent, includes archived released batches, and scop
     assert.equal(workbench.displayItems.find(item => item.batchId === septemberThird.id)?.currentProcess, '待生产反馈');
     assert.equal(workbench.displayItems[0]?.productionFollowUp?.text, '客户要求今日确认包装标签');
     assert.equal(workbench.displayItems[0]?.productionFollowUp?.source, 'PRODUCTION_CONTROL');
+    assert.equal(workbench.displayItems[0]?.orderRemark, '计划订单备注-internal');
+    assert.equal(workbench.displayItems[0]?.latestProgressRemark, '最新生产进度-internal');
     assert.ok(!workbench.displayItems.some(item => item.batchId === beforeCutover.id));
     assert.ok(!workbench.displayItems.some(item => item.batchId === septemberFourth.id));
 
     const completionDay = await loadDailyShipmentWorkbench({ shipDate: '2026-09-01' });
     assert.equal(completionDay.displayItems.length, 0);
     assert.deepEqual(completionDay.shippedTodayItems.map(item => item.batchId), [septemberFirst.id]);
+    assert.equal(completionDay.shippedTodayItems[0]?.orderRemark, '计划订单备注-first');
+    assert.equal(completionDay.shippedTodayItems[0]?.latestProgressRemark, '最新生产进度-first');
 
     const markItem = workbench.displayItems[0]!;
     await setDailyShipmentItemMark({
@@ -178,11 +185,17 @@ test('cutover repair is idempotent, includes archived released batches, and scop
 
     const warning = await loadShipmentWarningOverview({ anchorDate: '2026-09-03' });
     const warningIds = warning.groups.flatMap(group => group.items).map(item => item.batchId);
-    assert.ok(warningIds.includes(septemberFirst.id));
+    assert.ok(!warningIds.includes(septemberFirst.id));
     assert.ok(warningIds.includes(septemberThird.id));
     assert.ok(warningIds.includes(septemberFourth.id));
     assert.ok(!warningIds.includes(beforeCutover.id));
-    assert.equal(warning.summary.completedCount, 1);
+    assert.equal(warning.summary.itemCount, 2);
+    assert.equal(warning.summary.incompleteCount, 2);
+    assert.equal(warning.summary.completedCount, 0);
+    const internalWarning = warning.groups.flatMap(group => group.items).find(item => item.batchId === septemberThird.id);
+    assert.equal(internalWarning?.orderRemark, '计划订单备注-internal');
+    assert.equal(internalWarning?.latestProgressRemark, '最新生产进度-internal');
+    assert.equal(internalWarning?.productionFollowUp?.text, '客户要求今日确认包装标签');
   } finally {
     await cleanup(prefix);
   }
@@ -379,6 +392,8 @@ test('daily shipment stays on the exact due date, enforces completed goods, repl
     assert.equal(closedWorkbench.summary.readyQuantity, 0);
     assert.equal(closedWorkbench.plan?.items[0]?.events.length, 3);
     assert.deepEqual(closedWorkbench.week.days.map(day => day.itemCount), [0, 1, 0, 0, 0, 0, 0]);
+    const closedWarning = await loadShipmentWarningOverview({ anchorDate: '2020-01-06' });
+    assert.ok(!closedWarning.groups.flatMap(group => group.items).some(item => item.batchId === batch.id));
 
     tuesdayItem = await prisma.dailyShipmentPlanItem.findUniqueOrThrow({ where: { id: tuesdayItem.id } });
     const secondShipment = await prisma.shipmentEvent.findFirstOrThrow({
@@ -410,6 +425,8 @@ test('daily shipment stays on the exact due date, enforces completed goods, repl
     assert.equal(reopenedWorkbench.summary.readyQuantity, 12);
     assert.equal(reopenedWorkbench.plan?.items[0]?.actualShipAt, null);
     assert.equal(reopenedWorkbench.plan?.items[0]?.events.length, 5);
+    const reopenedWarning = await loadShipmentWarningOverview({ anchorDate: '2020-01-06' });
+    assert.ok(reopenedWarning.groups.flatMap(group => group.items).some(item => item.batchId === batch.id));
     const history = await loadShipmentHistoryOverview({ from: '2020-01-07', to: '2020-01-07' });
     const ownHistory = history.events.filter(event => event.workOrderCode === `${prefix}-WO`);
     assert.equal(ownHistory.length, 5);

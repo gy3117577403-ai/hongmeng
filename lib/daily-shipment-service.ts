@@ -63,6 +63,13 @@ type MutationResult = { planId: string; replayed: boolean };
 
 const actorSelect = { id: true, username: true, displayName: true } satisfies Prisma.UserSelect;
 
+const shipmentRemarkWorkOrderSelect = {
+  remark: true,
+  latestProgressRemark: true,
+  operationalNote: true,
+  productionControlVersion: true,
+} satisfies Prisma.WorkOrderSelect;
+
 const routeStepSelect = {
   id: true,
   processName: true,
@@ -86,8 +93,9 @@ const workOrderSelect = {
   uncompletedQty: true,
   completedQty: true,
   lastProgressAt: true,
-  operationalNote: true,
-  productionControlVersion: true,
+  ...shipmentRemarkWorkOrderSelect,
+  rootWorkOrderId: true,
+  rootWorkOrder: { select: shipmentRemarkWorkOrderSelect },
   processRoute: {
     select: {
       id: true,
@@ -135,6 +143,39 @@ const itemInclude = {
     take: 1,
   },
 } satisfies Prisma.DailyShipmentPlanItemInclude;
+
+type ShipmentWorkOrder = Prisma.WorkOrderGetPayload<{ select: typeof workOrderSelect }>;
+
+function remarkText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function serializeShipmentRemarks(
+  workOrder: ShipmentWorkOrder,
+  planOrderRemark: unknown,
+  shipmentPlanNote: unknown,
+) {
+  const rootWorkOrder = workOrder.rootWorkOrder;
+  const rootProductionFollowUp = rootWorkOrder ? serializeProductionControl(rootWorkOrder).note : null;
+  const currentProductionFollowUp = serializeProductionControl(workOrder).note;
+  const productionControlSource = rootProductionFollowUp ? rootWorkOrder! : workOrder;
+  const productionFollowUp = rootProductionFollowUp || currentProductionFollowUp;
+  return {
+    note: remarkText(shipmentPlanNote),
+    orderRemark: remarkText(planOrderRemark)
+      || remarkText(workOrder.remark)
+      || remarkText(rootWorkOrder?.remark),
+    latestProgressRemark: remarkText(workOrder.latestProgressRemark)
+      || remarkText(rootWorkOrder?.latestProgressRemark),
+    productionFollowUp: productionFollowUp ? {
+      source: 'PRODUCTION_CONTROL' as const,
+      version: productionControlSource.productionControlVersion,
+      ...productionFollowUp,
+    } : null,
+  };
+}
 
 function errorStatus(code: string): number {
   if (code.endsWith('_NOT_FOUND')) return 404;
@@ -343,7 +384,11 @@ function serializeItem(item: Prisma.DailyShipmentPlanItemGetPayload<{ include: t
   const shippedQuantity = netShipmentQuantity(item.events);
   const completedQuantity = completedGoodQuantity(item.workOrder);
   const actualShipAt = latestEffectiveShipmentAt(item.events);
-  const productionFollowUp = serializeProductionControl(item.workOrder).note;
+  const remarks = serializeShipmentRemarks(
+    item.workOrder,
+    item.productionPlanBatch.planOrder.remark,
+    item.note,
+  );
   const markerRevision = item.revisions[0] || null;
   return {
     id: item.id,
@@ -385,12 +430,7 @@ function serializeItem(item: Prisma.DailyShipmentPlanItemGetPayload<{ include: t
     planShipDate: dateKey(item.plan.shipDate),
     dueDateSnapshot: item.dueDateSnapshot ? dateKey(item.dueDateSnapshot) : null,
     deliveryVersionSnapshot: item.deliveryVersionSnapshot,
-    note: item.note,
-    productionFollowUp: productionFollowUp ? {
-      source: 'PRODUCTION_CONTROL' as const,
-      version: item.workOrder.productionControlVersion,
-      ...productionFollowUp,
-    } : null,
+    ...remarks,
     markerAudit: markerRevision ? {
       updatedAt: markerRevision.createdAt.toISOString(),
       actor: {
@@ -1330,7 +1370,10 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown; 
   const items = batches.flatMap(batch => {
     const shippedQuantity = netShipmentQuantity(batch.dailyShipmentItems.flatMap(item => item.events));
     const pendingQuantity = Math.max(0, batch.quantity - shippedQuantity);
-    if (!batch.workOrder) return [];
+    // The warning workbench is an actionable queue. Fully shipped batches remain
+    // available in the completion lane and shipment history, but must not continue
+    // to inflate current overdue/future-warning counts.
+    if (!batch.workOrder || pendingQuantity <= 0) return [];
     const dueDate = dateKey(batch.planOrder.customerDueDate);
     const daysUntilDue = Math.round(
       (parseShipmentDate(dueDate).value.getTime() - anchor.value.getTime()) / 86_400_000,
@@ -1347,6 +1390,7 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown; 
     const latestItem = openItem || batch.dailyShipmentItems.find(item => item.status !== DailyShipmentItemStatus.CANCELLED) || null;
     const associatedPlanDate = latestItem ? dateKey(latestItem.plan.shipDate) : null;
     const expectedPlanDate = daysUntilDue < 0 ? anchor.key : dueDate;
+    const remarks = serializeShipmentRemarks(batch.workOrder, batch.planOrder.remark, latestItem?.note);
     const completedQuantity = completedGoodQuantity(batch.workOrder);
     const productionState = completedQuantity >= batch.quantity
       ? 'COMPLETED'
@@ -1385,9 +1429,8 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown; 
       planningState,
       associationType: latestItem?.associationType || null,
       associatedPlanDate,
-      associationHealthy: pendingQuantity <= 0
-        ? Boolean(latestItem)
-        : associatedPlanDate === expectedPlanDate,
+      associationHealthy: associatedPlanDate === expectedPlanDate,
+      ...remarks,
     }];
   });
   const groupMeta = [
@@ -1416,8 +1459,8 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown; 
     summary: {
       itemCount: items.length,
       pendingQuantity: items.reduce((sum, item) => sum + item.pendingQuantity, 0),
-      completedCount: items.filter(item => item.shipmentState === 'SHIPPED').length,
-      incompleteCount: items.filter(item => item.shipmentState !== 'SHIPPED').length,
+      completedCount: 0,
+      incompleteCount: items.length,
       expectedNotPlannedCount: items.filter(item => item.planningState === 'EXPECTED_NOT_PLANNED').length,
       overdueCount: count('OVERDUE'),
       todayCount: count('TODAY'),
@@ -1428,7 +1471,7 @@ export async function loadShipmentWarningOverview(input: { anchorDate: unknown; 
         item.pendingQuantity > 0 && Math.max(0, item.completedQuantity - item.shippedQuantity) < item.pendingQuantity
       )).length,
       readyCount: items.filter(item => (
-        item.pendingQuantity <= 0 || Math.max(0, item.completedQuantity - item.shippedQuantity) >= item.pendingQuantity
+        Math.max(0, item.completedQuantity - item.shippedQuantity) >= item.pendingQuantity
       )).length,
       associationIssueCount: items.filter(item => !item.associationHealthy).length,
     },

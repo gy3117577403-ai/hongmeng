@@ -15,6 +15,17 @@ export type DailyShipmentEventDTO = {
   actor: { id: string; name: string };
 };
 
+export type DailyShipmentProductionFollowUpDTO = {
+  source: 'PRODUCTION_CONTROL';
+  version: number;
+  text: string;
+  category: 'material' | 'quality' | 'equipment' | 'customer' | 'process' | 'other';
+  owner: string;
+  followUpAt: string | null;
+  updatedAt: string;
+  updatedBy: string;
+};
+
 export type DailyShipmentItemDTO = {
   id: string;
   version: number;
@@ -49,16 +60,9 @@ export type DailyShipmentItemDTO = {
   dueDateSnapshot: string | null;
   deliveryVersionSnapshot: number | null;
   note: string | null;
-  productionFollowUp: {
-    source: 'PRODUCTION_CONTROL';
-    version: number;
-    text: string;
-    category: 'material' | 'quality' | 'equipment' | 'customer' | 'process' | 'other';
-    owner: string;
-    followUpAt: string | null;
-    updatedAt: string;
-    updatedBy: string;
-  } | null;
+  orderRemark: string | null;
+  latestProgressRemark: string | null;
+  productionFollowUp: DailyShipmentProductionFollowUpDTO | null;
   markerAudit: {
     updatedAt: string;
     actor: { id: string; name: string };
@@ -205,6 +209,10 @@ export type ShipmentWarningItemDTO = {
   associationType: DailyShipmentAssociationType | null;
   associatedPlanDate: string | null;
   associationHealthy: boolean;
+  note: string | null;
+  orderRemark: string | null;
+  latestProgressRemark: string | null;
+  productionFollowUp: DailyShipmentProductionFollowUpDTO | null;
 };
 
 export type ShipmentWarningOverviewDTO = {
