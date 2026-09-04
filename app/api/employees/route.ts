@@ -23,6 +23,11 @@ import {
   parseAttainmentStream,
 } from '@/lib/attendance';
 import {
+  AttendanceGroupInputError,
+  inferAttendanceGroup,
+  parseOptionalAttendanceGroup,
+} from '@/lib/attendance-groups';
+import {
   departmentRecordSelect,
   EmployeeDepartmentInputError,
   employeeAccessAdminInclude,
@@ -96,18 +101,26 @@ export async function POST(req: NextRequest) {
         if (duplicate) throw new EmployeeContactError('该手机号已绑定其他员工档案');
       }
       const employeeNo = await allocateEmployeeNumber(tx);
+      const position = cleanProcessText(body.position, 80) || null;
+      const team = cleanProcessText(body.team, 80) || null;
+      const attendanceGroup = parseOptionalAttendanceGroup(body.attendanceGroup) ?? inferAttendanceGroup({
+        department: resolvedDepartment?.department,
+        position,
+        team,
+      });
       const created = await tx.employee.create({
         data: {
           employeeNo,
           name,
           departmentId: resolvedDepartment?.departmentId ?? null,
           department: resolvedDepartment?.department ?? null,
-          position: cleanProcessText(body.position, 80) || null,
-          team: cleanProcessText(body.team, 80) || null,
+          position,
+          team,
           hireDate: employeeHireDateToDate(hireDate),
           mobile,
           notificationEnabled: body.notificationEnabled !== false,
           attendanceEnabled: body.attendanceEnabled !== false,
+          attendanceGroup,
           attainmentEligible: attainmentEligibleFromConfiguration(requestedFactor, requestedStream),
           attainmentFactorBasisPoints: requestedFactor,
           attainmentStream: requestedStream,
@@ -130,7 +143,7 @@ export async function POST(req: NextRequest) {
       action: 'create_employee',
       targetType: 'employee',
       targetId: employee.id,
-      detail: { employeeNo: employee.employeeNo },
+      detail: { employeeNo: employee.employeeNo, attendanceGroup: employee.attendanceGroup },
     });
     return NextResponse.json({
       ok: true,
@@ -147,6 +160,9 @@ export async function POST(req: NextRequest) {
     }
     if (error instanceof EmployeeContactError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    }
+    if (error instanceof AttendanceGroupInputError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }
     if ((error as { code?: string }).code === 'P2002') {
       return NextResponse.json({ ok: false, error: '员工编号、手机号或企业微信账号已被其他档案使用' }, { status: 409 });

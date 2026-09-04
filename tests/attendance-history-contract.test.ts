@@ -24,7 +24,7 @@ test('attendance UI shows departed historical rows but excludes them from batch 
   const source = readFileSync(resolve(repositoryRoot, 'components/AttendanceManagementShell.tsx'), 'utf8');
   assert.match(source, /attendanceRoster\.forEach\(employee => byId\.set\(employee\.id, employee\)\)/);
   assert.match(source, /filter\(employee => employee\.isActive && employee\.attendanceEnabled\)/);
-  assert.match(source, /disabled=\{!writable\}/);
+  assert.match(source, /disabled=\{!writable \|\| confirmed\}/);
   assert.match(source, /历史纠正原因（必填）/);
   assert.match(source, /已离职\$\{employee\.resignedAt/);
 });

@@ -23,6 +23,7 @@ function employee(id: string, employeeNo: string, name: string, active = true): 
     notificationEnabled: true,
     isActive: active,
     attendanceEnabled: true,
+    attendanceGroup: 'PRODUCTION_BACK',
     attainmentEligible: true,
     attainmentFactorBasisPoints: 10_000,
     attainmentStream: 'batch',

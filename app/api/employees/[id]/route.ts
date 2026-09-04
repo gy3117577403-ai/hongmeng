@@ -14,6 +14,7 @@ import {
   parseAttainmentFactorBasisPoints,
   parseAttainmentStream,
 } from '@/lib/attendance';
+import { AttendanceGroupInputError, parseOptionalAttendanceGroup } from '@/lib/attendance-groups';
 import { normalizeEmployeeMobile, EmployeeContactError } from '@/lib/employee-contact';
 import {
   employeeHireDateToDate,
@@ -84,6 +85,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
             ? 10_000
             : existing.attainmentFactorBasisPoints,
         );
+    const attendanceGroup = body.attendanceGroup === undefined
+      ? existing.attendanceGroup
+      : parseOptionalAttendanceGroup(body.attendanceGroup) ?? 'UNASSIGNED';
     const employee = await prisma.employee.update({
       where: { id: existing.id },
       data: {
@@ -106,6 +110,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         attendanceEnabled: existing.isActive && (body.attendanceEnabled === undefined
           ? existing.attendanceEnabled
           : body.attendanceEnabled === true),
+        attendanceGroup,
         attainmentEligible: attainmentEligibleFromConfiguration(requestedFactor, requestedStream),
         attainmentFactorBasisPoints: requestedFactor,
         attainmentStream: requestedStream,
@@ -125,6 +130,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         permissionSyncPending: serializedEmployee.permissionSyncPending,
         attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
         attainmentStream: employee.attainmentStream,
+        previousAttendanceGroup: existing.attendanceGroup,
+        attendanceGroup: employee.attendanceGroup,
       },
     });
     return NextResponse.json({ ok: true, employee: serializedEmployee });
@@ -139,6 +146,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
     if (error instanceof EmployeeContactError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    }
+    if (error instanceof AttendanceGroupInputError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }
     if ((error as { code?: string }).code === 'P2002') {
       return NextResponse.json({ ok: false, error: '员工编号、手机号或企业微信账号已被其他档案使用' }, { status: 409 });

@@ -10,6 +10,7 @@ import type {
   AttendanceSegmentType,
   AttendanceType,
 } from '@/types';
+import { parseAttendanceGroup } from '@/lib/attendance-groups';
 
 export const STANDARD_DAY_MILLISECONDS = 8 * 60 * 60 * 1000;
 export const MINUTE_MILLISECONDS = 60 * 1000;
@@ -280,6 +281,9 @@ export function serializeAttendanceRecord(record: AttendanceWithRelations): Atte
     employeeId: record.employeeId,
     employee: serializeEmployee(record.employee),
     departmentSnapshot: record.departmentSnapshot || null,
+    attendanceGroupSnapshot: record.attendanceGroupSnapshot
+      ? parseAttendanceGroup(record.attendanceGroupSnapshot)
+      : null,
     workDate: dateKeyFromDatabase(record.workDate),
     status: record.status === 'confirmed' ? 'confirmed' : 'draft',
     attendanceType: parseAttendanceType(record.attendanceType),

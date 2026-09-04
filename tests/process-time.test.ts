@@ -80,6 +80,7 @@ test('employee serialization keeps position and team as separate profile fields'
     notificationEnabled: true,
     isActive: true,
     attendanceEnabled: true,
+    attendanceGroup: 'PRODUCTION_FRONT',
     attainmentEligible: true,
     attainmentFactorBasisPoints: 10_000,
     attainmentStream: 'batch',

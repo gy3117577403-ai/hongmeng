@@ -18,6 +18,7 @@ import {
   STANDARD_DAY_MILLISECONDS,
 } from '@/lib/attendance';
 import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
+import { attendanceGroupEmployeeWhere, parseOptionalAttendanceGroup } from '@/lib/attendance-groups';
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
       : 'ALL';
     const boundary = await resolveAttendanceAccessBoundary(user);
     const scope = effectiveAttendanceWorkforceScope(boundary, requestedScope);
+    const attendanceGroup = parseOptionalAttendanceGroup(body.attendanceGroup);
     if (
       boundary.employeeIds !== null
       && employeeIds.some(employeeId => !boundary.employeeIds!.includes(employeeId))
@@ -53,6 +55,7 @@ export async function POST(req: NextRequest) {
     const employees = await prisma.employee.findMany({
       where: {
         ...attendanceEmployeeWhere(scope),
+        ...attendanceGroupEmployeeWhere(attendanceGroup),
         AND: [employeeHiredOnOrBeforeWhere(workDate.value)],
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
         id: { in: employeeIds },
@@ -62,6 +65,7 @@ export async function POST(req: NextRequest) {
         department: true,
         team: true,
         position: true,
+        attendanceGroup: true,
         attainmentEligible: true,
         attainmentFactorBasisPoints: true,
         attainmentStream: true,
@@ -106,6 +110,7 @@ export async function POST(req: NextRequest) {
           departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
           teamSnapshot: employee.team,
           positionSnapshot: employee.position,
+          attendanceGroupSnapshot: employee.attendanceGroup,
           attainmentEligibleSnapshot: attainmentEligible,
           attainmentFactorBasisPointsSnapshot: attainmentFactorBasisPoints,
           attainmentStreamSnapshot: attainmentStream,
@@ -145,6 +150,7 @@ export async function POST(req: NextRequest) {
       detail: {
         workDate: workDate.key,
         scope,
+        attendanceGroup,
         attendanceType,
         requestedCount: employeeIds.length,
         savedCount: writable.length,

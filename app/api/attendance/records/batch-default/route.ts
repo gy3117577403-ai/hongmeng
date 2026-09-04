@@ -12,6 +12,7 @@ import {
   STANDARD_DAY_MILLISECONDS,
 } from '@/lib/attendance';
 import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
+import { attendanceGroupEmployeeWhere, parseOptionalAttendanceGroup } from '@/lib/attendance-groups';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import {
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
       : 'ALL';
     const boundary = await resolveAttendanceAccessBoundary(user);
     const scope = effectiveAttendanceWorkforceScope(boundary, requestedScope);
+    const attendanceGroup = parseOptionalAttendanceGroup(body.attendanceGroup);
     const requestedEmployeeIds = body.employeeIds === undefined ? [] : parseAttendanceEmployeeIds(body.employeeIds);
     if (
       boundary.employeeIds !== null
@@ -46,6 +48,7 @@ export async function POST(req: NextRequest) {
     const employees = await prisma.employee.findMany({
       where: {
         ...attendanceEmployeeWhere(scope),
+        ...attendanceGroupEmployeeWhere(attendanceGroup),
         AND: [employeeHiredOnOrBeforeWhere(workDate.value)],
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
         ...(requestedEmployeeIds.length ? { id: { in: requestedEmployeeIds } } : {}),
@@ -55,6 +58,7 @@ export async function POST(req: NextRequest) {
         department: true,
         team: true,
         position: true,
+        attendanceGroup: true,
         attainmentEligible: true,
         attainmentFactorBasisPoints: true,
         attainmentStream: true,
@@ -71,6 +75,7 @@ export async function POST(req: NextRequest) {
         departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
         teamSnapshot: employee.team,
         positionSnapshot: employee.position,
+        attendanceGroupSnapshot: employee.attendanceGroup,
         attainmentEligibleSnapshot: employee.attainmentEligible,
         attainmentFactorBasisPointsSnapshot: employee.attainmentFactorBasisPoints,
         attainmentStreamSnapshot: employee.attainmentStream,
@@ -92,7 +97,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       action: 'batch_create_default_attendance',
       targetType: 'attendance_record',
-      detail: { workDate: workDate.key, scope, requested: employees.length, created: result.count },
+      detail: { workDate: workDate.key, scope, attendanceGroup, requested: employees.length, created: result.count },
     });
     return NextResponse.json({
       ok: true,

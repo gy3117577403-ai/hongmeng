@@ -2330,6 +2330,7 @@ export type EmployeeDTO = {
   notificationEnabled: boolean;
   isActive: boolean;
   attendanceEnabled: boolean;
+  attendanceGroup: AttendanceGroup;
   attainmentEligible: boolean;
   /** 0-10000 basis points. 10000 means a full production-capacity headcount. */
   attainmentFactorBasisPoints: number;
@@ -2485,6 +2486,7 @@ export type RecruitmentSummaryDTO = {
 };
 
 export type AttainmentStream = 'batch' | 'sample' | 'excluded';
+export type AttendanceGroup = 'PRODUCTION_FRONT' | 'PRODUCTION_BACK' | 'SAMPLE' | 'OTHER' | 'UNASSIGNED';
 export type AttendanceStatus = 'draft' | 'confirmed';
 export type AttendanceType = 'normal' | 'partial_leave' | 'leave' | 'absent' | 'rest';
 export type AttendanceSegmentType = 'regular' | 'overtime';
@@ -2501,6 +2503,7 @@ export type AttendanceRecordDTO = {
   employeeId: string;
   employee: EmployeeDTO;
   departmentSnapshot?: string | null;
+  attendanceGroupSnapshot?: AttendanceGroup | null;
   workDate: string;
   status: AttendanceStatus;
   attendanceType: AttendanceType;

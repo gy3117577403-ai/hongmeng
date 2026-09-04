@@ -23,6 +23,7 @@ import {
 } from '@/lib/attendance';
 import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
 import { attendanceCalendarDayLabel, resolveAttendanceCalendarDay } from '@/lib/attendance-calendar';
+import { ATTENDANCE_GROUPS, parseAttendanceGroup } from '@/lib/attendance-groups';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
 import { hasCapability } from '@/lib/department-access';
 import { logOp } from '@/lib/logs';
@@ -151,12 +152,21 @@ export async function GET(req: NextRequest) {
     const rosterById = new Map(employees.map(employee => [employee.id, employee]));
     effectiveRecords.forEach(record => rosterById.set(record.employeeId, record.employee));
     const roster = [...rosterById.values()].sort((left, right) => left.employeeNo.localeCompare(right.employeeNo, 'zh-CN'));
+    const groupSnapshotByEmployee = new Map(
+      effectiveRecords.map(record => [record.employeeId, record.attendanceGroupSnapshot]),
+    );
+    const groupCounts = Object.fromEntries(ATTENDANCE_GROUPS.map(group => [group, 0])) as Record<(typeof ATTENDANCE_GROUPS)[number], number>;
+    roster.forEach(employee => {
+      const group = parseAttendanceGroup(groupSnapshotByEmployee.get(employee.id) ?? employee.attendanceGroup);
+      groupCounts[group] += 1;
+    });
     const selectedCalendarDay = resolveDay(range.date);
     return NextResponse.json({
       ok: true,
       period,
       scope,
       scopeCounts: { production: productionCount, other: otherCount, all: allCount },
+      groupCounts,
       permissions: {
         allowedWorkforceScopes: boundary.allowedWorkforceScopes,
         scopeLabel: boundary.scopeLabel,
@@ -255,6 +265,7 @@ export async function POST(req: NextRequest) {
         departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
         teamSnapshot: employee.team,
         positionSnapshot: employee.position,
+        attendanceGroupSnapshot: employee.attendanceGroup,
         attainmentEligibleSnapshot: attainmentEligible,
         attainmentFactorBasisPointsSnapshot: attainmentFactorBasisPoints,
         attainmentStreamSnapshot: attainmentStream,

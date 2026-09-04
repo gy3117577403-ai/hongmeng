@@ -1,100 +1,55 @@
-# 日出货计划启用日与预警窗口视觉验收
+# 考勤分组工作台设计验收
 
-## 验收范围
+## 对照基线
 
-- 当日出货计划：仅承接 `2026-09-01` 起、交期不晚于所选日的未完成订单；按原客户交期分组，逾期余额滚动到当天。
-- 未来 3 天预警：固定从启用日开始，覆盖基准日后 3 天；同时保留已完成、未完成和历史预期订单。
-- 信息层级：客户名称和产品规格为主信息，工单号缩写为辅助信息，悬停或聚焦显示完整工单号，点击可复制。
-- 状态安全：内部技术值不直接显示给用户；`frontend` 等值统一转换为中文业务状态。
+- source visual truth path: `C:\Users\31175\.codex\generated_images\01a05fe5-fde4-7013-9ca0-6fd16f31f27f\exec-0dcae80d-2106-4cae-89eb-bb2597687aa2.png`
+- implementation screenshot path: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\attendance-group-v134116\implementation-1366x1024.jpg`
+- full comparison path: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\attendance-group-v134116\comparison-full.jpg`
+- focused comparison path: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\attendance-group-v134116\comparison-focus.jpg`
+- viewport: 1366 × 1024 CSS px，桌面横屏平板态
+- source pixels: 1487 × 1058；按 contain 归一化到 1366 × 1024
+- implementation pixels: 1366 × 1024；浏览器渲染为 1366 × 1024 CSS px，采集端 1.5 倍物理密度后归一化到 1 倍
+- state: 生产考勤 / 样品组 / 快速登记 / 已选择 2 人 / 已确认记录锁定 / 右侧组内处理中心可用
 
-## 对照材料
+## 可见对照结论
 
-- 原始当日空白状态：`C:/Windows/TEMP/codex-clipboard-fb7580c0-9f6c-48d6-a8b1-410377a3b85c.png`
-- 原始预警污染状态：`C:/Windows/TEMP/codex-clipboard-4ef54c34-1348-43cf-9938-e991bb2b0cfc.png`
-- 当日实现截图：`artifacts/daily-shipment-cutover-v134113/implementation-today-iab.jpg`（1057 × 898）
-- 预警实现截图：`artifacts/daily-shipment-cutover-v134113/implementation-warning-iab.jpg`（1280 × 720）
-- 同图对照：`artifacts/daily-shipment-cutover-v134113/comparison-today.png`、`artifacts/daily-shipment-cutover-v134113/comparison-warning.png`
+### 全屏结构
 
-## 可见性与交互验收
+参考稿与实现均采用左侧深蓝平台导航、顶部考勤概览、横向人员分组、左侧快速登记表和右侧组内处理中心。实现保留现有系统的紧凑图标导航与命令栏，以避免改变既有全站导航习惯；主任务结构、橙色品牌重心、卡片层级和组内批量操作位置与第三款一致。
 
-- [x] 当日页不再是无数据空白态，展示 9/1、9/2、9/3 三个交期分组及真实样例数据。
-- [x] 9/4 交期订单不会混入 9/3 当日操作清单；未来订单仅在预警页展示。
-- [x] 预警页标题、指标和列表范围统一为 9/1—9/6（基准日 9/3 + 未来 3 天）。
-- [x] 预警列表同时展示已完成、部分已发、生产中和未开工状态。
-- [x] 点击“已完成 1”后列表从 `5 / 5 批` 收敛为 `1 / 5 批`，筛选状态和结果同步。
-- [x] 长工单号在窄屏缩写，不挤压客户和产品规格；完整值仍可通过悬停、键盘聚焦和点击复制访问。
-- [x] 1057 × 898 与 1280 × 720 实际浏览器视口下未发现文本重叠、横向溢出、卡片裁切或不可点击主操作。
-- [x] 沿用现有橙色、圆角、玻璃高光和 2.5D 阴影，不引入另一套视觉语言。
+### 聚焦区域
 
-## 问题分级
+聚焦对照覆盖分组卡片、人员勾选、四段式出勤状态、班次/工时、确认状态和右侧快捷操作。实现中已确认记录为绿色锁定态，草稿为黄色，待登记为红色；所选行有浅橙底和左侧强调线；正常、请假、缺勤、休息使用不同语义色。重要控件在聚焦图中可读，无裁切、遮挡或固定操作区丢失。
 
-- P0：0
-- P1：0
-- P2：0
-- P3：0
+## 必查表面
 
-## 验收历史
+- Fonts and typography: 沿用项目中文系统字体栈；标题、摘要数值、字段标签和辅助文案的字号/字重层级清楚。相较概念稿更紧凑，属于 1366 × 1024 生产工作台密度约束，不影响可读性。
+- Spacing and layout rhythm: 四个有效分组自动等宽铺满；表格与右侧处理中心对齐；卡片间距、圆角、描边和阴影保持统一；固定确认区完整可见。
+- Colors and visual tokens: 深蓝导航、橙色品牌主色、白/珠光表面与浅灰画布一致；正常绿色、请假橙色、缺勤红色、休息蓝灰色形成明确语义映射。
+- Image quality and asset fidelity: 页面没有照片或品牌插画；所有可见功能图标均来自项目现用 Lucide 图标库，无 emoji、占位图或手工绘制替代品。
+- Copy and content: 分组名称使用“前端生产 / 后端装配 / 样品组 / 未分组”；操作文案明确说明只作用于当前分组、已确认自动跳过、确认后锁定和历史纠正保留快照。
 
-1. 原始问题：当日计划为空；预警把启用日前订单纳入，出现大量 7 月历史订单和内部技术状态。
-2. 第一次实现：加入 2026-09-01 启用边界、自动修复关联、当日累计窗口和完整预警状态。
-3. 最终复核：同图比较确认主要信息层级、日期范围、分组结构和玻璃质感符合本项目既有设计；已完成筛选交互单独验证通过。
+## 比较历史
 
-## 历史设计验收记录：v1.34.111 四分支初版
+### 第 1 轮
 
-### 对比目标与证据
+- [P2] 分组卡按固定五列排布，当前只有四个有效分组时右侧出现无意义留白；分组层级弱于第三款。
+- [P2] 四段式状态统一使用橙色选中态，未清楚表达正常、请假、缺勤和休息的不同业务语义。
+- 修复：分组改为 `auto-fit` 自动铺满；增加 Lucide 人员组图标和激活浮层；状态按钮增加正常绿、请假橙、缺勤红、休息蓝灰的语义色，右侧快捷操作同步语义色。
 
-- source visual truth path:
-  - `C:\Users\31175\.codex\generated_images\01a05fe5-fde4-7013-9ca0-6fd16f31f27f\exec-6b1dfd97-74ba-4833-af9e-6dbb1e33b0d2.png`（当日出货计划）
-  - `C:\Users\31175\.codex\generated_images\01a05fe5-fde4-7013-9ca0-6fd16f31f27f\exec-c773eb55-6c18-43f2-8926-0bbce7b668bd.png`（未来 3 天预警）
-  - `C:\Users\31175\.codex\generated_images\01a05fe5-fde4-7013-9ca0-6fd16f31f27f\exec-963daf8f-fd3e-4518-9bc9-d5563ddfa13c.png`（连续顺延）
-- implementation screenshot path:
-  - `artifacts/daily-shipment-v134111/implementation-today-1366x1024.png`
-  - `artifacts/daily-shipment-v134111/implementation-warning-1366x1024.png`
-  - `artifacts/daily-shipment-v134111/implementation-carryover-expanded-1366x1024.png`
-  - `artifacts/daily-shipment-v134111/implementation-history-1366x1024.png`
-- viewport: `1366 × 1024` CSS px，deviceScaleFactor `1`。
-- pixel dimensions and normalization:
-  - 当日参考图 `1448 × 1086`，按同一宽高比归一化为 `1366 × 1024`。
-  - 预警与顺延参考图均为 `1449 × 1086`，归一化为 `1366 × 1024`。
-  - 浏览器实现截图均原生输出 `1366 × 1024`，未二次缩放。
-- state: 基准日 `2026-09-03`；使用同一组可重复的设计验收夹具，覆盖今日到期、部分已发、历史逾期、明日到期、连续顺延和已发送历史。
-- full-view comparison evidence:
-  - `artifacts/daily-shipment-v134111/comparison-today-full.png`
-  - `artifacts/daily-shipment-v134111/comparison-warning-full.png`
-  - `artifacts/daily-shipment-v134111/comparison-carryover-full.png`
-- focused region comparison evidence:
-  - `artifacts/daily-shipment-v134111/comparison-warning-focus.png`
-  - `artifacts/daily-shipment-v134111/comparison-carryover-focus.png`
-  - 当日页不另做局部图：全屏对比中日期条、指标区、提示条、表头和所有数据行均可辨认。
+### 第 2 轮
 
-### Findings
+- post-fix visual evidence: `comparison-full.jpg` 与 `comparison-focus.jpg`
+- 未发现仍需处理的 P0/P1/P2。参考稿八名样品人员与实现五名样品人员属于演示数据差异；参考稿文字型左侧导航与实现现有图标型全站导航属于已存在的产品框架约束，不构成当前模块回归。
+- P3 follow-up: 若未来全站统一放宽信息密度，可整体提升 1px 小字号并增加一行可见人员；当前无需单独在考勤页破坏全站密度一致性。
 
-- 无剩余 P0 / P1 / P2 视觉问题。
-- 字体与排版：沿用项目现有的中文系统字体栈、字重与紧凑型生产管理信息层级；日期、数量、状态和主操作形成稳定的视觉优先级。长订单号使用受控换行或截断，不挤压操作列。
-- 间距与布局：四个分支共用同一导航骨架、日期基准卡、指标网格、提示条和数据表；1366 × 1024 下没有覆盖、横向截断或固定操作区被遮挡。实现比概念图更紧凑，是为保留现有左侧生产系统导航和同屏数据密度的有意调整。
-- 色彩与视觉令牌：保留橙色主品牌；预警使用橙红语义色，顺延使用紫色，历史使用蓝灰色。透明玻璃只作用于大容器，配合浅色渐变、内高光和分层阴影形成 2.5D 效果，同时保留不支持 `backdrop-filter` 和高对比模式的回退。
-- 图片和资产：参考界面没有产品照片、品牌插画或非标准位图资产；实现使用项目既有 Lucide 图标体系，没有用手绘 SVG、表情或 CSS 图形替换目标资产。
-- 文案与内容：明确写出“只显示当前日期应出货及已顺延未出货任务”“未来订单只在预警中提前显示”“出货不影响生产报工结单”，避免把预警清单误认成当日执行清单。
-- 状态与交互：四分支切换、日期切换、顺延轨迹展开/收起、发送弹窗打开/关闭均已在浏览器验证；发送弹窗显示正确的待发量和已完工量，验收过程未提交真实出货。
-- 可访问性与响应：语义按钮保留键盘焦点，状态不仅依赖颜色；实现包含高对比与减少动画回退。密集表格在窄视口进入可滚动/重排模式，不隐藏核心操作。
+## 交互与运行证据
 
-### Comparison history
-
-1. 第一轮发现 P2：出货历史表的“操作时间”列宽不足，`2026-09-03 16:25` 被截成 `202…`，无法用于现场追溯。
-2. 修复：为历史表增加独立列布局并放宽时间列，保持状态、数量和操作人列不被压缩。
-3. 修复后证据：`artifacts/daily-shipment-v134111/implementation-history-1366x1024.png`，完整日期时间可见；复查没有新的 P0 / P1 / P2 问题。
-
-### Open questions
-
-- “出货历史”没有单独的源视觉稿，因此该分支以同一设计系统、同一操作骨架和可追溯性要求作为验收基准，不声明逐像素还原。
-
-### Implementation checklist
-
-- [x] 精确交期关联到对应日期的日出货计划。
-- [x] 未来订单仅进入 3 天预警，不提前混入当日清单。
-- [x] 未发余量自动连续顺延，并保留逐日轨迹。
-- [x] 发送与生产报工结单解耦。
-- [x] 四分支共享统一玻璃 2.5D 视觉和操作结构。
-- [x] 浏览器错误与警告控制台检查结果为空。
+- 已验证：样品组 → 前端生产 → 样品组切换，人员列表正确变化且旧选择自动清空。
+- 已验证：快速登记 / 明细表格切换。
+- 已验证：组内勾选 2 人后，右侧正常出勤、统一请假和统一加班快捷操作从禁用转为可用。
+- 已验证：已确认记录不可勾选且状态操作锁定。
+- 已检查浏览器控制台错误：0。
+- 未执行会写入数据库的提交动作；仅验证本地预览交互状态。
 
 final result: passed

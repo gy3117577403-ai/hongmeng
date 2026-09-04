@@ -22,6 +22,7 @@ function employee(id: string, employeeNo: string, name: string, hireDate: Date |
     notificationEnabled: true,
     isActive: true,
     attendanceEnabled: true,
+    attendanceGroup: 'PRODUCTION_BACK',
     attainmentEligible: true,
     attainmentFactorBasisPoints: 10_000,
     attainmentStream: 'batch',

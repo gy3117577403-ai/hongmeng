@@ -6,6 +6,7 @@ import {
 } from '@/lib/attendance-access';
 import { parseAttendanceEmployeeIds, parseWorkDate } from '@/lib/attendance';
 import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
+import { attendanceGroupEmployeeWhere, parseOptionalAttendanceGroup } from '@/lib/attendance-groups';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import {
@@ -30,6 +31,7 @@ export async function POST(req: NextRequest) {
       : 'ALL';
     const boundary = await resolveAttendanceAccessBoundary(user);
     const scope = effectiveAttendanceWorkforceScope(boundary, requestedScope);
+    const attendanceGroup = parseOptionalAttendanceGroup(body.attendanceGroup);
     const requestedEmployeeIds = body.employeeIds === undefined ? [] : parseAttendanceEmployeeIds(body.employeeIds);
     if (
       boundary.employeeIds !== null
@@ -40,6 +42,7 @@ export async function POST(req: NextRequest) {
     const employees = await prisma.employee.findMany({
       where: {
         ...attendanceEmployeeWhere(scope),
+        ...attendanceGroupEmployeeWhere(attendanceGroup),
         AND: [employeeHiredOnOrBeforeWhere(workDate.value)],
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
         ...(requestedEmployeeIds.length ? { id: { in: requestedEmployeeIds } } : {}),
@@ -49,6 +52,7 @@ export async function POST(req: NextRequest) {
         attainmentEligible: true,
         attainmentFactorBasisPoints: true,
         attainmentStream: true,
+        attendanceGroup: true,
       },
     });
     if (requestedEmployeeIds.length && employees.length !== requestedEmployeeIds.length) {
@@ -69,6 +73,7 @@ export async function POST(req: NextRequest) {
         attainmentEligibleSnapshot: true,
         attainmentFactorBasisPointsSnapshot: true,
         attainmentStreamSnapshot: true,
+        attendanceGroupSnapshot: true,
       },
     });
     const draftRecords = existingRecords.filter(record => record.status === 'draft');
@@ -89,6 +94,7 @@ export async function POST(req: NextRequest) {
               attainmentFactorBasisPointsSnapshot: record.attainmentFactorBasisPointsSnapshot
                 ?? employee.attainmentFactorBasisPoints,
               attainmentStreamSnapshot: record.attainmentStreamSnapshot ?? employee.attainmentStream,
+              attendanceGroupSnapshot: record.attendanceGroupSnapshot ?? employee.attendanceGroup,
               confirmedById: user.id,
               confirmedAt: now,
               updatedById: user.id,
@@ -104,6 +110,7 @@ export async function POST(req: NextRequest) {
       detail: {
         workDate: workDate.key,
         scope,
+        attendanceGroup,
         requestedCount: employeeIds.length,
         confirmedCount: confirmedRecords.length,
         alreadyConfirmedCount: confirmedIds.size,

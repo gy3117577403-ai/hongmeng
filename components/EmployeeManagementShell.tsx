@@ -60,6 +60,7 @@ import { ResponsibilityMatrixWorkspace } from '@/components/ResponsibilityMatrix
 import SkillPerformanceWorkbench from '@/components/SkillPerformanceWorkbench';
 import TrainingDevelopmentWorkbench from '@/components/TrainingDevelopmentWorkbench';
 import { canManageEmployeeAccounts, isGlobalAccountManager } from '@/lib/employee-account-access';
+import { ATTENDANCE_GROUP_OPTIONS } from '@/lib/attendance-groups';
 import {
   responsibilityPeople,
   responsibilityWorkItems,
@@ -71,6 +72,7 @@ import {
 import type {
   AbnormalTimeEventDTO,
   AttendanceRecordDTO,
+  AttendanceGroup,
   AttainmentStream,
   CurrentUserDTO,
   EmployeeAttainmentReportDTO,
@@ -109,6 +111,7 @@ type EmployeeDraft = {
   notificationEnabled: boolean;
   isActive: boolean;
   attendanceEnabled: boolean;
+  attendanceGroup: AttendanceGroup;
   attainmentEligible: boolean;
   attainmentFactorBasisPoints: number;
   attainmentStream: AttainmentStream;
@@ -304,6 +307,7 @@ const emptyDraft: EmployeeDraft = {
   notificationEnabled: true,
   isActive: true,
   attendanceEnabled: true,
+  attendanceGroup: 'UNASSIGNED',
   attainmentEligible: true,
   attainmentFactorBasisPoints: 10000,
   attainmentStream: 'batch',
@@ -407,6 +411,7 @@ function toDraft(employee: EmployeeDTO): EmployeeDraft {
     notificationEnabled: employee.notificationEnabled,
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
+    attendanceGroup: employee.attendanceGroup,
     attainmentEligible: employee.attainmentEligible,
     attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
     attainmentStream: employee.attainmentStream,
@@ -2137,6 +2142,13 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                       <legend><Building2 />组织归属</legend>
                       <label><span>部门</span><input value={draft.department} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, department: event.target.value }))} placeholder="例如 生产部" /></label>
                       <label><span>班组</span><input value={draft.team} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, team: event.target.value }))} placeholder="例如 前端一组" /></label>
+                      <label>
+                        <span>考勤分组</span>
+                        <select value={draft.attendanceGroup} disabled={!editorUnlocked} onChange={event => setDraft(current => ({ ...current, attendanceGroup: event.target.value as AttendanceGroup }))}>
+                          {ATTENDANCE_GROUP_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
+                        </select>
+                        <small>仅用于考勤登记分组与批量操作，不改变报工或达成率口径</small>
+                      </label>
                     </fieldset>
                     <fieldset>
                       <legend><BriefcaseBusiness />岗位信息</legend>

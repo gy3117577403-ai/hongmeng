@@ -9,6 +9,7 @@ import type {
   SkillRewardRuleDTO,
   SkillWorkbenchSummaryDTO,
 } from '@/types';
+import { parseAttendanceGroup } from '@/lib/attendance-groups';
 
 export const skillTemplateInclude = {
   items: {
@@ -94,6 +95,7 @@ export function serializeEmployee(employee: Employee): EmployeeDTO {
     notificationEnabled: employee.notificationEnabled,
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
+    attendanceGroup: parseAttendanceGroup(employee.attendanceGroup),
     attainmentEligible: employee.attainmentEligible,
     attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
     attainmentStream: employee.attainmentStream === 'sample'

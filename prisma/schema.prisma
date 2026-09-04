@@ -1227,6 +1227,7 @@ model Employee {
   notificationEnabled              Boolean                              @default(true) @map("notification_enabled")
   isActive                         Boolean                              @default(true) @map("is_active")
   attendanceEnabled                Boolean                              @default(true) @map("attendance_enabled")
+  attendanceGroup                  String                               @default("UNASSIGNED") @map("attendance_group")
   attainmentEligible               Boolean                              @default(true) @map("attainment_eligible")
   attainmentFactorBasisPoints      Int                                  @default(10000) @map("attainment_factor_basis_points")
   attainmentStream                 String                               @default("batch") @map("attainment_stream")
@@ -1279,6 +1280,7 @@ model Employee {
   @@index([team])
   @@index([isActive, resignedAt])
   @@index([attendanceEnabled, isActive])
+  @@index([attendanceGroup, attendanceEnabled, isActive])
   @@map("employees")
 }
 
@@ -2464,6 +2466,7 @@ model AttendanceRecord {
   departmentSnapshot                  String?   @map("department_snapshot")
   teamSnapshot                        String?   @map("team_snapshot")
   positionSnapshot                    String?   @map("position_snapshot")
+  attendanceGroupSnapshot             String?   @map("attendance_group_snapshot")
   attainmentEligibleSnapshot          Boolean?  @map("attainment_eligible_snapshot")
   attainmentFactorBasisPointsSnapshot Int?      @map("attainment_factor_basis_points_snapshot")
   attainmentStreamSnapshot            String?   @map("attainment_stream_snapshot")
@@ -2491,6 +2494,7 @@ model AttendanceRecord {
   @@unique([employeeId, workDate])
   @@index([workDate, status])
   @@index([workDate, departmentSnapshot, status])
+  @@index([workDate, attendanceGroupSnapshot, status])
   @@index([employeeId, status])
   @@index([confirmedById])
   @@map("attendance_records")

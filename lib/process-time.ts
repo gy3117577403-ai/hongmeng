@@ -5,6 +5,7 @@ import type {
   ProcessTimeStandardDTO,
 } from '@/types';
 import { chinaDateKey } from '@/lib/china-date';
+import { parseAttendanceGroup } from '@/lib/attendance-groups';
 
 export const PROCESS_TIME_BASES: ProcessTimeBasis[] = ['per_unit', 'per_batch'];
 export const MAX_PROCESS_MILLISECONDS = 2_147_483_647;
@@ -156,6 +157,7 @@ export function serializeEmployee(employee: Employee): EmployeeDTO {
     notificationEnabled: employee.notificationEnabled,
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
+    attendanceGroup: parseAttendanceGroup(employee.attendanceGroup),
     attainmentEligible: employee.attainmentEligible,
     attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
     attainmentStream: employee.attainmentStream === 'sample'

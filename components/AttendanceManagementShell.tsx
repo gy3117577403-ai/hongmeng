@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  AlarmClockPlus,
   CalendarClock,
   Check,
   CheckCircle2,
@@ -15,16 +16,22 @@ import {
   Search,
   Save,
   ShieldCheck,
+  Sparkles,
   Trash2,
   UserRoundCheck,
   UsersRound,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
 import { ABNORMAL_TIME_CATEGORIES } from '@/lib/attendance';
+import {
+  ATTENDANCE_GROUP_OPTIONS,
+  parseAttendanceGroup,
+} from '@/lib/attendance-groups';
 import { formatProcessDuration } from '@/lib/process-time';
 import {
   isProductionDepartment,
@@ -34,6 +41,7 @@ import type {
   AbnormalTimeCategory,
   AbnormalTimeEventDTO,
   AttendanceRecordDTO,
+  AttendanceGroup,
   AttainmentStream,
   AttendanceType,
   CurrentUserDTO,
@@ -60,6 +68,7 @@ type AttendanceResponse = {
   records?: AttendanceRecordDTO[];
   scope?: AttendanceWorkforceScope;
   scopeCounts?: { production: number; other: number; all: number };
+  groupCounts?: Record<AttendanceGroup, number>;
   permissions?: AttendancePermissions;
   calendar?: {
     date: string;
@@ -112,6 +121,15 @@ type AttendanceDraft = {
   correctionReason: string;
 };
 
+export type AttendancePreviewData = {
+  employees: EmployeeDTO[];
+  records: AttendanceRecordDTO[];
+  summary: NonNullable<AttendanceResponse['summary']>;
+  scopeCounts: { production: number; other: number; all: number };
+  groupCounts: Record<AttendanceGroup, number>;
+  selectedGroup?: AttendanceGroup;
+};
+
 type AttendanceBatchDraft = Omit<AttendanceDraft, 'employeeId' | 'attainmentFactorBasisPoints' | 'attainmentStream' | 'correctionReason'>;
 
 type AbnormalDraft = {
@@ -143,6 +161,13 @@ const emptyEventSummary = {
   openCount: 0,
   incidentMilliseconds: 0,
   affectedPersonMilliseconds: 0,
+};
+const emptyGroupCounts: Record<AttendanceGroup, number> = {
+  PRODUCTION_FRONT: 0,
+  PRODUCTION_BACK: 0,
+  SAMPLE: 0,
+  OTHER: 0,
+  UNASSIGNED: 0,
 };
 
 function todayKey(): string {
@@ -196,23 +221,28 @@ function eventStatusLabel(event: AbnormalTimeEventDTO): string {
   return event.employeeExempt ? '已确认免责' : '已确认不免责';
 }
 
-export default function AttendanceManagementShell({ user }: { user: CurrentUserDTO }) {
+export default function AttendanceManagementShell({ user, previewData }: { user: CurrentUserDTO; previewData?: AttendancePreviewData }) {
   const [tab, setTab] = useState<TabKey>('attendance');
   const [date, setDate] = useState(todayKey);
   const [period, setPeriod] = useState<Period>('today');
   const [workforceScope, setWorkforceScope] = useState<AttendanceWorkforceScope>('PRODUCTION');
-  const [employeeDirectory, setEmployeeDirectory] = useState<EmployeeDTO[]>([]);
-  const [attendanceRoster, setAttendanceRoster] = useState<EmployeeDTO[]>([]);
-  const [scopeCounts, setScopeCounts] = useState({ production: 0, other: 0, all: 0 });
+  const [employeeDirectory, setEmployeeDirectory] = useState<EmployeeDTO[]>(previewData?.employees || []);
+  const [attendanceRoster, setAttendanceRoster] = useState<EmployeeDTO[]>(previewData?.employees || []);
+  const [scopeCounts, setScopeCounts] = useState(previewData?.scopeCounts || { production: 0, other: 0, all: 0 });
+  const [groupCounts, setGroupCounts] = useState<Record<AttendanceGroup, number>>(previewData?.groupCounts || emptyGroupCounts);
+  const [attendanceGroup, setAttendanceGroup] = useState<AttendanceGroup>(previewData?.selectedGroup || 'PRODUCTION_FRONT');
+  const [attendanceView, setAttendanceView] = useState<'quick' | 'detail'>('quick');
   const [allowedWorkforceScopes, setAllowedWorkforceScopes] = useState<AttendanceWorkforceScope[]>(['PRODUCTION']);
   const [accessScopeLabel, setAccessScopeLabel] = useState('生产范围');
-  const [records, setRecords] = useState<AttendanceRecordDTO[]>([]);
+  const [records, setRecords] = useState<AttendanceRecordDTO[]>(previewData?.records || []);
   const [events, setEvents] = useState<AbnormalTimeEventDTO[]>([]);
-  const [attendanceSummary, setAttendanceSummary] = useState(emptyAttendanceSummary);
-  const [attendanceCalendar, setAttendanceCalendar] = useState<AttendanceResponse['calendar']>();
+  const [attendanceSummary, setAttendanceSummary] = useState(previewData?.summary || emptyAttendanceSummary);
+  const [attendanceCalendar, setAttendanceCalendar] = useState<AttendanceResponse['calendar']>(previewData ? {
+    date: todayKey(), effectiveDayType: 'workday', isWorkday: true, displayLabel: '工作日', label: null, remark: null,
+  } : undefined);
   const [eventSummary, setEventSummary] = useState(emptyEventSummary);
   const [keyword, setKeyword] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!previewData);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -244,6 +274,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   }, []);
 
   const load = useCallback(async (signal?: AbortSignal): Promise<void> => {
+    if (previewData) return;
     setLoading(true);
     setError('');
     try {
@@ -262,6 +293,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       setAttendanceRoster(attendanceBody.employees || []);
       setRecords(attendanceBody.records || []);
       setScopeCounts(attendanceBody.scopeCounts || { production: 0, other: 0, all: 0 });
+      setGroupCounts(attendanceBody.groupCounts || emptyGroupCounts);
       const permissions = attendanceBody.permissions || employeeBody.permissions;
       if (permissions) {
         setAllowedWorkforceScopes(permissions.allowedWorkforceScopes);
@@ -281,7 +313,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     } finally {
       setLoading(false);
     }
-  }, [date, period, workforceScope]);
+  }, [date, period, previewData, workforceScope]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -324,6 +356,23 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
         : !isProductionDepartment(department);
     });
   }, [attendanceEmployeeDirectory, recordByEmployee, workforceScope]);
+  const availableAttendanceGroups = useMemo(() => {
+    const values = workforceScope === 'PRODUCTION'
+      ? ['PRODUCTION_FRONT', 'PRODUCTION_BACK', 'SAMPLE', 'UNASSIGNED']
+      : workforceScope === 'OTHER'
+        ? ['OTHER', 'UNASSIGNED']
+        : ATTENDANCE_GROUP_OPTIONS.map(option => option.value);
+    return ATTENDANCE_GROUP_OPTIONS.filter(option => values.includes(option.value) || groupCounts[option.value] > 0);
+  }, [groupCounts, workforceScope]);
+  useEffect(() => {
+    if (!availableAttendanceGroups.some(option => option.value === attendanceGroup)) {
+      setAttendanceGroup(availableAttendanceGroups[0]?.value || 'UNASSIGNED');
+    }
+  }, [attendanceGroup, availableAttendanceGroups]);
+  const groupedEmployees = useMemo(() => employees.filter(employee => {
+    const recordGroup = recordByEmployee.get(employee.id)?.attendanceGroupSnapshot;
+    return parseAttendanceGroup(recordGroup ?? employee.attendanceGroup) === attendanceGroup;
+  }), [attendanceGroup, employees, recordByEmployee]);
   const workforceLabel = workforceScope === 'PRODUCTION'
     ? '生产考勤'
     : workforceScope === 'OTHER'
@@ -337,10 +386,10 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   const attendanceEditable = attendanceCalendar?.isWorkday !== false;
   const filteredEmployees = useMemo(() => {
     const normalized = keyword.trim().toLocaleLowerCase('zh-CN');
-    if (!normalized) return employees;
-    return employees.filter(item => `${item.id} ${item.employeeNo} ${item.name} ${item.department || ''} ${item.position || ''} ${item.team || ''}`
+    if (!normalized) return groupedEmployees;
+    return groupedEmployees.filter(item => `${item.id} ${item.employeeNo} ${item.name} ${item.department || ''} ${item.position || ''} ${item.team || ''}`
       .toLocaleLowerCase('zh-CN').includes(normalized));
-  }, [employees, keyword]);
+  }, [groupedEmployees, keyword]);
   const visibleEmployeeIds = useMemo(
     () => filteredEmployees
       .filter(employee => employee.isActive && employee.attendanceEnabled)
@@ -357,7 +406,41 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   useEffect(() => {
     setSelectedEmployeeIds([]);
     setBatchAttendanceDraft(null);
-  }, [date, workforceScope]);
+  }, [attendanceGroup, date, workforceScope]);
+
+  const selectedGroupOption = ATTENDANCE_GROUP_OPTIONS.find(option => option.value === attendanceGroup)!;
+  const groupedRecordSummary = useMemo(() => groupedEmployees.reduce((summary, employee) => {
+    const record = recordByEmployee.get(employee.id);
+    if (!record) summary.missing += 1;
+    else if (record.status === 'confirmed') summary.confirmed += 1;
+    else summary.draft += 1;
+    if (record?.attendanceType === 'leave' || record?.attendanceType === 'partial_leave') summary.leave += 1;
+    if (record?.attendanceType === 'absent') summary.abnormal += 1;
+    return summary;
+  }, { missing: 0, draft: 0, confirmed: 0, leave: 0, abnormal: 0 }), [groupedEmployees, recordByEmployee]);
+  const groupCompletionPercent = groupedEmployees.length
+    ? Math.round((groupedRecordSummary.confirmed / groupedEmployees.length) * 100)
+    : 0;
+  const overallCompletionPercent = attendanceSummary.enabledEmployeeCount
+    ? Math.round((attendanceSummary.confirmedCount / attendanceSummary.enabledEmployeeCount) * 100)
+    : 0;
+  const overallAttendanceTypes = useMemo(() => records.reduce((summary, record) => {
+    if (record.status !== 'confirmed') return summary;
+    if (record.attendanceType === 'normal') summary.normal += 1;
+    if (record.attendanceType === 'leave' || record.attendanceType === 'partial_leave') summary.leave += 1;
+    if (record.attendanceType === 'absent') summary.absent += 1;
+    return summary;
+  }, { normal: 0, leave: 0, absent: 0 }), [records]);
+  const groupConfirmedCounts = useMemo(() => {
+    const counts = { ...emptyGroupCounts };
+    employees.forEach(employee => {
+      const record = recordByEmployee.get(employee.id);
+      if (record?.status !== 'confirmed') return;
+      const group = parseAttendanceGroup(record.attendanceGroupSnapshot ?? employee.attendanceGroup);
+      counts[group] += 1;
+    });
+    return counts;
+  }, [employees, recordByEmployee]);
 
   useEffect(() => {
     setSelectedEmployeeIds(current => current.filter(employeeId => visibleEmployeeIdSet.has(employeeId)));
@@ -484,6 +567,24 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     });
   }
 
+  function openBatchPreset(attendanceType: AttendanceType, overtime = false): void {
+    if (!selectedEmployeeIds.length) {
+      setError(`请先在${selectedGroupOption.label}中选择员工`);
+      return;
+    }
+    setBatchAttendanceDraft({
+      attendanceType,
+      morningStart: '08:00',
+      morningEnd: '12:00',
+      afternoonStart: '13:00',
+      afternoonEnd: '17:00',
+      overtimeStart: overtime ? '17:00' : '',
+      overtimeEnd: overtime ? '19:00' : '',
+      leaveMinutes: attendanceType === 'partial_leave' ? '60' : '0',
+      remark: '',
+    });
+  }
+
   async function batchDefault(employeeIds?: string[]): Promise<void> {
     setSaving(true);
     setError('');
@@ -494,6 +595,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
         body: JSON.stringify({
           workDate: date,
           scope: workforceScope,
+          attendanceGroup,
           ...(employeeIds?.length ? { employeeIds } : {}),
         }),
       });
@@ -508,8 +610,8 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     }
   }
 
-  async function batchConfirm(employeeIds?: string[]): Promise<void> {
-    const rangeLabel = employeeIds?.length ? `所选 ${employeeIds.length} 人` : workforceLabel;
+  async function batchConfirm(employeeIds?: string[], group: AttendanceGroup | null = attendanceGroup): Promise<void> {
+    const rangeLabel = employeeIds?.length ? `所选 ${employeeIds.length} 人` : group ? `${selectedGroupOption.label}` : workforceLabel;
     if (!window.confirm(`确认 ${date} 的${rangeLabel}草稿？请先修改请假、缺勤和加班例外。`)) return;
     setSaving(true);
     setError('');
@@ -520,6 +622,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
         body: JSON.stringify({
           workDate: date,
           scope: workforceScope,
+          ...(group ? { attendanceGroup: group } : {}),
           ...(employeeIds?.length ? { employeeIds } : {}),
         }),
       });
@@ -556,6 +659,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
           ...batchAttendanceDraft,
           workDate: date,
           scope: workforceScope,
+          attendanceGroup,
           employeeIds: selectedEmployeeIds,
           segments,
         }),
@@ -567,6 +671,42 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       setRefreshToken(value => value + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '批量设置考勤失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function quickSetAttendance(employeeId: string, attendanceType: AttendanceType): Promise<void> {
+    setSaving(true);
+    setError('');
+    try {
+      const segments = attendanceType === 'normal' || attendanceType === 'partial_leave'
+        ? [
+            { type: 'regular', startedAt: isoFor(date, '08:00'), endedAt: isoFor(date, '12:00') },
+            { type: 'regular', startedAt: isoFor(date, '13:00'), endedAt: isoFor(date, '17:00') },
+          ]
+        : [];
+      const response = await fetch('/api/attendance/records/batch-set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workDate: date,
+          scope: workforceScope,
+          attendanceGroup,
+          employeeIds: [employeeId],
+          attendanceType,
+          leaveMinutes: attendanceType === 'partial_leave' ? 60 : 0,
+          segments,
+          remark: '',
+        }),
+      });
+      const body = await response.json() as { ok: boolean; savedCount?: number; error?: string };
+      if (!response.ok) throw new Error(body.error || '快速登记失败');
+      if (!body.savedCount) throw new Error('该员工考勤已确认，如需修改请进入单人纠正流程');
+      setToast(`${attendanceTypeLabel(attendanceType)}已保存为草稿`);
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '快速登记失败');
     } finally {
       setSaving(false);
     }
@@ -743,17 +883,23 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
             <button type="button" onClick={() => { setExportSelectedOnly(selectedEmployeeIds.length > 0); setExportOpen(true); }}><Download size={16} />导出考勤</button>
             <button className="icon-only" type="button" aria-label="刷新" title="刷新" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={16} /></button>
             {tab === 'attendance'
-              ? <button className="primary" type="button" disabled={saving || !attendanceEditable} onClick={() => void batchDefault(selectedEmployeeIds.length ? selectedEmployeeIds : undefined)}><Plus size={16} />{selectedEmployeeIds.length ? `为所选生成（${selectedEmployeeIds.length}）` : '生成正常出勤'}</button>
+              ? <button className="primary" type="button" disabled={saving || !attendanceEditable} onClick={() => document.getElementById('attendance-group-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })}><Sparkles size={16} />处理待确认</button>
               : <button className="primary" type="button" onClick={beginAbnormal}><Plus size={16} />登记异常工时</button>}
           </>}
         />
 
-        <section className="attendance-summary" aria-label="考勤与异常概览">
-          <article><UsersRound /><span>{workforceLabel}<small>{workforceNote}</small></span><strong>{attendanceSummary.enabledEmployeeCount}</strong></article>
-          <article><UserRoundCheck /><span>已确认考勤<small>{date} 日记录</small></span><strong>{attendanceSummary.confirmedCount}</strong></article>
-          <article><Clock3 /><span>有效出勤<small>请假不计入</small></span><strong>{formatProcessDuration(attendanceSummary.actualMilliseconds)}</strong></article>
-          <article><AlertTriangle /><span>异常事件<small>{periodLabel(period)}汇总</small></span><strong>{eventSummary.eventCount}</strong></article>
-          <article className={eventSummary.pendingCount ? 'warning' : ''}><ShieldCheck /><span>待品质确认<small>确认后才影响免责口径</small></span><strong>{eventSummary.pendingCount}</strong></article>
+        <section className="attendance-summary attendance-summary-premium" aria-label="考勤与异常概览">
+          <article className="attendance-summary-lead">
+            <span><small>今日应考勤</small><strong>{attendanceSummary.enabledEmployeeCount}<em>人</em></strong><small>{date} · {workforceLabel}</small></span>
+          </article>
+          <article className="attendance-summary-progress">
+            <div className="attendance-progress-ring" style={{ '--attendance-progress': `${overallCompletionPercent}%` } as CSSProperties}><strong>{overallCompletionPercent}%</strong></div>
+            <span><small>登记进度</small><strong>{attendanceSummary.confirmedCount}/{attendanceSummary.enabledEmployeeCount}</strong><small>已确认 / 应考勤</small></span>
+          </article>
+          <article><CheckCircle2 /><span>正常<small>已确认出勤</small></span><strong>{overallAttendanceTypes.normal}</strong></article>
+          <article><CalendarClock /><span>请假<small>部分或全天</small></span><strong>{overallAttendanceTypes.leave}</strong></article>
+          <article className={eventSummary.eventCount ? 'warning' : ''}><AlertTriangle /><span>异常<small>{periodLabel(period)}异常事件</small></span><strong>{eventSummary.eventCount}</strong></article>
+          <article className={(attendanceSummary.draftCount || attendanceSummary.enabledEmployeeCount > attendanceSummary.recordCount) ? 'pending' : ''}><Clock3 /><span>待确认<small>含未登记人员</small></span><strong>{attendanceSummary.draftCount + Math.max(0, attendanceSummary.enabledEmployeeCount - attendanceSummary.recordCount)}</strong></article>
         </section>
 
         <section className="attendance-toolbar">
@@ -765,7 +911,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
           <label className="attendance-date"><span>基准日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
           {tab !== 'attendance' && <div className="attendance-period" role="group" aria-label="异常汇总周期">{(['today', 'week', 'month'] as Period[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{periodLabel(item)}</button>)}</div>}
           {tab === 'attendance'
-            ? <button type="button" disabled={saving || !attendanceEditable || (!attendanceSummary.draftCount && !selectedEmployeeIds.length)} onClick={() => void batchConfirm(selectedEmployeeIds.length ? selectedEmployeeIds : undefined)}><Check size={16} />{selectedEmployeeIds.length ? `确认所选（${selectedEmployeeIds.length}）` : '确认全部草稿'}</button>
+            ? <button type="button" disabled={saving || !attendanceEditable || (!groupedRecordSummary.draft && !selectedEmployeeIds.length)} onClick={() => void batchConfirm(selectedEmployeeIds.length ? selectedEmployeeIds : undefined, attendanceGroup)}><Check size={16} />{selectedEmployeeIds.length ? `确认所选（${selectedEmployeeIds.length}）` : `确认${selectedGroupOption.shortLabel}组草稿`}</button>
             : null}
         </section>
 
@@ -773,7 +919,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
         {tab === 'attendance' && attendanceCalendar && !attendanceCalendar.isWorkday && <div className="attendance-calendar-notice" role="status"><CalendarClock size={16} /><span><strong>{date} · {attendanceCalendar.displayLabel}</strong><small>历史记录仍可查看，但不进入有效出勤、工时或达成率；如为临时加班，请先在报表中心出勤日历设为“临时工作日”。</small></span></div>}
 
         {tab === 'attendance' ? (
-          <section className="attendance-ledger">
+          <section className="attendance-ledger attendance-group-ledger" id="attendance-group-workspace">
             <header>
               <div><span>手工考勤 · {workforceLabel}</span><h1>{date} 出勤登记</h1><small>{workforceNote} · 当前权限：{accessScopeLabel}</small></div>
               <div className="attendance-workforce-switch" role="tablist" aria-label="考勤人员范围">
@@ -782,46 +928,88 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                 {allowedWorkforceScopes.includes('ALL') && <button className={workforceScope === 'ALL' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'ALL'} onClick={() => { setWorkforceScope('ALL'); setAttendanceDraft(null); }}><strong>全部人员</strong><em>{scopeCounts.all}</em></button>}
               </div>
             </header>
-            <div className="attendance-selection-strip">
-              <label>
-                <input
-                  ref={selectAllRef}
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  onChange={event => toggleVisibleSelection(event.target.checked)}
-                />
-                <span>{selectedEmployeeIds.length ? `已选 ${selectedEmployeeIds.length} 人` : '尚未选择员工'}</span>
-              </label>
-              <button type="button" disabled={!visibleEmployeeIds.length} onClick={() => toggleVisibleSelection(!allVisibleSelected)}>
-                {allVisibleSelected ? '取消当前筛选全选' : `全选当前筛选结果 ${visibleEmployeeIds.length} 人`}
-              </button>
-              <small>日期或人员范围切换后自动清空；搜索结果变化时仅保留当前可见人员。</small>
-            </div>
-            <div className="attendance-table-wrap hm-scroll-region" tabIndex={0}>
-              <div className="attendance-table-head"><span className="attendance-checkbox-label">选择</span><span>员工</span><span>状态</span><span>有效出勤</span><span>加班</span><span>请假</span><span>确认</span><span>操作</span></div>
-              {filteredEmployees.map(employee => {
-                const record = recordByEmployee.get(employee.id);
-                const writable = employee.isActive && employee.attendanceEnabled;
-                const canEdit = writable || (!employee.isActive && Boolean(record) && canCorrectDepartedAttendance);
-                return <div className={`attendance-row ${record?.status || 'missing'} ${employee.isActive ? '' : 'departed'}`} key={employee.id}>
-                  <label className="attendance-row-checkbox" aria-label={`选择 ${employee.name}`}><input type="checkbox" disabled={!writable} checked={selectedEmployeeIdSet.has(employee.id)} onChange={event => toggleEmployeeSelection(employee.id, event.target.checked)} /></label>
-                  <div><strong>{employee.name}</strong><small>{employee.employeeNo} · {employee.position || '岗位未设置'} · {employee.team || '班组未设置'}{!employee.isActive ? ` · 已离职${employee.resignedAt ? ` ${employee.resignedAt}` : ''}` : ''}</small></div>
-                  <span>{record ? attendanceTypeLabel(record.attendanceType) : '未登记'}</span>
-                  <b>{record ? formatProcessDuration(record.actualMilliseconds) : '-'}</b>
-                  <b>{record ? formatProcessDuration(record.overtimeMilliseconds) : '-'}</b>
-                  <b>{record ? formatProcessDuration(record.leaveMilliseconds) : '-'}</b>
-                  <em>{record?.status === 'confirmed' ? '已确认' : record ? '草稿' : '缺失'}</em>
-                  <button type="button" disabled={!attendanceEditable || !canEdit} title={!employee.isActive && !canCorrectDepartedAttendance ? '离职员工历史考勤仅限人事更新权限纠正' : undefined} onClick={() => openAttendance(employee)}><Pencil size={15} />{!employee.isActive ? '纠正' : record ? '编辑' : '登记'}</button>
-                </div>;
+            <nav className="attendance-group-tabs" aria-label="考勤分组">
+              {availableAttendanceGroups.map(option => {
+                const total = groupCounts[option.value] || 0;
+                const confirmed = groupConfirmedCounts[option.value] || 0;
+                const percent = total ? Math.round((confirmed / total) * 100) : 0;
+                return <button type="button" className={attendanceGroup === option.value ? 'active' : ''} aria-current={attendanceGroup === option.value ? 'page' : undefined} key={option.value} onClick={() => { setAttendanceGroup(option.value); setAttendanceDraft(null); }}>
+                  <span className="attendance-group-icon" aria-hidden="true"><UsersRound /></span>
+                  <span className="attendance-group-copy"><strong>{option.label}</strong><em>{total} 人</em></span>
+                  <b>{confirmed}/{total}</b>
+                  <i><span style={{ width: `${percent}%` }} /></i>
+                </button>;
               })}
-              {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>当前日期没有可见考勤员工</strong><span>在职且启用考勤的员工会显示在当前名册；离职员工仅在离职前已有历史记录的日期显示。</span>{canOpenEmployeeAdmin && <a href="/workspace/employees?view=directory">打开人事管理</a>}</div>}
-              {selectedEmployeeIds.length > 0 && <div className="attendance-bulk-bar" role="toolbar" aria-label="所选员工批量操作">
-                <span><strong>{selectedEmployeeIds.length}</strong><small>人已选择</small></span>
-                <button type="button" disabled={saving || !attendanceEditable} onClick={() => void batchDefault(selectedEmployeeIds)}><Plus size={15} />生成正常考勤</button>
-                <button type="button" disabled={saving || !attendanceEditable} onClick={openBatchAttendance}><Pencil size={15} />批量设置</button>
-                <button className="confirm" type="button" disabled={saving || !attendanceEditable} onClick={() => void batchConfirm(selectedEmployeeIds)}><Check size={15} />确认所选草稿</button>
-                <button type="button" disabled={saving} onClick={() => setSelectedEmployeeIds([])}><X size={15} />清空选择</button>
-              </div>}
+            </nav>
+            <div className="attendance-group-workspace">
+              <section className="attendance-quick-panel">
+                <header className="attendance-quick-header">
+                  <div>
+                    <span>{selectedGroupOption.label}</span>
+                    <h2>快速登记</h2>
+                    <small>按人员逐项确认，已确认记录自动锁定</small>
+                  </div>
+                  <div className="attendance-view-switch" role="tablist" aria-label="考勤登记显示方式">
+                    <button className={attendanceView === 'quick' ? 'active' : ''} type="button" onClick={() => setAttendanceView('quick')}>快速登记</button>
+                    <button className={attendanceView === 'detail' ? 'active' : ''} type="button" onClick={() => setAttendanceView('detail')}>明细表格</button>
+                  </div>
+                </header>
+                <div className="attendance-selection-strip">
+                  <label>
+                    <input ref={selectAllRef} type="checkbox" checked={allVisibleSelected} onChange={event => toggleVisibleSelection(event.target.checked)} />
+                    <span>{selectedEmployeeIds.length ? `已选 ${selectedEmployeeIds.length} 人` : `本组 ${groupedEmployees.length} 人`}</span>
+                  </label>
+                  <button type="button" disabled={!visibleEmployeeIds.length} onClick={() => toggleVisibleSelection(!allVisibleSelected)}>{allVisibleSelected ? '取消全选' : `全选当前结果 ${visibleEmployeeIds.length} 人`}</button>
+                  <small>切换日期、人员范围或分组会自动清空选择</small>
+                </div>
+                <div className={`attendance-table-wrap attendance-table-${attendanceView} hm-scroll-region`} tabIndex={0}>
+                  <div className="attendance-table-head"><span className="attendance-checkbox-label">选择</span><span>员工</span><span>{attendanceView === 'quick' ? '出勤状态' : '状态'}</span><span>{attendanceView === 'quick' ? '班次 / 工时' : '有效出勤'}</span><span>{attendanceView === 'quick' ? '加班 / 请假' : '加班'}</span>{attendanceView === 'detail' && <span>请假</span>}<span>确认</span><span>操作</span></div>
+                  {filteredEmployees.map(employee => {
+                    const record = recordByEmployee.get(employee.id);
+                    const writable = employee.isActive && employee.attendanceEnabled;
+                    const confirmed = record?.status === 'confirmed';
+                    const canEdit = writable || (!employee.isActive && Boolean(record) && canCorrectDepartedAttendance);
+                    return <div className={`attendance-row ${record?.status || 'missing'} ${employee.isActive ? '' : 'departed'}`} key={employee.id}>
+                      <label className="attendance-row-checkbox" aria-label={`选择 ${employee.name}`}><input type="checkbox" disabled={!writable || confirmed} checked={selectedEmployeeIdSet.has(employee.id)} onChange={event => toggleEmployeeSelection(employee.id, event.target.checked)} /></label>
+                      <div><strong>{employee.name}</strong><small>{employee.employeeNo} · {employee.position || '岗位未设置'} · {employee.team || selectedGroupOption.label}{!employee.isActive ? ` · 已离职${employee.resignedAt ? ` ${employee.resignedAt}` : ''}` : ''}</small></div>
+                      {attendanceView === 'quick'
+                        ? <div className="attendance-status-segments" role="group" aria-label={`${employee.name}出勤状态`}>
+                            {(['normal', 'leave', 'absent', 'rest'] as AttendanceType[]).map(type => <button type="button" className={`${type} ${record?.attendanceType === type ? 'active' : ''}`} disabled={saving || confirmed || !attendanceEditable || !writable} onClick={() => void quickSetAttendance(employee.id, type)} key={type}>{type === 'normal' ? '正常' : type === 'leave' ? '请假' : type === 'absent' ? '缺勤' : '休息'}</button>)}
+                          </div>
+                        : <span>{record ? attendanceTypeLabel(record.attendanceType) : '未登记'}</span>}
+                      {attendanceView === 'quick'
+                        ? <button type="button" className="attendance-time-cell" disabled={!attendanceEditable || !canEdit} onClick={() => openAttendance(employee)}><strong>{record ? formatProcessDuration(record.actualMilliseconds) : '08:00–17:00'}</strong><small>{record ? '点击编辑班次' : '使用标准班次'}</small></button>
+                        : <b>{record ? formatProcessDuration(record.actualMilliseconds) : '-'}</b>}
+                      {attendanceView === 'quick'
+                        ? <div className="attendance-exception-time"><strong>{record?.overtimeMilliseconds ? `加班 ${formatProcessDuration(record.overtimeMilliseconds)}` : '无加班'}</strong><small>{record?.leaveMilliseconds ? `请假 ${formatProcessDuration(record.leaveMilliseconds)}` : '无请假'}</small></div>
+                        : <b>{record ? formatProcessDuration(record.overtimeMilliseconds) : '-'}</b>}
+                      {attendanceView === 'detail' && <b>{record ? formatProcessDuration(record.leaveMilliseconds) : '-'}</b>}
+                      <em>{confirmed ? '已确认' : record ? '草稿' : '待登记'}</em>
+                      <button type="button" disabled={!attendanceEditable || !canEdit} title={!employee.isActive && !canCorrectDepartedAttendance ? '离职员工历史考勤仅限人事更新权限纠正' : undefined} onClick={() => openAttendance(employee)}><Pencil size={15} />{!employee.isActive ? '纠正' : record ? '编辑' : '登记'}</button>
+                    </div>;
+                  })}
+                  {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>{selectedGroupOption.label}暂无可见员工</strong><span>人员不会被隐藏；尚未明确归属的员工统一显示在“未分组”。</span>{canOpenEmployeeAdmin && <a href="/workspace/employees?view=directory">前往人事管理设置分组</a>}</div>}
+                </div>
+              </section>
+              <aside className="attendance-group-action-panel">
+                <header><span><Sparkles /></span><div><small>当前处理分组</small><h2>{selectedGroupOption.label}</h2><p>{groupedEmployees.length} 人 · 已确认 {groupedRecordSummary.confirmed} · 待处理 {groupedRecordSummary.draft + groupedRecordSummary.missing}</p></div><strong>{groupCompletionPercent}%</strong></header>
+                <div className="attendance-group-progress"><span style={{ width: `${groupCompletionPercent}%` }} /></div>
+                <section>
+                  <span>快捷应用</span>
+                  <div className="attendance-quick-actions">
+                    <button className="normal" type="button" disabled={saving || !attendanceEditable || !selectedEmployeeIds.length} onClick={() => openBatchPreset('normal')}><CheckCircle2 />正常 8h</button>
+                    <button className="leave" type="button" disabled={saving || !attendanceEditable || !selectedEmployeeIds.length} onClick={() => openBatchPreset('partial_leave')}><CalendarClock />统一请假</button>
+                    <button className="overtime" type="button" disabled={saving || !attendanceEditable || !selectedEmployeeIds.length} onClick={() => openBatchPreset('normal', true)}><AlarmClockPlus />统一加班</button>
+                  </div>
+                </section>
+                <div className="attendance-selected-card"><span><strong>{selectedEmployeeIds.length}</strong> 人已选择</span><small>批量操作只作用于当前的{selectedGroupOption.label}</small></div>
+                <div className="attendance-scope-safety"><ShieldCheck /><span><strong>分组安全边界已启用</strong><small>后端会再次校验分组；不会误改其他分组，已确认记录自动跳过。</small></span></div>
+                <div className="attendance-group-panel-actions">
+                  <button type="button" disabled={saving || !attendanceEditable || !groupedRecordSummary.missing} onClick={() => void batchDefault()}><Plus />批量登记本组缺失人员</button>
+                  <button className="primary" type="button" disabled={saving || !attendanceEditable || !groupedRecordSummary.draft} onClick={() => void batchConfirm(undefined, attendanceGroup)}><Check />确认{selectedGroupOption.label}草稿</button>
+                </div>
+                <p>确认后锁定。单人历史纠正仍保留原分组快照和操作记录。</p>
+              </aside>
             </div>
           </section>
         ) : (

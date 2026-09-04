@@ -37,6 +37,7 @@ const employee: EmployeeDTO = {
   notificationEnabled: true,
   isActive: true,
   attendanceEnabled: true,
+  attendanceGroup: 'PRODUCTION_FRONT',
   attainmentEligible: false,
   attainmentFactorBasisPoints: 0,
   attainmentStream: 'excluded',
