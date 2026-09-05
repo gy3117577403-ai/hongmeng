@@ -14,6 +14,7 @@ export type AccessDataContract = {
  */
 export const ACCESS_DATA_CONTRACTS: Partial<Record<AccessModuleCode, AccessDataContract>> = {
   FIELD_REPORT: { label: '现场报工', endpoints: ['/api/field-report/terminals'], scoped: true },
+  QUALITY_DATA: { label: '质量数据', endpoints: ['/api/quality-data/records'] },
   BUSINESS: { label: '业务订单', endpoints: ['/api/work-orders'], datasetKey: 'workOrders' },
   PROCUREMENT: { label: '物料跟进', endpoints: ['/api/material-follow-ups'], datasetKey: 'materialFollowUps' },
   WAREHOUSE: { label: '仓库管理', endpoints: ['/api/warehouse/material-tasks'] },

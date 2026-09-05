@@ -600,7 +600,7 @@ export default function EightDArchiveShell({ user }: EightDArchiveShellProps) {
         </>}
       />
 
-      <QualityModuleTabs active="eight-d" eightDCount={summary.total} />
+      <QualityModuleTabs active="eight-d" eightDCount={summary.total} canViewData={user.access.capabilities.includes('QUALITY_DATA:READ')} />
 
       <section className="eight-d-summary hm-cockpit-stage-rail" aria-label="8D档案状态">
         {statusItems.map(([key, label, count]) => <button className={status === key ? 'active' : ''} type="button" key={key} onClick={() => setStatus(key)}><span>{label}</span><strong>{count}</strong></button>)}

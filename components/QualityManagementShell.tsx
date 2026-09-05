@@ -50,7 +50,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
         context={<><span>{risk.activeAlerts} 条工单预警</span><span>{risk.critical} 个重大风险</span><span>{eightD.total} 份8D档案</span></>}
         actions={<button type="button" disabled={loading} onClick={() => { void load(); }}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>}
       />
-      <QualityModuleTabs active="overview" riskCount={risk.total} eightDCount={eightD.total} />
+      <QualityModuleTabs active="overview" riskCount={risk.total} eightDCount={eightD.total} canViewData={user.access.capabilities.includes('QUALITY_DATA:READ')} />
       {error && <div className="quality-home-error"><AlertTriangle size={16} />{error}</div>}
       <section className="quality-home-kpis" aria-label="质量管理关键指标">
         <article className="danger"><span>活动工单预警</span><strong>{risk.activeAlerts}</strong><small>来自已归档异常版本</small></article>

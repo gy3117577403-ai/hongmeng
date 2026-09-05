@@ -101,6 +101,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     items: [
       { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
       { href: '/workspace/quality', label: '质量管理', icon: ShieldAlert },
+      { href: '/workspace/quality/data', label: '质量数据', icon: ClipboardCheck },
       { href: '/workspace/quality-tasks', label: '我的质量任务', icon: ClipboardCheck },
       { href: '/workspace/quality-confirmation', label: '品质确认', icon: ShieldCheck },
       { href: '/workspace/approvals', label: '重大审批', icon: ClipboardCheck },

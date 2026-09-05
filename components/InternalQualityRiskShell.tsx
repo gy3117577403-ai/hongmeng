@@ -801,7 +801,7 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
         search={<label className="internal-risk-search"><Search size={15} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、标题、原因、结论、产品或工单" />{keyword && <button type="button" onClick={() => setKeyword('')}><X size={13} /></button>}</label>}
         actions={<>{isAdmin && status === 'DELETED' && <button type="button" disabled={saving} onClick={() => void retryCleanup()}><RefreshCw size={15} />重试附件清理</button>}<button className="icon-only" type="button" title="刷新" disabled={loading} onClick={() => { void Promise.all([loadReports(), loadOptions()]); }}><RefreshCw className={loading ? 'spin' : ''} size={16} /></button>{canCreate && <button className="primary" type="button" onClick={openCreate}><Plus size={16} />质量发起异常</button>}</>}
       />
-      <QualityModuleTabs active="internal-risks" riskCount={summary.total} />
+      <QualityModuleTabs active="internal-risks" riskCount={summary.total} canViewData={user.access.capabilities.includes('QUALITY_DATA:READ')} />
       <section className="internal-risk-status hm-cockpit-stage-rail" aria-label="异常汇总状态">
         {statusItems.map(([key, count]) => <button className={status === key ? 'active' : ''} type="button" key={key} onClick={() => setStatus(key)}><span>{statusLabels[key]}</span><strong>{count}</strong></button>)}
       </section>

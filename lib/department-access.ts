@@ -31,6 +31,7 @@ export const ACCESS_PROFILE_CODES = [
   'DRAWING_LIBRARY_EDITOR',
   'REPORT_PEOPLE_READER',
   'QUALITY_REVIEWER',
+  'QUALITY_DATA_OPERATOR',
   'FIELD_REPORTER',
   'GM_OFFICE_READER_APPROVER',
   'FINANCE_ACCOUNT_ONLY',
@@ -54,6 +55,7 @@ export const ACCESS_MODULES = [
   'ACCOUNT_SELF',
   'NOTIFICATIONS',
   'FIELD_REPORT',
+  'QUALITY_DATA',
   'BUSINESS',
   'PROCUREMENT',
   'WAREHOUSE',
@@ -137,6 +139,7 @@ export const MODULE_ACTION_MATRIX = {
   ACCOUNT_SELF: ['READ', 'UPDATE'],
   NOTIFICATIONS: ['READ', 'UPDATE'],
   FIELD_REPORT: ['READ', 'CREATE', 'EXECUTE_WORKFLOW'],
+  QUALITY_DATA: ['READ', 'CREATE', 'UPDATE', 'DELETE', 'APPROVE', 'MANAGE'],
   BUSINESS: DEPARTMENT_OPERATION_ACTIONS,
   PROCUREMENT: DEPARTMENT_OPERATION_ACTIONS,
   WAREHOUSE: DEPARTMENT_OPERATION_ACTIONS,
@@ -445,6 +448,10 @@ export function resolveAccessContext(
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
       addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
       addScope(scopeForGrant(grant, moduleKey, 'DEPARTMENT', false));
+      if (departmentCode === 'QUALITY') {
+        addModuleActions(capabilities, 'QUALITY_DATA', MODULE_ACTION_MATRIX.QUALITY_DATA);
+        addScope(scopeForGrant(grant, 'QUALITY_DATA', 'GLOBAL', false));
+      }
       if (departmentCode === 'HR') {
         addModuleActions(capabilities, 'TRAINING', DEPARTMENT_OPERATION_ACTIONS);
         addScope(scopeForGrant(grant, 'TRAINING', 'DEPARTMENT', false));
@@ -489,10 +496,19 @@ export function resolveAccessContext(
 
     if (grant.profile === 'QUALITY_REVIEWER') {
       addWorkbenchCommon(capabilities, addScope, grant);
+      addModuleActions(capabilities, 'QUALITY_DATA', MODULE_ACTION_MATRIX.QUALITY_DATA);
+      addScope(scopeForGrant(grant, 'QUALITY_DATA', 'GLOBAL', false));
       addModuleActions(capabilities, 'QUALITY', ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
       capabilities.add(capabilityCode('DRAWING_LIBRARY', 'READ'));
       addScope(scopeForGrant(grant, 'QUALITY', 'GLOBAL', false));
       addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', true));
+      continue;
+    }
+
+    if (grant.profile === 'QUALITY_DATA_OPERATOR') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      addModuleActions(capabilities, 'QUALITY_DATA', ['READ', 'CREATE', 'UPDATE', 'DELETE']);
+      addScope(scopeForGrant(grant, 'QUALITY_DATA', 'GLOBAL', false));
       continue;
     }
 
@@ -549,6 +565,10 @@ export function resolveAccessContext(
       addBasicSummary(capabilities);
       addModuleActions(capabilities, 'PRODUCTION', DEPARTMENT_OPERATION_ACTIONS);
       const isTeamLeader = grant.profile === 'WORKSHOP_TEAM_LEADER';
+      if (isTeamLeader) {
+        addModuleActions(capabilities, 'QUALITY_DATA', ['READ', 'CREATE', 'UPDATE', 'DELETE']);
+        addScope(scopeForGrant(grant, 'QUALITY_DATA', 'GLOBAL', false));
+      }
       for (const technicalModule of ['TERMINAL_TOOLING', 'DRAWING_LIBRARY', 'ASSEMBLY_MANUALS', 'PRODUCT_TIME'] as const) {
         if (isTeamLeader) addModuleActions(capabilities, technicalModule, MODULE_ACTION_MATRIX[technicalModule]);
         else capabilities.add(capabilityCode(technicalModule, 'READ'));

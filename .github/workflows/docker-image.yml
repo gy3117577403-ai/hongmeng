@@ -162,6 +162,10 @@ jobs:
         run: npm run test:sample-integration
       - name: Type check
         run: npx tsc --noEmit
+      - name: Quality data PostgreSQL lifecycle integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/quality-data-integration.test.ts
       - name: Lint
         run: npm run lint
       - name: Performance regression contracts
@@ -299,6 +303,14 @@ jobs:
             WECOM_QA_BASE=http://127.0.0.1:3000 \
             PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
             node scripts/smoke-wecom-quality-only.mjs
+          mkdir -p artifacts/quality-data-v1
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime hongmeng-release-smoke node \
+            < scripts/seed-quality-data-smoke.cjs > artifacts/quality-data-v1/release-fixture.json
+          QUALITY_DATA_QA_BASE=http://127.0.0.1:3000 \
+            QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/release-fixture.json \
+            QUALITY_DATA_QA_OUTPUT=artifacts/quality-data-v1/release-runtime.json \
+            node scripts/smoke-quality-data.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -554,10 +566,26 @@ jobs:
             SMOKE_ADMIN_CHANGED_PASSWORD="$SMOKE_ADMIN_CHANGED_PASSWORD" \
             node scripts/smoke-sample-capture.mjs
 
+          mkdir -p artifacts/quality-data-v1
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
+            < scripts/seed-quality-data-smoke.cjs > artifacts/quality-data-v1/mirror-fixture.json
+          QUALITY_DATA_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
+            QUALITY_DATA_QA_OUTPUT=artifacts/quality-data-v1/mirror-runtime.json \
+            node scripts/smoke-quality-data.mjs
+
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
             echo "### Anonymous China mirror runtime acceptance"
             echo
-            echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed the sample capture lifecycle smoke."
+            echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture and quality data lifecycle smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload quality data acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-data-acceptance
+          path: artifacts/quality-data-v1/*runtime.json
+          if-no-files-found: ignore

@@ -60,6 +60,7 @@ test('stable department, profile and grant-type codes match the persistence cont
     'DRAWING_LIBRARY_EDITOR',
     'REPORT_PEOPLE_READER',
     'QUALITY_REVIEWER',
+    'QUALITY_DATA_OPERATOR',
     'FIELD_REPORTER',
     'GM_OFFICE_READER_APPROVER',
     'FINANCE_ACCOUNT_ONLY',

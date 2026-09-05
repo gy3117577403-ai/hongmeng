@@ -385,6 +385,7 @@ export type AccessProfileKeyDTO =
   | 'DRAWING_LIBRARY_EDITOR'
   | 'REPORT_PEOPLE_READER'
   | 'QUALITY_REVIEWER'
+  | 'QUALITY_DATA_OPERATOR'
   | 'FIELD_REPORTER'
   | 'GM_OFFICE_READER_APPROVER'
   | 'FINANCE_ACCOUNT_ONLY'
@@ -406,6 +407,7 @@ export type DepartmentRefDTO = {
 };
 
 export type AccessModuleCodeDTO =
+  | 'QUALITY_DATA'
   | 'BASIC_SUMMARY'
   | 'ACCOUNT_SELF'
   | 'NOTIFICATIONS'

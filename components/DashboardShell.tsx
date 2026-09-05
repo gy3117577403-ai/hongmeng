@@ -298,6 +298,7 @@ const accessProfileOptions: Array<{ value: AccessProfileKeyDTO; label: string; d
   { value: 'DRAWING_LIBRARY_EDITOR', label: '图纸资料编辑', description: '查看、新建、上传和更新图纸，不含删除与发布' },
   { value: 'REPORT_PEOPLE_READER', label: '人员效率报表', description: '查看并导出全厂人员、工时和效率数据' },
   { value: 'QUALITY_REVIEWER', label: '质量审核', description: '质量协同与审核，图纸资料只读，不含删除' },
+  { value: 'QUALITY_DATA_OPERATOR', label: '质量数据填报（调模兼岗）', description: '填写五类检验、上传、查询导出和本人草稿；不开放其他质量模块' },
   { value: 'FIELD_REPORTER', label: '扫码报工', description: '实名扫码进入现场报工' },
   { value: 'WORKSHOP_SUPERVISOR', label: '车间主管', description: '车间生产与计划协同' },
   { value: 'WORKSHOP_TEAM_LEADER', label: '车间组长', description: '已开放模块全操作，加载共享生产数据' },

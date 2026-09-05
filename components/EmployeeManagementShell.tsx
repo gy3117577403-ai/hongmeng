@@ -469,6 +469,7 @@ function employeeAccessProfileLabel(value?: string | null): string {
   if (value === 'ADMIN_GLOBAL') return '管理员全权限';
   if (value === 'DEPARTMENT_FULL') return '部门工作台';
   if (value === 'PROCESS_SPECIALIST') return '工艺专员';
+  if (value === 'QUALITY_DATA_OPERATOR') return '质量数据填报（调模兼岗）';
   if (value === 'FIELD_REPORTER') return '扫码报工';
   if (value === 'GM_OFFICE_READER_APPROVER') return '总经办只读与重大审批';
   if (value === 'FINANCE_ACCOUNT_ONLY') return '财务账号接入';

@@ -504,6 +504,7 @@ export async function prepareAccessGrant(
   if (profile === AccessProfileKey.DRAWING_LIBRARY_EDITOR) scopeKey = 'GLOBAL:DRAWING_LIBRARY';
   if (profile === AccessProfileKey.REPORT_PEOPLE_READER) scopeKey = 'GLOBAL:REPORT_PEOPLE';
   if (profile === AccessProfileKey.QUALITY_REVIEWER) scopeKey = 'GLOBAL:QUALITY_REVIEW';
+  if (profile === AccessProfileKey.QUALITY_DATA_OPERATOR) scopeKey = 'GLOBAL:QUALITY_DATA';
   if (profile === AccessProfileKey.FIELD_REPORTER) scopeKey = `EMPLOYEE:${employee!.id}`;
   if (profile === AccessProfileKey.WORKSHOP_SUPERVISOR) scopeKey = 'WORKSHOP:PRODUCTION';
   if (profile === AccessProfileKey.WORKSHOP_TEAM_LEADER) scopeKey = `TEAM:${targetTeam!.id}`;
