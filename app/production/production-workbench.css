@@ -10889,3 +10889,13 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   background: var(--hm-color-entity-wip, #6d28d9);
   box-shadow: 0 0 0 3px var(--hm-color-entity-wip-border, #c4b5fd);
 }
+
+.hm-production-workbench .production-dispatch-process-cell { min-width: 0; position: relative; display: grid; align-content: center; gap: 5px; }
+.hm-production-workbench .production-dispatch-process-cell .production-dispatch-process-flow { width: 100%; }
+.hm-production-workbench .production-current-quantity { display: grid; grid-template-columns: 1fr 54px; align-items: center; gap: 6px; font-size: 10px; color: #64748b; }
+.hm-production-workbench .production-current-quantity progress { width: 54px; height: 5px; accent-color: #ea580c; }
+.hm-production-workbench .production-progress-reasons { font-size: 11px; color: #9a3412; }
+.hm-production-workbench .production-progress-reasons summary { cursor: pointer; width: fit-content; padding: 3px 0; }
+.hm-production-workbench .production-progress-reasons[open] > div { position: absolute; z-index: 20; top: 100%; left: 0; width: min(340px, 60vw); max-height: 300px; overflow: auto; padding: 12px; border: 1px solid #fed7aa; border-radius: 12px; background: #fffaf5; box-shadow: 0 12px 30px #0f172a24; }
+.hm-production-workbench .production-progress-reasons p { display: grid; gap: 3px; margin: 0 0 8px; color: #475569; }
+.hm-production-workbench .production-progress-reasons button { padding: 7px 10px; border: 1px solid #fed7aa; border-radius: 7px; background: #fff; color: #9a3412; }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { usePreviewGestures } from '@/components/usePreviewGestures';
@@ -8,7 +8,7 @@ import { extractManualPageTitleCandidates, extractManualTocSuggestions } from '@
 import type { ConnectorManualTocSuggestion } from '@/lib/connector-manual-toc';
 import { createPdfJsAssetOptions } from '@/lib/pdfjs-assets';
 import { DocumentOrientationControls, DocumentPreviewFrame, requestPreviewLeave, useDocumentOrientation, type DocumentOrientationController } from '@/components/DocumentOrientation';
-import { normalizePreviewRotation } from '@/lib/preview-gestures';
+import { normalizePreviewRotation, PREVIEW_FIT_PADDING } from '@/lib/preview-gestures';
 
 declare global {
   interface Window {
@@ -124,6 +124,8 @@ function PdfCanvas({
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [baseSize, setBaseSize] = useState({ width: 0, height: 0 });
   const [renderedZoom, setRenderedZoom] = useState(1);
+  const [preparedFrame, setPreparedFrame] = useState<{ canvas: HTMLCanvasElement; width: number; height: number; zoom: number; page: number; document: PdfDocument } | null>(null);
+  const [visiblePage, setVisiblePage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [slowLoading, setSlowLoading] = useState(false);
   const [rendering, setRendering] = useState(false);
@@ -142,7 +144,7 @@ function PdfCanvas({
     resetKey: `${source}|${reloadKey}`,
     controlledRotation: orientation.draft[pageNo] || 0,
     memoryKey: `${orientation.key}|${pageNo}`,
-    initialFitMode: dashboardMode ? 'fit-height' : 'fit-window',
+    initialFitMode: 'fit-window',
     scrollWheel: dashboardMode,
   });
   const setReadingPage = orientation.setPage;
@@ -182,10 +184,11 @@ function PdfCanvas({
     setRendering(false);
     setError(null);
     setDoc(null);
-    setPageNo(1);
     setPageCount(0);
     setBaseSize({ width: 0, height: 0 });
     setRenderedZoom(1);
+    setPreparedFrame(null);
+    setVisiblePage(0);
     setPageTitleCandidates([]);
     setTocOpen(false);
 
@@ -264,7 +267,6 @@ function PdfCanvas({
   useEffect(() => {
     if (loading || !doc || !canvasRef.current || !boxReady) return undefined;
     let alive = true;
-    const canvas = canvasRef.current;
 
     (async () => {
       setRendering(true);
@@ -284,20 +286,7 @@ function PdfCanvas({
         renderTaskRef.current = task;
         await task.promise;
         if (!alive) return;
-        setCanvasSwapActive(true);
-        canvas.width = offscreen.width;
-        canvas.height = offscreen.height;
-        canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
-        canvas.style.height = `${Math.floor(viewport.height / dpr)}px`;
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('Canvas unavailable');
-        context.drawImage(offscreen, 0, 0);
-        setRenderedZoom(gestures.committedZoom);
-        if (canvasSwapFrameRef.current !== null) window.cancelAnimationFrame(canvasSwapFrameRef.current);
-        canvasSwapFrameRef.current = window.requestAnimationFrame(() => {
-          canvasSwapFrameRef.current = null;
-          setCanvasSwapActive(false);
-        });
+        setPreparedFrame({ canvas: offscreen, width: viewport.width / dpr, height: viewport.height / dpr, zoom: gestures.committedZoom, page: pageNo, document: doc });
         const nearby = [pageNo - 1, pageNo + 1].filter(value => value >= 1 && value <= doc.numPages);
         await Promise.all(nearby.map(value => doc.getPage(value).catch(() => null)));
       } catch (e) {
@@ -314,6 +303,27 @@ function PdfCanvas({
       renderTaskRef.current?.cancel();
     };
   }, [boxReady, doc, pageNo, gestures.committedZoom, gestures.rotation, loading]);
+
+  // Commit the finished bitmap and its CSS scale before the same browser paint.
+  // Updating the live canvas in the async render task exposed a new bitmap with
+  // the previous scale for one frame, especially during zoom and fullscreen.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !preparedFrame || preparedFrame.document !== doc || preparedFrame.page !== pageNo) return;
+    canvas.width = preparedFrame.canvas.width;
+    canvas.height = preparedFrame.canvas.height;
+    canvas.style.width = `${preparedFrame.width}px`;
+    canvas.style.height = `${preparedFrame.height}px`;
+    canvas.getContext('2d')?.drawImage(preparedFrame.canvas, 0, 0);
+    setRenderedZoom(preparedFrame.zoom);
+    setVisiblePage(preparedFrame.page);
+    setCanvasSwapActive(true);
+    if (canvasSwapFrameRef.current !== null) window.cancelAnimationFrame(canvasSwapFrameRef.current);
+    canvasSwapFrameRef.current = window.requestAnimationFrame(() => {
+      canvasSwapFrameRef.current = null;
+      setCanvasSwapActive(false);
+    });
+  }, [preparedFrame, doc, pageNo]);
 
   useEffect(() => () => {
     if (canvasSwapFrameRef.current !== null) window.cancelAnimationFrame(canvasSwapFrameRef.current);
@@ -358,8 +368,8 @@ function PdfCanvas({
 
   const displayScale = gestures.zoom / Math.max(0.001, renderedZoom);
   const scrollSurfaceStyle = dashboardMode ? {
-    width: `${Math.max(box.width, gestures.rotatedSize.width * gestures.zoom + 40)}px`,
-    height: `${Math.max(box.height, gestures.rotatedSize.height * gestures.zoom + 40)}px`,
+    width: `${Math.max(box.width, gestures.rotatedSize.width * gestures.zoom + PREVIEW_FIT_PADDING)}px`,
+    height: `${Math.max(box.height, gestures.rotatedSize.height * gestures.zoom + PREVIEW_FIT_PADDING)}px`,
   } : undefined;
 
   return (
@@ -426,16 +436,16 @@ function PdfCanvas({
         )}
         {!loading && !error && (
           <>
-            {rendering && <div className="render-badge">渲染中...</div>}
+            {rendering && <div className="render-badge" role="status">{visiblePage !== pageNo ? `正在读取第 ${pageNo} 页…` : '清晰度更新中…'}</div>}
             {dashboardMode ? (
               <div className="viewer-scroll-surface" style={scrollSurfaceStyle}>
                 <div className={`viewer-gesture-content${gestures.isGestureActive || canvasSwapActive ? ' active' : ''}`} style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}>
-                  <canvas ref={canvasRef} aria-label={title} />
+                  <canvas ref={canvasRef} aria-label={title} data-rendered-page={visiblePage} style={{ visibility: visiblePage !== pageNo ? 'hidden' : undefined }} />
                 </div>
               </div>
             ) : (
               <div className={`viewer-gesture-content${gestures.isGestureActive || canvasSwapActive ? ' active' : ''}`} style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}>
-                <canvas ref={canvasRef} aria-label={title} />
+                <canvas ref={canvasRef} aria-label={title} data-rendered-page={visiblePage} style={{ visibility: visiblePage !== pageNo ? 'hidden' : undefined }} />
               </div>
             )}
           </>

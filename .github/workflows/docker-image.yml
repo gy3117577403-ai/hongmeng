@@ -162,6 +162,10 @@ jobs:
         run: npm run test:sample-integration
       - name: Type check
         run: npx tsc --noEmit
+      - name: Pending report coverage PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/process-pending-coverage-recovery-integration.test.ts
       - name: Quality data PostgreSQL lifecycle integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -263,7 +267,7 @@ jobs:
             -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
             -e S3_FORCE_PATH_STYLE=true \
             -e PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
-            -e PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS=2 \
+            -e PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS=600 \
             hongmeng-release-smoke:${{ github.sha }}
           ready=0
           for attempt in $(seq 1 60); do
@@ -311,6 +315,20 @@ jobs:
             QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/release-fixture.json \
             QUALITY_DATA_QA_OUTPUT=artifacts/quality-data-v1/release-runtime.json \
             node scripts/smoke-quality-data.mjs
+          mkdir -p artifacts/planning-progress-preview
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime hongmeng-release-smoke node \
+            < scripts/seed-planning-import-smoke.cjs > artifacts/planning-progress-preview/release-reference.json
+          QUALITY_DATA_QA_BASE=http://127.0.0.1:3000 \
+            QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/release-fixture.json \
+            PLANNING_IMPORT_QA_OUTPUT=artifacts/planning-progress-preview/release-import-runtime.json \
+            PLANNING_IMPORT_QA_REFERENCE=artifacts/planning-progress-preview/release-reference.json \
+            node scripts/smoke-planning-import.mjs
+          RUN_DB_INTEGRATION=1 \
+            PROCESS_PENDING_RECOVERY_TEST_ORIGIN=http://127.0.0.1:3000 \
+            PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            npx tsx --test --test-concurrency=1 --test-name-pattern=historical-recovery tests/process-pending-coverage-recovery-integration.test.ts \
+            | tee artifacts/planning-progress-preview/release-worker-runtime.log
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -575,6 +593,16 @@ jobs:
             QUALITY_DATA_QA_OUTPUT=artifacts/quality-data-v1/mirror-runtime.json \
             node scripts/smoke-quality-data.mjs
 
+          mkdir -p artifacts/planning-progress-preview
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
+            < scripts/seed-planning-import-smoke.cjs > artifacts/planning-progress-preview/mirror-reference.json
+          QUALITY_DATA_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
+            PLANNING_IMPORT_QA_OUTPUT=artifacts/planning-progress-preview/mirror-import-runtime.json \
+            PLANNING_IMPORT_QA_REFERENCE=artifacts/planning-progress-preview/mirror-reference.json \
+            node scripts/smoke-planning-import.mjs
+
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
@@ -582,6 +610,13 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture and quality data lifecycle smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload planning and progress acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: planning-progress-preview-acceptance
+          path: artifacts/planning-progress-preview/*
+          if-no-files-found: ignore
       - name: Upload quality data acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

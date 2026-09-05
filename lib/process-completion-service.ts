@@ -2095,7 +2095,8 @@ async function reconcileQuantityStepStatuses(
   return steps.every(step => step.status === 'completed' || step.status === 'skipped');
 }
 
-/** Reconcile lifecycle projections only; supplemental reports never move material. */
+/** Reconcile lifecycle and replay available normal-report coverage. Supplemental
+ * reports themselves never move material or create an ordinary completion. */
 export async function reconcileSupplementRouteCompletion(
   tx: Prisma.TransactionClient,
   input: {
@@ -2116,6 +2117,21 @@ export async function reconcileSupplementRouteCompletion(
     );
   }
   const before = new Map(route.steps.map(step => [step.id, step.status]));
+  // Route edits and fulfilled supplements may make input available without a
+  // new ordinary report. Consume the existing pending reports before closing
+  // statuses, exactly as ordinary reporting does; never create another report.
+  const pendingReport = await tx.processCompletion.findFirst({
+    where: { routeId: route.id, voidedAt: null, supplementObligationId: null,
+      step: { retiredAt: null, executionMode: 'NORMAL' }, coverageStatus: { in: ['PENDING', 'PARTIAL'] } },
+    orderBy: [{ completedAt: 'asc' }, { createdAt: 'asc' }], select: { id: true },
+  });
+  if (pendingReport && !input.userId && (route.workOrder.branchType || await hasActiveDescendantBranches(tx, route.workOrderId))) {
+    throw new ProcessCompletionServiceError('分支工单需人工核对数量核销', 409, 'PROCESS_COVERAGE_RECOVERY_BRANCH');
+  }
+  const coverage = pendingReport ? await reconcilePendingCompletionCoverage(tx, {
+    route, triggerCompletionId: pendingReport.id, targetQty: targetQuantity(route.workOrder),
+    userId: input.userId, actor: input.actor, now: input.now,
+  }) : null;
   const stepsClosed = route.steps.length > 0 && await reconcileQuantityStepStatuses(tx, route.steps, {
     targetQty: targetQuantity(route.workOrder), userId: input.userId, now: input.now,
   });
@@ -2139,6 +2155,20 @@ export async function reconcileSupplementRouteCompletion(
     throw new ProcessCompletionServiceError(
       '工艺路线已被其他操作更新，请刷新后重试', 409, 'PROCESS_ROUTE_VERSION_CONFLICT',
     );
+  }
+
+  if (coverage) {
+    await updateCompletionWorkOrders(tx, {
+      route, targetQty: targetQuantity(route.workOrder),
+      finishedGoodDelta: coverage.finishedGoodDelta, frontendTransferDelta: coverage.frontendTransferDelta,
+      routeCompleted, actor: input.actor, now: input.now,
+      propagateFinishedToAncestors: route.workOrder.branchType !== 'REWORK',
+    });
+    for (const returned of coverage.reworkReturns) {
+      if (!input.userId) throw new ProcessCompletionServiceError('返工回流需人工核对', 409, 'PROCESS_COVERAGE_RECOVERY_REWORK');
+      await returnReworkOutputToParent(tx, { ...returned, sourceRoute: route, userId: input.userId, actor: input.actor, now: input.now });
+    }
+    route.workOrder = await tx.workOrder.findUniqueOrThrow({ where: { id: route.workOrderId } });
   }
 
   // Finished quantities have already been credited by ordinary reporting.
@@ -2194,6 +2224,7 @@ export async function reconcileSupplementRouteCompletion(
     routeCompleted,
     routeVersion: route.version + 1,
     changedStepIds: route.steps.filter(step => before.get(step.id) !== step.status).map(step => step.id),
+    coverage,
     completedWorkOrderIds,
     deferredLaborPoolIds,
   };
@@ -3224,7 +3255,7 @@ async function applyCompletionCoverage(
     };
     triggerCompletionId: string;
     targetQty: number;
-    userId: string;
+    userId: string | null;
     actor: string;
     now: Date;
   },
@@ -3420,6 +3451,7 @@ async function applyCompletionCoverage(
         'PROCESS_DEFECT_DISPOSITION_REQUIRED',
       );
     }
+    if (!input.userId) throw new ProcessCompletionServiceError('不良品核销需要人工确认处置', 409, 'PROCESS_COVERAGE_RECOVERY_DEFECT');
     const branch = await createDefectBranch(tx, {
       route: input.route,
       completionId: input.completion.id,
@@ -3474,7 +3506,7 @@ async function reconcilePendingCompletionCoverage(
     route: CompletionRouteRecord;
     triggerCompletionId: string;
     targetQty: number;
-    userId: string;
+    userId: string | null;
     actor: string;
     now: Date;
   },
@@ -4148,11 +4180,14 @@ async function performProcessCompletion(
     }
   }
 
-  const routeCompleted = await reconcileQuantityStepStatuses(
+  const stepsClosed = await reconcileQuantityStepStatuses(
     tx,
     route.steps as QuantityStep[],
     { targetQty, userId: input.userId, now },
   );
+  const openObligations = await tx.processSupplementObligation.count({ where: { routeId: route.id, status: 'ACTIVE' } });
+  const uncoveredReports = await tx.processCompletion.count({ where: { routeId: route.id, voidedAt: null, coverageStatus: { not: 'COVERED' } } });
+  const routeCompleted = stepsClosed && openObligations === 0 && uncoveredReports === 0;
   await createDeferredPerBatchLaborPools(tx, route, {
     userId: input.userId,
     now,

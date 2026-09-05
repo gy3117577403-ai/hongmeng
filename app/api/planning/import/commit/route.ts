@@ -19,6 +19,7 @@ import {
   type ProductionPlanImportRow,
 } from '@/lib/production-plan-import';
 import { planningProductIdentity } from '@/lib/planning-product-link';
+import { productionPlanImportNeedsProductDecision, resolvePlanningImportTime, planningImportTimeSourceText } from '@/lib/planning-import-time';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,7 @@ type CommitBody = {
   batchId?: string;
   previewToken?: string;
   decisions?: Record<string, string>;
+  orderDecisions?: Record<string, string>;
 };
 
 type ImportResult = {
@@ -173,6 +175,7 @@ async function commitBatch(
   batchId: string,
   previewToken: string,
   decisions: Record<string, string>,
+  orderDecisions: Record<string, string>,
   userId: string,
 ): Promise<CommitResult> {
   return prisma.$transaction(async tx => {
@@ -190,8 +193,15 @@ async function commitBatch(
     if (!rows.length) throw new Error('导入预检数据为空，请重新上传文件');
     const invalid = rows.find(row => row.status === 'invalid');
     if (invalid) throw new Error(`第 ${invalid.rowNo} 行仍有错误：${invalid.reason}`);
-    const unresolved = rows.find(row => row.status === 'conflict' && !clean(decisions[String(row.rowNo)], 80));
+    const unresolved = rows.find(row => productionPlanImportNeedsProductDecision(row, orderDecisions[String(row.rowNo)]) && !clean(decisions[String(row.rowNo)], 80));
     if (unresolved) throw new Error(`第 ${unresolved.rowNo} 行存在多个图纸库，请先选择后再确认`);
+    for (const row of rows) {
+      if (!row.requiresOrderDecision) continue;
+      const choice = orderDecisions[String(row.rowNo)];
+      if (choice !== 'new' && choice !== 'skip' && !row.orderCandidates?.some(order => order.id === choice)) {
+        throw new Error(`第 ${row.rowNo} 行需要确认新订单、关联已有订单或跳过`);
+      }
+    }
 
     const targetWeekStartDate = chinaDate(targetWeek.start);
     const targetWeekEndDate = chinaDate(targetWeek.end);
@@ -205,20 +215,24 @@ async function commitBatch(
     let automaticallyPrepared = 0;
 
     for (const row of rows) {
-      if (!row.input || row.status === 'skipped' || row.status === 'duplicate') {
+      const orderChoice = row.requiresOrderDecision ? orderDecisions[String(row.rowNo)] : '';
+      if (!row.input || row.status === 'skipped' || row.status === 'duplicate' || orderChoice === 'skip') {
         skipped += 1;
         results.push({
           row: row.rowNo,
           specification: row.input?.specification || '-',
           status: 'skipped',
           productAction: 'none',
-          message: row.reason || '该行已跳过',
+          message: orderChoice === 'skip' ? '已按预览选择跳过' : row.reason || '该行已跳过',
         });
         continue;
       }
 
+      const explicitOrderId = orderChoice && orderChoice !== 'new' ? orderChoice : null;
+      const lockIdentity = explicitOrderId || `${row.input.sourceOrderNo}:${row.input.sourceLineNo}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-plan-order:${lockIdentity}`}))`;
       const existing = await tx.productionPlanOrder.findUnique({
-        where: {
+        where: explicitOrderId ? { id: explicitOrderId } : {
           sourceOrderNo_sourceLineNo: {
             sourceOrderNo: row.input.sourceOrderNo,
             sourceLineNo: row.input.sourceLineNo,
@@ -226,6 +240,9 @@ async function commitBatch(
         },
         include: { batches: { orderBy: { batchNo: 'asc' } } },
       });
+      if (explicitOrderId && (!existing || existing.deletedAt || planningProductIdentity(existing.customerName, existing.specification) !== productionPlanImportIdentity(row.input))) {
+        throw new Error(`第 ${row.rowNo} 行关联订单已变化，请重新预检`);
+      }
       const activeBatches = existing?.batches.filter(batch => !batch.deletedAt) || [];
       if (activeBatches.some(batch => chinaDate(batch.weekStartDate) === targetWeekStartDate)) {
         skipped += 1;
@@ -240,6 +257,9 @@ async function commitBatch(
       }
       if (existing && !existing.deletedAt && (existing.status === 'cancelled' || existing.status === 'completed')) {
         throw new Error(`第 ${row.rowNo} 行关联订单已经完成或取消，不能追加批次`);
+      }
+      if (existing && !existing.deletedAt && activeBatches.reduce((sum, batch) => sum + batch.quantity, 0) + row.input.plannedQuantity > existing.orderQuantity) {
+        throw new Error(`第 ${row.rowNo} 行排产量超过原订单剩余未排数量，请调整后重新预检`);
       }
 
       let product: Awaited<ReturnType<typeof resolveProduct>>;
@@ -261,7 +281,15 @@ async function commitBatch(
         orderBy: { version: 'desc' },
         select: { id: true, version: true, entries: { select: { unitMilliseconds: true } } },
       });
-      const unitMilliseconds = profile?.entries.length ? productTimeTotalMilliseconds(profile.entries) : null;
+      const publishedMilliseconds = profile?.entries.length ? productTimeTotalMilliseconds(profile.entries) : null;
+      const planTime = resolvePlanningImportTime({ imported: row.input.planningUnitMilliseconds, published: publishedMilliseconds, order: existing?.planningUnitMilliseconds, quantity: row.input.plannedQuantity });
+      const previewProduct = row.candidates.find(item => item.id === product.item.id);
+      const previewOrder = row.orderCandidates?.find(order => order.id === existing?.id);
+      const previewTime = resolvePlanningImportTime({ imported: row.input.planningUnitMilliseconds, published: explicitOrderId ? previewOrder?.productUnitMilliseconds : previewProduct?.productUnitMilliseconds, order: previewOrder?.planningUnitMilliseconds, quantity: row.input.plannedQuantity });
+      if (row.timePreview && planTime.unitMilliseconds !== (explicitOrderId || row.status === 'conflict' ? previewTime.unitMilliseconds : row.timePreview.unitMilliseconds)) {
+        throw new Error(`第 ${row.rowNo} 行计划工时已变化，请重新预检核对`);
+      }
+      const unitMilliseconds = planTime.unitMilliseconds;
       const restoringOrder = Boolean(existing?.deletedAt);
       const nextBatchNo = existing ? Math.max(0, ...existing.batches.map(batch => batch.batchNo)) + 1 : 1;
       const customerDueDate = existing?.customerDueDate || new Date(`${row.input.customerDueDate}T12:00:00+08:00`);
@@ -276,7 +304,7 @@ async function commitBatch(
               specification: product.item.specification,
               drawingLibraryItemId: product.item.id,
               salesperson: existing.salesperson || row.input.salesperson,
-              orderQuantity: Math.max(existing.orderQuantity, row.input.orderQuantity),
+              orderQuantity: existing.orderQuantity,
               planningUnitMilliseconds: existing.planningUnitMilliseconds || unitMilliseconds,
               status: 'scheduled',
               remark: row.input.remark || existing.remark,
@@ -342,6 +370,8 @@ async function commitBatch(
             productAction: product.action,
             drawingLibraryItemId: product.item.id,
             targetWeekStartDate,
+            planningTime: { ...planTime, importedUnitMilliseconds: row.input.planningUnitMilliseconds || null, productTimeProfileVersion: profile?.version || null },
+            orderChoice: explicitOrderId ? 'existing' : row.input.sourceIdentity || 'provided',
           },
           reason: `量产计划批量导入到 ${targetWeekStartDate} 周`,
           actorId: userId,
@@ -360,11 +390,11 @@ async function commitBatch(
         specification: product.item.specification,
         status: 'created',
         productAction: product.action,
-        message: product.action === 'create'
+        message: (product.action === 'create'
           ? '已新建空白图纸库并绑定排产'
           : product.action === 'restore'
             ? '已恢复原图纸库并绑定排产'
-            : '已复用原图纸库及其图纸、SOP和工时',
+            : '已复用原图纸库及其图纸、SOP和工时') + `；计划工时：${planningImportTimeSourceText[planTime.source]}`,
       });
     }
 
@@ -388,7 +418,7 @@ async function commitBatch(
       where: { id: importBatch.id },
       data: {
         status: 'completed',
-        decisions: decisions as unknown as Prisma.InputJsonValue,
+        decisions: { products: decisions, orders: orderDecisions } as unknown as Prisma.InputJsonValue,
         resultData: result as unknown as Prisma.InputJsonValue,
         errorMessage: null,
         committedAt: new Date(),
@@ -427,7 +457,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '缺少导入预检凭证，请重新上传文件' }, { status: 400 });
     }
     const decisions = body.decisions && typeof body.decisions === 'object' ? body.decisions : {};
-    const result = await commitBatch(batchId, previewToken, decisions, user.id);
+    const orderDecisions = body.orderDecisions && typeof body.orderDecisions === 'object' ? body.orderDecisions : {};
+    const result = await commitBatch(batchId, previewToken, decisions, orderDecisions, user.id);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

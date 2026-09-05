@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { ext } from '@/lib/validation';
+import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import { normalizePlanningProductText } from '@/lib/planning-product-link';
 import { chinaDate, editableProductionPlanningWeek } from '@/lib/production-planning';
 import {
   buildProductionPlanImportRows,
@@ -98,7 +100,10 @@ export async function POST(req: NextRequest) {
 
     const targetWeekStartDate = chinaDate(targetWeek.start);
     const targetWeekEndDate = chinaDate(targetWeek.end);
+    const sourceFileHash = createHash('sha256').update(parsed.bytes).digest('hex');
+    const importIdentitySeed = `${sourceFileHash}:${targetWeekStartDate}:${form.get('importAsNew') === 'true' ? randomUUID() : 'file'}`;
     const preliminaryRows = buildProductionPlanImportRows({
+      importIdentitySeed,
       headers: parsed.rows[headerIndex],
       rows: dataRows,
       startRowNo: headerIndex + 2,
@@ -108,8 +113,21 @@ export async function POST(req: NextRequest) {
       existingOrders: [],
     });
     const sourceOrderNumbers = [...new Set(preliminaryRows.flatMap(row => row.input?.sourceOrderNo ? [row.input.sourceOrderNo] : []))];
+    const specifications = [...new Set(preliminaryRows.flatMap(row => row.input ? [row.input.specification] : []))];
+    const libraryRefs = preliminaryRows.flatMap(row => row.input?.drawingLibraryRef ? [row.input.drawingLibraryRef] : []);
+    // Match the same NFKC/case/whitespace identity as the importer, while keeping
+    // file metadata and profile queries limited to relevant products.
+    const normalizedSpecs = specifications.map(normalizePlanningProductText);
+    const matching = normalizedSpecs.length ? await prisma.$queryRaw<{ id: string; kind: string }[]>(Prisma.sql`
+      SELECT id, 'product' AS kind FROM drawing_library_items
+      WHERE lower(trim(regexp_replace(normalize(specification, NFKC), '[[:space:]]+', ' ', 'g'))) IN (${Prisma.join(normalizedSpecs)})
+      UNION ALL
+      SELECT id, 'order' AS kind FROM production_plan_orders
+      WHERE lower(trim(regexp_replace(normalize(specification, NFKC), '[[:space:]]+', ' ', 'g'))) IN (${Prisma.join(normalizedSpecs)})
+    `) : [];
     const [libraryRecords, orderRecords] = await Promise.all([
       prisma.drawingLibraryItem.findMany({
+        where: { OR: [{ id: { in: matching.filter(item => item.kind === 'product').map(item => item.id) } }, { id: { in: libraryRefs } }, { libraryKey: { in: libraryRefs } }, { productionPlanOrders: { some: { sourceOrderNo: { in: sourceOrderNumbers } } } }] },
         select: {
           id: true, libraryKey: true, customerName: true, productName: true, specification: true, deletedAt: true,
           _count: {
@@ -122,16 +140,18 @@ export async function POST(req: NextRequest) {
             select: { id: true }, take: 1,
           },
           productTimeProfiles: {
-            where: { status: 'published' }, orderBy: { version: 'desc' }, select: { version: true }, take: 1,
+            where: { status: 'published' }, orderBy: { version: 'desc' }, select: { version: true, entries: { select: { unitMilliseconds: true } } }, take: 1,
           },
         },
       }),
       prisma.productionPlanOrder.findMany({
-        where: sourceOrderNumbers.length ? { sourceOrderNo: { in: sourceOrderNumbers } } : { id: '__none__' },
+        where: { OR: [{ sourceOrderNo: { in: sourceOrderNumbers } }, { id: { in: matching.filter(item => item.kind === 'order').map(item => item.id) } }] },
         select: {
           id: true, sourceOrderNo: true, sourceLineNo: true, drawingLibraryItemId: true,
           customerDueDate: true, status: true, deletedAt: true,
-          batches: { where: { deletedAt: null }, select: { weekStartDate: true } },
+          customerName: true, specification: true, orderDate: true, orderQuantity: true, planningUnitMilliseconds: true,
+          drawingLibraryItem: { select: { productTimeProfiles: { where: { status: 'published' }, orderBy: { version: 'desc' }, take: 1, select: { entries: { select: { unitMilliseconds: true } } } } } },
+          batches: { where: { deletedAt: null }, select: { weekStartDate: true, quantity: true } },
         },
       }),
     ]);
@@ -145,6 +165,7 @@ export async function POST(req: NextRequest) {
       drawingFileCount: item._count.files,
       sopFileCount: item.files.length,
       productTimeVersion: item.productTimeProfiles[0]?.version || null,
+      productUnitMilliseconds: item.productTimeProfiles[0]?.entries.length ? productTimeTotalMilliseconds(item.productTimeProfiles[0].entries) : null,
     }));
     const existingOrders: ProductionPlanImportExistingOrder[] = orderRecords.map(order => ({
       id: order.id,
@@ -155,8 +176,14 @@ export async function POST(req: NextRequest) {
       status: order.status,
       deletedAt: order.deletedAt?.toISOString() || null,
       batchWeekStartDates: order.batches.map(batch => chinaDate(batch.weekStartDate)),
+      customerName: order.customerName, specification: order.specification, orderDate: chinaDate(order.orderDate),
+      orderQuantity: order.orderQuantity,
+      remainingQuantity: Math.max(0, order.orderQuantity - order.batches.reduce((sum, batch) => sum + batch.quantity, 0)),
+      planningUnitMilliseconds: order.planningUnitMilliseconds,
+      productUnitMilliseconds: order.drawingLibraryItem?.productTimeProfiles[0]?.entries.length ? productTimeTotalMilliseconds(order.drawingLibraryItem.productTimeProfiles[0].entries) : null,
     }));
     const rows = buildProductionPlanImportRows({
+      importIdentitySeed,
       headers: parsed.rows[headerIndex],
       rows: dataRows,
       startRowNo: headerIndex + 2,
@@ -165,7 +192,6 @@ export async function POST(req: NextRequest) {
       libraryItems,
       existingOrders,
     });
-    const sourceFileHash = createHash('sha256').update(parsed.bytes).digest('hex');
     const previewToken = productionPlanImportPreviewToken({ sourceFileHash, targetWeekStartDate, targetWeekEndDate, rows });
     const requestId = randomUUID();
     const summary = summarizeProductionPlanImport(rows);

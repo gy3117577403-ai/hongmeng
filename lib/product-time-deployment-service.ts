@@ -1,3 +1,4 @@
+import { reconcileSupplementRouteCompletion } from '@/lib/process-completion-service';
 import { createHash } from 'node:crypto';
 import {
   Prisma,
@@ -2483,6 +2484,11 @@ async function applyRouteDeployment(
       },
     });
   }
+  const pendingCoverageRoute = await tx.workOrderProcessRoute.findUniqueOrThrow({ where: { id: route.id }, select: { status: true, version: true } });
+  const hasPendingCoverage = await tx.processCompletion.count({ where: { routeId: route.id, voidedAt: null, supplementObligationId: null, step: { retiredAt: null, executionMode: 'NORMAL', inputQty: { gt: prisma.workOrderProcessStep.fields.processedQty } }, coverageStatus: { in: ['PENDING', 'PARTIAL'] } } });
+  const coverageReconciliation = pendingCoverageRoute.status === 'in_progress' && hasPendingCoverage > 0
+    ? await reconcileSupplementRouteCompletion(tx, { routeId: route.id, expectedRouteVersion: pendingCoverageRoute.version, userId: input.actorId, actor: '产品工艺发布核销同步', now: new Date() })
+    : null;
   const taskSync = await syncDailyTasksAfterProcessRouteChange(tx, {
     changeId: `product-time-deployment:${input.deploymentId}`,
     routeId: route.id,
@@ -2510,6 +2516,7 @@ async function applyRouteDeployment(
     reopened,
     closedAfterForcedMigration,
     closedAfterSupplementCancellation,
+    coverageReconciliation,
     taskSync,
     stepChanges,
     routeActivated: Boolean(activation),

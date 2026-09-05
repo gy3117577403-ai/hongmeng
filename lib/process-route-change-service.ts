@@ -3740,6 +3740,14 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
           });
         }
       }
+      if (appliesCurrent) {
+        const currentRoute = await tx.workOrderProcessRoute.findUniqueOrThrow({ where: { id: change.routeId }, select: { status: true, version: true } });
+        const pending = await tx.processCompletion.count({ where: { routeId: change.routeId, voidedAt: null, supplementObligationId: null, step: { retiredAt: null, executionMode: 'NORMAL', inputQty: { gt: prisma.workOrderProcessStep.fields.processedQty } }, coverageStatus: { in: ['PENDING', 'PARTIAL'] } } });
+        if (currentRoute.status === 'in_progress' && pending > 0) {
+          await reconcileSupplementRouteCompletion(tx, { routeId: change.routeId, expectedRouteVersion: currentRoute.version, userId: identity.userId, actor: identity.actor, now: new Date() });
+          activatedRouteVersion = (await tx.workOrderProcessRoute.findUniqueOrThrow({ where: { id: change.routeId }, select: { version: true } })).version;
+        }
+      }
       const taskSync = profile
         ? await syncUnfinishedDailyTasksFromPublishedProductTime(tx, {
             drawingLibraryItemId: change.route.workOrder.drawingLibraryItemId as string,

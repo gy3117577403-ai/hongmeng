@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { drawingLibraryKey, invalidSpecificationReason } from '@/lib/drawing-library';
 import { chinaDate, parsePlanDate } from '@/lib/production-planning';
 import { normalizePlanningProductText, planningProductIdentity } from '@/lib/planning-product-link';
+import { resolvePlanningImportTime, type PlanningImportTime } from '@/lib/planning-import-time';
 
 export const PRODUCTION_PLAN_IMPORT_MAX_ROWS = 1000;
 
@@ -11,6 +12,8 @@ export type ProductionPlanImportProductAction = 'reuse' | 'restore' | 'create' |
 export type ProductionPlanImportInput = {
   sourceOrderNo: string;
   sourceLineNo: number;
+  sourceIdentity?: 'provided' | 'generated';
+  planningUnitMilliseconds?: number | null;
   orderDate: string;
   customerName: string;
   productName: string;
@@ -35,6 +38,7 @@ export type ProductionPlanImportCandidate = {
   drawingFileCount: number;
   sopFileCount: number;
   productTimeVersion: number | null;
+  productUnitMilliseconds?: number | null;
 };
 
 export type ProductionPlanImportExistingOrder = {
@@ -46,6 +50,13 @@ export type ProductionPlanImportExistingOrder = {
   status: string;
   deletedAt: string | null;
   batchWeekStartDates: string[];
+  customerName?: string;
+  specification?: string;
+  orderDate?: string;
+  orderQuantity?: number;
+  remainingQuantity?: number;
+  planningUnitMilliseconds?: number | null;
+  productUnitMilliseconds?: number | null;
 };
 
 export type ProductionPlanImportRow = {
@@ -58,6 +69,9 @@ export type ProductionPlanImportRow = {
   candidates: ProductionPlanImportCandidate[];
   existingPlanOrderId: string | null;
   input: ProductionPlanImportInput | null;
+  orderCandidates?: ProductionPlanImportExistingOrder[];
+  requiresOrderDecision?: boolean;
+  timePreview?: PlanningImportTime;
 };
 
 export type ProductionPlanImportSummary = {
@@ -93,6 +107,9 @@ const headerAliases: Record<string, keyof ProductionPlanImportInput> = {
   '型号/规格': 'specification', 规格: 'specification', 型号规格: 'specification',
   订单总量: 'orderQuantity', 订单数量: 'orderQuantity',
   本周排产量: 'plannedQuantity', 排产数量: 'plannedQuantity',
+  '单件计划工时（分钟）': 'planningUnitMilliseconds',
+  '单件计划工时(分钟)': 'planningUnitMilliseconds',
+  '工时（分钟）': 'planningUnitMilliseconds', 工时: 'planningUnitMilliseconds',
   客户交期: 'customerDueDate', 交期: 'customerDueDate',
   计划完成日期: 'plannedCompletionDate', 内部完成日期: 'plannedCompletionDate',
   图纸库编号: 'drawingLibraryRef', 图纸库ID: 'drawingLibraryRef',
@@ -100,7 +117,7 @@ const headerAliases: Record<string, keyof ProductionPlanImportInput> = {
 };
 
 const requiredHeaders: Array<keyof ProductionPlanImportInput> = [
-  'sourceOrderNo', 'sourceLineNo', 'orderDate', 'customerName', 'productName',
+  'orderDate', 'customerName', 'productName',
   'specification', 'orderQuantity', 'plannedQuantity', 'customerDueDate',
 ];
 
@@ -213,11 +230,14 @@ export function buildProductionPlanImportRows(options: {
   targetWeekEndDate: string;
   libraryItems: ProductionPlanImportCandidate[];
   existingOrders: ProductionPlanImportExistingOrder[];
+  importIdentitySeed?: string;
 }): ProductionPlanImportRow[] {
   const mappedHeaders = options.headers.map(header => headerAliases[headerKey(header)] || null);
   const orderMap = new Map(options.existingOrders.map(order => [rowKey(order.sourceOrderNo, order.sourceLineNo), order]));
   const catalog = candidateCatalog(options.libraryItems);
   const seen = new Set<string>();
+  const seed = createHash('sha256').update(options.importIdentitySeed || randomUUID()).digest('hex').slice(0, 20).toUpperCase();
+  const businessRows = new Set<string>();
 
   return options.rows.map((rawRow, index): ProductionPlanImportRow => {
     const rowNo = options.startRowNo + index;
@@ -233,8 +253,12 @@ export function buildProductionPlanImportRows(options: {
       if (key) raw[key] = clean(rawRow[cell], 500);
     }
     const errors: string[] = [];
-    const sourceOrderNo = clean(raw.sourceOrderNo, 120);
-    const sourceLineNo = integer(raw.sourceLineNo);
+    const suppliedOrderNo = clean(raw.sourceOrderNo, 120);
+    const sourceOrderNo = suppliedOrderNo || `PLAN-${seed}-${rowNo}`;
+    const sourceLineNo = raw.sourceLineNo ? integer(raw.sourceLineNo) : 1;
+    const rawMinutes = clean(raw.planningUnitMilliseconds, 80);
+    const minutes = rawMinutes ? Number(rawMinutes) : null;
+    const planningUnitMilliseconds = minutes === null ? null : Math.round(minutes * 60_000);
     const orderDate = dateOnly(raw.orderDate);
     const customerName = clean(raw.customerName, 120);
     const productName = clean(raw.productName, 160);
@@ -245,8 +269,10 @@ export function buildProductionPlanImportRows(options: {
     const plannedCompletionDate = dateOnly(raw.plannedCompletionDate) || options.targetWeekEndDate;
     const rawLevel = clean(raw.customerLevel, 10).toUpperCase();
     const customerLevel = rawLevel ? (['A', 'B', 'C', 'D'].includes(rawLevel) ? rawLevel as 'A' | 'B' | 'C' | 'D' : null) : null;
-    if (!sourceOrderNo) errors.push('来源订单号必填');
     if (!sourceLineNo) errors.push('订单行号必须是正整数');
+    if (rawMinutes && (!/^\d+(?:\.\d{1,3})?$/.test(rawMinutes) || !Number.isFinite(minutes) || minutes! <= 0 || minutes! > 1440)) {
+      errors.push('单件计划工时须为大于 0、不超过 1440 的分钟数，最多三位小数；可留空');
+    }
     if (!orderDate) errors.push('订单日期无法解析');
     if (!customerName) errors.push('客户名称必填');
     if (!productName) errors.push('产品名称必填');
@@ -274,6 +300,7 @@ export function buildProductionPlanImportRows(options: {
 
     const input: ProductionPlanImportInput = {
       sourceOrderNo, sourceLineNo, orderDate, customerName, productName, specification,
+      sourceIdentity: suppliedOrderNo ? 'provided' : 'generated', planningUnitMilliseconds,
       orderQuantity, plannedQuantity, customerDueDate, plannedCompletionDate,
       drawingLibraryRef: clean(raw.drawingLibraryRef, 180) || null,
       customerLevel,
@@ -306,11 +333,22 @@ export function buildProductionPlanImportRows(options: {
     }
 
     const match = productMatch(input, existing, catalog);
-    const warning = existing && existing.customerDueDate !== customerDueDate
-      ? `导入交期 ${customerDueDate} 与现有交期 ${existing.customerDueDate} 不同，将保留现有交期`
-      : null;
+    const orderCandidates = !suppliedOrderNo && !existing
+      ? options.existingOrders.filter(order => !order.deletedAt && !['completed', 'cancelled'].includes(order.status)
+        && planningProductIdentity(order.customerName || '', order.specification || '') === planningProductIdentity(customerName, specification))
+      : [];
+    const businessKey = JSON.stringify([orderDate, customerName, specification, orderQuantity, plannedQuantity, customerDueDate]);
+    const warnings = [
+      existing && existing.customerDueDate !== customerDueDate ? `导入交期 ${customerDueDate} 与现有交期 ${existing.customerDueDate} 不同，将保留现有交期` : '',
+      !suppliedOrderNo && businessRows.has(businessKey) ? '文件内有相同业务内容，本行仍作为独立订单，请核对' : '',
+      orderCandidates.length ? '发现同客户同型号订单，请选择新订单、关联已有订单或跳过' : '',
+    ].filter(Boolean);
+    businessRows.add(businessKey);
+    const selectedProduct = match.candidates.find(item => item.id === match.matchedDrawingLibraryItemId);
     return {
-      rowNo, ...match, warning, existingPlanOrderId: existing?.id || null, input,
+      rowNo, ...match, warning: warnings.join('；') || null, existingPlanOrderId: existing?.id || null, input,
+      orderCandidates, requiresOrderDecision: orderCandidates.length > 0,
+      timePreview: resolvePlanningImportTime({ imported: planningUnitMilliseconds, published: selectedProduct?.productUnitMilliseconds, order: existing?.planningUnitMilliseconds, quantity: plannedQuantity }),
     };
   });
 }

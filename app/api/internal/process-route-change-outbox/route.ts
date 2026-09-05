@@ -3,10 +3,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { backgroundMaintenanceGate } from '@/lib/maintenance-single-flight';
 import { dispatchProcessRouteChangeOutbox } from '@/lib/process-route-change-notifications';
 import { recoverStaleSupplementRouteCompletions } from '@/lib/process-supplement-completion-recovery';
+import { recoverStalePendingCompletionCoverage } from '@/lib/process-pending-coverage-recovery';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 let recoveryCursor: string | null = null;
+let coverageCursor: string | null = null;
 
 function validWorkerToken(req: NextRequest): boolean {
   const expected = String(process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN || '');
@@ -34,7 +36,11 @@ export async function POST(req: NextRequest) {
       console.info('supplement route completion recovery', JSON.stringify(recovery));
     }
     const result = await dispatchProcessRouteChangeOutbox({ limit: 10 });
-    return { result, recovery };
+    const coverageRecovery = process.env.PROCESS_PENDING_COVERAGE_RECOVERY_ENABLED === 'false' ? null
+      : await recoverStalePendingCompletionCoverage({ afterId: coverageCursor, limit: 3 });
+    if (coverageRecovery) coverageCursor = coverageRecovery.nextCursor;
+    if (coverageRecovery?.repairedRouteIds.length || coverageRecovery?.failures.length) console.info('pending completion coverage recovery', JSON.stringify(coverageRecovery));
+    return { result, recovery, coverageRecovery };
   });
   if (!flight.started) {
     const response = NextResponse.json({

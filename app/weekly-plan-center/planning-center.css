@@ -4639,3 +4639,6 @@ main.planning-center-shell.hm-workbench-root {
   .planning-import-summary.production-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .planning-import-steps > i { width: 28px; }
 }
+
+.planning-import-new-order { display:flex !important; align-items:center; gap:8px; font-size:12px; }
+.planning-import-new-order input { width:16px !important; height:16px; margin:0; }

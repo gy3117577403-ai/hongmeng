@@ -24,7 +24,7 @@ export function useDocumentOrientation(source: string) {
   const [revision, setRevision] = useState(cached?.revision || 0);
   const [page, setPage] = useState(cached?.page || 1);
   const [canSave, setCanSave] = useState(false);
-  const [ready, setReady] = useState(!url);
+  const [ready, setReady] = useState(!url || Boolean(cached));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
   const [prompt, setPrompt] = useState(false);
@@ -34,24 +34,27 @@ export function useDocumentOrientation(source: string) {
   const rootRef = useRef<HTMLDivElement>(null);
   const dirty = !samePageRotations(saved, draft);
 
-  async function load(discard = false) {
+  async function load(discard = false, signal?: AbortSignal) {
     if (!url) return;
     try {
-      const response = await fetch(url, { cache: 'no-store' });
+      const response = await fetch(url, { cache: 'no-store', signal });
       const data = await response.json();
+      if (signal?.aborted) return;
       if (!response.ok) throw new Error(data.error || '方向设置读取失败');
       setSaved(data.pageRotations);
       setRevision(data.revision);
       setCanSave(data.canSave === true);
-      setDraft(!discard && cached && cached.revision === data.revision ? cached.draft : data.pageRotations);
+      setDraft(!discard && state.current.revision === data.revision ? state.current.draft : data.pageRotations);
       setReady(true);
       setMessage(discard ? '已恢复服务器保存的方向' : '');
     } catch (error) {
+      if (signal?.aborted) return;
+      setCanSave(false);
       setMessage(error instanceof Error ? error.message : '方向设置读取失败');
     }
   }
 
-  useEffect(() => { void load(); /* source identity is the keyed viewer boundary */
+  useEffect(() => { const controller = new AbortController(); void load(false, controller.signal); return () => controller.abort(); /* source identity is the keyed viewer boundary */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   useEffect(() => {

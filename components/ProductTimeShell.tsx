@@ -52,6 +52,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { requestPreviewLeave } from '@/components/DocumentOrientation';
 import { useToast, useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { productTimeReturnContextFromSearch, type ProductTimeReturnContext } from '@/lib/workflow-routes';
@@ -574,8 +575,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const deploymentBusy = publishing || deployment?.status === 'pending' || deployment?.status === 'applying';
   const selectedCopySource = copySources.find(source => source.profileId === copySourceId) || null;
   const referenceFiles = useMemo(
-    () => referenceItem?.files.filter(file => !file.deletedAt) || [],
-    [referenceItem],
+    () => referenceItem?.id === selectedItemId ? referenceItem.files.filter(file => !file.deletedAt) : [],
+    [referenceItem, selectedItemId],
   );
   const visibleReferenceFiles = useMemo(
     () => referenceFiles.filter(file => referenceCategoryFilter === 'all' || referenceCategory(file) === referenceCategoryFilter),
@@ -797,15 +798,13 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       return;
     }
     if (!referenceOpen) {
-      setReferenceItem(null);
-      setReferenceFileId('');
       setReferenceLoading(false);
       setReferenceError('');
       return;
     }
     const controller = new AbortController();
-    setReferenceItem(null);
-    setReferenceFileId('');
+    const sameItem = referenceItem?.id === selectedItemId;
+    if (!sameItem) { setReferenceItem(null); setReferenceFileId(''); }
     setReferenceLoading(true);
     setReferenceError('');
     fetchJson<{ ok?: boolean; error?: string; item?: DrawingLibraryItemDTO }>(`/api/drawing-library/${selectedItemId}`, {
@@ -815,8 +814,13 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       retries: 1,
     })
       .then(data => {
+        if (controller.signal.aborted) return;
         if (!data.item) throw new Error(data.error || '参考资料加载失败');
         setReferenceItem(data.item);
+        if (!sameItem) {
+          const files = data.item.files.filter(file => !file.deletedAt);
+          setReferenceCategoryFilter(files.some(file => referenceCategory(file) === 'drawing') ? 'drawing' : files.some(file => referenceCategory(file) === 'sop') ? 'sop' : 'all');
+        }
       })
       .catch(reason => {
         if (controller.signal.aborted) return;
@@ -829,6 +833,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     return () => {
       controller.abort();
     };
+    // Keep the current document mounted while this same item is revalidated.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [referenceOpen, selectedItemId]);
 
   useEffect(() => {
@@ -1079,20 +1085,14 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }
 
   function openReferencePreview(): void {
-    const nextCategory: ReferenceCategory = referenceFiles.some(file => referenceCategory(file) === 'drawing')
-      ? 'drawing'
-      : referenceFiles.some(file => referenceCategory(file) === 'sop')
-        ? 'sop'
-        : 'all';
-    setReferenceCategoryFilter(nextCategory);
-    const nextFile = referenceFiles.find(file => nextCategory === 'all' || referenceCategory(file) === nextCategory) || null;
-    setReferenceFileId(nextFile?.id || '');
     setReferenceOpen(true);
   }
 
   function closeReferencePreview(): void {
-    setReferenceOpen(false);
-    window.requestAnimationFrame(() => referenceTriggerRef.current?.focus());
+    requestPreviewLeave(() => {
+      setReferenceOpen(false);
+      window.requestAnimationFrame(() => referenceTriggerRef.current?.focus());
+    });
   }
 
   function adoptPlanningQuotation(): void {
@@ -2321,15 +2321,15 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             </div>
           </header>
           <nav aria-label="参考资料分类">
-            <button type="button" className={referenceCategoryFilter === 'drawing' ? 'active' : ''} onClick={() => setReferenceCategoryFilter('drawing')}>原图 <b>{referenceDrawingCount}</b></button>
-            <button type="button" className={referenceCategoryFilter === 'sop' ? 'active' : ''} onClick={() => setReferenceCategoryFilter('sop')}>作业指导书 <b>{referenceSopCount}</b></button>
-            <button type="button" className={referenceCategoryFilter === 'all' ? 'active' : ''} onClick={() => setReferenceCategoryFilter('all')}>全部资料 <b>{referenceFiles.length}</b></button>
+            <button type="button" className={referenceCategoryFilter === 'drawing' ? 'active' : ''} onClick={() => requestPreviewLeave(() => setReferenceCategoryFilter('drawing'))}>原图 <b>{referenceDrawingCount}</b></button>
+            <button type="button" className={referenceCategoryFilter === 'sop' ? 'active' : ''} onClick={() => requestPreviewLeave(() => setReferenceCategoryFilter('sop'))}>作业指导书 <b>{referenceSopCount}</b></button>
+            <button type="button" className={referenceCategoryFilter === 'all' ? 'active' : ''} onClick={() => requestPreviewLeave(() => setReferenceCategoryFilter('all'))}>全部资料 <b>{referenceFiles.length}</b></button>
           </nav>
           <div className="product-time-reference-body">
             <aside className="product-time-reference-list hm-scroll-region" aria-label="参考资料文件列表" tabIndex={0}>
               {referenceLoading && <div className="product-time-context-loading"><RefreshCw className="spin" size={17} aria-hidden="true" />正在读取资料</div>}
               {!referenceLoading && referenceError && <div className="product-time-context-error"><AlertTriangle size={16} aria-hidden="true" />{referenceError}</div>}
-              {!referenceLoading && !referenceError && visibleReferenceFiles.map(file => <button className={selectedReferenceFile?.id === file.id ? 'active' : ''} type="button" key={file.id} onClick={() => setReferenceFileId(file.id)} title={file.displayName || file.originalName}>
+              {!referenceError && visibleReferenceFiles.map(file => <button className={selectedReferenceFile?.id === file.id ? 'active' : ''} type="button" key={file.id} onClick={() => requestPreviewLeave(() => setReferenceFileId(file.id))} title={file.displayName || file.originalName}>
                 {file.mimeType.includes('pdf') || file.fileType.toLocaleLowerCase('zh-CN') === 'pdf' ? <FileText size={18} aria-hidden="true" /> : <ImageIcon size={18} aria-hidden="true" />}
                 <span><strong>{file.displayName || file.originalName}</strong><small>{file.categoryName || '未分类'} · {file.version || 'V1.0'}</small></span>
               </button>)}
@@ -2337,7 +2337,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             </aside>
             <div className="product-time-reference-viewer">
               {selectedReferenceFile && (selectedReferenceFile.mimeType.includes('pdf') || selectedReferenceFile.fileType.toLocaleLowerCase('zh-CN') === 'pdf') && <PdfViewer fileId={selectedReferenceFile.id} title={selectedReferenceFile.displayName || selectedReferenceFile.originalName} contentUrl={selectedReferenceFile.contentUrl} downloadUrl={selectedReferenceFile.downloadUrl} viewUrl={selectedReferenceFile.viewUrl} dashboardMode />}
-              {selectedReferenceFile && selectedReferenceFile.mimeType.startsWith('image/') && <ImageViewer fileId={selectedReferenceFile.id} title={selectedReferenceFile.displayName || selectedReferenceFile.originalName} contentUrl={selectedReferenceFile.contentUrl} downloadUrl={selectedReferenceFile.downloadUrl} gestureResetKey={selectedReferenceFile.id} dashboardMode />}
+              {selectedReferenceFile && selectedReferenceFile.mimeType.startsWith('image/') && <ImageViewer fileId={selectedReferenceFile.id} title={selectedReferenceFile.displayName || selectedReferenceFile.originalName} contentUrl={selectedReferenceFile.contentUrl} downloadUrl={selectedReferenceFile.downloadUrl} gestureResetKey={selectedReferenceFile.id} initialFitMode="fit-window" dashboardMode />}
               {selectedReferenceFile && !selectedReferenceFile.mimeType.includes('pdf') && selectedReferenceFile.fileType.toLocaleLowerCase('zh-CN') !== 'pdf' && !selectedReferenceFile.mimeType.startsWith('image/') && <div className="product-time-empty large"><FileText aria-hidden="true" /><strong>此文件暂不支持内嵌预览</strong><span>{selectedReferenceFile.displayName || selectedReferenceFile.originalName}</span><a className="hm-workbench-button" href={selectedReferenceFile.viewUrl} target="_blank" rel="noreferrer">打开文件<ExternalLink size={15} aria-hidden="true" /></a></div>}
               {!selectedReferenceFile && !referenceLoading && <div className="product-time-empty large"><BookOpenText aria-hidden="true" /><strong>暂无可预览资料</strong><span>进入图纸资料页上传原图或作业指导书后即可临时查阅。</span></div>}
             </div>

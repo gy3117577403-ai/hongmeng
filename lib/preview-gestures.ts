@@ -46,11 +46,13 @@ export function rotatedPreviewSize(size: PreviewSize, rotation: number): Preview
     : size;
 }
 
+export const PREVIEW_FIT_PADDING = 36;
+
 export function previewFitZoom(
   mode: Exclude<PreviewFitMode, 'manual'>,
   contentSize: PreviewSize,
   viewportSize: PreviewSize,
-  padding = 36,
+  padding = PREVIEW_FIT_PADDING,
 ): number {
   if (mode === 'actual-size') return 1;
   if (contentSize.width <= 0 || contentSize.height <= 0 || viewportSize.width <= 0 || viewportSize.height <= 0) return 1;

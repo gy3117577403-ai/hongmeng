@@ -1,4 +1,5 @@
 'use client';
+import { productionProcessProgress } from '@/lib/production-process-progress';
 import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
 import { canManageProductionControl, canAdjustProductionDates, type ProductionControlView } from '@/lib/production-control';
 
@@ -3332,7 +3333,7 @@ export default function ProductionExecutionCenter({
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
           <section className="production-dispatch-list-panel" aria-label="生产工单调度列表">
             <header className="production-dispatch-list-head">
-              <span>序号</span><span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>工时完成进度</span><span>交期 / 风险</span><span>备注</span><span>现场操作</span>
+              <span>序号</span><span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>已计标准工时</span><span>交期 / 风险</span><span>备注</span><span>现场操作</span>
             </header>
             <div ref={boardShellRef} className="production-dispatch-list hm-scroll-region" tabIndex={0} aria-label={initialBoardLoading ? '生产工单列表，正在加载' : board ? `生产工单列表，共 ${board.pagination.total} 项` : '生产工单列表，数据加载失败'}>
               {dispatchItems.map((item, rowIndex) => <ProductionDispatchRow
@@ -3839,6 +3840,9 @@ function ProductionDispatchRow({
               : 'pending' as const,
         }))
     : route?.steps || [];
+  const processProgress = isWipContinuation ? [] : productionProcessProgress(routeSteps, targetQuantity);
+  const currentQuantityProgress = processProgress[0];
+  const laborReachedButOpen = laborPercentage !== null && laborPercentage >= 100 && !lifecycle.aggregateCompleted && !isFullyMovedOutSource;
   const activeRouteIndex = routeSteps.findIndex(step => step.status === 'current');
   const routePreviewStart = Math.max(0, Math.min(activeRouteIndex > 0 ? activeRouteIndex - 1 : 0, Math.max(0, routeSteps.length - 4)));
   const routePreview = routeSteps.slice(routePreviewStart, routePreviewStart + 4);
@@ -3917,6 +3921,7 @@ function ProductionDispatchRow({
       </div>
     </div>
 
+    <div className="production-dispatch-process-cell">
     <button className="production-dispatch-process-flow" type="button" title="进入流程中心查看完整工序进度" onClick={() => openWorkflow(order, displayStage)}>
       <span className="production-dispatch-process-flow-head">
         <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{isWipContinuation ? '执行半成品剩余工序' : isMovedOutSource ? '整单工艺事实 · 转出后保留历史进度' : lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
@@ -3930,6 +3935,9 @@ function ProductionDispatchRow({
           : <i className="state-pending"><span /><em>待维护</em></i>}
       </span>
     </button>
+    {currentQuantityProgress && <div className="production-current-quantity"><span>{currentQuantityProgress.name} · 已确认 {currentQuantityProgress.confirmed}/{currentQuantityProgress.required} {unitLabel}</span><progress aria-label={`${currentQuantityProgress.name}数量进度`} value={currentQuantityProgress.percentage} max={100} /></div>}
+    {!lifecycle.aggregateCompleted && !isFullyMovedOutSource && <details className="production-progress-reasons"><summary>未完成原因{processProgress.length ? ` · ${processProgress.length}道` : ''}</summary><div>{processProgress.map(step => <p key={step.id}><strong>{step.name}</strong><span>{step.reason}</span></p>)}{lifecycle.awaitingBranchClosure && <p>主路线已完成，等待返工或补产分支结束</p>}{!processProgress.length && !lifecycle.awaitingBranchClosure && <p>等待工序、报工核销及成品数量核对</p>}<button type="button" onClick={() => openWorkflow(order, displayStage)}>查看工序与报工明细</button></div></details>}
+    </div>
 
     <div className="production-arrangement-date-cell">
       {visibleArrangements.map(arrangement => <div className={`production-arrangement-record status-${arrangement.status}`} key={arrangement.id}>
@@ -3966,10 +3974,11 @@ function ProductionDispatchRow({
       <span><b>{laborPercentage === null ? '待维护' : formatProductionPercentage(laborPercentage)}</b><small>{isMovedOutSource ? '整单累计已完成' : '已完成'} {completedLaborText}</small></span>
       <i><span style={{ width: `${progressPercentage}%` }} /></i>
       <em className="production-dispatch-progress-summary">
-        <span>剩余 {remainingLaborText}</span>
+        <span>计划差额 {remainingLaborText}</span>
         <span>总计 {totalLaborText}</span>
       </em>
       {isMovedOutSource && <small className="production-dispatch-progress-scope-note"><b>整单工时进度</b>，不等同本周动态有效计划达成率；{isFullyMovedOutSource ? '本周有效计划仅保留转仓前已完成工序，转出剩余工序在目标周核算' : `本周普通来源仅限 ${formatProductionQuantity(movedOutSummary?.nativeRemainingQuantity ?? 0)} 件，转出部分在目标周核算`}</small>}
+      {laborReachedButOpen && <small className="production-dispatch-progress-warning">工时已达 · 工序尚未全部完成</small>}
       {laborWarning && <small className="production-dispatch-progress-warning">{laborWarning}</small>}
     </div>
 
