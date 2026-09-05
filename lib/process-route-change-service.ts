@@ -34,6 +34,7 @@ import { materializeProcessActionConsumptions } from '@/lib/process-action-consu
 import { normalizeWorkDate } from '@/lib/daily-plan-domain';
 import { calculateAttainmentBasisPoints } from '@/lib/process-time';
 import { prisma } from '@/lib/prisma';
+import { EXISTING_ROUTE_REPORT_POLICY } from '@/lib/process-route-material-reconciliation';
 import {
   ProcessDefinitionResolutionError,
   resolveOrCreateProcessDefinition,
@@ -2346,7 +2347,8 @@ async function insertionRequiresSupplementObligation(
     || step.defectOutputQty > 0
     || step.releasedGoodQty > 0
   ));
-  return hasStepFacts
+  return steps.some(step => step.materialSequenceGroup !== null)
+    || hasStepFacts
     || completionStepIds.length > 0
     || executionStepIds.length > 0
     || Number(change.route.workOrder.completedQty) > 0
@@ -4069,6 +4071,7 @@ export async function completeProcessSupplementObligation(
         deploymentRoute: { include: { deployment: true } },
         route: { include: { workOrder: { include: { qrTicket: true } } } },
         displayStep: true,
+        coverage: true,
       },
     });
     if (!obligation || (routeId && obligation.routeId !== routeId)) {
@@ -4092,14 +4095,20 @@ export async function completeProcessSupplementObligation(
     if (obligation.change && obligation.change.status !== ProcessRouteChangeStatus.ACTIVE) {
       throw new ProcessRouteChangeServiceError('工艺变更尚未启用', 409, 'PROCESS_SUPPLEMENT_CHANGE_NOT_ACTIVE');
     }
-    if (!obligation.change && obligation.deploymentRoute?.deployment.status !== 'ACTIVE') {
+    const reconciledExistingOperation = obligation.coverage?.policy === EXISTING_ROUTE_REPORT_POLICY
+      && obligation.reconciliationKey === `existing-route:${obligation.displayStepId}`
+      && obligation.coverage.displayStepId === obligation.displayStepId
+      && obligation.coverage.routeId === obligation.routeId
+      && obligation.coverage.actualRequiredQty === obligation.requiredQty
+      && obligation.coverage.systemCoveredQty === 0 && obligation.fulfillmentMode === 'ACTUAL';
+    if (!obligation.change && obligation.deploymentRoute && obligation.deploymentRoute.deployment.status !== 'ACTIVE') {
       throw new ProcessRouteChangeServiceError(
         '产品工序与工时部署尚未完成',
         409,
         'PROCESS_SUPPLEMENT_DEPLOYMENT_NOT_ACTIVE',
       );
     }
-    if (!obligation.change && !obligation.deploymentRoute) {
+    if (!obligation.change && !obligation.deploymentRoute && !reconciledExistingOperation) {
       throw new ProcessRouteChangeServiceError(
         '补充工序义务缺少有效来源',
         409,
@@ -4213,8 +4222,8 @@ export async function completeProcessSupplementObligation(
     }
     const now = new Date();
     const deploymentId = obligation.deploymentRoute?.deploymentId || null;
-    const sourceKey = obligation.changeId || `product-time-deployment:${deploymentId}`;
-    const standardSource = deploymentId ? 'product_time_deployment' : 'route_change_supplement';
+    const sourceKey = obligation.changeId || (deploymentId ? `product-time-deployment:${deploymentId}` : `route-material-reconciliation:${obligation.id}`);
+    const standardSource = deploymentId ? 'product_time_deployment' : reconciledExistingOperation ? 'route_material_reconciliation' : 'route_change_supplement';
     const nextReportedQty = obligation.reportedQty + processedQty;
     const nextReportedUnitQty = obligation.reportedUnitQty + reportQuantities.reportedUnitQty;
     const nextReportedGoodUnitQty = obligation.reportedGoodUnitQty + reportQuantities.reportedGoodUnitQty;

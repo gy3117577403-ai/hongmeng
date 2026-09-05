@@ -413,7 +413,8 @@ test(
       const movedCompletion = await prisma.processCompletion.findUniqueOrThrow({ where: { id: completionA.id } });
       assert.equal(movedCompletion.productTimeProfileId, v3.id);
       assert.equal(movedCompletion.productTimeProfileVersion, 3);
-      assert.equal(movedCompletion.routeVersion, 2);
+      assert.ok(movedCompletion.routeVersion > completionA.routeVersion && movedCompletion.routeVersion <= moved.version,
+        'the report references its published route revision, including any subsequent coverage reconciliation');
 
       const terminalOrder = await prisma.workOrder.create({
         data: {

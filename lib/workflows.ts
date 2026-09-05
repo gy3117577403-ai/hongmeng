@@ -408,8 +408,10 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
     return {
       key: step.id,
       label: step.processName,
-      state: step.status === 'completed' || step.status === 'skipped'
-        ? 'done'
+      state: !supplement && reportedQuantity > displayedProcessedQuantity
+        ? 'current'
+        : step.status === 'skipped' ? 'skipped'
+        : step.status === 'completed' ? 'done'
         : step.status === 'current'
           ? 'current'
           : 'pending',

@@ -165,7 +165,7 @@ jobs:
       - name: Pending report coverage PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/process-pending-coverage-recovery-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/process-pending-coverage-recovery-integration.test.ts tests/process-flexible-route-closure-integration.test.ts
       - name: Quality data PostgreSQL lifecycle integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -329,6 +329,11 @@ jobs:
             PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
             npx tsx --test --test-concurrency=1 --test-name-pattern=historical-recovery tests/process-pending-coverage-recovery-integration.test.ts \
             | tee artifacts/planning-progress-preview/release-worker-runtime.log
+          RUN_DB_INTEGRATION=1 \
+            PROCESS_PENDING_RECOVERY_TEST_ORIGIN=http://127.0.0.1:3000 \
+            PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            npx tsx --test --test-concurrency=1 tests/process-flexible-route-closure-integration.test.ts \
+            | tee artifacts/planning-progress-preview/release-flexible-route-runtime.log
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image

@@ -2203,6 +2203,16 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   border-top: 3px solid var(--hm-color-success);
 }
 
+.hm-workflow-center .workflow-flow-node.skipped {
+  border-top: 3px solid var(--hm-color-text-muted);
+  background: var(--hm-color-surface-secondary, #f4f5f6);
+}
+
+.hm-workflow-center .workflow-flow-node.skipped > header em {
+  color: var(--hm-color-text-muted);
+  background: var(--hm-color-surface-secondary, #f4f5f6);
+}
+
 .hm-workflow-center .workflow-flow-node.current {
   border-top: 3px solid var(--hm-color-accent);
 }

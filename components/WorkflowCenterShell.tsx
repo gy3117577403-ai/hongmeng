@@ -118,6 +118,8 @@ function reportingUnitLabel(step: WorkflowStepDTO): string {
 }
 
 function processStepStateLabel(step: WorkflowStepDTO): string {
+  if (step.executionMode !== 'SUPPLEMENTAL_OBLIGATION' && (step.reportedQuantity || 0) > (step.materialProcessedQuantity || 0)) return '报工待核销';
+  if (step.status === 'skipped') return '已跳过';
   if (step.state === 'done') return '已完成';
   if (step.state === 'current') return '当前工序';
   return '待进入';

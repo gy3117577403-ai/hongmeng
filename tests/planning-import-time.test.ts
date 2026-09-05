@@ -48,3 +48,10 @@ test('quantity progress distinguishes pending coverage from remaining reports an
   assert.equal(steps.length,3);assert.equal(steps[0].pending,40);assert.equal(steps[0].remaining,0);assert.equal(steps[0].percentage,0);
   assert.equal(steps[1].remaining,20);assert.equal(steps[2].confirmed,20);assert.equal(steps[2].remaining,10);
 });
+
+test('a stale skipped label cannot hide existing reports awaiting coverage', () => {
+  const steps = productionProcessProgress([{ id: 'tin', processName: '沾锡', status: 'skipped', inputQty: 0, processedQty: 0, completedProcessedQuantity: 430 }], 430);
+  assert.equal(steps.length, 1); assert.equal(steps[0].pending, 430);
+  assert.equal(steps[0].reason, '已报 430，待核销 430');
+  assert.equal(steps[0].percentage, 0);
+});

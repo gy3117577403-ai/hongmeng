@@ -17,6 +17,7 @@ import {
   voidProcessActionConsumptionsForCompletion,
 } from '@/lib/process-action-consumption';
 import { processSupplementActualRequiredQty } from '@/lib/process-supplement-coverage';
+import { materialSequenceGroup, projectMaterialSequence } from '@/lib/process-material-sequence';
 import {
   createSystemNotification,
   eligibleUserIdsForCapability,
@@ -515,6 +516,8 @@ async function loadState(
       'PROCESS_COMPLETION_NOT_FOUND',
     );
   }
+  state.step.sequenceGroup = materialSequenceGroup(state.step);
+  state.route.steps = projectMaterialSequence(state.route.steps);
   // The coverage columns were added after the original completion ledger.
   // A fully covered legacy/direct completion can therefore carry the new
   // COVERED default with zero snapshots. Treat that exact shape as the
@@ -533,7 +536,8 @@ async function loadState(
     db.processQuantityMovement.findMany({
       where: {
         workOrderId: state.workOrderId,
-        sourceSequenceGroup: { gte: state.step.sequenceGroup },
+        sourceStepId: { in: state.route.steps.filter(step => step.executionMode === 'NORMAL'
+          && step.sequenceGroup >= state.step.sequenceGroup).map(step => step.id) },
         type: { in: [ProcessMovementType.GOOD_TRANSFER, ProcessMovementType.FINISHED_GOOD] },
         voidedAt: null,
       },
@@ -561,6 +565,9 @@ async function loadState(
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     }),
   ]);
+  for (const coverage of triggeredCoverages) {
+    coverage.reportCompletion.step.sequenceGroup = materialSequenceGroup(coverage.reportCompletion.step);
+  }
   return { state, releaseMovements, triggeredCoverages };
 }
 
@@ -732,7 +739,9 @@ function buildWithdrawalRollbackPlan(
             sequenceGroup: group,
             targetStepId,
             plans: planQuantityMovementReversals({
-              movements: releaseMovements,
+              movements: releaseMovements.map(movement => ({ ...movement,
+                sourceSequenceGroup: state.route.steps.find(step => step.id === movement.sourceStepId)?.sequenceGroup ?? movement.sourceSequenceGroup,
+              })),
               targetStepId,
               requiredQty: releaseReduction,
               sourceSequenceGroup: group,
@@ -1688,10 +1697,11 @@ async function applyWithdrawal(
     step.quantityVersion += 1;
   }
 
-  const groups = [...new Set(state.route.steps.map(step => step.sequenceGroup))].sort((a, b) => a - b);
+  const ordinarySteps = state.route.steps.filter(step => step.executionMode === 'NORMAL');
+  const groups = [...new Set(ordinarySteps.map(step => step.sequenceGroup))].sort((a, b) => a - b);
   let priorClosed = true;
   for (const group of groups) {
-    const steps = state.route.steps.filter(step => step.sequenceGroup === group);
+    const steps = ordinarySteps.filter(step => step.sequenceGroup === group);
     const groupClosed: boolean = priorClosed
       && steps.every(step => (
         step.executionMode === 'SUPPLEMENTAL_OBLIGATION'

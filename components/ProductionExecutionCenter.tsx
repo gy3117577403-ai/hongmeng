@@ -3978,7 +3978,7 @@ function ProductionDispatchRow({
         <span>总计 {totalLaborText}</span>
       </em>
       {isMovedOutSource && <small className="production-dispatch-progress-scope-note"><b>整单工时进度</b>，不等同本周动态有效计划达成率；{isFullyMovedOutSource ? '本周有效计划仅保留转仓前已完成工序，转出剩余工序在目标周核算' : `本周普通来源仅限 ${formatProductionQuantity(movedOutSummary?.nativeRemainingQuantity ?? 0)} 件，转出部分在目标周核算`}</small>}
-      {laborReachedButOpen && <small className="production-dispatch-progress-warning">工时已达 · 工序尚未全部完成</small>}
+      {laborReachedButOpen && <small className="production-dispatch-progress-warning">工时已达 · {currentQuantityProgress?.pending ? '报工待核销' : currentQuantityProgress?.remaining ? '仍有工序待报工' : '待完成状态确认'}</small>}
       {laborWarning && <small className="production-dispatch-progress-warning">{laborWarning}</small>}
     </div>
 

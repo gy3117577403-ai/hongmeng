@@ -24,6 +24,7 @@ import {
   type ProductTimeProfileRecord,
 } from '@/lib/product-time';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
+import { materialSequenceGroup } from '@/lib/process-material-sequence';
 import {
   normalizeProductTimeInsertPolicies,
   projectProductTimeCoverage,
@@ -563,6 +564,16 @@ function coverageBoundaryForEntry(
   targetQty: number,
 ): CoverageBoundary {
   const downstreamFacts = downstreamHasFacts(route, entry, previous?.entries || []);
+  // Open-batch insertion always requires actual reports for the full target.
+  // Advance reports and reordered partial steps do not establish an implicit
+  // system credit, so their differing progress must not block this obligation.
+  if (routeHasFacts(route) && routeState(route) !== 'completed') {
+    return {
+      hasNextExistingStep: profile.entries.some(candidate => candidate.position > entry.position && currentByKey.has(candidate.occurrenceKey)),
+      downstreamHasFacts: downstreamFacts, boundaryProgressQty: 0,
+      evidence: { boundaryType: 'FULL_WORK_ORDER_ACTUAL', targetQty, routeVersion: route.version },
+    };
+  }
   if (routeState(route) === 'completed') {
     return {
       hasNextExistingStep: profile.entries.some(candidate => (
@@ -1400,9 +1411,9 @@ async function bypassRetiredStepGroupOpenQuantity(
 ): Promise<{ quantity: number; targetStepIds: string[]; finishedGoodQty: number }> {
   if (!input.steps.length) return { quantity: 0, targetStepIds: [], finishedGoodQty: 0 };
   const orderedSteps = [...input.steps].sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
-  const sequenceGroup = orderedSteps[0].sequenceGroup;
+  const sequenceGroup = materialSequenceGroup(orderedSteps[0]);
   const originalGroup = input.route.steps.filter(step => (
-    step.executionMode === ProcessStepExecutionMode.NORMAL && step.sequenceGroup === sequenceGroup
+    step.executionMode === ProcessStepExecutionMode.NORMAL && materialSequenceGroup(step) === sequenceGroup
   ));
   // A deleted member of a still-active parallel group does not own a separate
   // stream of product. The retained members already hold the same group input,
@@ -1437,16 +1448,22 @@ async function bypassRetiredStepGroupOpenQuantity(
     && !input.route.steps.some(step => stepOccurrenceKey(step) === entry.occurrenceKey)
   ));
   const nextEntry = replacementEntry || successorEntry || createdSuccessor || null;
-  const targetStepIds = nextEntry
+  let targetStepIds = nextEntry
     ? input.profile.entries
         .filter(entry => entry.sequenceGroup === nextEntry.sequenceGroup)
         .map(entry => input.stepIdByKey.get(entry.occurrenceKey))
         .filter((id): id is string => Boolean(id))
     : [];
+  if (input.route.steps.some(step => step.materialSequenceGroup !== null)) {
+    const retainedNormal = input.route.steps.filter(step => input.retainedIds.has(step.id)
+      && step.executionMode === 'NORMAL' && materialSequenceGroup(step) > sequenceGroup);
+    const nextMaterialGroup = Math.min(...retainedNormal.map(materialSequenceGroup));
+    targetStepIds = retainedNormal.filter(step => materialSequenceGroup(step) === nextMaterialGroup).map(step => step.id);
+  }
   const now = new Date();
   const removedStepIds = orderedSteps.map(step => step.id);
   const priorGroupExists = input.route.steps.some(step => (
-    step.executionMode === ProcessStepExecutionMode.NORMAL && step.sequenceGroup < sequenceGroup
+    step.executionMode === ProcessStepExecutionMode.NORMAL && materialSequenceGroup(step) < sequenceGroup
   ));
   let rewiredQuantity = 0;
   if (priorGroupExists) {
@@ -1539,7 +1556,8 @@ async function bypassRetiredStepGroupOpenQuantity(
             type: ProcessMovementType.GOOD_TRANSFER,
             quantity: eventQuantity,
             sourceSequenceGroup: source.sourceSequenceGroup,
-            targetSequenceGroup: nextEntry?.sequenceGroup || null,
+            targetSequenceGroup: input.route.steps.find(step => step.id === targetStepId)?.materialSequenceGroup
+              ?? nextEntry?.sequenceGroup ?? null,
             idempotencyKey: `product-time:${input.deploymentId}:delete-bypass:${eventIndex}:${targetStepId}`.slice(0, 190),
           })),
         });
@@ -1633,90 +1651,6 @@ async function bypassRetiredStepGroupOpenQuantity(
     },
   });
   return { quantity, targetStepIds, finishedGoodQty };
-}
-
-async function reconcileRouteAfterForcedProductTimeMigration(
-  tx: Tx,
-  input: {
-    routeId: string;
-    workOrderId: string;
-    profileVersion: number;
-  },
-): Promise<boolean> {
-  const [unfinishedNormalSteps, activeSupplements, order] = await Promise.all([
-    tx.workOrderProcessStep.count({
-      where: {
-        routeId: input.routeId,
-        retiredAt: null,
-        executionMode: ProcessStepExecutionMode.NORMAL,
-        status: { notIn: ['completed', 'skipped'] },
-      },
-    }),
-    tx.processSupplementObligation.count({
-      where: { routeId: input.routeId, status: ProcessSupplementObligationStatus.ACTIVE },
-    }),
-    tx.workOrder.findUniqueOrThrow({
-      where: { id: input.workOrderId },
-      select: {
-        productionTargetQty: true,
-        uncompletedQty: true,
-        completedQty: true,
-        completedAt: true,
-      },
-    }),
-  ]);
-  if (unfinishedNormalSteps > 0 || activeSupplements > 0) return false;
-  const quantity = getProductionQuantitySummary(order);
-  const targetQty = quantity.targetQty || 0;
-  const completedQty = quantity.completedQty || 0;
-  if (targetQty <= 0 || completedQty < targetQty) return false;
-
-  let frontier = [input.workOrderId];
-  const visited = new Set(frontier);
-  let activeDescendantBranches = false;
-  while (frontier.length && !activeDescendantBranches) {
-    const children = await tx.workOrder.findMany({
-      where: { parentWorkOrderId: { in: frontier }, deletedAt: null },
-      select: { id: true, branchStatus: true },
-    });
-    activeDescendantBranches = children.some(child => (
-      child.branchStatus !== 'RESOLVED' && child.branchStatus !== 'CANCELLED'
-    ));
-    const next: string[] = [];
-    for (const child of children) {
-      if (visited.has(child.id)) {
-        throw new ProductTimeDeploymentError(
-          '工单分支层级存在循环，不能确认强制迁移后的完成状态',
-          409,
-          'PRODUCT_TIME_BRANCH_ANCESTRY_CYCLE',
-        );
-      }
-      visited.add(child.id);
-      next.push(child.id);
-    }
-    frontier = next;
-  }
-
-  const now = new Date();
-  await tx.workOrderProcessRoute.update({
-    where: { id: input.routeId },
-    data: { status: 'completed', completedAt: now },
-  });
-  await tx.workOrder.update({
-    where: { id: input.workOrderId },
-    data: {
-      stage: activeDescendantBranches ? 'backend' : 'completed',
-      status: activeDescendantBranches ? 'processing' : 'done',
-      progress: 100,
-      completedAt: activeDescendantBranches ? null : order.completedAt || now,
-      lastProgressAt: now,
-      latestProgressRemark: activeDescendantBranches
-        ? `产品工序与工时 V${input.profileVersion} 强制迁移完成主路线，等待不良分支闭环`
-        : `产品工序与工时 V${input.profileVersion} 强制迁移后工单生产完成`,
-      executionVersion: { increment: 1 },
-    },
-  });
-  return true;
 }
 
 async function retireRemovedStep(tx: Tx, step: DeploymentStepRecord, deploymentRouteId: string) {
@@ -2003,6 +1937,20 @@ async function applyRouteDeployment(
     if (key) currentByKey.set(key, step);
   }
   const routeDrift = routeDeploymentDrift(route, profile);
+  // Editing the visible order cannot retroactively change where an already
+  // recorded transfer went. Keep that ledger order for this started batch;
+  // later batches use the new profile normally, and new operations are actual
+  // supplemental obligations. This also preserves partial/parallel quantities.
+  const preserveMaterialSequence = facts;
+  if (preserveMaterialSequence && route.steps.some(step => step.materialSequenceGroup === null)) {
+    await tx.$executeRaw`UPDATE "work_order_process_steps"
+      SET "material_sequence_group" = "sequence_group"
+      WHERE "route_id" = ${route.id} AND "retired_at" IS NULL AND "material_sequence_group" IS NULL`;
+    for (const step of route.steps) {
+      if (step.materialSequenceGroup !== null) continue;
+      step.materialSequenceGroup = step.sequenceGroup;
+    }
+  }
   const insertedEntries = routeDrift.createdEntries;
   const retainedIds = new Set<string>();
   const stepIdByKey = new Map<string, string>();
@@ -2158,7 +2106,7 @@ async function applyRouteDeployment(
       candidate.position > entry.position
       && currentByKey.has(candidate.occurrenceKey)
     ));
-    const mustSupplement = projection.execution === 'supplement';
+    const mustSupplement = preserveMaterialSequence || projection.execution === 'supplement';
     const standard = productTimeStandardSnapshot(profile, entry);
     const targetStep = nextExistingEntry ? currentByKey.get(nextExistingEntry.occurrenceKey) || null : null;
     const fulfilledSupplement = mustSupplement && projection.obligationStatus === 'FULFILLED';
@@ -2295,9 +2243,9 @@ async function applyRouteDeployment(
   const removedGroups = new Map<number, DeploymentStepRecord[]>();
   for (const step of route.steps) {
     if (retainedIds.has(step.id)) continue;
-    const group = removedGroups.get(step.sequenceGroup) || [];
+    const group = removedGroups.get(materialSequenceGroup(step)) || [];
     group.push(step);
-    removedGroups.set(step.sequenceGroup, group);
+    removedGroups.set(materialSequenceGroup(step), group);
   }
   for (const [, groupSteps] of [...removedGroups.entries()].sort(([left], [right]) => left - right)) {
     const bypass = await bypassRetiredStepGroupOpenQuantity(tx, {
@@ -2426,49 +2374,6 @@ async function applyRouteDeployment(
     }
   }
 
-  const closedAfterForcedMigration = removedGroups.size > 0
-    ? await reconcileRouteAfterForcedProductTimeMigration(tx, {
-        routeId: route.id,
-        workOrderId: route.workOrderId,
-        profileVersion: profile.version,
-      })
-    : false;
-  let closedAfterSupplementCancellation = false;
-  if (!closedAfterForcedMigration && cancelledSupplement && supplements === 0) {
-    const [activeSupplements, unfinishedNormalSteps] = await Promise.all([
-      tx.processSupplementObligation.count({
-        where: { routeId: route.id, status: ProcessSupplementObligationStatus.ACTIVE },
-      }),
-      tx.workOrderProcessStep.count({
-        where: {
-          routeId: route.id,
-          retiredAt: null,
-          executionMode: ProcessStepExecutionMode.NORMAL,
-          status: { notIn: ['completed', 'skipped'] },
-        },
-      }),
-    ]);
-    if (activeSupplements === 0 && unfinishedNormalSteps === 0) {
-      const completedAt = new Date();
-      await tx.workOrderProcessRoute.update({
-        where: { id: route.id },
-        data: { status: 'completed', completedAt },
-      });
-      await tx.workOrder.update({
-        where: { id: route.workOrderId },
-        data: {
-          stage: 'completed',
-          status: 'done',
-          progress: 100,
-          completedAt,
-          lastProgressAt: completedAt,
-          latestProgressRemark: '已取消退役的补充工序；其余工序均已完成',
-          executionVersion: { increment: 1 },
-        },
-      });
-      closedAfterSupplementCancellation = true;
-    }
-  }
   if (reopened) {
     await tx.workOrderProcessRoute.update({
       where: { id: route.id },
@@ -2485,10 +2390,11 @@ async function applyRouteDeployment(
     });
   }
   const pendingCoverageRoute = await tx.workOrderProcessRoute.findUniqueOrThrow({ where: { id: route.id }, select: { status: true, version: true } });
-  const hasPendingCoverage = await tx.processCompletion.count({ where: { routeId: route.id, voidedAt: null, supplementObligationId: null, step: { retiredAt: null, executionMode: 'NORMAL', inputQty: { gt: prisma.workOrderProcessStep.fields.processedQty } }, coverageStatus: { in: ['PENDING', 'PARTIAL'] } } });
-  const coverageReconciliation = pendingCoverageRoute.status === 'in_progress' && hasPendingCoverage > 0
+  const coverageReconciliation = pendingCoverageRoute.status === 'in_progress'
     ? await reconcileSupplementRouteCompletion(tx, { routeId: route.id, expectedRouteVersion: pendingCoverageRoute.version, userId: input.actorId, actor: '产品工艺发布核销同步', now: new Date() })
     : null;
+  const closedAfterForcedMigration = removedGroups.size > 0 && Boolean(coverageReconciliation?.routeCompleted);
+  const closedAfterSupplementCancellation = cancelledSupplement && Boolean(coverageReconciliation?.routeCompleted);
   const taskSync = await syncDailyTasksAfterProcessRouteChange(tx, {
     changeId: `product-time-deployment:${input.deploymentId}`,
     routeId: route.id,
@@ -2514,6 +2420,7 @@ async function applyRouteDeployment(
     bypassedQuantity,
     fulfillmentModes: [...fulfillmentModes],
     reopened,
+    materialSequencePreserved: preserveMaterialSequence,
     closedAfterForcedMigration,
     closedAfterSupplementCancellation,
     coverageReconciliation,

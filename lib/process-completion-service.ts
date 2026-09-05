@@ -18,6 +18,8 @@ import {
   resolveCompletionQuantities,
 } from '@/lib/process-completion-domain';
 import { prisma } from '@/lib/prisma';
+import { reconcileBypassedRouteOperations } from '@/lib/process-route-material-reconciliation';
+import { materialSequenceGroup, projectMaterialSequence } from '@/lib/process-material-sequence';
 import {
   assertActionFlowDoesNotExceedReportedOutput,
   normalizeProcessReportQuantityBasis,
@@ -1103,7 +1105,7 @@ function firstNormalSequenceGroup<T extends Pick<QuantityStep, 'sequenceGroup' |
 ): number | null {
   const normalSteps = normalQuantitySteps(steps);
   return normalSteps.length
-    ? Math.min(...normalSteps.map(step => step.sequenceGroup))
+    ? Math.min(...normalSteps.map(materialSequenceGroup))
     : null;
 }
 
@@ -1116,12 +1118,12 @@ function nextNormalSequenceGroupSteps<T extends Pick<
 ): T[] {
   const normalSteps = normalQuantitySteps(steps);
   const futureGroups = normalSteps
-    .map(step => step.sequenceGroup)
+    .map(materialSequenceGroup)
     .filter(group => group > sequenceGroup);
   if (!futureGroups.length) return [];
   const nextGroup = Math.min(...futureGroups);
   return normalSteps
-    .filter(step => step.sequenceGroup === nextGroup)
+    .filter(step => materialSequenceGroup(step) === nextGroup)
     .sort((left, right) => left.position - right.position);
 }
 
@@ -1130,7 +1132,7 @@ function effectiveInputQuantity(
   firstGroup: number | null,
   target: number,
 ): number {
-  return step.sequenceGroup === firstGroup ? Math.max(step.inputQty, target) : step.inputQty;
+  return materialSequenceGroup(step) === firstGroup ? Math.max(step.inputQty, target) : step.inputQty;
 }
 
 export function planDefectBranchRoute<T extends {
@@ -1567,7 +1569,7 @@ export async function loadProcessCompletionContext(
       'PROCESS_STEP_REPORT_TARGET_REACHED',
     );
   }
-  const nextSteps = nextNormalSequenceGroupSteps(route.steps, selected.sequenceGroup);
+  const nextSteps = nextNormalSequenceGroupSteps(route.steps, materialSequenceGroup(selected));
   const presetWeekDate = route.workOrder.productionPlanBatch?.weekStartDate
     || route.workOrder.weekStartDate
     || route.workOrder.rootWorkOrder?.productionPlanBatch?.weekStartDate
@@ -2043,14 +2045,20 @@ async function reconcileQuantityStepStatuses(
     now: Date;
   },
 ): Promise<boolean> {
-  const groups = [...new Set(steps.map(step => step.sequenceGroup))].sort((a, b) => a - b);
+  const pendingReports = await tx.processCompletion.findMany({
+    where: { stepId: { in: steps.map(step => step.id) }, voidedAt: null, coverageStatus: { in: ['PENDING', 'PARTIAL'] } },
+    select: { stepId: true }, distinct: ['stepId'],
+  });
+  const pendingStepIds = new Set(pendingReports.map(report => report.stepId));
+  const ordinarySteps = steps.filter(step => step.executionMode === 'NORMAL');
+  const groups = [...new Set(ordinarySteps.map(step => step.sequenceGroup))].sort((a, b) => a - b);
   let priorGroupClosed = true;
   for (const group of groups) {
-    const groupSteps = steps.filter(step => step.sequenceGroup === group);
+    const groupSteps = ordinarySteps.filter(step => step.sequenceGroup === group);
     const groupClosed: boolean = priorGroupClosed && groupSteps.every(step => (
       step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
         ? step.status === 'completed' || step.status === 'skipped'
-        : step.processedQty >= step.inputQty
+        : step.processedQty >= step.inputQty && !pendingStepIds.has(step.id)
     ));
     for (const step of groupSteps) {
       // A late-inserted supplemental step is closed by its independent
@@ -2059,7 +2067,8 @@ async function reconcileQuantityStepStatuses(
       // cause this reconciler to auto-skip it.
       if (step.executionMode === 'SUPPLEMENTAL_OBLIGATION') continue;
       let nextStatus = step.status;
-      if (groupClosed) nextStatus = step.inputQty > 0 ? 'completed' : 'skipped';
+      if (pendingStepIds.has(step.id)) nextStatus = 'current';
+      else if (groupClosed) nextStatus = step.inputQty > 0 ? 'completed' : 'skipped';
       else if (step.inputQty > step.processedQty) nextStatus = 'current';
       else if (step.status !== 'completed' && step.status !== 'skipped') nextStatus = 'current';
       if (nextStatus !== step.status || (groupClosed && !step.completedAt)) {
@@ -2107,7 +2116,7 @@ export async function reconcileSupplementRouteCompletion(
     now: Date;
   },
 ) {
-  const route = await tx.workOrderProcessRoute.findUniqueOrThrow({
+  let route = await tx.workOrderProcessRoute.findUniqueOrThrow({
     where: { id: input.routeId },
     include: completionRouteInclude,
   });
@@ -2116,6 +2125,13 @@ export async function reconcileSupplementRouteCompletion(
       '工艺路线已被其他操作更新，请刷新后重试', 409, 'PROCESS_ROUTE_VERSION_CONFLICT',
     );
   }
+  const materialReconciliation = await reconcileBypassedRouteOperations(tx, {
+    routeId: route.id, actorId: input.userId, now: input.now,
+  });
+  if (materialReconciliation.convertedStepIds.length) {
+    route = await tx.workOrderProcessRoute.findUniqueOrThrow({ where: { id: route.id }, include: completionRouteInclude });
+  }
+  route.steps = projectMaterialSequence(route.steps);
   const before = new Map(route.steps.map(step => [step.id, step.status]));
   // Route edits and fulfilled supplements may make input available without a
   // new ordinary report. Consume the existing pending reports before closing
@@ -2139,7 +2155,7 @@ export async function reconcileSupplementRouteCompletion(
     where: { routeId: route.id, status: 'ACTIVE' },
   });
   const pendingCoverage = await tx.processCompletion.count({
-    where: { routeId: route.id, voidedAt: null, coverageStatus: { not: 'COVERED' } },
+    where: { routeId: route.id, step: { retiredAt: null }, voidedAt: null, coverageStatus: { not: 'COVERED' } },
   });
   const routeCompleted = stepsClosed && remainingObligations === 0 && pendingCoverage === 0;
   const deferredLaborPoolIds = await createDeferredPerBatchLaborPools(tx, route, input);
@@ -2222,6 +2238,7 @@ export async function reconcileSupplementRouteCompletion(
   }
   return {
     routeCompleted,
+    materialReconciliation,
     routeVersion: route.version + 1,
     changedStepIds: route.steps.filter(step => before.get(step.id) !== step.status).map(step => step.id),
     coverage,
@@ -2284,7 +2301,10 @@ async function hasActiveUpstreamReworkBranch(
       originStep: {
         is: {
           routeId: route.id,
-          sequenceGroup: { lt: currentSequenceGroup },
+          OR: [
+            { materialSequenceGroup: { lt: currentSequenceGroup } },
+            { materialSequenceGroup: null, sequenceGroup: { lt: currentSequenceGroup } },
+          ],
         },
       },
     },
@@ -2484,11 +2504,9 @@ async function createDeferredPerBatchLaborPools(
 ): Promise<string[]> {
   const createdPoolIds: string[] = [];
   const candidates = route.steps.filter(step => (
-    step.executionMode === 'NORMAL'
-    && step.timeBasis === 'per_batch'
-    && step.inputQty > 0
-    && step.processedQty >= step.inputQty
-    && step.goodOutputQty > 0
+    step.timeBasis === 'per_batch'
+    && (step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+      || (step.inputQty > 0 && step.processedQty >= step.inputQty && step.goodOutputQty > 0))
     && step.status === 'completed'
   ));
 
@@ -2617,7 +2635,10 @@ async function loadDirectRouteReleaseCap(
     where: {
       workOrderId: input.workOrderId,
       type: 'SCRAP_REPLENISH_SPLIT',
-      sourceSequenceGroup: { lte: input.currentSequenceGroup },
+      sourceStep: { OR: [
+        { materialSequenceGroup: { lte: input.currentSequenceGroup } },
+        { materialSequenceGroup: null, sequenceGroup: { lte: input.currentSequenceGroup } },
+      ] },
       voidedAt: null,
     },
     _sum: { quantity: true },
@@ -3001,6 +3022,7 @@ async function returnReworkOutputToParent(
       'PROCESS_REWORK_RETURN_PARENT_ROUTE_MISSING',
     );
   }
+  parentRoute.steps = projectMaterialSequence(parentRoute.steps);
   const originStep = parentRoute.steps.find(step => step.id === sourceOrder.originStepId);
   if (!originStep) {
     throw new ProcessCompletionServiceError(
@@ -3783,6 +3805,7 @@ async function performProcessCompletion(
       'PROCESS_ROUTE_NOT_FOUND',
     );
   }
+  route.steps = projectMaterialSequence(route.steps);
   await assertProductionMayRun(tx, route.workOrder.id, backfill);
   if (!isExecutableProductionWorkOrder(route.workOrder)) {
     throw new ProcessCompletionServiceError(
@@ -4186,7 +4209,7 @@ async function performProcessCompletion(
     { targetQty, userId: input.userId, now },
   );
   const openObligations = await tx.processSupplementObligation.count({ where: { routeId: route.id, status: 'ACTIVE' } });
-  const uncoveredReports = await tx.processCompletion.count({ where: { routeId: route.id, voidedAt: null, coverageStatus: { not: 'COVERED' } } });
+  const uncoveredReports = await tx.processCompletion.count({ where: { routeId: route.id, step: { retiredAt: null }, voidedAt: null, coverageStatus: { not: 'COVERED' } } });
   const routeCompleted = stepsClosed && openObligations === 0 && uncoveredReports === 0;
   await createDeferredPerBatchLaborPools(tx, route, {
     userId: input.userId,

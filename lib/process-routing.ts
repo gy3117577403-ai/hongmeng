@@ -656,7 +656,8 @@ export function serializeProcessRoute(
       position: step.position,
       sequenceGroup: step.sequenceGroup,
       unitsPerProduct: step.unitsPerProduct,
-      status: normalizeStepStatus(step.status),
+      status: step.executionMode === 'NORMAL' && completionProcessedQuantity > step.processedQty
+        ? 'current' as const : normalizeStepStatus(step.status),
       startedAt: step.startedAt?.toISOString() || null,
       completedAt: step.completedAt?.toISOString() || null,
       completedBy: 'completedBy' in step ? step.completedBy : null,
@@ -705,7 +706,7 @@ export function serializeProcessRoute(
       previousStandardMillisecondsPerUnit: changeSnapshot.previousStandardMillisecondsPerUnit,
     };
   });
-  const completedStepCount = steps.filter(step => step.status === 'completed' || step.status === 'skipped').length;
+  const completedStepCount = steps.filter(step => step.status === 'completed').length;
   const currentSteps = steps.filter(step => step.status === 'current');
   const currentSequenceGroup = currentSteps.length
     ? Math.min(...currentSteps.map(step => step.sequenceGroup))
@@ -740,7 +741,7 @@ export function serializeProcessRoute(
     updatedAt: route.updatedAt.toISOString(),
     stepCount: steps.length,
     completedStepCount,
-    progress: steps.length > 0 ? Math.round((completedStepCount / steps.length) * 100) : 0,
+    progress: status === 'completed' ? 100 : steps.length > 0 ? Math.round((completedStepCount / steps.length) * 100) : 0,
     currentSteps,
     nextSteps,
     currentStep,

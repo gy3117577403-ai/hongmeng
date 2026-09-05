@@ -5,7 +5,9 @@ type ProgressStep = {
 };
 
 export function productionProcessProgress(steps: readonly ProgressStep[], targetQuantity: number) {
-  return steps.filter(step => !['completed', 'skipped'].includes(step.status)).map(step => {
+  return steps.filter(step => !['completed', 'skipped'].includes(step.status)
+    || (step.executionMode !== 'SUPPLEMENTAL_OBLIGATION'
+      && (step.completedProcessedQuantity || 0) > (step.processedQty || 0))).map(step => {
     const supplemental = step.executionMode === 'SUPPLEMENTAL_OBLIGATION';
     const required = supplemental ? Math.max(0, step.actualRequiredQty || 0) : Math.max(step.inputQty || 0, targetQuantity);
     const confirmed = supplemental ? Math.max(0, required - (step.supplementRemainingQty ?? required)) : step.processedQty || 0;

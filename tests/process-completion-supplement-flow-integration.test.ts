@@ -645,7 +645,8 @@ for (const scenario of ['last-supplement', 'partial-supplement', 'multiple-suppl
         });
         const routeShouldClose = scenario !== 'quantity-gap' && scenario !== 'multiple-supplements';
         const orderShouldClose = routeShouldClose && scenario !== 'active-branch' && scenario !== 'finished-good-gap';
-        assert.equal(closedRoute.steps.find(step => step.id === secondStep.id)?.status, routeShouldClose ? 'completed' : 'current');
+        assert.equal(closedRoute.steps.find(step => step.id === secondStep.id)?.status, scenario === 'quantity-gap' ? 'current' : 'completed',
+          'fully covered ordinary work is completed independently of another outstanding supplemental obligation');
         assert.equal(closedRoute.steps.every(step => ['completed', 'skipped'].includes(step.status)), routeShouldClose);
         assert.equal(closedRoute.status, routeShouldClose ? 'completed' : 'in_progress');
         assert.equal(closedRoute.version, supplementRouteVersion + 1);

@@ -3495,7 +3495,7 @@ export type ProductionWeekReconciliationDTO = {
 export type WorkflowStepDTO = {
   key: string;
   label: string;
-  state: 'done' | 'current' | 'pending';
+  state: 'done' | 'current' | 'pending' | 'skipped';
   sequenceGroup?: number;
   status?: ProcessStepStatus;
   stageGroup?: ProcessStageGroup;

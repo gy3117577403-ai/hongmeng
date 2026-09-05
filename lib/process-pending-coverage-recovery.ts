@@ -8,14 +8,18 @@ const candidateWhere = (): Prisma.WorkOrderProcessRouteWhereInput => ({
   workOrder: { deletedAt: null, planClearedAt: null, productionPausedAt: null, branchType: null, status: { notIn: ['cancelled'] }, planType: { in: ['weekly_plan', 'managed_plan'] } },
   supplementObligations: { none: { status: 'ACTIVE' } },
   steps: {
-    some: { retiredAt: null, executionMode: 'NORMAL', inputQty: { gt: prisma.workOrderProcessStep.fields.processedQty },
+    some: { retiredAt: null, executionMode: 'NORMAL', OR: [
+      { inputQty: { gt: prisma.workOrderProcessStep.fields.processedQty } },
+      { inputQty: 0, processedQty: 0 },
+    ],
       completions: { some: { voidedAt: null, coverageStatus: { in: ['PENDING', 'PARTIAL'] }, defectQty: 0 } } },
     none: { retiredAt: null, executionMode: 'NORMAL', reportQuantityBasis: 'action' },
   },
   completions: { none: { voidedAt: null, coverageStatus: { in: ['PENDING', 'PARTIAL'] }, defectQty: { gt: 0 } } },
 });
 
-/** Replays existing good-output reports only when material input is available.
+/** Replays existing good-output reports when material input is available, or
+ * reconciles an operation demonstrably bypassed by an existing full transfer.
  * Serializable transactions and quantity/version guards make repeated workers
  * harmless. Defect disposition, action counts and branches stay out of this
  * unattended recovery path. No completion or per-unit labor is re-created. */
@@ -38,7 +42,7 @@ export async function recoverStalePendingCompletionCoverage(options: { routeId?:
         const reconciliation = await reconcileSupplementRouteCompletion(tx, { routeId: route.id, expectedRouteVersion: route.version, userId: null, actor: '系统已有报工核销恢复', now: new Date() });
         const after = await tx.processCompletion.aggregate({ where: { routeId: route.id, voidedAt: null }, _sum: { coveredQty: true } });
         const coveredQuantityDelta = (after._sum.coveredQty || 0) - (before._sum.coveredQty || 0);
-        if (coveredQuantityDelta <= 0) throw new Error('NO_COVERAGE_PROGRESS');
+        if (coveredQuantityDelta <= 0 && !reconciliation.materialReconciliation.convertedStepIds.length) throw new Error('NO_COVERAGE_PROGRESS');
         const taskSync = await syncDailyTasksAfterProcessRouteChange(tx, { routeId: route.id, changeId: `pending-coverage:${route.id}:${route.version}`, actorId: null, reason: '上游数量已到位，核销既有报工并同步工序完成状态' });
         const detail = { previousRouteVersion: route.version, ...reconciliation, coveredQuantityDelta,
           completedQtyDelta: reconciliation.coverage?.finishedGoodDelta || 0,
