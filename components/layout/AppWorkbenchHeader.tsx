@@ -143,7 +143,7 @@ function routePath(href: string): string {
 function isActiveRoute(activeHref: string, href: string): boolean {
   const active = routePath(activeHref);
   const target = routePath(href);
-  if (target === '/workspace/quality') return active === target || active.startsWith(`${target}/`);
+  if (target === '/workspace/quality') return active === target || (active.startsWith(`${target}/`) && !sideNavigation.some(group => group.items.some(item => item.href !== target && routePath(item.href) === active)));
   return active === target;
 }
 

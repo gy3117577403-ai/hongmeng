@@ -9,6 +9,8 @@ async function main() {
   const departments = await prisma.department.findMany({ where: { code: { in: ['PRODUCTION','QUALITY','PROCESS'] } } });
   const department = code => { const found = departments.find(d => d.code === code); if (!found) throw new Error('Seed departments first'); return found; };
   const users = {};
+  const team = await prisma.productionTeam.upsert({where:{name:'质量验收班组'},create:{code:'QUALITY-QA-TEAM',name:'质量验收班组'},update:{isActive:true}});
+  const terminal = await prisma.terminalToolingTerminal.create({data:{specification:marker+'-端子',manufacturer:'验收厂家',normalizedKey:marker+'-terminal',wireRange:'0.5 mm²'}});
   for (const [kind,profile,dept,report] of [
     ['quality','QUALITY_REVIEWER','QUALITY',false],
     ['leader','WORKSHOP_TEAM_LEADER','PRODUCTION',true],
@@ -22,7 +24,8 @@ async function main() {
       { profile, departmentId: department(dept).id, scopeKey:kind==='leader'?'TEAM:quality-qa':'GLOBAL:QUALITY_QA',grantType:kind==='tooling'?'CONCURRENT':'PRIMARY',effectiveFrom:new Date('2026-01-01') },
       ...(report?[{profile:'FIELD_REPORTER',departmentId:department(dept).id,scopeKey:'EMPLOYEE:'+employee.id,grantType:kind==='tooling'?'PRIMARY':'CONCURRENT',effectiveFrom:new Date('2026-01-01')}]:[]),
     ] } }, include: { accessGrants:true } });
-    users[kind]={id:account.id,username:account.username,employeeId:employee.id,grants:account.accessGrants.map(g=>({id:g.id,profile:g.profile,version:g.version}))};
+    if(kind==='admin')await prisma.user.update({where:{id:account.id},data:{employeeId:null}});
+    users[kind]={id:account.id,username:account.username,employeeId:kind==='admin'?null:employee.id,grants:account.accessGrants.map(g=>({id:g.id,profile:g.profile,version:g.version}))};
   }
   const orders = [];
   for (let index=1;index<=2;index++){
@@ -36,6 +39,6 @@ async function main() {
     const plan=await prisma.productionPlanOrder.create({data:{sourceOrderNo:order.sourceOrderNo,sourceLineNo:1,customerName:order.customerName,productName:order.productName,specification:order.specification,orderQuantity:200,orderDate:new Date(),customerDueDate:new Date(Date.now()+86400000),batches:{create:{batchNo:index,quantity:200,weekStartDate:new Date(),weekEndDate:new Date(Date.now()+6*86400000),plannedCompletionDate:new Date(Date.now()+86400000),workOrderId:order.id,releaseState:'active'}}}});
     orders.push({id:order.id,code,publicCode,planOrderId:plan.id});
   }
-  return {marker,password,users,orders};
+  return {marker,password,users,orders,team:{id:team.id,name:team.name},terminal:{id:terminal.id,specification:terminal.specification,manufacturer:terminal.manufacturer}};
 }
 main().then(data=>console.log(JSON.stringify(data))).finally(()=>prisma.$disconnect());

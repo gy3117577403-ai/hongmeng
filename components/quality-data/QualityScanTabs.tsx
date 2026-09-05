@@ -1,7 +1,9 @@
 import Link from 'next/link';
+import { ClipboardCheck, Wrench } from 'lucide-react';
+import './quality-scan.css';
 export default function QualityScanTabs({ code, active, canReport = true }: { code: string; active: 'report' | 'quality'; canReport?: boolean }) {
-  return <nav aria-label="工单扫码功能" style={{ display:'flex',gap:8,padding:'10px 16px',background:'#fff7ed',borderBottom:'1px solid #fed7aa',justifyContent:'center' }}>
-    {canReport&&<Link href={'/field-report/'+encodeURIComponent(code)} aria-current={active==='report'?'page':undefined} style={{ padding:'10px 24px',borderRadius:8,background:active==='report'?'#b45309':'white',color:active==='report'?'white':'#78350f',fontWeight:700,textDecoration:'none' }}>生产报工</Link>}
-    <Link href={'/quality-capture/'+encodeURIComponent(code)} aria-current={active==='quality'?'page':undefined} style={{ padding:'10px 24px',borderRadius:8,background:active==='quality'?'#b45309':'white',color:active==='quality'?'white':'#78350f',fontWeight:700,textDecoration:'none' }}>质量填报</Link>
+  return <nav className="qd-scan-tabs" aria-label="工单扫码功能">
+    {canReport && <Link href={'/field-report/'+encodeURIComponent(code)+'?mode=report'} aria-current={active==='report'?'page':undefined}><Wrench size={17}/>生产报工</Link>}
+    <Link href={'/quality-capture/'+encodeURIComponent(code)} aria-current={active==='quality'?'page':undefined}><ClipboardCheck size={17}/>质量登记</Link>
   </nav>;
 }

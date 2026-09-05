@@ -36,7 +36,7 @@ assert.ok(qualityLanding.response.headers.get('location').includes('/quality-cap
 const ordinaryLanding=await request('employee','/field-report/'+fixture.orders[0].publicCode);
 assert.ok(!ordinaryLanding.body.toString().includes('工单扫码功能'),'ordinary scan has no quality tabs');
 const dualLanding=await request('leader','/field-report/'+fixture.orders[0].publicCode);
-assert.ok(dualLanding.body.toString().includes('质量填报'),'leader sees dual entry');
+assert.ok(dualLanding.body.toString().includes('质量登记'),'leader sees dual entry');
 function form(type,value='80'){
   return {mode:'FORM',context:{processName:type==='FINAL'?'成品检验':'端子压接',inspectedBy:'现场验收员',team:'质量验收班组',standardRef:'验收样例标准 V1'},summary:'验收样例：检查线束端子，保留原始测量结果。',rows:[{sample:'01',position:'P1 / 红线',item:type==='PULL'?'拉力':'检验项目',standard:'仅用于软件验收的样例标准',lower:'70',upper:'90',value,unit:type==='PULL'?'N':'mm',result:'PASS',note:'验收记录'}]};
 }
@@ -91,6 +91,55 @@ const deleted=await request('quality',api+'records?'+query+'&deleted=1');assert.
 fileRecord=(await request('quality',api+'records/'+fileRecord.id,'PATCH',{version:fileRecord.version,action:'RESTORE',reason:'验收恢复'})).body.data;
 assert.equal(fileRecord.deletedAt,null);
 await request('quality',api+'attachments/'+file.id+'/content');
+
+// V2: independent reference library and simplified capture over real HTTP + S3.
+for(const kind of ['employee','process'])for(const path of ['references','reference-export','options'])await request(kind,api+path,'GET',undefined,403);
+const options=(await request('quality',api+'options?q='+encodeURIComponent(fixture.terminal.specification))).body.data;
+assert.ok(options.teams.some(t=>t.id===fixture.team.id));assert.ok(options.terminals.some(t=>t.id===fixture.terminal.id));
+const adminScan=await request('admin','/field-report/'+fixture.orders[0].publicCode);
+assert.ok(adminScan.body.toString().includes('质量登记'));assert.equal(fixture.users.admin.employeeId,null);
+await request('admin','/quality-capture/'+fixture.orders[0].publicCode);
+const refInput={terminalId:fixture.terminal.id,terminalName:fixture.terminal.specification,manufacturer:fixture.terminal.manufacturer,title:fixture.marker+' 机台参考方案',status:'DRAFT',data:{wire:'0.5 mm² 单线',wireSize:'0.5',wireUnit:'mm²',equipment:'QA-机台 A',mold:'QA-模具 A',source:'EXPERIENCE',remark:'软件验收样例',parameters:[{group:'DIMENSION',name:'导体压接高度',value:'1.2',unit:'mm'},{group:'MACHINE',name:'高度调节刻度',value:'3.5',unit:'刻度'}]},idempotencyKey:randomUUID()};
+let reference=(await request('tooling',api+'references','POST',refInput)).body.data;
+assert.equal('workOrderId' in reference,false);
+assert.equal((await request('tooling',api+'references','POST',refInput)).body.data.id,reference.id);
+await request('leader',api+'references/'+reference.id,'PATCH',{...reference,title:'越权'},403);
+await request('leader',api+'references/'+reference.id,'DELETE',{version:reference.version,reason:'越权删除'},403);
+const refUpload=new FormData();refUpload.set('file',new File([png],'机台参考.png',{type:'image/png'}));refUpload.set('version',String(reference.version));
+reference=(await request('tooling',api+'references/'+reference.id+'/attachments','POST',refUpload)).body.data;
+const refFile=reference.attachments[0],refFileVersion=reference.version;
+await request('employee',api+'reference-files/'+refFile.id+'/content','GET',undefined,403);
+assert.equal(createHash('sha256').update((await request('quality',api+'reference-files/'+refFile.id+'/content')).bytes).digest('hex'),refFile.sha256);
+const race=await Promise.all([request('tooling',api+'references/'+reference.id,'PATCH',{...reference,status:'ACTIVE',reason:'启用'},[200,409]),request('admin',api+'references/'+reference.id,'PATCH',{...reference,status:'ACTIVE',reason:'同时启用'},[200,409])]);
+assert.deepEqual(race.map(r=>r.response.status).sort(),[200,409]);
+reference=(await request('quality',api+'references/'+reference.id)).body.data;
+await request('tooling',api+'references/'+reference.id,'PATCH',{...reference,title:'无原因'},400);
+reference=(await request('tooling',api+'references/'+reference.id,'PATCH',{...reference,reason:'校准后调整高度',data:{...reference.data,parameters:reference.data.parameters.map(p=>p.group==='DIMENSION'?{...p,value:'1.25'}:p)}})).body.data;
+assert.equal((await request('quality',api+'references/'+reference.id+'/revisions/1')).body.data.data.parameters[0].value,'1.2');
+const copyReference=(await request('leader',api+'references','POST',{...reference,title:fixture.marker+' 机台 B 副本',status:'DRAFT',data:{...reference.data,equipment:'QA-机台 B'},idempotencyKey:randomUUID()})).body.data;
+assert.notEqual(copyReference.id,reference.id);assert.equal(copyReference.version,1);
+await request('leader',api+'references/'+reference.id,'PATCH',{action:'FAVORITE',favorite:true});
+assert.equal((await request('leader',api+'references?favorite=1&q='+fixture.marker)).body.data.total,1);
+assert.equal((await request('quality',api+'references?favorite=1&q='+fixture.marker)).body.data.total,0);
+const refBook=new ExcelJS.Workbook();await refBook.xlsx.load((await request('quality',api+'reference-export?q='+fixture.marker)).bytes);
+assert.equal(refBook.getWorksheet('端子参考参数').rowCount,5);
+const refArchive=await JSZip.loadAsync((await request('quality',api+'reference-export?format=zip&q='+fixture.marker)).bytes);
+assert.ok(Object.keys(refArchive.files).some(name=>name.endsWith('机台参考.png')));
+reference=(await request('tooling',api+'reference-files/'+refFile.id,'DELETE',{version:reference.version,reason:'换图验收'})).body.data;
+await request('quality',api+'reference-files/'+refFile.id+'/content','GET',undefined,404);
+await request('quality',api+'reference-files/'+refFile.id+'/content?historyVersion='+refFileVersion);
+refUpload.set('version',String(reference.version));refUpload.set('reason','恢复原图');
+reference=(await request('tooling',api+'references/'+reference.id+'/attachments','POST',refUpload)).body.data;
+reference=(await request('tooling',api+'references/'+reference.id,'DELETE',{version:reference.version,reason:'回收站验收'})).body.data;
+assert.equal((await request('quality',api+'references?deleted=1&q='+fixture.marker)).body.data.total,1);
+await request('quality',api+'reference-files/'+refFile.id+'/content','GET',undefined,404);
+await request('tooling',api+'references/'+reference.id,'PATCH',{action:'RESTORE',version:reference.version,reason:'无恢复权限'},403);
+reference=(await request('quality',api+'references/'+reference.id,'PATCH',{action:'RESTORE',version:reference.version,reason:'恢复验收'})).body.data;
+assert.equal(reference.deletedAt,null);await request('quality',api+'reference-files/'+refFile.id+'/content');
+const minimal={mode:'FORM',teamId:fixture.team.id,context:{inspectedBy:'简化验收员',team:'客户端随意名称'},summary:'',rows:[{sample:'1',item:'高度',value:'1.2',unit:'mm',result:'PASS'},{sample:'2',item:'外观',value:'',result:'PENDING'}]};
+const minimalRecord=(await request('admin',api+'records','POST',{type:'CRIMP',title:'简化登记',workOrderId:fixture.orders[0].id,inspectedAt:new Date().toISOString(),data:minimal,status:'SUBMITTED',idempotencyKey:randomUUID()})).body.data;
+assert.equal(minimalRecord.data.context.team,fixture.team.name);assert.equal(minimalRecord.result,'PENDING');
+await request('quality',api+'records','POST',{type:'CRIMP',title:'错误班组',workOrderId:fixture.orders[0].id,inspectedAt:new Date().toISOString(),data:{...minimal,teamId:'missing-team'},idempotencyKey:randomUUID()},400);
 const grant=fixture.users.tooling.grants.find(g=>g.profile==='QUALITY_DATA_OPERATOR');
 await request('admin','/api/users/'+fixture.users.tooling.id+'/access-grants/'+grant.id,'DELETE',{expectedVersion:grant.version});
 await request('tooling',api+'records?period=all','GET',undefined,401);
@@ -98,7 +147,9 @@ const relogin=await request('tooling','/api/auth/login','POST',{username:fixture
 cookies.tooling=relogin.response.headers.get('set-cookie').match(/hm_session=[^;]+/)[0];
 await request('tooling',api+'records?period=all','GET',undefined,403);
 await request('tooling',api+'attachments/'+file.id+'/content','GET',undefined,403);
+await request('tooling',api+'references','GET',undefined,403);
+await request('tooling',api+'reference-files/'+refFile.id+'/content','GET',undefined,403);
 await request('tooling','/api/field-report/tickets/'+fixture.orders[0].publicCode);
-const report={ok:true,checks:checks.length,recordIds:records.map(r=>r.id),fileRecordId:fileRecord.id,orders:fixture.orders,details:checks};
+const report={ok:true,checks:checks.length,recordIds:records.map(r=>r.id),fileRecordId:fileRecord.id,orders:fixture.orders,referenceId:reference.id,copyReferenceId:copyReference.id,minimalRecordId:minimalRecord.id,details:checks};
 if(process.env.QUALITY_DATA_QA_OUTPUT)await fs.writeFile(process.env.QUALITY_DATA_QA_OUTPUT,JSON.stringify(report,null,2));
-console.log(JSON.stringify({ok:true,checks:checks.length,records:6,attachmentsVerified:true,excelRows:6,zipVerified:true,revocationVerified:true}));
+console.log(JSON.stringify({ok:true,checks:checks.length,records:7,references:2,attachmentsVerified:true,excelRows:6,zipVerified:true,revocationVerified:true}));

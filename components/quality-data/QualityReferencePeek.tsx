@@ -1,0 +1,12 @@
+'use client';
+import { useEffect, useState } from 'react';
+import { BookOpen, Search, X } from 'lucide-react';
+import { referenceConditions, type QualityReference } from '@/lib/quality-reference';
+import { ReferenceFacts } from './QualityReferenceDetail';
+import { qualityRequest } from './client';
+export default function QualityReferencePeek({onClose}:{onClose:()=>void}) {
+  const [q,setQ]=useState(''),[query,setQuery]=useState(''),[items,setItems]=useState<QualityReference[]>([]),[selected,setSelected]=useState<QualityReference|null>(null),[page,setPage]=useState(1),[total,setTotal]=useState(0),[error,setError]=useState('');
+  useEffect(()=>{const timer=setTimeout(()=>{setQuery(q);setPage(1);},300);return()=>clearTimeout(timer);},[q]);
+  useEffect(()=>{let active=true;qualityRequest<{items:QualityReference[];total:number}>('references?'+new URLSearchParams({q:query,page:String(page),status:'ACTIVE'})).then(data=>{if(active){setItems(data.items);setTotal(data.total);setSelected(previous=>data.items.find(r=>r.id===previous?.id)||null);}}).catch(e=>{if(active)setError(e.message);});return()=>{active=false;};},[query,page]);
+  return <div className="qd-modal qr-peek-modal" role="dialog" aria-modal="true" aria-label="查阅参考数据"><section className="qd-editor"><header className="qd-editor-head"><h2><BookOpen size={20}/>查阅参考数据</h2><button onClick={onClose} aria-label="关闭参考数据"><X size={20}/></button></header><div className="qd-editor-body"><p className="qd-help">核对线材、机台与模具后参考使用。检验结果由本次实际测量填写。</p><form className="qd-search-form" onSubmit={e=>{e.preventDefault();setQuery(q);setPage(1);}}><Search size={17}/><input aria-label="搜索参考数据" placeholder="端子、线材、机台、模具…" value={q} onChange={e=>setQ(e.target.value)}/></form>{error&&<div role="alert" className="qd-alert error">{error}</div>}{selected?<><button onClick={()=>setSelected(null)}>返回方案列表</button><h3>{selected.title} · V{selected.version}</h3><ReferenceFacts record={selected}/></>:<>{items.map(r=><button className="qr-peek-option" key={r.id} onClick={()=>setSelected(r)}><b>{r.terminalName} · {r.title}</b><span>{referenceConditions(r.data)}</span></button>)}{!items.length&&<p className="qd-help">没有匹配的在用方案。可在“质量数据 → 参考数据”维护和启用方案。</p>}<div className="qd-pagination"><button disabled={page<=1} onClick={()=>setPage(v=>v-1)}>上一页</button><span>{page}</span><button disabled={page*20>=total} onClick={()=>setPage(v=>v+1)}>下一页</button></div></>}</div></section></div>;
+}

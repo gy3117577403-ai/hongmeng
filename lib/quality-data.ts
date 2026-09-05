@@ -22,7 +22,7 @@ export type QualityMeasurement = {
   value: string; unit: string; result: QualityResult; note: string;
 };
 export type QualityFormData = {
-  mode: 'FORM' | 'FILE'; context: QualityContext; rows: QualityMeasurement[]; summary: string;
+  mode: 'FORM' | 'FILE'; context: QualityContext; rows: QualityMeasurement[]; summary: string; teamId?: string;
 };
 export type QualityOrder = {
   id: string; code: string; businessCode: string | null; sourceOrderNo: string | null;
@@ -112,27 +112,27 @@ export function qualityForm(value: unknown): QualityFormData {
     return row;
   });
   if (input.mode !== 'FORM' && input.mode !== 'FILE') throw new QualityDataError('填报方式无效');
-  return { mode: input.mode, context, rows, summary: qualityText(input.summary, 4000) };
+  return { mode: input.mode, context, rows, summary: qualityText(input.summary, 4000), teamId: qualityText(input.teamId, 120) };
 }
 export function qualityResult(data: QualityFormData): QualityResult {
+  if (data.mode === 'FILE') return Number(data.context.defectQty || 0) > 0 ? 'FAIL' : 'PENDING';
   if (data.rows.some(row => row.result === 'FAIL') || Number(data.context.defectQty || 0) > 0) return 'FAIL';
-  return data.rows.length && data.rows.every(row => row.result === 'PASS') ? 'PASS' : 'PENDING';
+  const measured = data.rows.filter(row => row.value);
+  return measured.length && measured.every(row => row.result === 'PASS') ? 'PASS' : 'PENDING';
 }
 export function assertQualitySubmission(data: QualityFormData, attachments: number) {
   if (!data.context.inspectedBy) throw new QualityDataError('请填写实际检验人');
-  if (!data.context.processName) throw new QualityDataError('请填写检验工序');
   if (data.mode === 'FILE') {
-    if (!attachments || !data.summary) throw new QualityDataError('文件归档需上传附件并填写内容摘要');
-  } else if (!data.rows.length || data.rows.some(row => !row.item || !row.value)) {
-    throw new QualityDataError('提交前请填写每项检查项目与实测 / 检查结果');
+    if (!attachments) throw new QualityDataError('文件归档需至少上传一份附件');
+  } else if (data.rows.some(row => row.value && !row.item) || (!data.rows.some(row => row.item && row.value) && !attachments)) {
+    throw new QualityDataError('请填写至少一项检验结果或上传附件；已填结果须有项目名称');
   }
 }
 export function emptyQualityForm(type: QualityDataType, inspector = ''): QualityFormData {
   const context = Object.fromEntries(CONTEXT_FIELDS.map(([key]) => [key, key === 'inspectedBy' ? inspector : ''])) as QualityContext;
   const names: Record<QualityDataType, string[]> = {
-    CRIMP: ['压接高度', '压接宽度', '压接外观'], PULL: ['端子拉力'],
-    FINAL: ['外观', '尺寸 / 装配', '功能检查'], FIRST: ['首件外观', '关键尺寸', '工艺符合性'],
-    PATROL: ['作业符合性', '过程质量', '设备 / 工装状态'],
+    CRIMP: ['压接高度'], PULL: ['端子拉力'],
+    FINAL: ['外观'], FIRST: ['首件外观'], PATROL: ['过程质量'],
   };
   return { mode: 'FORM', context, summary: '', rows: names[type].map(item => ({ sample: '1', position: '', item, standard: '', lower: '', upper: '', value: '', unit: item.includes('高度') || item.includes('宽度') ? 'mm' : type === 'PULL' ? 'N' : '', result: 'PENDING', note: '' })) };
 }

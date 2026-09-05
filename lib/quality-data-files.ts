@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { getObjectStream, putObject, deleteObjectsBestEffort } from '@/lib/s3';
 import { safeFilename, validateFileSignature } from '@/lib/validation';
 import { readQualityImageGeometry } from '@/lib/quality-image-metadata';
-import { QualityDataError, assertQualityEdit, type QualityActor } from '@/lib/quality-data';
+import { QualityDataError, assertQualityEdit, assertQualitySubmission, type QualityFormData, type QualityActor } from '@/lib/quality-data';
 import { lockQuality, qualityInclude, qualityRevisionReset, snapshotQuality, serializeQuality } from '@/lib/quality-data-service';
 
 const MIME: Record<string, string> = {
@@ -78,7 +78,10 @@ export async function deleteQualityFile(fileId: string, actor: QualityActor, bod
     assertQualityEdit(actor, current);
     const selected = current.attachments.find(item => item.id === fileId && !item.deletedAt);
     if (!selected) throw new QualityDataError('附件已移除', 409);
-    if (current.status === 'SUBMITTED' && (current.data as Record<string, unknown>).mode === 'FILE' && current.attachments.filter(item => !item.deletedAt).length <= 1) throw new QualityDataError('文件归档记录须至少保留一份附件', 409);
+    if (current.status === 'SUBMITTED') {
+      try { assertQualitySubmission(current.data as unknown as QualityFormData, current.attachments.filter(item => !item.deletedAt).length - 1); }
+      catch { throw new QualityDataError('记录须保留有效检验内容或至少一份附件', 409); }
+    }
     await tx.qualityDataAttachment.update({ where: { id: fileId }, data: { deletedAt: new Date() } });
     await tx.qualityDataRecord.update({ where: { id: current.id }, data: { version: { increment: 1 }, updatedById: actor.id, ...qualityRevisionReset() } });
     return snapshotQuality(tx, current.id, actor, 'REMOVE_ATTACHMENT', reason);

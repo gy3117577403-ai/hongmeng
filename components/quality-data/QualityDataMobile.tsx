@@ -11,6 +11,7 @@ import { qualityRequest } from './client';
 export default function QualityDataMobile({ code,user }: { code: string; user: CurrentUserDTO }) {
   const [order,setOrder] = useState<QualityOrder|null>(null),[items,setItems] = useState<QualityRecord[]>([]),[error,setError] = useState(''),[message,setMessage] = useState('');
   const [edit,setEdit] = useState<{type:QualityDataType;record?:QualityRecord;supersedesId?:string}|null>(null),[selected,setSelected] = useState<QualityRecord|null>(null),[refresh,setRefresh] = useState(0);
+  useEffect(()=>{setOrder(null);setItems([]);setEdit(null);setSelected(null);setError('');setMessage('');},[code]);
   useEffect(()=>{
     let active=true;
     qualityRequest<QualityOrder>('qr/'+encodeURIComponent(code)).then(async value=>{

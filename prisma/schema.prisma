@@ -5508,12 +5508,87 @@ model TerminalToolingTerminal {
   updatedAt     DateTime                        @updatedAt @map("updated_at")
   supplierLinks TerminalToolingTerminalSupply[]
   setups        TerminalToolingSetup[]
+  qualityReferences QualityReference[]
 
   @@index([specification])
   @@index([manufacturer])
   @@index([isActive])
   @@index([updatedAt])
   @@map("terminal_tooling_terminals")
+}
+
+model QualityReference {
+  id String @id @default(uuid())
+  code String @unique
+  kind String @default("CRIMP")
+  terminalId String? @map("terminal_id")
+  terminalName String @map("terminal_name")
+  manufacturer String @default("")
+  title String
+  status String @default("DRAFT")
+  data Json
+  searchText String @map("search_text")
+  version Int @default(1)
+  createdById String @map("created_by_id")
+  createdByName String @map("created_by_name")
+  updatedById String @map("updated_by_id")
+  idempotencyKey String @map("idempotency_key")
+  requestHash String @map("request_hash")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  deleteReason String? @map("delete_reason")
+  terminal TerminalToolingTerminal? @relation(fields: [terminalId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  attachments QualityReferenceAttachment[]
+  revisions QualityReferenceRevision[]
+  favorites QualityReferenceFavorite[]
+  @@unique([createdById, idempotencyKey])
+  @@index([deletedAt, updatedAt])
+  @@index([terminalId, deletedAt])
+  @@index([terminalName, manufacturer])
+  @@map("quality_references")
+}
+
+model QualityReferenceAttachment {
+  id String @id @default(uuid())
+  referenceId String @map("reference_id")
+  originalName String @map("original_name")
+  mimeType String @map("mime_type")
+  size Int
+  objectKey String @unique @map("object_key")
+  sha256 String
+  createdById String @map("created_by_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  deletedAt DateTime? @map("deleted_at")
+  reference QualityReference @relation(fields: [referenceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([referenceId, sha256, originalName])
+  @@index([referenceId, deletedAt])
+  @@map("quality_reference_attachments")
+}
+
+model QualityReferenceRevision {
+  id String @id @default(uuid())
+  referenceId String @map("reference_id")
+  version Int
+  action String
+  reason String
+  actorId String @map("actor_id")
+  actorName String @map("actor_name")
+  snapshot Json
+  createdAt DateTime @default(now()) @map("created_at")
+  reference QualityReference @relation(fields: [referenceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  @@unique([referenceId, version])
+  @@map("quality_reference_revisions")
+}
+
+model QualityReferenceFavorite {
+  referenceId String @map("reference_id")
+  userId String @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  reference QualityReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  @@id([referenceId, userId])
+  @@index([userId])
+  @@map("quality_reference_favorites")
 }
 
 model TerminalToolingBlade {

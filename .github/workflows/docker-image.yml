@@ -165,7 +165,7 @@ jobs:
       - name: Quality data PostgreSQL lifecycle integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/quality-data-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/quality-data-integration.test.ts tests/quality-reference-integration.test.ts
       - name: Lint
         run: npm run lint
       - name: Performance regression contracts

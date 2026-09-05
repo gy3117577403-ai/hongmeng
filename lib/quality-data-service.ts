@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { reportRangeQuery } from '@/lib/report-date-range';
+import { bindQualityTeam } from './quality-data-options';
 import {
   assertQualityEdit, assertQualitySubmission, beijingInput, qualityDate, qualityForm, qualityResult, qualityText, qualityType,
   QualityDataError, type QualityActor, type QualityFormData, type QualityOrder, type QualityRecord,
@@ -119,7 +120,7 @@ export async function listQualityRecords(params: URLSearchParams) {
   const [total, items, counts] = await prisma.$transaction([
     prisma.qualityDataRecord.count({ where }),
     prisma.qualityDataRecord.findMany({ where, include: qualityInclude, orderBy: [{ inspectedAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * 20, take: 20 }),
-    prisma.qualityDataRecord.groupBy({ by: ['result', 'status'], where, _count: true, orderBy: { result: 'asc' } }),
+    prisma.qualityDataRecord.groupBy({ by: ['result', 'status'], where: { ...where, status: undefined, result: undefined }, _count: true, orderBy: { result: 'asc' } }),
   ]);
   return { total, page, items: items.map(serializeQuality), counts };
 }
@@ -161,6 +162,7 @@ export async function createQualityRecord(actor: QualityActor, body: Record<stri
       return serializeQuality(previous);
     }
     const orderSnapshot = await readOrder(tx, workOrderId);
+    await bindQualityTeam(tx, data);
     if (sourceQrCode) {
       const ticket = await tx.workOrderQrTicket.findUnique({ where: { publicCode: sourceQrCode } });
       if (!ticket || ticket.status !== 'ACTIVE' || ticket.workOrderId !== workOrderId) throw new QualityDataError('二维码与当前工单不匹配或已停用', 409);
@@ -206,6 +208,7 @@ export async function mutateQualityRecord(id: string, actor: QualityActor, body:
     } else if (action === 'SAVE' || action === 'SUBMIT') {
       assertQualityEdit(actor, current);
       const data = qualityForm(body.data), inspectedAt = qualityDate(body.inspectedAt), title = qualityText(body.title, 160);
+      await bindQualityTeam(tx, data, current.data as unknown as QualityFormData);
       if (!title) throw new QualityDataError('请填写记录标题');
       const status = action === 'SUBMIT' || current.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT';
       if (status === 'SUBMITTED') assertQualitySubmission(data, current.attachments.filter(file => !file.deletedAt).length);
