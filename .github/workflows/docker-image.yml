@@ -166,6 +166,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/process-pending-coverage-recovery-integration.test.ts tests/process-flexible-route-closure-integration.test.ts
+      - name: Production collaboration PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/wip-route-edit-integration.test.ts tests/wip-material-route-integration.test.ts tests/production-snapshot-integration.test.ts tests/production-wip-execution-state-integration.test.ts
       - name: Quality data PostgreSQL lifecycle integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -332,8 +336,15 @@ jobs:
           RUN_DB_INTEGRATION=1 \
             PROCESS_PENDING_RECOVERY_TEST_ORIGIN=http://127.0.0.1:3000 \
             PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
-            npx tsx --test --test-concurrency=1 tests/process-flexible-route-closure-integration.test.ts \
+            npx tsx --test --test-concurrency=1 tests/wip-route-edit-integration.test.ts \
             | tee artifacts/planning-progress-preview/release-flexible-route-runtime.log
+          mkdir -p artifacts/production-collaboration
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime hongmeng-release-smoke node \
+            < scripts/seed-production-board-smoke.cjs > artifacts/production-collaboration/fixture.json
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          PRODUCTION_BOARD_QA_BASE=http://127.0.0.1:3000 \
+            PRODUCTION_BOARD_QA_FIXTURE=artifacts/production-collaboration/fixture.json \
+            node scripts/smoke-production-board-browser.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -615,6 +626,16 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture and quality data lifecycle smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload production collaboration acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-collaboration-${{ github.ref_name }}
+          path: |
+            artifacts/production-collaboration/browser-runtime.txt
+            artifacts/production-collaboration/initial-browser-snapshot.txt
+            artifacts/production-collaboration/production-76-rows.png
+          if-no-files-found: warn
       - name: Upload planning and progress acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -1204,7 +1204,7 @@ export async function loadFieldReportTicket(
   const route = order.processRoute;
   const wipAllocations = route ? await prisma.wipWeekAllocation.findMany({
     where: {
-      lot: { workOrderId: order.id },
+      lot: { workOrderId: order.id, scheduleStatus: { not: 'CANCELLED' } },
       status: { in: ['ACTIVE', 'IN_PROGRESS'] },
     },
     select: {
@@ -1221,6 +1221,7 @@ export async function loadFieldReportTicket(
         },
       },
       steps: {
+        where: { status: { not: 'CANCELLED' }, lotStep: { status: { not: 'CANCELLED' } } },
         select: {
           plannedQty: true,
           completedQty: true,

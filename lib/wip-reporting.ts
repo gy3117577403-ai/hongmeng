@@ -4,6 +4,7 @@ import {
   WipWeekAllocationStatus,
 } from '@prisma/client';
 import { WipWarehouseError, refreshWipLotStatus } from '@/lib/wip-warehouse';
+import { wipEntryCheckpointClosesRoute } from '@/lib/wip-completion-checkpoint';
 
 export type WipReportingResolution = {
   allocationId: string;
@@ -75,6 +76,7 @@ export async function resolveWipReportingAllocation(
       remainingQty: true,
       lot: { select: { id: true, lotNo: true, containerCode: true } },
       allocationSteps: {
+        where: { status: { not: 'CANCELLED' } },
         select: {
           id: true,
           plannedQty: true,
@@ -180,7 +182,7 @@ function proportionalCredit(milliseconds: bigint, quantity: number, totalQuantit
   return milliseconds * BigInt(quantity) / BigInt(totalQuantity);
 }
 
-async function recomputeAllocationAndLot(
+export async function recomputeAllocationAndLot(
   tx: Prisma.TransactionClient,
   allocationId: string,
   lotId: string,
@@ -195,17 +197,25 @@ async function recomputeAllocationAndLot(
     },
   });
   if (!allocation) return;
-  const completedMilliseconds = allocation.steps.reduce(
+  if (allocation.status === WipWeekAllocationStatus.CANCELLED) return;
+  const activeSteps = allocation.steps.filter(step => step.status !== WipRequirementStatus.CANCELLED);
+  const completedMilliseconds = activeSteps.reduce(
     (sum, step) => sum + step.completedStandardMilliseconds,
     0n,
   );
-  const terminalStep = allocation.steps.at(-1);
-  const completedQty = terminalStep
-    ? Math.min(allocation.quantity, terminalStep.completedQty)
-    : 0;
-  const allCompleted = allocation.steps.length > 0
-    && allocation.steps.every(step => step.completedQty >= step.plannedQty);
-  const hasProgress = allocation.steps.some(step => step.completedQty > 0);
+  // Every requirement (including parallel and supplemental operations) must
+  // cover this slice. Display position is not a physical completion endpoint.
+  const order = !activeSteps.length ? await tx.semiFinishedLot.findUniqueOrThrow({ where: { id: lotId },
+    select: { completedStepIds: true, route: { select: { steps: { where: { retiredAt: null, status: { not: 'skipped' } }, select: { id: true } } } },
+      workOrder: { select: { stage: true, completedQty: true, productionTargetQty: true } } } }) : null;
+  const canonicalClosed = Boolean(order && (wipEntryCheckpointClosesRoute({ completedStepIds: order.completedStepIds,
+    liveStepIds: order.route.steps.map(step => step.id) }) || order.workOrder.stage === 'completed'
+    && Number(order.workOrder.completedQty) >= (order.workOrder.productionTargetQty || 1)));
+  const completedQty = activeSteps.length
+    ? Math.max(0, Math.min(allocation.quantity, ...activeSteps.map(step => allocation.quantity - step.plannedQty + step.completedQty)))
+    : canonicalClosed ? allocation.quantity : 0;
+  const allCompleted = completedQty >= allocation.quantity;
+  const hasProgress = activeSteps.some(step => step.completedQty > 0);
   const status = allocation.status === WipWeekAllocationStatus.SUPERSEDED
     ? WipWeekAllocationStatus.SUPERSEDED
     : allCompleted
@@ -218,26 +228,29 @@ async function recomputeAllocationAndLot(
     data: {
       completedQty,
       completedStandardMilliseconds: completedMilliseconds,
+      plannedStandardMilliseconds: activeSteps.reduce((sum, step) => sum + step.plannedStandardMilliseconds, 0n),
       status,
       startedAt: hasProgress ? allocation.startedAt || new Date() : null,
-      completedAt: allCompleted ? new Date() : null,
+      completedAt: allCompleted ? allocation.completedAt || new Date() : null,
       version: { increment: 1 },
     },
   });
   await refreshWipLotStatus(tx, lotId);
 }
 
-async function recomputeLotStep(tx: Prisma.TransactionClient, lotStepId: string): Promise<void> {
+export async function recomputeLotStep(tx: Prisma.TransactionClient, lotStepId: string): Promise<void> {
   const lotStep = await tx.semiFinishedLotStep.findUnique({
     where: { id: lotStepId },
     select: {
       remainingQty: true,
+      status: true,
       allocationSteps: {
-        select: { credits: { where: { status: 'ACTIVE' }, select: { quantity: true } } },
+        where: { status: { not: 'CANCELLED' } },
+        select: { plannedQty: true, allocation: { select: { status: true, completedQty: true } }, credits: { where: { status: 'ACTIVE' }, select: { quantity: true } } },
       },
     },
   });
-  if (!lotStep) return;
+  if (!lotStep || lotStep.status === WipRequirementStatus.CANCELLED) return;
   const completed = lotStep.allocationSteps.reduce((sum, allocationStep) => (
     sum + allocationStep.credits.reduce((creditSum, credit) => creditSum + credit.quantity, 0)
   ), 0);
@@ -245,7 +258,8 @@ async function recomputeLotStep(tx: Prisma.TransactionClient, lotStepId: string)
     ? WipRequirementStatus.COMPLETED
     : completed > 0
       ? WipRequirementStatus.IN_PROGRESS
-      : WipRequirementStatus.SCHEDULED;
+      : lotStep.allocationSteps.some(step => ['ACTIVE', 'IN_PROGRESS'].includes(step.allocation.status))
+        ? WipRequirementStatus.SCHEDULED : WipRequirementStatus.UNSCHEDULED;
   await tx.semiFinishedLotStep.update({ where: { id: lotStepId }, data: { status } });
 }
 
@@ -268,10 +282,11 @@ export async function creditWipCompletion(
       completedQty: true,
       plannedStandardMilliseconds: true,
       completedStandardMilliseconds: true,
-      allocation: { select: { id: true, lotId: true } },
+      status: true,
+      allocation: { select: { id: true, lotId: true, status: true } },
     },
   });
-  if (!allocationStep) {
+  if (!allocationStep || allocationStep.status === 'CANCELLED' || !['ACTIVE', 'IN_PROGRESS'].includes(allocationStep.allocation.status)) {
     throw new WipWarehouseError('半成品排程已变化，请刷新后重试', 'WIP_ALLOCATION_CHANGED', 409);
   }
   const remainingQty = Math.max(0, allocationStep.plannedQty - allocationStep.completedQty);
@@ -328,6 +343,7 @@ export async function voidWipCreditsForCompletion(
           lotStepId: true,
           completedQty: true,
           completedStandardMilliseconds: true,
+          status: true,
           allocation: { select: { id: true, lotId: true } },
         },
       },
@@ -345,7 +361,8 @@ export async function voidWipCreditsForCompletion(
         completedStandardMilliseconds: credit.allocationStep.completedStandardMilliseconds > credit.standardMilliseconds
           ? credit.allocationStep.completedStandardMilliseconds - credit.standardMilliseconds
           : 0n,
-        status: WipRequirementStatus.IN_PROGRESS,
+        status: credit.allocationStep.status === WipRequirementStatus.CANCELLED
+          ? WipRequirementStatus.CANCELLED : WipRequirementStatus.IN_PROGRESS,
       },
     });
     await recomputeLotStep(tx, credit.allocationStep.lotStepId);

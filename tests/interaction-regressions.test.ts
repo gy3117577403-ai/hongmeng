@@ -102,7 +102,7 @@ test('production execution defaults to weekly plan attainment and exposes separa
 
   assert.match(service, /const \[nativeOrders, weekWipContinuations\] = await runTasksWithConcurrencyLimit\(2/);
   assert.match(service, /const wipPlanMetrics = input\.includeSummary && input\.week\.weekStart/);
-  assert.match(service, /input\.includeSummary && input\.week\.weekStart[\s\S]*?loadWipWeekLaborMetrics\(input\.week\.weekStart\)/);
+  assert.match(service, /input\.includeSummary && input\.week\.weekStart[\s\S]*?loadWipWeekLaborMetrics\(input\.week\.weekStart, input\.productionScope\)/);
   assert.match(service, /summary:\s*\{[\s\S]*?wipPlanMetrics,[\s\S]*?executionCountBreakdown/);
   assert.match(component, /pageParams\.set\('includeSummary', '1'\)/, 'the initial board request must include WIP metrics');
   assert.match(component, /subscribeProductionDataInvalidations[\s\S]*?productionBoardCache\.clear\(\)[\s\S]*?setRefreshToken\(value => value \+ 1\)/, 'WIP invalidation must force the summary-bearing first page to refetch');

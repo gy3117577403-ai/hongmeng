@@ -31,12 +31,13 @@ import {
 } from '@/lib/client-load-resilience';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
 import { productionDrawingStageLabel } from '@/lib/production-drawing-readiness';
-import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
+import { completedProductionDeliveryRisk, productionDispatchLifecycle } from '@/lib/production-dispatch-status';
 import { resolveProductionPrimaryAction } from '@/lib/production-primary-action';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
 import { formatProcessDuration } from '@/lib/process-time';
 import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { subscribeProductionDataInvalidations } from '@/lib/production-data-client-sync';
+import { fetchProductionBoardRange, mergeProductionBoardPage, productionBoardOffset, replaceProductionBoardExecution } from '@/lib/production-board-pagination';
 import { productTimeConfigurationRoute, type ProductTimeRouteScope } from '@/lib/workflow-routes';
 import { canManageWipWarehouse } from '@/lib/wip-access';
 import { selectPrimaryWipMovedOutTarget } from '@/lib/wip-navigation';
@@ -516,7 +517,7 @@ type BoardPayload = {
   items: ProductionOrder[];
   arrangementMetrics: ProductionArrangementMetrics;
   filterOptions: { customers: string[] };
-  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+  pagination: { page: number; pageSize: number; total: number; totalPages: number; loadedOffset?: number; snapshotToken?: string | null };
   summary?: ProductionSummary;
 };
 
@@ -1039,7 +1040,8 @@ function nextRouteSteps(order: ProductionOrder): WorkOrderProcessRouteDTO['steps
 }
 
 function nextProcessName(order: ProductionOrder): string {
-  const lifecycle = resolveProductionLifecycle({
+  const lifecycle = productionDispatchLifecycle({
+    continuationStatus: order.wipContinuation?.status,
     routeCompleted: order.processRoute?.status === 'completed',
     workOrderCompletedAt: order.completedAt,
   });
@@ -1060,6 +1062,12 @@ function dispatchRisk(order: ProductionOrder): DispatchRisk {
       tone: highRisk ? 'danger' : 'warning',
       quality: true,
     };
+  }
+  if (order.stage === 'completed') {
+    return completedProductionDeliveryRisk({
+      completedAt: order.wipContinuation ? null : order.completedAt,
+      customerDeliveryDate: order.deliveryDay,
+    });
   }
   const criticalAlert = order.productionAlerts.find(alert => alert.tone === 'red');
   if (criticalAlert) return { label: criticalAlert.label, detail: '需要立即处理', tone: 'danger', alert: criticalAlert };
@@ -1149,13 +1157,14 @@ function executionParams(
 async function fetchProductionBoardPage(
   params: URLSearchParams,
   signal: AbortSignal,
-  options: { offset?: number; includeSummary?: boolean } = {},
+  options: { offset?: number; includeSummary?: boolean; snapshotToken?: string | null } = {},
 ): Promise<BoardPayload> {
   const pageParams = new URLSearchParams(params);
   const offset = Math.max(0, options.offset || 0);
   pageParams.set('page', String(Math.floor(offset / 60) + 1));
   pageParams.set('pageSize', '60');
   pageParams.delete('displayPage');
+  if (options.snapshotToken) pageParams.set('snapshotToken', options.snapshotToken);
   if (options.includeSummary === false) {
     pageParams.delete('includeSummary');
     pageParams.set('skipReconcile', '1');
@@ -1192,7 +1201,7 @@ async function fetchProductionBoardPage(
       });
       continue;
     }
-    throw new Error(body.error || '生产看板加载失败');
+    throw Object.assign(new Error(body.error || '生产看板加载失败'), { code: body.code });
   }
   throw new Error('生产看板加载失败');
 }
@@ -1224,7 +1233,7 @@ function findProductionOrderCard(orderId?: string, stage?: StageKey): HTMLElemen
 
 function replaceOrder(payload: BoardPayload | null, order: ProductionOrder): BoardPayload | null {
   if (!payload) return payload;
-  const items = payload.items.map(item => item.id === order.id ? order : item);
+  const items = replaceProductionBoardExecution(payload.items, order);
   const stageCounts: Record<StageKey, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
   items.forEach(item => cardSegments(item).forEach(segment => { stageCounts[segment.stage] += 1; }));
   return { ...payload, items, stageCounts };
@@ -1277,6 +1286,8 @@ export default function ProductionExecutionCenter({
     || user.access.capabilities.includes('PLANNING:UPDATE');
   const [summarySnapshot, setSummarySnapshot] = useState<CacheBoundSnapshot<ProductionSummary> | null>(null);
   const [boardSnapshot, setBoardSnapshot] = useState<CacheBoundSnapshot<BoardPayload> | null>(null);
+  const boardSnapshotRef = useRef(boardSnapshot);
+  boardSnapshotRef.current = boardSnapshot;
   const [view, setView] = useState<ViewKey>('board');
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
@@ -1314,11 +1325,15 @@ export default function ProductionExecutionCenter({
   const [refreshToken, setRefreshToken] = useState(0);
   const productionRequestInFlightRef = useRef(false);
   const productionRefreshPendingRef = useRef(false);
+  const productionMutationRevisionRef = useRef(0);
   const autoRefreshFailureCountRef = useRef(0);
   const nextAutoRefreshAtRef = useRef(0);
   useEffect(() => {
     const refreshControl = () => {
-      if (productionRequestInFlightRef.current) return;
+      if (productionRequestInFlightRef.current) {
+        productionRefreshPendingRef.current = true;
+        return;
+      }
       setRefreshToken(value => value + 1);
     };
     window.addEventListener('production-control-updated', refreshControl);
@@ -1327,6 +1342,9 @@ export default function ProductionExecutionCenter({
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState('');
+  const [loadMoreNeedsRefresh, setLoadMoreNeedsRefresh] = useState(false);
+  const [loadMoreRetryToken, setLoadMoreRetryToken] = useState(0);
   const [loadError, setLoadError] = useState('');
   const [toast, setToast] = useState('');
   useToastBridge(toast, setToast);
@@ -1403,6 +1421,7 @@ export default function ProductionExecutionCenter({
   const returnKeyRef = useRef('');
   const requestRef = useRef(0);
   const loadMoreRequestRef = useRef<AbortController | null>(null);
+  const loadMoreFailedRef = useRef(false);
   const processedSummaryRefreshRef = useRef(0);
   const reconciliationRefreshTokenRef = useRef(-1);
   const reconciledScopeKeysRef = useRef(new Set<string>());
@@ -1532,6 +1551,13 @@ export default function ProductionExecutionCenter({
     params.set('skipReconcile', '1');
     if (scope === 'history' && weekStart) params.set('weekStart', weekStart);
     const cacheKey = activeBoardCacheKey;
+    const requestId = requestRef.current;
+    const mutationRevision = productionMutationRevisionRef.current;
+    const summaryIsCurrent = () => !controller.signal.aborted
+      && activeBoardCacheKeyRef.current === cacheKey
+      && requestRef.current === requestId
+      && productionMutationRevisionRef.current === mutationRevision
+      && !productionRequestInFlightRef.current;
     fetch(`/api/dashboard/production-summary?${params.toString()}`, { cache: 'no-store', signal: controller.signal })
       .then(async response => {
         const body = await response.json().catch(() => ({}));
@@ -1540,12 +1566,12 @@ export default function ProductionExecutionCenter({
         return body.data as ProductionSummary;
       })
       .then(data => {
-        if (activeBoardCacheKeyRef.current !== cacheKey) return;
+        if (!summaryIsCurrent()) return;
         setSummarySnapshot({ cacheKey, value: data });
         if (scope === 'history' && !weekStart && data.weekStartDate) setWeekStart(data.weekStartDate);
       })
       .catch(reason => {
-        if (reason instanceof DOMException && reason.name === 'AbortError') return;
+        if (!summaryIsCurrent()) return;
         setLoadError(reason instanceof Error ? reason.message : '生产摘要加载失败');
       });
     return () => controller.abort();
@@ -1555,7 +1581,13 @@ export default function ProductionExecutionCenter({
     if (!stateReady) return undefined;
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
+    const mutationRevision = productionMutationRevisionRef.current;
     productionRequestInFlightRef.current = true;
+    loadMoreRequestRef.current?.abort();
+    loadMoreRequestRef.current = null;
+    loadMoreFailedRef.current = false;
+    setLoadingMore(false);
+    setLoadMoreError('');
     const controller = new AbortController();
     const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId, 12, targetWipAllocationId);
     const cacheKey = activeBoardCacheKey;
@@ -1567,19 +1599,25 @@ export default function ProductionExecutionCenter({
     if (reconciledScopeKeysRef.current.has(reconciliationScopeKey)) params.set('skipReconcile', '1');
     else reconciledScopeKeysRef.current.add(reconciliationScopeKey);
     const cached = productionBoardCache.get(cacheKey);
+    const retained = cacheBoundSnapshotValue(boardSnapshotRef.current, cacheKey) || cached;
+    const loadedOffset = retained ? productionBoardOffset(retained) : 0;
     if (cached) {
       setBoardSnapshot({ cacheKey, value: cached });
       setSummarySnapshot(cached.summary ? { cacheKey, value: cached.summary } : null);
-      setLoading(false);
     } else {
       setBoardSnapshot(current => retainCacheBoundSnapshot(current, cacheKey));
       setSummarySnapshot(current => retainCacheBoundSnapshot(current, cacheKey));
-      setLoading(true);
     }
+    setLoading(true);
     setLoadError('');
-    fetchProductionBoardPage(params, controller.signal)
+    fetchProductionBoardRange({
+      fetchPage: (offset, includeSummary, snapshotToken) => fetchProductionBoardPage(params, controller.signal, { offset, includeSummary, snapshotToken }),
+      loadedOffset,
+      signal: controller.signal,
+    })
       .then(data => {
-        if (requestId !== requestRef.current) return;
+        if (controller.signal.aborted || requestId !== requestRef.current || activeBoardCacheKeyRef.current !== cacheKey
+          || productionMutationRevisionRef.current !== mutationRevision) return;
         productionBoardCache.set(cacheKey, data);
         if (productionBoardCache.size > 8) productionBoardCache.delete(productionBoardCache.keys().next().value || '');
         setBoardSnapshot({ cacheKey, value: data });
@@ -1592,7 +1630,8 @@ export default function ProductionExecutionCenter({
       })
       .catch(reason => {
         if (reason instanceof DOMException && reason.name === 'AbortError') return;
-        if (requestId === requestRef.current) {
+        if (requestId === requestRef.current && productionMutationRevisionRef.current === mutationRevision
+          && activeBoardCacheKeyRef.current === cacheKey) {
           const failures = autoRefreshFailureCountRef.current + 1;
           autoRefreshFailureCountRef.current = failures;
           nextAutoRefreshAtRef.current = Date.now() + autoRefreshDelayMs(failures, Math.random());
@@ -1694,7 +1733,7 @@ export default function ProductionExecutionCenter({
       const now = Date.now();
       if (!shouldStartAutoRefresh({
         visible: document.visibilityState === 'visible',
-        requestInFlight: productionRequestInFlightRef.current,
+        requestInFlight: productionRequestInFlightRef.current || Boolean(loadMoreRequestRef.current),
         now,
         nextAllowedAt: nextAutoRefreshAtRef.current,
       })) return;
@@ -1882,45 +1921,47 @@ export default function ProductionExecutionCenter({
     () => dispatchAllItems.slice(0, page * dispatchPageSize),
     [dispatchAllItems, dispatchPageSize, page],
   );
-  const dispatchHasMore = dispatchItems.length < (board?.pagination.total || dispatchAllItems.length);
+  const dispatchHasMore = dispatchItems.length < dispatchAllItems.length
+    || Boolean(board && productionBoardOffset(board) < board.pagination.total);
 
   useEffect(() => {
-    if (!board || loading || loadingMore) return undefined;
+    if (!board || loading || productionRequestInFlightRef.current || loadMoreFailedRef.current) return undefined;
     if (dispatchItems.length < board.items.length) return undefined;
-    if (board.items.length >= board.pagination.total) return undefined;
+    if (productionBoardOffset(board) >= board.pagination.total) return undefined;
     if (page * dispatchPageSize <= board.items.length) return undefined;
     const controller = new AbortController();
     loadMoreRequestRef.current?.abort();
     loadMoreRequestRef.current = controller;
-    const offset = board.items.length;
+    const offset = productionBoardOffset(board);
     const cacheKey = activeBoardCacheKey;
+    const requestId = requestRef.current;
     const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId, 12, targetWipAllocationId);
     setLoadingMore(true);
-    fetchProductionBoardPage(params, controller.signal, { offset, includeSummary: false })
+    fetchProductionBoardPage(params, controller.signal, { offset, includeSummary: false, snapshotToken: board.pagination.snapshotToken })
       .then(nextPage => {
-        if (controller.signal.aborted || activeBoardCacheKeyRef.current !== cacheKey) return;
+        if (controller.signal.aborted || requestRef.current !== requestId || activeBoardCacheKeyRef.current !== cacheKey) return;
+        const merged = mergeProductionBoardPage(board, nextPage);
         setBoardSnapshot(current => {
           const currentBoard = cacheBoundSnapshotValue(current, cacheKey);
-          if (!currentBoard) return current;
-          const seen = new Set(currentBoard.items.map(item => item.id));
-          const merged = {
-            ...currentBoard,
-            items: [...currentBoard.items, ...nextPage.items.filter(item => !seen.has(item.id))],
-            pagination: { ...nextPage.pagination, page: 1 },
-          };
+          if (!currentBoard || currentBoard !== board || requestRef.current !== requestId) return current;
           productionBoardCache.set(cacheKey, merged);
           return { cacheKey, value: merged };
         });
       })
       .catch(reason => {
-        if (controller.signal.aborted) return;
-        setLoadError(reason instanceof Error ? reason.message : '更多生产工单加载失败');
+        if (controller.signal.aborted || requestRef.current !== requestId || activeBoardCacheKeyRef.current !== cacheKey) return;
+        loadMoreFailedRef.current = true;
+        setLoadMoreNeedsRefresh(reason?.code === 'PRODUCTION_SNAPSHOT_EXPIRED');
+        setLoadMoreError(reason instanceof Error ? reason.message : '更多生产工单加载失败');
       })
       .finally(() => {
-        if (loadMoreRequestRef.current === controller) setLoadingMore(false);
+        if (loadMoreRequestRef.current === controller) {
+          loadMoreRequestRef.current = null;
+          setLoadingMore(false);
+        }
       });
     return () => controller.abort();
-  }, [activeBoardCacheKey, advanced, board, debouncedKeyword, dispatchItems.length, dispatchPageSize, loading, loadingMore, page, quick, scope, targetWipAllocationId, targetWorkOrderId, view, weekStart]);
+  }, [activeBoardCacheKey, advanced, board, debouncedKeyword, dispatchItems.length, dispatchPageSize, loading, loadMoreRetryToken, page, quick, scope, targetWipAllocationId, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     if (page <= dispatchBatchCount) return;
@@ -1932,7 +1973,7 @@ export default function ProductionExecutionCenter({
     const target = dispatchLoadMoreRef.current;
     if (!root || !target || loading || !dispatchHasMore) return undefined;
     const observer = new IntersectionObserver(entries => {
-      if (!entries[0]?.isIntersecting) return;
+      if (!entries[0]?.isIntersecting || loadMoreRequestRef.current || loadMoreFailedRef.current) return;
       setPage(current => Math.min(dispatchBatchCount, current + 1));
     }, {
       root,
@@ -2390,7 +2431,22 @@ export default function ProductionExecutionCenter({
       if (!current || current.cacheKey !== cacheKey) return current;
       return { cacheKey, value: replaceOrder(current.value, order) || current.value };
     });
-    setDetailOrder(current => current?.id === order.id ? order : current);
+    setDetailOrder(current => current?.executionKey === order.executionKey ? order : current);
+  }
+
+  function refreshAfterExecutionUpdate(order: ProductionOrder): void {
+    productionMutationRevisionRef.current += 1;
+    productionBoardCache.clear();
+    if (productionRequestInFlightRef.current) {
+      // Invalidate the response, but keep its request ID so finally releases loading and starts the queued refresh.
+      productionRefreshPendingRef.current = true;
+      return;
+    }
+    if (boardRef.current?.items.some(item => item.id === order.id && item.executionKey !== order.executionKey)) {
+      setRefreshToken(value => value + 1);
+    } else {
+      setSummaryRefreshToken(value => value + 1);
+    }
   }
 
   async function requestExecutionPatch(orderId: string, payload: ExecutionPatchPayload, fallbackError: string): Promise<ProductionOrder> {
@@ -2410,8 +2466,7 @@ export default function ProductionExecutionCenter({
     try {
       const updated = await requestExecutionPatch(order.id, payload, successMessage);
       applyLocalOrder(updated);
-      productionBoardCache.clear();
-      setSummaryRefreshToken(value => value + 1);
+      refreshAfterExecutionUpdate(updated);
       setToast(successMessage);
       return updated;
     } catch (reason) {
@@ -2820,8 +2875,7 @@ export default function ProductionExecutionCenter({
       const updated = withProductionDerived(responseOrder as ProductionOrder);
       applyLocalOrder(updated);
       setNextStepRequest(null);
-      productionBoardCache.clear();
-      setSummaryRefreshToken(value => value + 1);
+      refreshAfterExecutionUpdate(updated);
       setToast('工艺路线已启动，工单已进入首道工序');
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : '生产数量流转失败';
@@ -3363,8 +3417,10 @@ export default function ProductionExecutionCenter({
               />)}
               {loading && !board && <DispatchRowSkeleton count={dispatchPageSize} />}
               {!loading && board && !board.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
-              {!loading && dispatchAllItems.length > 0 && <div ref={dispatchLoadMoreRef} className={`production-dispatch-load-more ${dispatchHasMore ? 'loading' : 'complete'}`} aria-live="polite">
-                {dispatchHasMore
+              {dispatchAllItems.length > 0 && <div ref={dispatchLoadMoreRef} className={`production-dispatch-load-more ${loadingMore ? 'loading' : dispatchHasMore ? '' : 'complete'}`} aria-live="polite">
+                {loadMoreError
+                  ? <><span role="alert">{loadMoreError}</span><button type="button" onClick={() => { loadMoreFailedRef.current = false; setLoadMoreError(''); if (loadMoreNeedsRefresh) setRefreshToken(value => value + 1); else setLoadMoreRetryToken(value => value + 1); }}>{loadMoreNeedsRefresh ? '刷新当前查询' : '重试加载下一页'}</button></>
+                  : dispatchHasMore
                   ? <><Loader2 size={14} aria-hidden="true" /><span>{loadingMore ? '正在从服务器加载下一页' : `继续下滑加载 · 已取 ${dispatchAllItems.length}/${board?.pagination.total || dispatchAllItems.length} 单`}</span></>
                   : <><CheckCircle2 size={14} aria-hidden="true" /><span>无更多数据 · 共 {board?.pagination.total || dispatchAllItems.length} 单</span></>}
               </div>}
@@ -3373,15 +3429,15 @@ export default function ProductionExecutionCenter({
 
           {insightsOpen && <button className="production-dispatch-scrim" type="button" aria-label="关闭调度侧栏" onClick={closeInsights} />}
           <aside ref={insightsPanelRef} id="production-insight-panel" className={`production-dispatch-rail ${insightsOpen ? 'open' : ''}`} aria-label="生产调度侧栏" aria-hidden={!insightsOpen} aria-busy={initialBoardLoading} tabIndex={-1}>
-            <header><div><span>实时协同</span><strong>调度建议</strong></div><button ref={insightsCloseRef} type="button" aria-label="关闭调度侧栏" title="关闭调度侧栏" onClick={closeInsights}><X size={18} aria-hidden="true" /></button></header>
+            <header><div><span>已加载范围 · {dispatchAllItems.length} 项</span><strong>调度建议</strong></div><button ref={insightsCloseRef} type="button" aria-label="关闭调度侧栏" title="关闭调度侧栏" onClick={closeInsights}><X size={18} aria-hidden="true" /></button></header>
             <section className="production-dispatch-rail-section production-dispatch-alerts" aria-label="待处理异常">
               <div className="production-dispatch-rail-title"><strong><AlertTriangle size={15} aria-hidden="true" />待处理异常</strong><button type="button" onClick={() => applyDispatchPreset('exceptions')}>查看全部</button></div>
               <div className="production-dispatch-alert-summary"><AlertTriangle size={20} aria-hidden="true" /><b>{dispatchAlertItems.length}</b><span>项需要处理</span></div>
               {dispatchAlerts.map(item => <button type="button" key={item.id} onClick={() => openProductionIssue(item.order, item.alert.code, item.order.stage)}><span><b title={specText(item.order)}>{specText(item.order)}</b><small>{item.alert.label}</small></span><em className={item.alert.tone}>{item.alert.tone === 'red' ? '紧急' : '关注'}</em></button>)}
-              {!dispatchAlerts.length && <p>当前筛选范围内没有待处理异常</p>}
+              {!dispatchAlerts.length && <p>已加载范围内没有待处理异常</p>}
             </section>
             <section className="production-dispatch-rail-section" aria-label="工序待处理量">
-              <div className="production-dispatch-rail-title"><strong>工序待处理量</strong><span>实时</span></div>
+              <div className="production-dispatch-rail-title"><strong>工序待处理量</strong><span>已加载范围</span></div>
               <div className="production-dispatch-loads">{processLoads.map((item, index) => {
                 const maximum = processLoads[0]?.quantity || 1;
                 const percentage = Math.max(4, Math.round((item.quantity / maximum) * 100));
@@ -3817,15 +3873,17 @@ function ProductionDispatchRow({
           : '';
   const risk = dispatchRisk(order);
   const selectedRow = selected.includes(order.id);
-  const lifecycle = resolveProductionLifecycle({
+  const lifecycle = productionDispatchLifecycle({
+    continuationStatus: wipContinuation?.status,
     routeCompleted: route?.status === 'completed',
     workOrderCompletedAt: order.completedAt,
   });
-  const currentProcess = wipRemainingSteps[0]?.processName
-    || (lifecycle.awaitingBranchClosure ? '主路线完成' : currentProcessName(order));
+  const currentProcess = isWipContinuation && lifecycle.aggregateCompleted
+    ? isWipHistoricalContinuation ? '历史已完成' : '续作已完成'
+    : wipRemainingSteps[0]?.processName || (lifecycle.awaitingBranchClosure ? '主路线完成' : currentProcessName(order));
   const nextProcess = wipRemainingSteps[1]?.processName || (isWipContinuation ? '完成续作' : nextProcessName(order));
   const upcomingSteps = isWipContinuation ? wipRemainingSteps.slice(1) : nextRouteSteps(order);
-  const routeProgress = isWipContinuation ? laborPercentage ?? 0 : route?.progress ?? 0;
+  const routeProgress = isWipContinuation ? lifecycle.aggregateCompleted ? 100 : laborPercentage ?? 0 : route?.progress ?? 0;
   const continuationStepById = new Map(wipContinuation?.steps.map(step => [step.stepId, step] as const) || []);
   const firstRemainingStepId = wipRemainingSteps[0]?.stepId;
   const routeSteps = isWipContinuation && route
@@ -3854,7 +3912,7 @@ function ProductionDispatchRow({
     && (Boolean(continuableArrangement) || activeArrangements.length === 0);
   const unitLabel = route?.currentStep?.unitLabel || route?.steps[0]?.unitLabel || '件';
   const routeReadiness = processRouteExecutionReadiness(route?.steps || []);
-  const routeNeedsMaintenance = !route || route.status === 'draft' || !routeReadiness.ready;
+  const routeNeedsMaintenance = !lifecycle.aggregateCompleted && (!route || route.status === 'draft' || !routeReadiness.ready);
   const primaryText = isWipHistoricalContinuation
     ? '查看记录'
     : wipTargetStartsInFuture && wipContinuation
@@ -3924,7 +3982,7 @@ function ProductionDispatchRow({
     <div className="production-dispatch-process-cell">
     <button className="production-dispatch-process-flow" type="button" title="进入流程中心查看完整工序进度" onClick={() => openWorkflow(order, displayStage)}>
       <span className="production-dispatch-process-flow-head">
-        <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{isWipContinuation ? '执行半成品剩余工序' : isMovedOutSource ? '整单工艺事实 · 转出后保留历史进度' : lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
+        <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{isWipContinuation ? lifecycle.aggregateCompleted ? '本次续作事实已归档' : '执行半成品剩余工序' : isMovedOutSource ? '整单工艺事实 · 转出后保留历史进度' : lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
         <em>{isWipContinuation ? `${wipContinuation?.steps.filter(step => step.remainingQty <= 0).length || 0}/${wipContinuation?.steps.length || 0}` : route ? `${route.completedStepCount}/${route.stepCount}` : '未建路线'}</em>
         <span className="production-dispatch-process-next"><ArrowRight size={13} aria-hidden="true" /><b>{nextProcess}</b><small>{upcomingSteps.length ? `${upcomingSteps.length} 道待衔接` : lifecycle.aggregateCompleted ? '生产已结束' : routeNeedsMaintenance ? '等待发布' : '末道工序'}</small></span>
       </span>

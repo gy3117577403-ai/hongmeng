@@ -1,3 +1,5 @@
+import { creditWipCompletion, resolveWipReportingAllocation } from '@/lib/wip-reporting';
+import { syncWipRequirementsAfterRouteEdit } from '@/lib/wip-route-sync';
 import {
   Prisma,
   ProcessCompletionCoverageStatus,
@@ -206,6 +208,7 @@ export type ActivateProcessRouteChangeCommand = MutationIdentity & {
 };
 
 export type CompleteProcessSupplementObligationCommand = MutationIdentity & {
+  wipAllocationId?: unknown;
   obligationId: string;
   routeId?: unknown;
   publicCode?: unknown;
@@ -3760,6 +3763,10 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
             reason: `工艺变更 ${change.id} 已启用`,
           })
         : null;
+      if (appliesCurrent) await syncWipRequirementsAfterRouteEdit(tx, {
+        routeId: change.routeId, actorId: identity.userId, changeKey: `route-change:${change.id}`,
+        reason: `工艺变更 ${change.id} 同步半成品剩余任务`,
+      });
       const dailyTaskSync = appliesCurrent
         ? await synchronizeRouteChangeDailyTasks(tx, {
             changeId: change.id,
@@ -4002,6 +4009,7 @@ export async function completeProcessSupplementObligation(
         defectQty: true,
         reportedUnitQty: true,
         reportedDefectUnitQty: true,
+        wipCredits: { select: { allocationStep: { select: { allocationId: true } } } },
         participants: { orderBy: { position: 'asc' }, select: { employeeId: true } },
         laborPool: { select: { totalStandardLaborMilliseconds: true, claims: { where: { status: ProcessLaborClaimStatus.ACTIVE } } } },
         supplementObligation: {
@@ -4037,6 +4045,7 @@ export async function completeProcessSupplementObligation(
         || duplicate.reportedDefectUnitQty !== reportedDefectUnitQty
         || duplicate.workDate.getTime() !== workDate.getTime()
         || !sameEmployees
+        || (clean(command.wipAllocationId, 80) || '') !== (duplicate.wipCredits[0]?.allocationStep.allocationId || '')
       ) {
         throw new ProcessRouteChangeServiceError(
           '请求标识已用于其他报工',
@@ -4178,6 +4187,14 @@ export async function completeProcessSupplementObligation(
       unitsPerProduct: obligation.unitsPerProduct,
     });
     const remainingActionQty = Math.max(0, actionTargetQty - obligation.reportedGoodUnitQty);
+    const wipResolution = await resolveWipReportingAllocation(tx, {
+      workOrderId: obligation.workOrderId, stepId: obligation.displayStepId, workDate,
+      processedQty: reportQuantities.productGoodQty, reportedProductQty: processedQty,
+      reportableQty: remainingQty, requestedAllocationId: clean(command.wipAllocationId, 80) || null,
+      reportedGoodUnitQty: reportQuantityBasis === 'action' ? reportQuantities.reportedGoodUnitQty : undefined,
+      reportableUnitQty: reportQuantityBasis === 'action' ? remainingActionQty : undefined,
+      unitsPerProduct: obligation.unitsPerProduct,
+    });
     if (reportQuantities.reportedGoodUnitQty > remainingActionQty) {
       throw new ProcessRouteChangeServiceError(
         `本次合格动作数量不能超过剩余数量 ${remainingActionQty}`,
@@ -4357,6 +4374,7 @@ export async function completeProcessSupplementObligation(
     if (obligationUpdate.count !== 1) {
       throw new ProcessRouteChangeServiceError('补充工序报工版本冲突', 409, 'PROCESS_SUPPLEMENT_VERSION_CONFLICT');
     }
+    await creditWipCompletion(tx, { resolution: wipResolution, completionId: completion.id, workDate, idempotencyKey: identity.idempotencyKey });
     await tx.workOrderProcessStep.update({
       where: { id: obligation.displayStepId },
       data: {

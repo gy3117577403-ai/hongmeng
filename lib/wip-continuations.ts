@@ -86,6 +86,7 @@ export type WipContinuationProjection = {
   }>;
   scheduledBy: { id: string; displayName: string };
   scheduledAt: string;
+  completedAt: string | null;
   steps: WipContinuationStep[];
 };
 
@@ -147,8 +148,7 @@ export async function loadWipSourceLots(input: {
           select: { quantity: true, completedQty: true },
         },
         steps: {
-          orderBy: { position: 'desc' },
-          take: 1,
+          where: { status: { not: 'CANCELLED' } },
           select: {
             remainingQty: true,
             allocationSteps: {
@@ -168,20 +168,15 @@ export async function loadWipSourceLots(input: {
     .sort((first, second) => first.enteredAt.getTime() - second.enteredAt.getTime() || first.id.localeCompare(second.id))
     .slice(0, requestedTake ?? undefined);
   return lots.map(lot => {
-    const terminalStep = lot.steps[0];
-    const terminalCompletedQuantity = terminalStep?.allocationSteps.reduce((sum, allocationStep) => (
-      sum + allocationStep.credits.reduce((creditSum, credit) => creditSum + credit.quantity, 0)
-    ), 0) || 0;
+    const outstandingQuantity = lot.steps.reduce((maximum, step) => Math.max(maximum,
+      step.remainingQty - step.allocationSteps.reduce((sum, allocationStep) =>
+        sum + allocationStep.credits.reduce((creditSum, credit) => creditSum + credit.quantity, 0), 0)), 0);
     return {
       lotId: lot.id,
       lotNo: lot.lotNo,
       lotQuantity: lot.quantity,
-      // Terminal active credits are the WIP quantities already reflected in
-      // workOrder.completedQty. Superseded allocation history remains linked
-      // through its allocation steps, so it is intentionally included here.
-      outstandingQuantity: terminalStep
-        ? Math.max(0, terminalStep.remainingQty - terminalCompletedQuantity)
-        : lot.quantity,
+      // Display order can change, and parallel/supplemental work can remain.
+      outstandingQuantity: lot.steps.length ? outstandingQuantity : lot.scheduleStatus === 'COMPLETED' ? 0 : lot.quantity,
       scheduledOutstandingQuantity: lot.allocations.reduce((sum, allocation) => (
         sum + Math.max(0, allocation.quantity - allocation.completedQty)
       ), 0),
@@ -282,6 +277,7 @@ export async function loadWipContinuations(input: {
         status: true,
         reason: true,
         scheduledAt: true,
+        completedAt: true,
         scheduledBy: { select: { id: true, displayName: true } },
         team: { select: { id: true, code: true, name: true } },
         workers: {
@@ -326,6 +322,7 @@ export async function loadWipContinuations(input: {
           },
         },
         steps: {
+          where: { status: { not: 'CANCELLED' } },
           orderBy: { lotStep: { position: 'asc' } },
           select: {
             id: true,
@@ -422,6 +419,7 @@ export async function loadWipContinuations(input: {
       })),
       scheduledBy: record.scheduledBy,
       scheduledAt: record.scheduledAt.toISOString(),
+      completedAt: record.completedAt?.toISOString() || null,
       steps: visibleSteps.map(step => {
         const stepPlanned = historical
           ? step.completedStandardMilliseconds

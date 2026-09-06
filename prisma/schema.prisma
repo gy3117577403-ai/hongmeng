@@ -3220,6 +3220,30 @@ model ProductionCarryover {
   @@map("production_carryovers")
 }
 
+// Short-lived, scope-bound read snapshots. No business records are modified.
+model ProductionExecutionSnapshot {
+  id        String   @id @default(uuid())
+  queryKey  String   @map("query_key")
+  metadata  Json
+  rowCount  Int      @map("row_count")
+  createdAt DateTime @default(now()) @map("created_at")
+  expiresAt DateTime @map("expires_at")
+  rows      ProductionExecutionSnapshotRow[]
+
+  @@index([expiresAt])
+  @@map("production_execution_snapshots")
+}
+
+model ProductionExecutionSnapshotRow {
+  snapshotId String @map("snapshot_id")
+  ordinal    Int
+  payload    Json
+  snapshot   ProductionExecutionSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@id([snapshotId, ordinal])
+  @@map("production_execution_snapshot_rows")
+}
+
 model SemiFinishedLot {
   id                     String                     @id @default(uuid())
   lotNo                  String                     @unique @map("lot_no")

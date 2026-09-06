@@ -21,6 +21,7 @@ import {
   assertProductionScopeRead,
   assertProductionScopeWrite,
   assertProductionTeam,
+  productionTeamScopeWhere,
 } from '@/lib/production-access-scope';
 import { lockProductionWorkOrder } from '@/lib/production-work-order-lock';
 import {
@@ -30,6 +31,8 @@ import {
   wipOwnershipKey,
 } from '@/lib/wip-native-ownership';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
+import { materialSequenceGroup } from '@/lib/process-material-sequence';
+import { wipEntryCheckpointClosesRoute } from '@/lib/wip-completion-checkpoint';
 
 const OPEN_LOT_STATUSES: SemiFinishedScheduleStatus[] = [
   SemiFinishedScheduleStatus.UNSCHEDULED,
@@ -183,6 +186,9 @@ const batchEntrySelect = Prisma.validator<Prisma.ProductionPlanBatchSelect>()({
               stageGroup: true,
               position: true,
               sequenceGroup: true,
+              materialSequenceGroup: true,
+              executionMode: true,
+              supplementObligation: { select: { status: true, requiredQty: true, systemCoveredQty: true, reportedQty: true } },
               timeBasis: true,
               standardMillisecondsPerUnit: true,
               setupMilliseconds: true,
@@ -200,6 +206,33 @@ const batchEntrySelect = Prisma.validator<Prisma.ProductionPlanBatchSelect>()({
 });
 
 type BatchEntryRecord = Prisma.ProductionPlanBatchGetPayload<{ select: typeof batchEntrySelect }>;
+type EntryStep = NonNullable<NonNullable<BatchEntryRecord['workOrder']>['processRoute']>['steps'][number];
+
+function materialTerminalSteps(steps: readonly EntryStep[]): EntryStep[] {
+  const ordinary = steps.filter(step => step.executionMode === 'NORMAL');
+  if (!ordinary.length) return [];
+  const terminalGroup = Math.max(...ordinary.map(materialSequenceGroup));
+  return ordinary.filter(step => materialSequenceGroup(step) === terminalGroup);
+}
+
+function materialTerminalQuantities(
+  batch: BatchEntryRecord,
+  ownership: ReadonlyMap<string, number>,
+) {
+  const terminal = materialTerminalSteps(batch.workOrder?.processRoute?.steps || []);
+  // Parallel operations share a product quantity. A larger result in one
+  // operation cannot become finished output before its peers catch up.
+  return {
+    finished: terminal.length ? Math.min(...terminal.map(step => step.goodOutputQty)) : 0,
+    outstanding: Math.max(0, ...terminal.map(step => (
+      ownership.get(wipOwnershipKey(batch.workOrder!.id, batch.id, step.id)) || 0
+    ))),
+  };
+}
+
+function fulfilledSupplement(step: EntryStep): boolean {
+  return step.executionMode === 'SUPPLEMENTAL_OBLIGATION' && step.supplementObligation?.status === 'FULFILLED';
+}
 
 export type WipEntryPreview = {
   batchId: string;
@@ -241,18 +274,13 @@ async function entryPreviewWithDb(
     throw new WipWarehouseError('工艺路线尚未确认，无法固定剩余工序和工时快照', 'WIP_ROUTE_NOT_CONFIRMED', 409);
   }
   const routeSteps = batch.workOrder.processRoute.steps;
-  const terminalStep = routeSteps.at(-1);
-  const finalGoodQuantity = terminalStep?.goodOutputQty || 0;
-  const terminalOwnership = terminalStep
-    ? await loadOutstandingWipByProcess(db, [{
-        workOrderId: batch.workOrder.id,
-        productionPlanBatchId: batch.id,
-        stepId: terminalStep.id,
-      }])
-    : new Map<string, number>();
-  const outstandingWipQuantity = terminalStep
-    ? terminalOwnership.get(wipOwnershipKey(batch.workOrder.id, batch.id, terminalStep.id)) || 0
-    : 0;
+  const workOrderId = batch.workOrder.id;
+  const terminalOwnership = await loadOutstandingWipByProcess(db, routeSteps.map(step => ({
+    workOrderId,
+    productionPlanBatchId: batch.id,
+    stepId: step.id,
+  })));
+  const { finished: finalGoodQuantity, outstanding: outstandingWipQuantity } = materialTerminalQuantities(batch, terminalOwnership);
   // WIP reports update the canonical terminal step. Subtract only unfinished
   // WIP ownership here; subtracting the original lot quantity would count a
   // completed WIP slice twice and incorrectly block a later partial entry.
@@ -275,11 +303,21 @@ async function entryPreviewWithDb(
   const stepData: Array<Record<string, unknown>> = [];
   let totalRemaining = 0n;
   for (const step of batch.workOrder.processRoute.steps) {
+    // Supplemental reports never change ordinary goodOutputQty. A fulfilled
+    // obligation is already complete and must not become another WIP task.
+    if (fulfilledSupplement(step)) {
+      completedSteps.push({ id: step.id, processName: step.processName, position: step.position });
+      continue;
+    }
     // Select only the still-native slice. Final output is already finished and
     // active WIP still owns a separate slice; neither may become the completion
     // checkpoint of a newly entered lot. This also keeps a completed first WIP
     // transfer from making a later partial transfer look fully completed.
-    const completedWithinLot = Math.min(quantity, nativeCheckpointCompletedQuantity({
+    const completedWithinLot = step.supplementObligation
+      ? quantity - Math.min(quantity, Math.max(0,
+          step.supplementObligation.requiredQty - step.supplementObligation.systemCoveredQty - step.supplementObligation.reportedQty
+          - (terminalOwnership.get(wipOwnershipKey(workOrderId, batch.id, step.id)) || 0)))
+      : Math.min(quantity, nativeCheckpointCompletedQuantity({
       stepGoodOutputQuantity: step.goodOutputQty,
       finalGoodOutputQuantity: finalGoodQuantity,
       outstandingWipQuantity,
@@ -297,7 +335,8 @@ async function entryPreviewWithDb(
         409,
       );
     }
-    const remainingStandardMilliseconds = incrementalLabor(snapshot, step.processedQty, remainingQty);
+    const processedAtEntry = step.supplementObligation?.reportedQty ?? step.processedQty;
+    const remainingStandardMilliseconds = incrementalLabor(snapshot, processedAtEntry, remainingQty);
     totalRemaining += remainingStandardMilliseconds;
     remainingSteps.push({
       id: step.id,
@@ -321,7 +360,7 @@ async function entryPreviewWithDb(
       unitsPerProduct: snapshot.unitsPerProduct,
       countsForEfficiency: step.countsForEfficiency,
       plannedQty: quantity,
-      processedQtyAtEntry: step.processedQty,
+      processedQtyAtEntry: processedAtEntry,
       goodOutputQtyAtEntry: step.goodOutputQty,
       remainingQty,
       remainingStandardMilliseconds,
@@ -547,6 +586,10 @@ async function recomputeLotScheduleStatus(tx: Prisma.TransactionClient, lotId: s
       physicalStatus: true,
       locationCode: true,
       containerCode: true,
+      steps: { where: { status: { not: 'CANCELLED' } }, select: { id: true } },
+      completedStepIds: true,
+      route: { select: { steps: { where: { retiredAt: null, status: { not: 'skipped' } }, select: { id: true } } } },
+      workOrder: { select: { stage: true, completedQty: true, productionTargetQty: true } },
       allocations: { select: { status: true, quantity: true, completedQty: true } },
     },
   });
@@ -556,7 +599,10 @@ async function recomputeLotScheduleStatus(tx: Prisma.TransactionClient, lotId: s
     allocation.status === WipWeekAllocationStatus.IN_PROGRESS
     || allocation.completedQty > 0
   ));
-  const completed = covered >= lot.quantity && lot.allocations.some(allocation => (
+  const completedByRoute = !lot.steps.length && (wipEntryCheckpointClosesRoute({ completedStepIds: lot.completedStepIds,
+    liveStepIds: lot.route.steps.map(step => step.id) }) || lot.workOrder.stage === 'completed'
+    && Number(lot.workOrder.completedQty) >= (lot.workOrder.productionTargetQty || 1));
+  const completed = completedByRoute || covered >= lot.quantity && lot.allocations.some(allocation => (
     allocation.status === WipWeekAllocationStatus.COMPLETED
   )) && lot.allocations
     .filter(allocation => effectiveAllocationQuantity(allocation) > 0)
@@ -618,7 +664,7 @@ export async function scheduleWipLot(input: {
     const lot = await tx.semiFinishedLot.findUnique({
       where: { id: lotId },
       include: {
-        steps: { orderBy: { position: 'asc' } },
+        steps: { where: { status: { not: 'CANCELLED' } }, orderBy: { position: 'asc' } },
         allocations: {
           include: { steps: true },
           orderBy: { createdAt: 'asc' },
@@ -990,6 +1036,7 @@ export async function rescheduleWipAllocation(input: {
       assertProductionTeam(input.productionScope, source.team);
     }
     const stepCreates = source.steps
+      .filter(step => step.status !== WipRequirementStatus.CANCELLED)
       .map(step => ({
         lotStep: { connect: { id: step.lotStepId } },
         plannedQty: Math.max(0, step.plannedQty - step.completedQty),
@@ -1654,7 +1701,7 @@ function serializeLot(lot: Prisma.SemiFinishedLotGetPayload<{ include: typeof li
   const completedLabor = lot.allocations
     .filter(allocation => allocation.status !== WipWeekAllocationStatus.CANCELLED)
     .reduce((sum, allocation) => sum + allocation.completedStandardMilliseconds, 0n);
-  const entryLabor = lot.steps.reduce((sum, step) => sum + step.remainingStandardMilliseconds, 0n);
+  const entryLabor = lot.steps.filter(step => step.status !== 'CANCELLED').reduce((sum, step) => sum + step.remainingStandardMilliseconds, 0n);
   const remainingLabor = entryLabor > completedLabor ? entryLabor - completedLabor : 0n;
   return {
     id: lot.id,
@@ -1703,8 +1750,8 @@ function serializeLot(lot: Prisma.SemiFinishedLotGetPayload<{ include: typeof li
         stepId: step.stepId,
         processName: step.processName,
         position: step.position,
-        remainingQty: Math.max(0, step.remainingQty - completedQty),
-        remainingHours: hours(remainingMilliseconds),
+        remainingQty: step.status === 'CANCELLED' ? 0 : Math.max(0, step.remainingQty - completedQty),
+        remainingHours: step.status === 'CANCELLED' ? 0 : hours(remainingMilliseconds),
         status: step.status,
       };
     }),
@@ -1773,18 +1820,14 @@ export async function listWipWarehouse(input: {
   ]);
 
   const candidateTerminalPairs = candidates.flatMap(batch => {
-    const terminalStep = batch.workOrder?.processRoute?.steps.at(-1);
-    return terminalStep && batch.workOrder
-      ? [{ workOrderId: batch.workOrder.id, productionPlanBatchId: batch.id, stepId: terminalStep.id }]
+    const terminalSteps = materialTerminalSteps(batch.workOrder?.processRoute?.steps || []);
+    return batch.workOrder
+      ? terminalSteps.map(step => ({ workOrderId: batch.workOrder!.id, productionPlanBatchId: batch.id, stepId: step.id }))
       : [];
   });
   const candidateOutstandingByProcess = await loadOutstandingWipByProcess(prisma, candidateTerminalPairs);
   const candidateRows = candidates.map(batch => {
-    const terminalStep = batch.workOrder?.processRoute?.steps.at(-1);
-    const finalGood = terminalStep?.goodOutputQty || 0;
-    const outstandingWip = terminalStep && batch.workOrder
-      ? candidateOutstandingByProcess.get(wipOwnershipKey(batch.workOrder.id, batch.id, terminalStep.id)) || 0
-      : 0;
+    const { finished: finalGood, outstanding: outstandingWip } = materialTerminalQuantities(batch, candidateOutstandingByProcess);
     return {
       id: batch.id,
       batchNo: batch.batchNo,
@@ -1802,7 +1845,7 @@ export async function listWipWarehouse(input: {
       weekStartDate: chinaDate(batch.weekStartDate),
       weekEndDate: chinaDate(batch.weekEndDate),
       routeStatus: batch.workOrder!.processRoute!.status,
-      completedProcessCount: batch.workOrder!.processRoute!.steps.filter(step => step.goodOutputQty > 0).length,
+      completedProcessCount: batch.workOrder!.processRoute!.steps.filter(step => step.goodOutputQty > 0 || fulfilledSupplement(step)).length,
       processCount: batch.workOrder!.processRoute!.steps.length,
       materialStatus: batch.workOrder!.materialTask?.status || 'not_created',
       materialExceptionType: batch.workOrder!.materialTask?.exceptionType || null,
@@ -1925,11 +1968,32 @@ export function calculateWipWeekAttainment(input: WipWeekAttainmentInput): WipWe
   };
 }
 
-export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Promise<WipWeekLaborMetrics> {
+export async function loadWipWeekLaborMetrics(
+  weekStartInput: string | Date,
+  productionScope?: ProductionEntityScope,
+): Promise<WipWeekLaborMetrics> {
   const parsed = parsePlanDate(weekStartInput);
   if (!parsed) throw new WipWarehouseError('生产周日期无效', 'WIP_WEEK_INVALID');
   const week = chinaWeekRange(parsed);
   const selectedWeekKey = chinaDate(week.start);
+  const teamWhere = productionScope
+    ? productionTeamScopeWhere(productionScope) as Prisma.ProductionTeamWhereInput | null
+    : null;
+  const dailyAssignmentWhere: Prisma.DailyProcessTaskWhereInput = {
+    status: { not: 'CANCELLED' },
+    ...(teamWhere ? { plan: { team: teamWhere } } : {}),
+  };
+  const liveLotWhere: Prisma.SemiFinishedLotWhereInput = {
+    scheduleStatus: { not: SemiFinishedScheduleStatus.CANCELLED },
+    workOrder: { deletedAt: null },
+    productionPlanBatch: { deletedAt: null, planOrder: { deletedAt: null } },
+  };
+  const targetAllocationWhere: Prisma.WipWeekAllocationWhereInput = {
+    targetWeekStartDate: week.start,
+    status: { not: WipWeekAllocationStatus.CANCELLED },
+    lot: liveLotWhere,
+    ...(teamWhere ? { team: { is: teamWhere } } : {}),
+  };
   // A carryover is a real execution scope for its target week. Reuse the
   // original batch and work order facts, but attribute that week's planned and
   // reported labor to the carryover target instead of locking them forever to
@@ -1937,7 +2001,10 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
   const batches = await prisma.productionPlanBatch.findMany({
     where: {
       deletedAt: null,
+      planOrder: { deletedAt: null },
+      workOrder: { is: { deletedAt: null } },
       workOrderId: { not: null },
+      ...(teamWhere ? { dailyProcessTasks: { some: dailyAssignmentWhere } } : {}),
       OR: [
         { weekStartDate: week.start },
         {
@@ -1985,14 +2052,15 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
   ] = await runTasksWithConcurrencyLimit(2, [
     () => effectiveBatchIds.length ? prisma.semiFinishedLot.findMany({
       where: {
+        ...liveLotWhere,
         productionPlanBatchId: { in: effectiveBatchIds },
-        scheduleStatus: { not: SemiFinishedScheduleStatus.CANCELLED },
       },
       select: {
         productionPlanBatchId: true,
         sourceWeekStartDate: true,
         enteredAt: true,
         steps: {
+          where: { status: { not: 'CANCELLED' } },
           select: {
             remainingStandardMilliseconds: true,
             allocationSteps: {
@@ -2008,7 +2076,7 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
       },
     }) : Promise.resolve([]),
     () => prisma.wipWeekAllocation.findMany({
-      where: { targetWeekStartDate: week.start, status: { not: WipWeekAllocationStatus.CANCELLED } },
+      where: targetAllocationWhere,
       select: {
         status: true,
         plannedStandardMilliseconds: true,
@@ -2020,6 +2088,7 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
         workOrderId: { in: effectiveWorkOrderIds },
         workDate: { gte: week.start, lte: week.end },
         completion: { is: { voidedAt: null } },
+        status: { not: 'VOIDED' },
       },
       _sum: { totalStandardLaborMilliseconds: true },
     }) : Promise.resolve({ _sum: { totalStandardLaborMilliseconds: null } }),
@@ -2034,12 +2103,16 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
     () => prisma.processWipCredit.aggregate({
       where: {
         status: 'ACTIVE',
-        allocationStep: { allocation: { targetWeekStartDate: week.start } },
+        allocationStep: { allocation: targetAllocationWhere },
       },
       _sum: { standardMilliseconds: true },
     }),
     () => prisma.semiFinishedLot.findMany({
-      where: { scheduleStatus: { in: [SemiFinishedScheduleStatus.UNSCHEDULED, SemiFinishedScheduleStatus.PARTIALLY_SCHEDULED] } },
+      where: {
+        ...liveLotWhere,
+        scheduleStatus: { in: [SemiFinishedScheduleStatus.UNSCHEDULED, SemiFinishedScheduleStatus.PARTIALLY_SCHEDULED] },
+        ...(teamWhere ? { workOrder: { deletedAt: null, dailyProcessTasks: { some: dailyAssignmentWhere } } } : {}),
+      },
       select: {
         quantity: true,
         allocations: { select: { status: true, quantity: true, completedQty: true } },
@@ -2051,6 +2124,7 @@ export async function loadWipWeekLaborMetrics(weekStartInput: string | Date): Pr
         workOrderId: { in: effectiveWorkOrderIds },
         workDate: { lt: week.start },
         completion: { is: { voidedAt: null } },
+        status: { not: 'VOIDED' },
       },
       _sum: { totalStandardLaborMilliseconds: true },
     }) : Promise.resolve([]),

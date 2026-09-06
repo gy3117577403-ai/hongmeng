@@ -71,9 +71,13 @@ export class ProductionReadCoordinator {
       requestId: string;
       operation: ProductionReadOperation;
       now?: Date;
+      boundedSnapshotPage?: boolean;
     },
     execute: () => Promise<T>,
   ): Promise<ProductionReadResult<T>> {
+    // A continuation reads an indexed snapshot range and at most one page of
+    // orders. It does not run the full scope aggregation guarded below.
+    if (input.boundedSnapshotPage) return { started: true, shared: false, value: await execute() };
     if (this.active) {
       if (this.active.key === input.key) {
         return {

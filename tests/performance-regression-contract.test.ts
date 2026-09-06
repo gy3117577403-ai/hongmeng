@@ -23,7 +23,7 @@ test('production execution loads server pages progressively instead of downloadi
   const shell = source('components/ProductionExecutionCenter.tsx');
   assert.match(shell, /fetchProductionBoardPage/);
   assert.match(shell, /includeSummary: false/);
-  assert.match(shell, /offset = board\.items\.length/);
+  assert.match(shell, /offset = productionBoardOffset\(board\)/);
   assert.doesNotMatch(shell, /remainingOffsets|chunkSize = 500/);
 });
 

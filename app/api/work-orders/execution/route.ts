@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ProductionSnapshotExpiredError } from '@/lib/production-execution-snapshot';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
@@ -55,10 +56,12 @@ export async function GET(req: NextRequest) {
     const view = parseProductionExecutionView(params.get('view'));
     const pageSize = Math.min(500, positiveInt(params.get('pageSize'), 120));
     const offset = nonNegativeInt(params.get('offset'));
+    const snapshotToken = (params.get('snapshotToken') || '').trim().slice(0, 80) || undefined;
     const preparedAt = performance.now();
     const readResult = await productionReadCoordinator.run({
       requestId,
       operation: 'execution',
+      boundedSnapshotPage: Boolean(snapshotToken) && !includeSummary,
       key: productionReadKey('execution', productionScope, {
         weekSelector,
         filters: keyFilters,
@@ -67,6 +70,7 @@ export async function GET(req: NextRequest) {
         pageSize,
         offset,
         includeSummary,
+        snapshotToken,
       }),
     }, async () => {
       const week = await resolveProductionWeek(...weekInput);
@@ -79,6 +83,8 @@ export async function GET(req: NextRequest) {
         offset,
         includeSummary,
         productionScope,
+        snapshotMode: true,
+        snapshotToken,
       });
       let navigation: Awaited<ReturnType<typeof loadProductionWeekNavigation>> | null = null;
       const warnings: Array<{ code: string; message: string }> = [];
@@ -138,6 +144,7 @@ export async function GET(req: NextRequest) {
     ].join(', '));
     return response;
   } catch (error) {
+    if (error instanceof ProductionSnapshotExpiredError) return NextResponse.json({ ok: false, error: error.message, code: error.code, requestId }, { status: 409 });
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof ProductionAccessScopeError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });

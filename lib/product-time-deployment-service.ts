@@ -1,5 +1,6 @@
 import { reconcileSupplementRouteCompletion } from '@/lib/process-completion-service';
 import { createHash } from 'node:crypto';
+import { syncWipRequirementsAfterRouteEdit } from '@/lib/wip-route-sync';
 import {
   Prisma,
   ProcessLaborClaimStatus,
@@ -215,6 +216,7 @@ const routeInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
       _count: {
         select: {
           dailyProcessTasks: true,
+          semiFinishedLotSteps: true,
           processLaborPools: true,
           sourceQuantityMovements: true,
           targetQuantityMovements: true,
@@ -1685,6 +1687,7 @@ async function retireRemovedStep(tx: Tx, step: DeploymentStepRecord, deploymentR
   });
   const hasReferences = stepHasFacts(step)
     || step._count.dailyProcessTasks > 0
+    || step._count.semiFinishedLotSteps > 0
     || Boolean(step.supplementObligation);
   if (!hasReferences) {
     await tx.workOrderProcessStep.delete({ where: { id: step.id } });
@@ -2395,6 +2398,10 @@ async function applyRouteDeployment(
     : null;
   const closedAfterForcedMigration = removedGroups.size > 0 && Boolean(coverageReconciliation?.routeCompleted);
   const closedAfterSupplementCancellation = cancelledSupplement && Boolean(coverageReconciliation?.routeCompleted);
+  const wipSync = await syncWipRequirementsAfterRouteEdit(tx, {
+    routeId: route.id, actorId: input.actorId, changeKey: `product-time:${input.deploymentRouteId}`,
+    reason: `产品工序与工时 V${profile.version} 发布，同步半成品剩余任务与工时`,
+  });
   const taskSync = await syncDailyTasksAfterProcessRouteChange(tx, {
     changeId: `product-time-deployment:${input.deploymentId}`,
     routeId: route.id,
@@ -2425,6 +2432,7 @@ async function applyRouteDeployment(
     closedAfterSupplementCancellation,
     coverageReconciliation,
     taskSync,
+    wipSync,
     stepChanges,
     routeActivated: Boolean(activation),
     activatedStatus: activation?.status || null,

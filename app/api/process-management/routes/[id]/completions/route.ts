@@ -85,6 +85,7 @@ export async function POST(
     const data = body.obligationId
       ? await completeProcessSupplementObligation({
           obligationId: String(body.obligationId),
+          wipAllocationId: body.wipAllocationId,
           routeId: params.id,
           expectedVersion: body.expectedObligationVersion,
           expectedRouteVersion: body.expectedRouteVersion,

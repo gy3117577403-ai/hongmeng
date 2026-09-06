@@ -95,7 +95,7 @@ test('planning center distinguishes a failed first load from a genuine empty pla
 test('production execution keeps a prior board on refresh failure and never presents a failed first load as empty', () => {
   const source = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
   assert.match(source, /const \[loadError, setLoadError\]/);
-  assert.match(source, /fetchProductionBoardPage\(params, controller\.signal\)/);
+  assert.match(source, /fetchProductionBoardRange\(/);
   assert.match(source, /includeSummary: false/);
   assert.doesNotMatch(source, /remainingOffsets/);
   assert.match(source, /cacheBoundSnapshotValue\(boardSnapshot, activeBoardCacheKey\)/);

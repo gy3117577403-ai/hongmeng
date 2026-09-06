@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { completeProcessStep } from '../lib/process-completion-service';
 import { completeProcessSupplementObligation } from '../lib/process-route-change-service';
-import { deployPublishedProductTimeRoutesInTransaction } from '../lib/product-time-deployment-service';
+import { deployPublishedProductTimeRoutesInTransaction, previewProductTimeDeployment, publishProductTimeDeployment } from '../lib/product-time-deployment-service';
 import { recoverStalePendingCompletionCoverage } from '../lib/process-pending-coverage-recovery';
 import { previewProcessCompletionWithdrawal, withdrawProcessCompletion } from '../lib/process-completion-withdrawal-service';
 
@@ -45,7 +45,7 @@ export async function fixture(indices = [0, 1, 3, 4]) {
   const employee = await prisma.employee.create({ data: { employeeNo: prefix, name: prefix, department: '生产部' } });
   const item = await prisma.drawingLibraryItem.create({ data: { customerName: 'integration-test', productName: 'flexible route', specification: prefix, libraryKey: prefix } });
   const definitions = await Promise.all(['裁线', '沾锡', '检沾锡', '检验', '包装'].map((name, index) => prisma.processDefinition.create({ data: { code: `${prefix}-${index}`, name, stageGroup: index < 3 ? 'frontend' : 'backend', sortOrder: index + 1 } })));
-  const entryData = (ids: number[]) => ids.map((id, index) => ({ processDefinitionId: definitions[id].id, occurrenceKey: `operation-${id}`, position: index + 1, sequenceGroup: index + 1, timeBasis: 'per_unit', unitMilliseconds: 1000, occurrences: 1, unitLabel: '套' }));
+  const entryData = (ids: number[], unitMilliseconds = 1000) => ids.map((id, index) => ({ processDefinitionId: definitions[id].id, occurrenceKey: `operation-${id}`, position: index + 1, sequenceGroup: index + 1, timeBasis: 'per_unit', unitMilliseconds, occurrences: 1, unitLabel: '套' }));
   let profile = await prisma.productTimeProfile.create({ data: { drawingLibraryItemId: item.id, version: 1, status: 'published', publishedAt: new Date(), createdById: actor.id, entries: { create: entryData(indices) } }, include: { entries: { orderBy: { position: 'asc' } } } });
   const order = await prisma.workOrder.create({ data: {
     code: prefix, customerName: item.customerName, productName: 'flexible route', specification: prefix,
@@ -62,11 +62,11 @@ export async function fixture(indices = [0, 1, 3, 4]) {
   }, include: { processRoute: { include: { steps: { orderBy: { position: 'asc' } } } } } });
   const routeId = order.processRoute!.id;
   async function state() { return prisma.workOrderProcessRoute.findUniqueOrThrow({ where: { id: routeId }, include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' }, include: { supplementObligation: true } } } }); }
-  async function report(id: number, qty: number) {
+  async function report(id: number, qty: number, options: { wipAllocationId?: string; workDate?: string } = {}) {
     const current = await state();
     const step = current.steps.find(step => step.processDefinitionId === definitions[id].id)!;
     assert.ok(step);
-    const common = { routeId, processedQty: qty, defectQty: 0, workDate: '2026-09-03', employeeIds: [employee.id],
+    const common = { routeId, processedQty: qty, defectQty: 0, workDate: options.workDate || '2026-09-03', wipAllocationId: options.wipAllocationId, employeeIds: [employee.id],
       idempotencyKey: `${prefix}-${randomUUID()}`, expectedRouteVersion: current.version, userId: actor.id, actor: prefix };
     if (origin) {
       return api(`/api/process-management/routes/${routeId}/completions`, { ...common, stepId: step.id,
@@ -77,9 +77,9 @@ export async function fixture(indices = [0, 1, 3, 4]) {
       ? completeProcessSupplementObligation({ ...common, obligationId: step.supplementObligation.id, expectedVersion: step.supplementObligation.version })
       : completeProcessStep({ ...common, stepId: step.id, requireParticipants: true, allowAdvanceReporting: true });
   }
-  async function publish(ids: number[]) {
+  async function publish(ids: number[], unitMilliseconds = 1000) {
     if (origin) {
-      const draft = await prisma.productTimeProfile.create({ data: { drawingLibraryItemId: item.id, version: profile.version + 1, status: 'draft', createdById: actor.id, entries: { create: entryData(ids) } } });
+      const draft = await prisma.productTimeProfile.create({ data: { drawingLibraryItemId: item.id, version: profile.version + 1, status: 'draft', createdById: actor.id, entries: { create: entryData(ids, unitMilliseconds) } } });
       const preview = await api<{ preview: { previewToken: string; canPublish: boolean } }>(`/api/product-time-profiles/${item.id}/publish/preview`, {});
       assert.equal(preview.preview.canPublish, true);
       await api(`/api/product-time-profiles/${item.id}/publish`, { expectedRevision: draft.revision, previewToken: preview.preview.previewToken });
@@ -87,7 +87,7 @@ export async function fixture(indices = [0, 1, 3, 4]) {
       return;
     }
     await prisma.productTimeProfile.update({ where: { id: profile.id }, data: { status: 'archived' } });
-    profile = await prisma.productTimeProfile.create({ data: { drawingLibraryItemId: item.id, version: profile.version + 1, status: 'published', publishedAt: new Date(), createdById: actor.id, entries: { create: entryData(ids) } }, include: { entries: { orderBy: { position: 'asc' } } } });
+    profile = await prisma.productTimeProfile.create({ data: { drawingLibraryItemId: item.id, version: profile.version + 1, status: 'published', publishedAt: new Date(), createdById: actor.id, entries: { create: entryData(ids, unitMilliseconds) } }, include: { entries: { orderBy: { position: 'asc' } } } });
     const result = await prisma.$transaction(tx => deployPublishedProductTimeRoutesInTransaction(tx, { itemId: item.id, profileId: profile.id, actorId: actor.id, sourceChangeId: `${prefix}-v${profile.version}` }), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30000 });
     assert.equal(result.updated, 1);
   }
@@ -179,6 +179,40 @@ test('deleting a pending reported operation after reordering keeps history witho
     const retired = await prisma.workOrderProcessStep.findFirstOrThrow({ where: { routeId: f.routeId, processName: '检验' } });
     assert.ok(retired.retiredAt);
     assert.equal(await prisma.processCompletion.count({ where: { stepId: retired.id, voidedAt: null } }), 1);
+  } finally { await f.cleanup(); }
+});
+
+test('a completed order stays completed when a later profile contains a legacy recall insertion policy', { skip: !run }, async () => {
+  const f = await fixture([0, 3, 4]);
+  try {
+    await f.report(0, 40); await f.report(3, 40); await f.report(4, 40); await f.assertClosed();
+    const before = await f.state();
+    const reportIds = (await prisma.processCompletion.findMany({ where: { routeId: f.routeId }, orderBy: { id: 'asc' } })).map(report => report.id);
+    const draft = await prisma.productTimeProfile.create({ data: {
+      drawingLibraryItemId: f.item.id, version: 2, status: 'draft', createdById: f.actor.id,
+      entries: { create: [0, 2, 3, 4].map((index, position) => ({
+        processDefinitionId: f.definitions[index].id, occurrenceKey: `operation-${index}`,
+        position: position + 1, sequenceGroup: position + 1, timeBasis: 'per_unit', unitMilliseconds: 1000, occurrences: 1, unitLabel: '套',
+      })) },
+    } });
+    const policies = { 'operation-2': 'RECALL_REWORK' };
+    const preview = await previewProductTimeDeployment(f.item.id, prisma, policies);
+    assert.equal(preview.canPublish, true);
+    assert.equal(preview.impact.keptCompleted, 1);
+    const result = await publishProductTimeDeployment({ itemId: f.item.id, actorId: f.actor.id,
+      expectedRevision: draft.revision, previewToken: preview.previewToken, policies });
+    assert.equal(result.profileId, draft.id);
+    assert.equal(result.deployment.status, 'active');
+    assert.equal(result.deployment.routes.find(route => route.workOrderId === f.order.id)?.status, 'unchanged');
+    const after = await f.state();
+    assert.equal(after.version, before.version);
+    assert.equal(after.productTimeProfileId, before.productTimeProfileId);
+    assert.equal(after.workOrder.stage, 'completed');
+    assert.equal(after.workOrder.status, 'done');
+    assert.deepEqual(after.workOrder.completedAt, before.workOrder.completedAt);
+    assert.deepEqual(after.steps.map(step => step.id), before.steps.map(step => step.id));
+    assert.deepEqual((await prisma.processCompletion.findMany({ where: { routeId: f.routeId }, orderBy: { id: 'asc' } })).map(report => report.id), reportIds);
+    assert.equal(await prisma.processSupplementObligation.count({ where: { routeId: f.routeId } }), 0);
   } finally { await f.cleanup(); }
 });
 
