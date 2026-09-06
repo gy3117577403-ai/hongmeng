@@ -23,8 +23,12 @@ try {
     const origin=${JSON.stringify(origin)}, f=${JSON.stringify(fixture)}, checks=[], errors=[];
     page.on('pageerror', error=>errors.push(String(error)));
     const check=(value,label)=>{if(!value)throw Error(label);checks.push(label)};
-    const login=async kind=>{const r=await page.request.post(origin+'/api/auth/login',{headers:{Origin:origin},data:{username:f.users[kind].username,password:f.password}});check(r.status()===200,'login '+kind)};
-    const post=async(path,data)=>{const r=await page.request.post(origin+path,{headers:{Origin:origin},data});if(r.status()>=300)throw Error(await r.text());return r.json()};
+    let apiCookie='';
+    const login=async kind=>{const r=await page.request.post(origin+'/api/auth/login',{headers:{Origin:origin},data:{username:f.users[kind].username,password:f.password}});check(r.status()===200,'login '+kind);apiCookie=(r.headers()['set-cookie']||'').match(/hm_session=[^;]+/)?.[0]||'';check(Boolean(apiCookie),'session issued '+kind)};
+    // The production cookie stays Secure. Explicitly carry the disposable session
+    // for APIRequestContext probes over loopback HTTP; browser UI uses its cookie jar.
+    const get=async path=>{const r=await page.request.get(origin+path,{headers:{Cookie:apiCookie}});if(r.status()!==200)throw Error('GET '+path+' returned '+r.status()+': '+await r.text());return r.json()};
+    const post=async(path,data)=>{const r=await page.request.post(origin+path,{headers:{Origin:origin,Cookie:apiCookie},data});if(r.status()>=300)throw Error('POST '+path+' returned '+r.status()+': '+await r.text());return r.json()};
     const snap=async name=>page.screenshot({path:'${dir}/'+name+'.png'});
     try {
     await login('admin'); await page.setViewportSize({width:1366,height:1024});
@@ -55,7 +59,7 @@ try {
     await form.getByRole('button',{name:'提交并分派',exact:true}).click();await form.waitFor({state:'detached'});
     await page.waitForURL(/reportId=/);
     const id=await page.evaluate(()=>new URL(window.location.href).searchParams.get('reportId'));check(Boolean(id),'create keeps report context');
-    let r=(await (await page.request.get(origin+'/api/quality/internal-risks/'+id)).json()).report;
+    let r=(await get('/api/quality/internal-risks/'+id)).report;
     check(r.workflow.phase==='SUBMITTED'&&r.tasks.length===2&&r.attachments.length===1,'UI creation creates one event, two tasks, one retried attachment');
     await snap('tablet-workbench');
     const leadId=r.tasks.find(t=>t.ownerUserId===f.users.lead.id).id,workerId=r.tasks.find(t=>t.ownerUserId===f.users.worker.id).id;
@@ -66,7 +70,7 @@ try {
     const resultInput=page.locator('#task-'+leadId).getByLabel('处理结果',{exact:false});
     await resultInput.fill('断网或并发时需要保留的结果');
     await page.locator('#task-'+leadId).getByLabel('采取了什么措施',{exact:false}).fill('已核对原图');
-    await login('worker');r=(await(await page.request.get(origin+'/api/quality-tasks?reportId='+id)).json()).reports.find(x=>x.id===id);
+    await login('worker');r=(await get('/api/quality-tasks?reportId='+id)).reports.find(x=>x.id===id);
     await post('/api/quality/internal-risks/'+id+'/stage',{expectedVersion:r.version,action:'START_TASK',payload:{taskId:workerId}});
     await login('lead');await page.locator('#task-'+leadId).getByRole('button',{name:'保存草稿',exact:true}).click();
     await page.getByRole('button',{name:'读取最新记录（保留草稿）'}).waitFor();
@@ -79,7 +83,7 @@ try {
     const fillAnalysis=async()=>{for(const [key,value] of Object.entries({occurrenceCause:'原图要求抄录不一致',rootCause:'发布前复核不足',finalConclusion:'核对后统一要求',correctiveAction:'修订指导书并核对首件'}))await page.locator('#quality-field-'+key+' textarea').fill(value);await page.getByRole('button',{name:'提交品质确认',exact:true}).click();await page.locator('.qv4-next .phase-verifying').waitFor()};
     await fillAnalysis();
     await login('reviewer');await page.goto(origin+'/workspace/quality-confirmation?reportId='+id);await page.getByRole('button',{name:'退回指定责任人补充'}).click();await page.getByLabel('退回原因',{exact:false}).fill('补充一次复测记录');await page.locator('.qv3-return-form input[type=checkbox]').first().check();await page.getByRole('button',{name:'确认定向退回'}).click();await page.locator('.qv4-next .phase-collaborating').waitFor();
-    r=(await(await page.request.get(origin+'/api/quality/internal-risks/'+id)).json()).report;const returned=r.tasks.find(t=>t.status==='IN_PROGRESS');check(r.tasks.filter(t=>t.status==='COMPLETED').length===1,'targeted return preserves other result');
+    r=(await get('/api/quality/internal-risks/'+id)).report;const returned=r.tasks.find(t=>t.status==='IN_PROGRESS');check(r.tasks.filter(t=>t.status==='COMPLETED').length===1,'targeted return preserves other result');
     const returnedKind=returned.ownerUserId===f.users.lead.id?'lead':'worker';await openTask(returnedKind,returned.id);await complete(returned.id,'第二轮复测完成');await openTask('lead',leadId);await fillAnalysis();
     await login('reviewer');await page.goto(origin+'/workspace/quality-confirmation?reportId='+id);await page.getByLabel('验证结果',{exact:false}).fill('独立复测首件与图纸一致，资料齐全');
     check(await page.evaluate(()=>{const panel=document.querySelector('.qv3-review-layout').getBoundingClientRect();const card=document.querySelector('.qv3-review-layout>.qv3-analysis').getBoundingClientRect();return card.width>=panel.width-2}),'confirmation cards use the available workspace width');
@@ -88,7 +92,7 @@ try {
     await login('admin');await page.goto(origin+'/workspace/quality/internal-risks?reportId='+id);await page.getByRole('button',{name:'归档发布',exact:true}).click();await page.locator('.risk-archive-modal').waitFor();await snap('archive-impact');await page.getByRole('button',{name:'确认归档并发布警示'}).click();await page.locator('.risk-archive-modal').waitFor({state:'detached'});
     await page.setViewportSize({width:390,height:844});await snap('phone-detail');await page.getByRole('button',{name:'返回列表',exact:true}).click();await snap('phone-queue');check(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+2),'phone list no horizontal overflow');
     await page.setViewportSize({width:1366,height:1024});await page.goto(origin+'/workspace/quality/internal-risks/'+id+'/print-preview');await page.getByRole('button',{name:'适合窗口',exact:true}).click();await snap('print-preview');
-    const printData=(await(await page.request.get(origin+'/api/quality/internal-risks/'+id+'/print-preview')).json()).preview;
+    const printData=(await get('/api/quality/internal-risks/'+id+'/print-preview')).preview;
     await page.goto(origin+printData.warning.employeePath);await page.setViewportSize({width:390,height:844});await snap('phone-published-warning');
     check(!errors.length,'no uncaught browser errors: '+errors.join(';'));return {passed:true,reportId:id,checks};
     } catch(error) { await snap('failure'); throw error; }
