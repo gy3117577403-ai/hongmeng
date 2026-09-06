@@ -1749,6 +1749,24 @@ type ProductionExecutionInput = Parameters<typeof buildProductionExecutionSnapsh
 type ProductionExecutionMetadata = Awaited<ReturnType<typeof buildProductionExecutionSnapshot>>['metadata'];
 
 async function hydrateProductionExecutionPage(seeds: ProductionExecutionSeed[], input: ProductionExecutionInput, now: Date) {
+  const teamWhere = input.productionScope ? productionTeamScopeWhere(input.productionScope) as Prisma.ProductionTeamWhereInput | null : null;
+  if (teamWhere) {
+    // A stable query token is not a lasting access grant. A team reassignment
+    // after page one must take effect before serving previously unread rows.
+    const nativeIds = seeds.filter(seed => !seed.continuation).map(seed => seed.workOrderId);
+    const allocationIds = [...new Set(seeds.flatMap(seed => [
+      ...(seed.continuation ? [seed.continuation] : []), ...seed.mergedContinuations, ...seed.linkedContinuations,
+    ].map(item => item.allocationId)))];
+    const [native, allocations] = await runTasksWithConcurrencyLimit(2, [
+      () => nativeIds.length ? prisma.workOrder.findMany({ where: { id: { in: nativeIds }, deletedAt: null, ...productionWorkOrderScopeWhere(input.productionScope) }, select: { id: true } }) : Promise.resolve([]),
+      () => allocationIds.length ? prisma.wipWeekAllocation.findMany({ where: { id: { in: allocationIds }, status: { not: 'CANCELLED' }, team: { is: teamWhere } }, select: { id: true } }) : Promise.resolve([]),
+    ] as const);
+    const nativeAllowed = new Set(native.map(order => order.id));
+    const wipAllowed = new Set(allocations.map(allocation => allocation.id));
+    seeds = seeds.filter(seed => seed.continuation ? wipAllowed.has(seed.continuation.allocationId) : nativeAllowed.has(seed.workOrderId))
+      .map(seed => ({ ...seed, mergedContinuations: seed.mergedContinuations.filter(item => wipAllowed.has(item.allocationId)),
+        linkedContinuations: seed.linkedContinuations.filter(item => wipAllowed.has(item.allocationId)) }));
+  }
   const ids = [...new Set(seeds.map(seed => seed.workOrderId))];
   const orders = ids.length ? await prisma.workOrder.findMany({ where: { id: { in: ids }, deletedAt: null }, include: productionExecutionInclude }) : [];
   const byId = new Map(orders.map(order => [order.id, order]));
@@ -1975,7 +1993,7 @@ async function buildProductionExecutionSnapshot(input: {
     executionKey: task.executionKey, workOrderId: task.workOrderId, continuation: task.continuation,
     mergedContinuations: task.continuation ? [task.continuation] : sameWeekByWorkOrder.get(task.workOrderId) || [],
     linkedContinuations: task.continuation ? [] : relevantWipByWorkOrder.get(task.workOrderId) || [],
-    sourceLots: relevantWipLotsByWorkOrder.get(task.workOrderId) || [],
+    sourceLots: task.continuation ? [] : relevantWipLotsByWorkOrder.get(task.workOrderId) || [],
     arrangements: task.continuation ? [] : arrangementsByOrder.get(task.workOrderId) || [],
   }));
   const summaryRootOrders = input.includeSummary

@@ -140,3 +140,20 @@ test('partially fulfilled supplemental work transfers only its actual remaining 
     await ctx.f.assertClosed();
   } finally { await ctx.cleanup(); }
 });
+
+test('a completed WIP slice reprices with its unfinished source order without reopening or changing completion facts', { skip: !enabled }, async () => {
+  const ctx = await wipFixture(false);
+  try {
+    const options = { wipAllocationId: ctx.allocation!.id, workDate: chinaDate(ctx.week.start) };
+    for (const id of [1, 3, 4]) await ctx.f.report(id, 6, options);
+    const before = await prisma.wipWeekAllocation.findUniqueOrThrow({ where: { id: ctx.allocation!.id } });
+    assert.equal(before.status, 'COMPLETED');
+    const reportIds = (await prisma.processCompletion.findMany({ where: { routeId: ctx.f.routeId }, orderBy: { id: 'asc' } })).map(row => row.id);
+    await ctx.f.publish([0, 1, 2, 3, 4], 2000);
+    const after = await prisma.wipWeekAllocation.findUniqueOrThrow({ where: { id: ctx.allocation!.id } });
+    assert.equal(after.plannedStandardMilliseconds, 36000n); assert.equal(after.completedStandardMilliseconds, 36000n);
+    assert.equal(after.status, 'COMPLETED'); assert.equal(after.completedQty, 6); assert.deepEqual(after.completedAt, before.completedAt);
+    assert.equal(await prisma.semiFinishedLotStep.count({ where: { lotId: ctx.lot.id, processName: '检沾锡' } }), 0, 'new operations do not reopen a completed WIP history slice');
+    assert.deepEqual((await prisma.processCompletion.findMany({ where: { routeId: ctx.f.routeId }, orderBy: { id: 'asc' } })).map(row => row.id), reportIds);
+  } finally { await ctx.cleanup(); }
+});

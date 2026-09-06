@@ -15,7 +15,7 @@ export async function syncWipRequirementsAfterRouteEdit(
     include: { steps: { where: { retiredAt: null, status: { not: 'skipped' } }, include: { supplementObligation: true } } },
   });
   const lots = await tx.semiFinishedLot.findMany({
-    where: { routeId: route.id, scheduleStatus: { notIn: ['CANCELLED', 'COMPLETED'] } },
+    where: { routeId: route.id, scheduleStatus: { not: 'CANCELLED' } },
     include: { steps: true, allocations: { include: { steps: true }, orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }] } },
     orderBy: [{ enteredAt: 'asc' }, { id: 'asc' }],
   });
@@ -25,6 +25,7 @@ export async function syncWipRequirementsAfterRouteEdit(
   let cancelled = 0;
   let inserted = 0;
   for (const lot of lots) {
+    const historical = lot.scheduleStatus === 'COMPLETED';
     const lotStepById = new Map(lot.steps.map(step => [step.stepId, step]));
     const completedIds = new Set(Array.isArray(lot.completedStepIds) ? lot.completedStepIds as string[] : []);
     for (const old of lot.steps) {
@@ -42,6 +43,7 @@ export async function syncWipRequirementsAfterRouteEdit(
     }
     for (const step of route.steps) {
       const old = lotStepById.get(step.id);
+      if (historical && !old) continue;
       if (!old && completedIds.has(step.id)) continue;
       const supplement = step.supplementObligation;
       if (!old && supplement && supplement.status !== 'ACTIVE') continue;
@@ -109,8 +111,21 @@ export async function syncWipRequirementsAfterRouteEdit(
     await tx.semiFinishedLot.update({ where: { id: lot.id }, data: {
       routeVersion: route.version, nextStepIds: liveSteps.filter(step => step.sequenceGroup === liveSteps[0]?.sequenceGroup).map(step => step.stepId), version: { increment: 1 },
     } });
-    for (const allocation of lot.allocations) await recomputeAllocationAndLot(tx, allocation.id, lot.id);
-    await refreshWipLotStatus(tx, lot.id);
+    for (const allocation of lot.allocations) {
+      if (historical) {
+        const totals = await tx.wipWeekAllocationStep.aggregate({ where: { allocationId: allocation.id, status: { not: 'CANCELLED' } },
+          _sum: { plannedStandardMilliseconds: true, completedStandardMilliseconds: true } });
+        // The source order's standard correction already repriced its labor
+        // pools. Keep this attribution ledger aligned without changing the
+        // completed lot's quantities, lifecycle or historical timestamps.
+        await tx.wipWeekAllocation.update({ where: { id: allocation.id }, data: {
+          plannedStandardMilliseconds: totals._sum.plannedStandardMilliseconds || 0n,
+          completedStandardMilliseconds: totals._sum.completedStandardMilliseconds || 0n,
+          version: { increment: 1 },
+        } });
+      } else await recomputeAllocationAndLot(tx, allocation.id, lot.id);
+    }
+    if (!historical) await refreshWipLotStatus(tx, lot.id);
     await tx.wipEvent.create({ data: { lotId: lot.id, eventType: 'ROUTE_REQUIREMENTS_SYNCHRONIZED', reason: input.reason,
       actorId: input.actorId, idempotencyKey: `${input.changeKey}:wip:${lot.id}`,
       beforeData: { routeVersion: lot.routeVersion, stepIds: lot.steps.map(step => step.stepId) },

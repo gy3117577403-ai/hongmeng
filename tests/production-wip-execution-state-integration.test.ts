@@ -72,6 +72,14 @@ test('WIP execution cards, filters and both summaries use allocation state and q
     assert.equal(active.items[0].stage, 'not_issued');
     assert.equal(active.items[0].quantitySummary.targetQty, 40);
     assert.equal(active.items[0].completedAt, null);
+    const snapshotInput = { week, filters: { keyword: prefix }, productionScope: teamScope, snapshotMode: true };
+    const snapshot = await loadProductionExecution(snapshotInput);
+    assert.ok(snapshot.pagination.snapshotToken);
+    await prisma.wipWeekAllocation.update({ where: { id: allocation.id }, data: { teamId: otherTeam.id } });
+    assert.equal((await loadProductionExecution({ ...snapshotInput, snapshotToken: snapshot.pagination.snapshotToken })).items.length, 0,
+      'an existing snapshot does not keep access to a continuation reassigned to another team');
+    await prisma.wipWeekAllocation.update({ where: { id: allocation.id }, data: { teamId: team.id } });
+    await prisma.productionExecutionSnapshot.delete({ where: { id: snapshot.pagination.snapshotToken } });
     await prisma.workOrder.update({ where: { id: order.id }, data: { completedAt: new Date() } });
     assert.equal((await read({ quick: ['not_started'] })).items[0].completedAt, null,
       'an active continuation cannot inherit a completion timestamp from its source order');
