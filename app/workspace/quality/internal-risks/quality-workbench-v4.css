@@ -61,7 +61,8 @@
 .qv4-blockers{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0;color:#a34413;font-size:12px}.qv4-blockers button{min-height:32px;padding:5px 9px;font-size:12px;background:#fff2e7;box-shadow:none;border-color:#edc2a0}
 .qv4-timeline{padding:12px;background:#fff;border-radius:12px}.qv4-timeline article{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid #edf1f5}.qv4-timeline article>span{color:#c54b08;padding-top:3px}.qv4-timeline p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;font-size:14px}.qv4-timeline small{color:var(--q-muted)}
 .qv3-root .qv3-head{padding:12px 16px;min-height:70px;gap:12px;background:linear-gradient(110deg,#fff,#f8fafdf5);box-shadow:var(--q-shadow)}.qv3-head h1{font-size:21px}.qv3-shell-grid{grid-template-columns:300px minmax(0,1fr);gap:10px}.qv3-list{padding:12px;background:#f7f9fc}.qv3-list>button{padding:12px;gap:7px;box-shadow:none;margin:8px 0;border-radius:12px}.qv3-list>button strong{font-size:15px}.qv3-list>button p{font-size:12px}.qv3-workspace{padding:14px;background:#f7f9fc}.qv3-context{padding:0 3px}
-.qv3-review-layout{display:flex}.qv3-review-layout>.qv3-review{position:static;order:5}.qv3-review-layout>.qv3-problem{order:2}.qv3-review-layout>.qv3-analysis{order:3}.qv3-review-layout>.qv3-review-tasks{order:4}.qv3-review-layout>.qv4-next{order:1}.qv3-review-layout>.qv3-progress{order:0}.qv3-review-layout>.qv3-context{order:-1}.qv3-review-layout>.qv3-notification-log{order:7}.qv3-review-layout>.qv4-comment{order:6}
+.qv3-panel.qv3-review-layout{display:flex;flex-direction:column;align-items:stretch;width:100%}.qv3-review-layout>*{min-width:0}.qv3-review-layout>.qv3-review{position:static;order:5}.qv3-review-layout>.qv3-problem{order:2}.qv3-review-layout>.qv3-analysis{order:3}.qv3-review-layout>.qv3-review-tasks{order:4}.qv3-review-layout>.qv4-next{order:1}.qv3-review-layout>.qv3-progress{order:0}.qv3-review-layout>.qv3-context{order:-1}.qv3-review-layout>.qv3-notification-log{order:7}.qv3-review-layout>.qv4-comment{order:6}
+@media(min-width:1101px){.qv3-review-layout .qv3-analysis>.qv3-form-pair{grid-template-columns:repeat(2,minmax(0,1fr))}.qv3-review-layout>.qv3-problem{display:grid;grid-template-columns:minmax(0,1fr) 200px;column-gap:18px}.qv3-review-layout>.qv3-problem>:is(h3,p,small){grid-column:1}.qv3-review-layout>.qv3-problem>.qv3-evidence{grid-column:2;grid-row:1/5;margin:0;grid-template-columns:1fr}}
 .risk-modal-backdrop { background:#152b4166;backdrop-filter:blur(4px);padding:20px; }
 .risk-modal-backdrop :is(.risk-form-modal,.risk-task-modal,.risk-archive-modal,.risk-confirm-modal,.quality-initiate-dialog,.risk-attachment-preview){border-radius:18px;border:1px solid #ffffffd9;box-shadow:0 4px 0 #dee5ec,0 28px 90px #12223738;overflow:hidden}
 .risk-modal-backdrop :is(label,button,input,select,textarea){font:inherit}.risk-modal-backdrop label{display:grid;gap:7px;font-size:14px;color:#35485d}.risk-modal-backdrop :is(input:not([type=checkbox]),select,textarea){min-height:44px;background:#f8fafc;border:1px solid #d4dee7;border-radius:10px;padding:10px 12px;color:#24374d;width:100%;min-width:0}.risk-modal-backdrop textarea{line-height:1.6;resize:vertical}.risk-modal-backdrop input[type=checkbox]{width:19px;height:19px;accent-color:#c54b08;flex-shrink:0}
@@ -102,3 +103,22 @@
 .qv4-intake label:has(>b){display:block}.qv4-intake label:has(>b)>:is(input,select,textarea){display:block;width:100%;margin-top:8px}.qv4-intake label:has(>b)>small{display:block;margin-top:6px}
 
 .qv4-root.internal-risk-shell .risk-card :is(small,p,footer,.qv4-queue-progress){font-size:12px;line-height:1.5}.qv4-root.internal-risk-shell .risk-card footer span{max-width:62%}.qv4-source summary{cursor:pointer;min-height:32px;line-height:1.6}.qv4-source summary strong{font-size:13px}
+
+.risk-modal-backdrop .risk-archive-modal{width:min(900px,calc(100vw - 32px))}
+.risk-modal-backdrop .risk-archive-modal-body{padding:16px;gap:12px}
+.risk-modal-backdrop .risk-archive-modal-body :is(p,span,small,b,strong){font-size:13px;line-height:1.6}
+.risk-modal-backdrop .risk-archive-modal-body .archive-readiness strong{font-size:15px}
+.risk-modal-backdrop .risk-archive-modal-body .archive-impact-grid strong{font-size:24px;line-height:1.3}
+.risk-modal-backdrop .risk-archive-modal-body .archive-policy-summary strong{font-size:20px}
+.risk-modal-backdrop .risk-archive-modal-body .quality-publication-choice{display:flex;align-items:flex-start;gap:12px;margin:0}
+.risk-modal-backdrop .risk-archive-modal-body .quality-publication-choice input{margin-top:3px}
+.risk-modal-backdrop .risk-archive-modal-body .archive-check-list>div{align-items:flex-start}
+.risk-modal-backdrop .risk-archive-modal-body .archive-check-list>div>svg{flex-shrink:0;margin-top:4px}
+.risk-modal-backdrop :is(.risk-form-modal,.risk-task-modal,.risk-archive-modal)>header span{font-size:12px}
+.risk-modal-backdrop :is(.risk-form-modal,.risk-task-modal,.risk-archive-modal)>header>button{width:44px;height:44px;flex-shrink:0}
+.risk-modal-backdrop :is(.risk-form-modal,.risk-task-modal,.risk-archive-modal)>footer>span{font-size:12px;line-height:1.6;flex:1;min-width:180px}
+.risk-modal-backdrop :is(.risk-form-modal,.risk-task-modal,.risk-archive-modal)>footer>:is(div,nav){display:flex;gap:8px;flex-wrap:wrap}
+.risk-modal-backdrop :is(.risk-form-modal,.risk-task-modal,.risk-archive-modal)>footer :is(button,a){font-size:14px;min-height:44px;height:auto;padding:10px 14px}
+.risk-modal-backdrop .risk-confirm-modal>p{font-size:15px;line-height:1.6}
+.risk-modal-backdrop .risk-confirm-modal>span{font-size:14px;line-height:1.7}
+@media(max-width:800px){.qv4-intake .qv4-intake-fields{align-items:stretch}.qv4-intake .qv4-intake-column>:is(section,details){width:100%}.risk-modal-backdrop .risk-archive-modal{width:100%;max-height:97dvh}.risk-modal-backdrop .risk-archive-modal-body{padding:12px}.risk-modal-backdrop .archive-impact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.risk-modal-backdrop .archive-policy-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.risk-modal-backdrop .archive-policy-summary>p{grid-column:1/-1}.risk-modal-backdrop .risk-archive-modal>footer>div{width:100%}.risk-modal-backdrop .risk-archive-modal>footer :is(button,a){flex:1}}

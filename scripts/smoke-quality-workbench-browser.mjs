@@ -1,10 +1,22 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
 const origin = process.env.QUALITY_WORKBENCH_QA_BASE || 'http://127.0.0.1:3000';
 if (!['127.0.0.1', 'localhost'].includes(new URL(origin).hostname)) throw Error('Disposable runtime required');
 const fixture = JSON.parse(readFileSync(process.env.QUALITY_WORKBENCH_QA_FIXTURE, 'utf8').replace(/^\uFEFF/, ''));
-const dir = 'artifacts/quality-workbench'; mkdirSync(dir, { recursive: true });
-function cli(args) { const result = spawnSync('npx', ['--yes', '--package', '@playwright/cli@0.1.19', 'playwright-cli', '-s=quality-workbench-release', ...args], { encoding: 'utf8', timeout: 180000 }); if (result.error || result.status) throw Error(result.error?.message || result.stderr || result.stdout); return result.stdout; }
+const dir = process.env.QUALITY_WORKBENCH_QA_BROWSER_OUTPUT || 'artifacts/quality-workbench'; mkdirSync(dir, { recursive: true });
+const codeFile = dir + '/browser-code.generated.cjs';
+const uploadFile = dir + '/upload-fixture.png';
+writeFileSync(uploadFile, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=', 'base64'));
+function cli(args) {
+  const command = process.platform === 'win32' ? process.execPath : 'npx';
+  const prefix = process.platform === 'win32' ? [join(dirname(process.execPath), 'node_modules/npm/bin/npx-cli.js')] : [];
+  const result = spawnSync(command, [...prefix, '--yes', '--package', '@playwright/cli@0.1.19', 'playwright-cli', '-s=quality-workbench-release', ...args], { encoding: 'utf8', timeout: 180000 });
+  const output = ((result.stdout || '') + (result.stderr || '')).replace(/### Ran Playwright code\r?\n```[\s\S]*?```(?:\r?\n)?/g, '').replaceAll(fixture.password, '[disposable-password]');
+  if (args[0] === 'run-code') writeFileSync(dir + '/browser-runtime.txt', output);
+  if (result.error || result.status) throw Error(result.error?.message || output);
+  return output;
+}
 try {
   cli(['open', origin + '/login']);
   const code = `async page => {
@@ -14,19 +26,22 @@ try {
     const login=async kind=>{const r=await page.request.post(origin+'/api/auth/login',{headers:{Origin:origin},data:{username:f.users[kind].username,password:f.password}});check(r.status()===200,'login '+kind)};
     const post=async(path,data)=>{const r=await page.request.post(origin+path,{headers:{Origin:origin},data});if(r.status()>=300)throw Error(await r.text());return r.json()};
     const snap=async name=>page.screenshot({path:'${dir}/'+name+'.png'});
+    try {
     await login('admin'); await page.setViewportSize({width:1366,height:1024});
     await page.goto(origin+'/workspace/quality/internal-risks');
     await page.getByRole('button',{name:'建立异常工单',exact:true}).click();
     const form=page.locator('.qv4-intake'); await form.waitFor();
     await form.getByLabel('异常标题',{exact:false}).fill('浏览器验收：压接首件参数核对');
-    await form.getByLabel('实际问题',{exact:false}).fill('首件记录与参考参数不一致，核对实测与指导书。');
-    await form.locator('.quality-product-choices label').filter({hasText:f.product.specification}).locator('input').check();
-    for(const kind of ['lead','worker'])await form.locator('.qv3-people-list label').filter({hasText:f.users[kind].name}).locator('input').check();
+    await form.getByRole('textbox',{name:/^实际问题/}).fill('首件记录与参考参数不一致，核对实测与指导书。');
+    await form.locator('.qv4-intake-products .quality-product-choices label').filter({hasText:f.product.specification}).locator('input').check();
+    for(const kind of ['lead','worker']){await form.getByLabel('搜索责任人',{exact:true}).fill(f.users[kind].username);await form.locator('.qv3-people-list label').filter({hasText:f.users[kind].name}).locator('input').check();}
+    await form.getByLabel('搜索责任人',{exact:true}).fill('');
     await form.getByRole('button',{name:'品质确认人（独立审核）',exact:true}).click();
     await form.locator('.quality-assignee-options button').filter({hasText:f.users.reviewer.username}).click();
     await form.getByRole('button',{name:'关闭发起窗口'}).click();
     await form.getByRole('button',{name:'保留草稿并关闭'}).click();
     await page.getByRole('button',{name:'建立异常工单',exact:true}).click();
+    await form.locator('.qv4-intake-fields:not(:disabled)').waitFor();
     check(await form.getByLabel('异常标题',{exact:false}).inputValue()==='浏览器验收：压接首件参数核对','closed text draft restores');
     await snap('tablet-intake');
     await page.setViewportSize({width:390,height:844}); await snap('phone-intake');
@@ -34,11 +49,12 @@ try {
     await page.setViewportSize({width:1366,height:1024});
     let failUpload=true;
     await page.route('**/api/quality/internal-risks/*/attachments', async route=>{if(failUpload&&route.request().method()==='POST'){failUpload=false;return route.fulfill({status:503,json:{ok:false,error:'隔离验收：模拟上传失败'}})}return route.continue()});
-    await form.locator('.quality-initiate-upload input').setInputFiles({name:'首件验收.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=','base64')});
+    await form.locator('.quality-initiate-upload input').setInputFiles(${JSON.stringify(uploadFile)});
     await form.getByRole('button',{name:'提交并分派',exact:true}).click();
     await form.getByRole('alert').filter({hasText:'附件上传失败'}).waitFor();check(await form.count()===1,'failed upload retains draft');
     await form.getByRole('button',{name:'提交并分派',exact:true}).click();await form.waitFor({state:'detached'});
-    const id=new URL(page.url()).searchParams.get('reportId');check(Boolean(id),'create keeps report context');
+    await page.waitForURL(/reportId=/);
+    const id=await page.evaluate(()=>new URL(window.location.href).searchParams.get('reportId'));check(Boolean(id),'create keeps report context');
     let r=(await (await page.request.get(origin+'/api/quality/internal-risks/'+id)).json()).report;
     check(r.workflow.phase==='SUBMITTED'&&r.tasks.length===2&&r.attachments.length===1,'UI creation creates one event, two tasks, one retried attachment');
     await snap('tablet-workbench');
@@ -55,7 +71,9 @@ try {
     await login('lead');await page.locator('#task-'+leadId).getByRole('button',{name:'保存草稿',exact:true}).click();
     await page.getByRole('button',{name:'读取最新记录（保留草稿）'}).waitFor();
     check(await resultInput.inputValue()==='断网或并发时需要保留的结果','conflict retains typed result');
-    await page.getByRole('button',{name:'读取最新记录（保留草稿）'}).click();
+    const refreshButton=page.getByRole('button',{name:'读取最新记录（保留草稿）'});
+    await Promise.all([page.waitForResponse(response=>response.url().includes('/api/quality-tasks?reportId='+id)&&response.status()===200),refreshButton.click()]);
+    await page.waitForFunction(()=>!document.querySelector('.qv3-error button')?.disabled);
     await complete(leadId,'首件核对完成');await openTask('worker',workerId);await complete(workerId,'现场复核完成');
     await openTask('lead',leadId);await page.getByText('牵头人汇总原因与方案，提交品质确认',{exact:true}).waitFor();
     const fillAnalysis=async()=>{for(const [key,value] of Object.entries({occurrenceCause:'原图要求抄录不一致',rootCause:'发布前复核不足',finalConclusion:'核对后统一要求',correctiveAction:'修订指导书并核对首件'}))await page.locator('#quality-field-'+key+' textarea').fill(value);await page.getByRole('button',{name:'提交品质确认',exact:true}).click();await page.locator('.qv4-next .phase-verifying').waitFor()};
@@ -63,15 +81,20 @@ try {
     await login('reviewer');await page.goto(origin+'/workspace/quality-confirmation?reportId='+id);await page.getByRole('button',{name:'退回指定责任人补充'}).click();await page.getByLabel('退回原因',{exact:false}).fill('补充一次复测记录');await page.locator('.qv3-return-form input[type=checkbox]').first().check();await page.getByRole('button',{name:'确认定向退回'}).click();await page.locator('.qv4-next .phase-collaborating').waitFor();
     r=(await(await page.request.get(origin+'/api/quality/internal-risks/'+id)).json()).report;const returned=r.tasks.find(t=>t.status==='IN_PROGRESS');check(r.tasks.filter(t=>t.status==='COMPLETED').length===1,'targeted return preserves other result');
     const returnedKind=returned.ownerUserId===f.users.lead.id?'lead':'worker';await openTask(returnedKind,returned.id);await complete(returned.id,'第二轮复测完成');await openTask('lead',leadId);await fillAnalysis();
-    await login('reviewer');await page.goto(origin+'/workspace/quality-confirmation?reportId='+id);await page.getByLabel('验证结果',{exact:false}).fill('独立复测首件与图纸一致，资料齐全');await snap('tablet-confirmation');await page.getByRole('button',{name:'验证通过，进入待归档'}).click();await page.getByText('检查归档条件，预览并归档',{exact:true}).waitFor();
+    await login('reviewer');await page.goto(origin+'/workspace/quality-confirmation?reportId='+id);await page.getByLabel('验证结果',{exact:false}).fill('独立复测首件与图纸一致，资料齐全');
+    check(await page.evaluate(()=>{const panel=document.querySelector('.qv3-review-layout').getBoundingClientRect();const card=document.querySelector('.qv3-review-layout>.qv3-analysis').getBoundingClientRect();return card.width>=panel.width-2}),'confirmation cards use the available workspace width');
+    await snap('tablet-confirmation');await page.locator('#quality-confirmation-form').scrollIntoViewIfNeeded();await snap('tablet-confirmation-form');
+    await page.getByRole('button',{name:'验证通过，进入待归档'}).click();await page.getByText('检查归档条件，预览并归档',{exact:true}).waitFor();
     await login('admin');await page.goto(origin+'/workspace/quality/internal-risks?reportId='+id);await page.getByRole('button',{name:'归档发布',exact:true}).click();await page.locator('.risk-archive-modal').waitFor();await snap('archive-impact');await page.getByRole('button',{name:'确认归档并发布警示'}).click();await page.locator('.risk-archive-modal').waitFor({state:'detached'});
     await page.setViewportSize({width:390,height:844});await snap('phone-detail');await page.getByRole('button',{name:'返回列表',exact:true}).click();await snap('phone-queue');check(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+2),'phone list no horizontal overflow');
     await page.setViewportSize({width:1366,height:1024});await page.goto(origin+'/workspace/quality/internal-risks/'+id+'/print-preview');await page.getByRole('button',{name:'适合窗口',exact:true}).click();await snap('print-preview');
     const printData=(await(await page.request.get(origin+'/api/quality/internal-risks/'+id+'/print-preview')).json()).preview;
     await page.goto(origin+printData.warning.employeePath);await page.setViewportSize({width:390,height:844});await snap('phone-published-warning');
     check(!errors.length,'no uncaught browser errors: '+errors.join(';'));return {passed:true,reportId:id,checks};
+    } catch(error) { await snap('failure'); throw error; }
   }`;
-  const result = cli(['run-code', code]); writeFileSync(dir + '/browser-runtime.txt', result);
+  writeFileSync(codeFile, code);
+  const result = cli(['run-code', '--filename', codeFile]); writeFileSync(dir + '/browser-runtime.txt', result);
   if (!/"passed":\s*true/.test(result)) throw Error(result);
   console.log(result);
-} finally { cli(['close']); }
+} finally { rmSync(codeFile, { force: true }); rmSync(uploadFile, { force: true }); cli(['close']); }
