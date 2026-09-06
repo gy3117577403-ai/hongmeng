@@ -5,9 +5,11 @@ import './internal-quality-risk.css';
 import './quality-workflow-v2.css';
 import './quality-workflow-v3.css';
 
-export default async function InternalQualityRiskPage({ searchParams }: { searchParams?: { reportId?: string | string[]; workOrderId?: string | string[] } }) {
+export default async function InternalQualityRiskPage({ searchParams }: { searchParams?: { reportId?: string | string[]; workOrderId?: string | string[]; sourceRecordId?: string | string[] } }) {
   const user = await requirePageAccess('/workspace/quality/internal-risks', qualityReturnPath('/workspace/quality/internal-risks', searchParams || {}));
   const reportId = Array.isArray(searchParams?.reportId) ? searchParams?.reportId[0] : searchParams?.reportId;
   const workOrderId = Array.isArray(searchParams?.workOrderId) ? searchParams?.workOrderId[0] : searchParams?.workOrderId;
-  return <InternalQualityRiskShell user={user} initialReportId={reportId || ''} initialWorkOrderId={workOrderId || ''} />;
+  return <InternalQualityRiskShell user={user} initialReportId={reportId || ''} initialWorkOrderId={workOrderId || ''} initialSourceRecordId={typeof searchParams?.sourceRecordId === 'string' ? searchParams.sourceRecordId : ''} />;
 }
+
+import '@/app/workspace/quality/internal-risks/quality-workbench-v4.css';

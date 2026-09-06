@@ -7,3 +7,5 @@ import { qualityReturnPath } from '@/lib/quality-workflow-shared';
 export default async function QualityTasksPage({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
   return <QualityTasksShell user={await requirePageAccess('/workspace/quality-tasks', qualityReturnPath('/workspace/quality-tasks', searchParams))} />;
 }
+
+import '@/app/workspace/quality/internal-risks/quality-workbench-v4.css';

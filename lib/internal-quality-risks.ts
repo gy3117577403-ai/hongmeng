@@ -1,3 +1,5 @@
+import { qualityWorkflowView, QUALITY_PHASE_LABELS } from './quality-workbench';
+import { qualityPhaseWhere, qualityWorkViewWhere } from './quality-workbench-query';
 import crypto from 'node:crypto';
 import { resolveQualityPrintImages } from '@/lib/quality-print-image-source';
 import { qualityPrintHeaderExtraMm } from '@/lib/quality-warning-print-layout';
@@ -428,6 +430,8 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
     ...(report.revisions.length || report.alerts.length ? ['已形成归档/工单预警历史，保留版本、附件与打印追溯；可留在回收站或恢复'] : []),
   ];
   return {
+    qualitySource: report.qualitySource as { id: string; code: string; version: number; title: string; workOrderId: string; description: string; capturedAt: string } | null,
+    workflow: qualityWorkflowView({ ...report, ownerName: actorLabel(report.owner), reviewerName: actorLabel(report.reviewer) }),
     workflowVersion: report.workflowVersion,
     problemCategory: report.problemCategory,
     responsibleUserIds: report.responsibleUserIds,
@@ -902,6 +906,7 @@ export async function previewInternalQualityRiskArchive(reportId: string): Promi
 
 function snapshotFor(report: InternalQualityRiskRecord, revisionNumber: number): Prisma.InputJsonValue {
   return {
+    qualitySource: report.qualitySource,
     schemaVersion: 2,
     printPhotoLayout: report.printPhotoLayout,
     revisionNumber,
@@ -1635,6 +1640,13 @@ export async function loadInternalQualityRisks(input: {
   workOrderId?: string;
   limit?: number;
   assignedUserId?: string;
+  workView?: string;
+  viewerId?: string;
+  ownerId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  overdue?: boolean;
+  offset?: number;
   problemCategory?: string;
   department?: string;
 } = {}) {
@@ -1645,8 +1657,12 @@ export async function loadInternalQualityRisks(input: {
   if (input.problemCategory) and.push({ problemCategory: input.problemCategory });
   if (input.department) and.push({ responsibleDepartment: input.department });
   if (input.assignedUserId) and.push({ OR: [{ ownerUserId: input.assignedUserId }, { tasks: { some: { ownerUserId: input.assignedUserId } } }] });
-  if (status === 'SUBMITTED') and.push({ status: { in: ['SUBMITTED', 'CONTAINMENT'] } });
-  else if (INTERNAL_QUALITY_RISK_STATUSES.includes(status as InternalQualityRiskStatus)) and.push({ status });
+  if (input.viewerId) and.push(qualityWorkViewWhere(input.workView || 'ALL', input.viewerId));
+  if (input.ownerId) and.push({ OR: [{ ownerUserId: input.ownerId }, { tasks: { some: { ownerUserId: input.ownerId, status: { not: 'CANCELLED' } } } }] });
+  if (input.overdue) and.push({ status: { in: ['SUBMITTED', 'CONTAINMENT', 'COLLABORATING', 'REVISING'] }, tasks: { some: { status: { in: ['TODO', 'IN_PROGRESS'] }, dueAt: { lt: new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date()) + 'T00:00:00+08:00') } } } });
+  for (const [value, bound] of [[input.dateFrom, 'gte'], [input.dateTo, 'lte']] as const) {
+    if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) { const date = new Date(value + (bound === 'gte' ? 'T00:00:00+08:00' : 'T23:59:59.999+08:00')); if (Number.isFinite(date.getTime())) and.push({ occurrenceDate: { [bound]: date } }); }
+  }
   if (status === 'UNLINKED') and.push({ products: { none: {} } });
   if (input.severity && INTERNAL_QUALITY_RISK_SEVERITIES.includes(input.severity as InternalQualityRiskSeverity)) and.push({ severity: input.severity });
   if (input.productId) and.push({ products: { some: { drawingLibraryItemId: input.productId } } });
@@ -1674,30 +1690,28 @@ export async function loadInternalQualityRisks(input: {
       ...(Number.isInteger(sequence) && sequence > 0 ? [{ sequence }] : []),
     ] });
   }
-  const where: Prisma.InternalQualityRiskReportWhereInput = {
-    deletedAt: deletedMode ? { not: null } : null,
-    ...(and.length ? { AND: and } : {}),
-  };
+  const scopeWhere: Prisma.InternalQualityRiskReportWhereInput = { deletedAt: null, ...(and.length ? { AND: and } : {}) };
+  const phase = Object.keys(QUALITY_PHASE_LABELS).includes(status) || ['REVISING', 'CONTAINMENT'].includes(status) ? qualityPhaseWhere(status) : {};
+  const where: Prisma.InternalQualityRiskReportWhereInput = { AND: [{ ...scopeWhere, deletedAt: deletedMode ? { not: null } : null }, phase] };
   const limit = Math.min(Math.max(Number(input.limit) || 300, 1), 600);
-  const [records, total, draft, submitted, collaborating, verifying, pendingClose, revising, archived, deleted, critical, activeAlerts, unlinked, overdueTasks] = await Promise.all([
-    prisma.internalQualityRiskReport.findMany({ where, include: internalQualityRiskInclude, orderBy: [{ updatedAt: 'desc' }], take: limit }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'DRAFT' } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: { in: ['SUBMITTED', 'CONTAINMENT'] } } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'COLLABORATING' } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'VERIFYING' } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'PENDING_CLOSE' } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'REVISING' } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, status: 'ARCHIVED' } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: { not: null } } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, severity: 'CRITICAL' } }),
-    prisma.workOrderQualityAlert.count({ where: { state: { in: [...QUALITY_ALERT_ACTIVE_STATES] }, report: { deletedAt: null } } }),
-    prisma.internalQualityRiskReport.count({ where: { deletedAt: null, products: { none: {} } } }),
-    prisma.internalQualityRiskTask.count({ where: { report: { deletedAt: null }, status: { in: ['TODO', 'IN_PROGRESS'] }, dueAt: { lt: new Date() } } }),
+  const offset = Math.max(0, Math.floor(Number(input.offset) || 0));
+  const keys = Object.keys(QUALITY_PHASE_LABELS);
+  const [records, matchedTotal, total, deleted, activeAlerts, overdueTasks, critical, unlinked, revising, counts] = await Promise.all([
+    prisma.internalQualityRiskReport.findMany({ where, include: internalQualityRiskInclude, orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }], skip: offset, take: limit }),
+    prisma.internalQualityRiskReport.count({ where }),
+    prisma.internalQualityRiskReport.count({ where: scopeWhere }),
+    prisma.internalQualityRiskReport.count({ where: { ...scopeWhere, deletedAt: { not: null } } }),
+    prisma.workOrderQualityAlert.count({ where: { state: { in: [...QUALITY_ALERT_ACTIVE_STATES] }, report: scopeWhere } }),
+    prisma.internalQualityRiskTask.count({ where: { report: { AND: [scopeWhere, { status: { in: ['SUBMITTED', 'CONTAINMENT', 'COLLABORATING', 'REVISING'] } }] }, status: { in: ['TODO', 'IN_PROGRESS'] }, dueAt: { lt: new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date()) + 'T00:00:00+08:00') } } }),
+    prisma.internalQualityRiskReport.count({ where: { AND: [scopeWhere, { severity: 'CRITICAL' }] } }),
+    prisma.internalQualityRiskReport.count({ where: { AND: [scopeWhere, { products: { none: {} } }] } }),
+    prisma.internalQualityRiskReport.count({ where: { AND: [scopeWhere, { status: 'REVISING' }] } }),
+    Promise.all(keys.map(key => prisma.internalQualityRiskReport.count({ where: { AND: [scopeWhere, qualityPhaseWhere(key)] } }))),
   ]);
+  const workflowCounts = Object.fromEntries(keys.map((key, index) => [key, counts[index]]));
   return {
-    reports: records.map(serializeInternalQualityRisk),
-    summary: { total, draft, submitted, collaborating, verifying, pendingClose, revising, archived, deleted, critical, activeAlerts, unlinked, overdueTasks },
+    reports: records.map(serializeInternalQualityRisk), matchedTotal, offset, hasMore: offset + records.length < matchedTotal, workflowCounts,
+    summary: { total, draft: workflowCounts.DRAFT, submitted: workflowCounts.SUBMITTED, collaborating: workflowCounts.COLLABORATING, verifying: workflowCounts.VERIFYING, pendingClose: workflowCounts.PENDING_CLOSE, archived: workflowCounts.ARCHIVED, revising, deleted, critical, activeAlerts, unlinked, overdueTasks },
   };
 }
 

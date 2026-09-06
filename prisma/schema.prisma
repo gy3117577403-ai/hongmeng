@@ -4359,6 +4359,7 @@ model EightDReportActivity {
 }
 
 model InternalQualityRiskReport {
+  qualitySource Json? @map("quality_source")
   id                    String                            @id @default(uuid())
   sequence              Int                               @unique @default(autoincrement())
   reportNo              String                            @unique @map("report_no")

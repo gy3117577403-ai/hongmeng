@@ -29,6 +29,7 @@ export default function QualityDataDetail({ record, user, onChanged, onEdit, onR
   }
   return <section className="qd-detail" aria-label="检验记录详情">
     <header><div><small>{r.code} · V{r.version}</small><h2>{r.title}</h2></div><span className={'qd-badge ' + r.result.toLowerCase()}>{RESULT_LABELS[r.result]}</span></header>
+    {!old && !record.deletedAt && record.status === 'SUBMITTED' && (user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:CREATE')) && <Link className="qd-source-exception" href={'/workspace/quality/internal-risks?sourceRecordId=' + encodeURIComponent(record.id) + '&workOrderId=' + encodeURIComponent(record.workOrderId)}>从本次检验建立异常工单 · 带入订单批次</Link>}
     <div className="qd-detail-tags"><span>{QUALITY_LABELS[r.type]}</span><span>{r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交'}</span><span>{REVIEW_LABELS[r.reviewStatus]}</span></div>
     {old && <div className="qd-alert">正在查看 V{old.version} 历史快照<button onClick={() => setOld(null)}>返回当前版本</button></div>}
     {error && <p className="qd-alert error" role="alert">{error}</p>}

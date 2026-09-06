@@ -4,13 +4,16 @@ import { AlertTriangle, ArrowLeft, CheckCircle2, Printer, ShieldAlert } from 'lu
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import QRCode from 'qrcode';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { QualityWarningPrintSheet } from '@/components/QualityWarningPrintSheet';
 import { buildQualityWarningPages } from '@/lib/quality-warning-print-layout';
 import type { InternalQualityRiskPrintPreviewDTO } from '@/types';
 
 export default function InternalQualityRiskPrintPreview({ preview }: { preview: InternalQualityRiskPrintPreviewDTO }) {
   const router = useRouter();
+  const [scale, setScale] = useState(1);
+  function fitPage() { const width = stageRef.current?.clientWidth || window.innerWidth; setScale(Math.min(1, Math.max(.25, (width - 48) / (210 * 96 / 25.4)))); }
+  useEffect(() => { fitPage(); }, []);
   const [qrImage, setQrImage] = useState('');
   const [qrError, setQrError] = useState('');
   const stageRef = useRef<HTMLElement>(null);
@@ -49,6 +52,6 @@ export default function InternalQualityRiskPrintPreview({ preview }: { preview: 
       <em><ShieldAlert size={14} />{preview.order.businessWorkOrderCode || preview.order.workOrderCode}</em>
     </section>
     <section className="risk-print-layout-options"><label>排版试览 <select aria-label="图片排版试览" value={layout} onChange={event => setLayout(event.target.value as 'PAIR' | 'SINGLE')}><option value="PAIR">自动省纸 · 保持原图比例</option><option value="SINGLE">大图细节 · 按需续页</option></select></label><strong>预计 {pages.length} 页 A4</strong><span>不裁切、不拉伸；同组两图保持并排。{layout !== preview.warning.printPhotoLayout ? '当前为试览，正式随单打印仍使用归档图片设置。' : '正式随单打印使用相同排版规则。'}</span></section>
-    <section ref={stageRef} className="risk-print-preview-stage">{pages.map((page, index) => <div className="risk-print-preview-paper" key={index}><QualityWarningPrintSheet page={page} order={preview.order} warning={warning} qrImage={qrImage} pageNumber={index + 1} totalPages={pages.length} previewState={preview.previewState} /></div>)}</section>
+    <nav className="risk-print-zoom" aria-label="附页屏幕缩放"><button onClick={() => setScale(value => Math.max(.25, value - .1))}>缩小</button><span>{Math.round(scale * 100)}%</span><button onClick={() => setScale(value => Math.min(2, value + .1))}>放大</button><button onClick={fitPage}>适合窗口</button><button onClick={() => setScale(1)}>实际大小</button><small>缩放仅影响屏幕；打印保持 A4 原比例。</small></nav><section ref={stageRef} style={{ '--quality-preview-scale': scale } as CSSProperties} className="risk-print-preview-stage">{pages.map((page, index) => <div className="risk-print-preview-paper" key={index}><QualityWarningPrintSheet page={page} order={preview.order} warning={warning} qrImage={qrImage} pageNumber={index + 1} totalPages={pages.length} previewState={preview.previewState} /></div>)}</section>
   </main>;
 }

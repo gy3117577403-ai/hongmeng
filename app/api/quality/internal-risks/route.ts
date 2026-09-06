@@ -3,6 +3,8 @@ import { requireCapability, requireUser } from '@/lib/auth';
 import { internalQualityRiskRouteError } from '@/lib/internal-quality-risk-route-response';
 import {
   createInternalQualityRiskRecord,
+  InternalQualityRiskError,
+  internalQualityRiskInclude,
   loadInternalQualityRisks,
   parseInternalQualityRiskInput,
   serializeInternalQualityRisk,
@@ -23,8 +25,15 @@ function actor(user: { id: string; displayName: string; username: string }) {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
     const result = await loadInternalQualityRisks({
+      viewerId: user.id,
+      workView: req.nextUrl.searchParams.get('view') || 'ALL',
+      ownerId: req.nextUrl.searchParams.get('ownerId') || '',
+      dateFrom: req.nextUrl.searchParams.get('dateFrom') || '',
+      dateTo: req.nextUrl.searchParams.get('dateTo') || '',
+      overdue: req.nextUrl.searchParams.get('overdue') === 'true',
+      offset: Number(req.nextUrl.searchParams.get('offset') || 0),
       keyword: req.nextUrl.searchParams.get('keyword') || '',
       status: req.nextUrl.searchParams.get('status') || 'all',
       severity: req.nextUrl.searchParams.get('severity') || '',
@@ -47,8 +56,17 @@ export async function POST(req: NextRequest) {
     const user = await requireCapability('QUALITY', 'CREATE');
     const body = await req.json() as Record<string, unknown>;
     const input = parseInternalQualityRiskInput({ ...body, workflowVersion: 3 });
+    const sourceId = typeof body.sourceQualityRecordId === 'string' ? body.sourceQualityRecordId : '';
+    if (sourceId) await requireCapability('QUALITY_DATA', 'READ');
     const report = await prisma.$transaction(async tx => {
-      const draft = await createInternalQualityRiskRecord(tx, input, actor(user));
+      let draft = await createInternalQualityRiskRecord(tx, input, actor(user));
+      if (sourceId) {
+        const source = await tx.qualityDataRecord.findFirst({ where: { id: sourceId, deletedAt: null, status: 'SUBMITTED' } });
+        if (!source) throw new InternalQualityRiskError('来源质量记录不存在、尚未提交或已作废', 400);
+        if (!input.workOrderIds.includes(source.workOrderId)) throw new InternalQualityRiskError('必须保留来源检验记录所属工单，其他影响对象可另行关联', 400);
+        const data = source.data as { summary?: string };
+        draft = await tx.internalQualityRiskReport.update({ where: { id: draft.id }, data: { qualitySource: { id: source.id, code: source.code, version: source.version, title: source.title, workOrderId: source.workOrderId, description: data.summary || source.title, capturedAt: new Date().toISOString() } }, include: internalQualityRiskInclude });
+      }
       return body.submit === true ? actOnQualityWorkflow(tx, draft.id, draft.version, 'SUBMIT', {}, qualityRiskActor(user)) : draft;
     });
     await logOp({

@@ -22,7 +22,7 @@ export function qualityTaskPath(reportId: string, taskId?: string | null, review
 }
 export function qualityReturnPath(path: string, query: Record<string, string | string[] | undefined>) {
   const params = new URLSearchParams();
-  for (const key of ['reportId', 'taskId', 'workOrderId']) {
+  for (const key of ['reportId', 'taskId', 'workOrderId', 'sourceRecordId']) {
     const value = query[key];
     if (typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value)) params.set(key, value);
   }

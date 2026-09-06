@@ -10,7 +10,7 @@ const eightDArchive = readFileSync(resolve(repositoryRoot, 'components/EightDArc
 
 test('all quality management pages remove hidden-header spacing through the cockpit root contract', () => {
   assert.match(qualityOverview, /className="hm-workbench-root hm-cockpit-root quality-home-shell"/);
-  assert.match(internalRisks, /className="hm-workbench-root hm-cockpit-root internal-risk-shell"/);
+  assert.match(internalRisks, /hm-workbench-root hm-cockpit-root internal-risk-shell/);
   assert.match(eightDArchive, /className="hm-workbench-root hm-cockpit-root hm-eight-d-workbench"/);
 
   for (const component of [qualityOverview, internalRisks, eightDArchive]) {

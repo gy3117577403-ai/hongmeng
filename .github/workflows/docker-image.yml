@@ -345,6 +345,19 @@ jobs:
           PRODUCTION_BOARD_QA_BASE=http://127.0.0.1:3000 \
             PRODUCTION_BOARD_QA_FIXTURE=artifacts/production-collaboration/fixture.json \
             node scripts/smoke-production-board-browser.mjs
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          mkdir -p artifacts/quality-workbench
+          docker exec -i -e QUALITY_WORKBENCH_QA_ALLOW=disposable-quality-runtime hongmeng-release-smoke node \
+            < scripts/seed-quality-workbench-smoke.cjs > artifacts/quality-workbench/release-fixture.json
+          QUALITY_WORKBENCH_QA_BASE=http://127.0.0.1:3000 \
+            QUALITY_WORKBENCH_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/release-fixture.json \
+            QUALITY_WORKBENCH_QA_OUTPUT=artifacts/quality-workbench/release-http.json \
+            node scripts/smoke-quality-workbench.mjs
+          QUALITY_WORKBENCH_QA_BASE=http://127.0.0.1:3000 \
+            QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/release-fixture.json \
+            node scripts/smoke-quality-workbench-browser.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -619,6 +632,14 @@ jobs:
             PLANNING_IMPORT_QA_REFERENCE=artifacts/planning-progress-preview/mirror-reference.json \
             node scripts/smoke-planning-import.mjs
 
+          mkdir -p artifacts/quality-workbench
+          docker exec -i -e QUALITY_WORKBENCH_QA_ALLOW=disposable-quality-runtime "$app_name" node \
+            < scripts/seed-quality-workbench-smoke.cjs > artifacts/quality-workbench/mirror-fixture.json
+          QUALITY_WORKBENCH_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_WORKBENCH_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/mirror-fixture.json \
+            QUALITY_WORKBENCH_QA_OUTPUT=artifacts/quality-workbench/mirror-http.json \
+            node scripts/smoke-quality-workbench.mjs
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
@@ -626,6 +647,16 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture and quality data lifecycle smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload quality workbench acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-workbench-${{ github.ref_name }}
+          path: |
+            artifacts/quality-workbench/*http.json
+            artifacts/quality-workbench/browser-runtime.txt
+            artifacts/quality-workbench/*.png
+          if-no-files-found: warn
       - name: Upload production collaboration acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

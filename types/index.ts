@@ -1048,6 +1048,8 @@ export type InternalQualityRiskAttachmentDTO = {
 };
 
 export type InternalQualityRiskDTO = {
+  qualitySource?: { id: string; code: string; version: number; title: string; workOrderId: string; description: string; capturedAt: string } | null;
+  workflow?: ReturnType<typeof import('@/lib/quality-workbench').qualityWorkflowView>;
   workflowVersion?: number;
   problemCategory?: string | null;
   responsibleUserIds?: string[];

@@ -243,7 +243,7 @@ test('workbench exposes administrator-only recycle interactions and production w
 });
 
 test('quality risk workbench removes hidden-header spacing and offers searchable association filters', () => {
-  assert.match(workbench, /className="hm-workbench-root hm-cockpit-root internal-risk-shell"/);
+  assert.match(workbench, /hm-workbench-root hm-cockpit-root internal-risk-shell/);
   assert.match(workbench, /function SearchableRiskFilter/);
   assert.match(workbench, /role="combobox"/);
   assert.match(workbench, /label="产品"[\s\S]*?searchPlaceholder="搜索规格、品名或客户"/);

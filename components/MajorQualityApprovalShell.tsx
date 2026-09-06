@@ -30,6 +30,7 @@ import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
+import { useModalLayer } from './useModalLayer';
 import { useToastBridge } from '@/components/ToastProvider';
 import type { CurrentUserDTO } from '@/types';
 
@@ -226,6 +227,8 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
   const initialViewerFilterChosenRef = useRef(false);
   const selectedIdRef = useRef(requestedApprovalId);
   const modalCloseRef = useRef<HTMLButtonElement>(null);
+  const decisionLayer = useRef<HTMLFormElement>(null);
+  useModalLayer({ open: Boolean(dialog), layerRef: decisionLayer, onClose: () => { if (!submitting) setDialog(null); } });
   useToastBridge(toast, setToast);
 
   const loadApprovals = useCallback(async (signal: AbortSignal) => {
@@ -238,6 +241,7 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
       });
       const body = await response.json().catch(() => ({ ok: false, error: '服务返回格式异常' })) as ApprovalResponse;
       if (!response.ok || !body.ok) throw new Error(body.error || body.message || '重大质量审批加载失败');
+      if (signal.aborted) return;
       const nextApprovals = Array.isArray(body.approvals) ? body.approvals : [];
       const nextViewer = body.viewer || { canQualityReview: false, canFinalApprove: false };
       setApprovals(nextApprovals);
@@ -257,8 +261,7 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
-      setApprovals([]);
-      setSelected(null);
+      // Keep the last confirmed screen available during a failed refresh.
       setLoadError(error instanceof Error ? error.message : '重大质量审批加载失败');
     } finally {
       if (!signal.aborted) setLoading(false);
@@ -280,20 +283,7 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
     window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}`);
   }, [filter, selected]);
 
-  useEffect(() => {
-    if (!dialog) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.requestAnimationFrame(() => modalCloseRef.current?.focus());
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape' && !submitting) setDialog(null);
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [dialog, submitting]);
+
 
   const visibleApprovals = useMemo(() => {
     const normalized = keyword.trim().toLocaleLowerCase('zh-CN');
@@ -430,7 +420,7 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
               <button type="button" aria-label="刷新审批队列" title="刷新审批队列" disabled={loading} onClick={() => setReloadKey(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button>
             </header>
             <div className="major-approval-queue-scroll hm-scroll-region" tabIndex={0}>
-              {loading && <div className="major-approval-empty"><Loader2 className="spin" /><b>正在加载审批队列</b><span>正在核对最新审批状态和版本</span></div>}
+              {loading && !approvals.length && <div className="major-approval-empty"><Loader2 className="spin" /><b>正在加载审批队列</b><span>正在核对最新审批状态和版本</span></div>}
               {!loading && loadError && <div className="major-approval-empty error"><AlertCircle /><b>审批队列加载失败</b><span>{loadError}</span><button type="button" onClick={() => setReloadKey(value => value + 1)}>重新加载</button></div>}
               {!loading && !loadError && !visibleApprovals.length && <div className="major-approval-empty"><CheckCircle2 /><b>当前队列没有事项</b><span>新的重大质量事项提交后会自动进入对应队列。</span></div>}
               {!loading && !loadError && visibleApprovals.map(approval => {
@@ -511,7 +501,7 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
       </div>
 
       {dialog && selected && <div className="major-decision-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !submitting) setDialog(null); }}>
-        <form className={`major-decision-dialog decision-${dialog.decision.toLowerCase()}`} role="dialog" aria-modal="true" aria-labelledby="major-decision-title" onSubmit={submitDecision}>
+        <form ref={decisionLayer} className={`major-decision-dialog decision-${dialog.decision.toLowerCase()}`} role="dialog" aria-modal="true" aria-labelledby="major-decision-title" onSubmit={submitDecision}>
           <header><span className="decision-icon">{dialog.decision === 'APPROVE' ? <BadgeCheck /> : <RotateCcw />}</span><div><small>{selected.issue.code} · 第 {selected.round} 轮</small><h2 id="major-decision-title">{decisionTitle}</h2></div><button ref={modalCloseRef} type="button" aria-label="关闭审批弹窗" title="关闭" disabled={submitting} onClick={() => setDialog(null)}><X size={19} /></button></header>
           <div className="major-decision-summary"><span>{statusMeta[selected.status].shortLabel}</span><b>{selected.issue.title}</b><p>{dialog.decision === 'APPROVE' ? '通过后将进入下一审批阶段；总经办终审通过后问题自动闭环。' : '退回后问题进入整改状态，需要完善处理方案后重新提交。'}</p></div>
           <label>审批意见 <em>必填</em><textarea autoFocus required maxLength={2000} rows={5} value={decisionNote} onChange={event => { setDecisionNote(event.target.value); setDecisionError(''); }} placeholder={dialog.decision === 'APPROVE' ? '说明核验范围、判断依据和通过结论…' : '明确指出需整改的问题、补充资料和重新提交条件…'} /></label>

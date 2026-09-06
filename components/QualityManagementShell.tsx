@@ -12,6 +12,7 @@ const emptyRisk: InternalQualityRiskSummaryDTO = { total: 0, draft: 0, submitted
 const emptyEightD: EightDReportSummaryDTO = { total: 0, active: 0, archived: 0, deleted: 0, productCount: 0, issueCount: 0, unlinked: 0 };
 
 export default function QualityManagementShell({ user }: { user: CurrentUserDTO }) {
+  const [phases, setPhases] = useState<Record<string, number>>({});
   const [risk, setRisk] = useState(emptyRisk);
   const [eightD, setEightD] = useState(emptyEightD);
   const [loading, setLoading] = useState(true);
@@ -28,6 +29,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
       const [riskBody, eightDBody] = await Promise.all([riskResponse.json(), eightDResponse.json()]);
       if (!riskResponse.ok) throw new Error(riskBody.error || '重大异常概况加载失败');
       if (!eightDResponse.ok) throw new Error(eightDBody.error || '8D档案概况加载失败');
+      setPhases(riskBody.workflowCounts || {});
       setRisk(riskBody.summary || emptyRisk);
       setEightD(eightDBody.summary || emptyEightD);
     } catch (loadError) {
@@ -52,6 +54,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
       />
       <QualityModuleTabs active="overview" riskCount={risk.total} eightDCount={eightD.total} canViewData={user.access.capabilities.includes('QUALITY_DATA:READ')} />
       {error && <div className="quality-home-error"><AlertTriangle size={16} />{error}</div>}
+      <nav className="quality-entry-shortcuts"><Link href="/workspace/quality-tasks">我的责任任务</Link><Link href="/workspace/quality-confirmation">品质确认 · {phases.VERIFYING || 0} 份待确认</Link><Link href="/workspace/approvals">重大事项审批</Link><span>待接单 {phases.SUBMITTED || 0} · 处理中 {phases.COLLABORATING || 0} · 待汇总 {phases.SUMMARIZING || 0} · 待归档 {phases.PENDING_CLOSE || 0}</span></nav>
       <section className="quality-home-kpis" aria-label="质量管理关键指标">
         <article className="danger"><span>活动工单预警</span><strong>{risk.activeAlerts}</strong><small>来自已归档异常版本</small></article>
         <article><span>待完善草稿</span><strong>{risk.draft}</strong><small>{risk.unlinked} 份关联不完整</small></article>
@@ -62,7 +65,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
       <section className="quality-home-modules">
         <Link className="risk-module" href="/workspace/quality/internal-risks">
           <header><span><ShieldAlert size={20} /></span><em>内部闭环</em></header>
-          <h2>内部重大异常风险汇总</h2>
+          <h2>重大异常协同工作台</h2>
           <p>汇总车间不良与重大质量问题，完善发生原因、流出原因、根因、措施和结论，归档后原子同步到关联工单。</p>
           <dl><div><dt>草稿/修订</dt><dd>{risk.draft + risk.revising}</dd></div><div><dt>已归档</dt><dd>{risk.archived}</dd></div><div><dt>回收站</dt><dd>{risk.deleted}</dd></div></dl>
           <footer><span><Sparkles size={14} />支持同产品历史风险建议</span><b>进入工作台 <ArrowRight size={15} /></b></footer>
@@ -72,7 +75,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
           <h2>8D PDF档案库</h2>
           <p>保存已经制作完成的8D PDF、受控版本、产品与质量问题多对多关联；不在系统内重复编辑D1–D8正文。</p>
           <dl><div><dt>在用</dt><dd>{eightD.active}</dd></div><div><dt>已归档</dt><dd>{eightD.archived}</dd></div><div><dt>待关联</dt><dd>{eightD.unlinked}</dd></div></dl>
-          <footer><span>PDF存入S3兼容对象存储</span><b>打开档案库 <ArrowRight size={15} /></b></footer>
+          <footer><span>保留原始 PDF 和每次受控版本</span><b>打开档案库 <ArrowRight size={15} /></b></footer>
         </Link>
       </section>
       <section className="quality-home-flow" aria-label="质量闭环数据流">
