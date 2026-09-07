@@ -360,13 +360,18 @@ function stepStandardMatchesEntry(
   entry: ProductTimeProfileRecord['entries'][number],
 ): boolean {
   const standard = entryStandard(entry);
+  // Product reports use unitLabel; reportUnitLabel may still hold an unused
+  // legacy default. Canonicalizing that field must not reprice historical pools.
+  const reportingUnit = step.reportQuantityBasis === 'action'
+    ? step.reportUnitLabel
+    : step.unitLabel || '件';
   return step.timeBasis === standard.timeBasis
     && step.standardMillisecondsPerUnit === standard.standardMillisecondsPerUnit
     && step.setupMilliseconds === standard.setupMilliseconds
     && step.unitsPerProduct === standard.unitsPerProduct
     && step.unitLabel === standard.unitLabel
     && step.reportQuantityBasis === standard.reportQuantityBasis
-    && step.reportUnitLabel === standard.reportUnitLabel
+    && reportingUnit === standard.reportUnitLabel
     && step.countsForEfficiency === standard.countsForEfficiency;
 }
 

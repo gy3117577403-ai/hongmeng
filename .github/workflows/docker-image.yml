@@ -679,7 +679,7 @@ jobs:
           {
             echo "### Anonymous China mirror runtime acceptance"
             echo
-            echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture and quality data lifecycle smoke."
+            echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Upload reporting recovery acceptance evidence
         if: always()

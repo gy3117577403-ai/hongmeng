@@ -19,7 +19,7 @@ async function recover(routeId: string) {
   assert.ok(body.coverageRecovery);return body.coverageRecovery;
 }
 
-for (const mode of ['published-deployment','historical-recovery'] as const) {
+for (const mode of ['published-deployment','published-deployment-with-claims','historical-recovery'] as const) {
   test(`${mode}: existing inspection and packing reports settle once after an upstream operation is removed`, {skip:!run}, async()=>{
     const prefix=`IT-PENDING-${Date.now()}-${randomUUID().slice(0,8)}`;
     const actor=await prisma.user.create({data:{username:prefix,passwordHash:'not-a-login-hash',displayName:prefix,laborRole:'ADMIN'}});
@@ -33,14 +33,16 @@ for (const mode of ['published-deployment','historical-recovery'] as const) {
     try {
       for(const step of [inspect,pack,cut]) {
         const current=await prisma.workOrderProcessRoute.findUniqueOrThrow({where:{id:route.id}});
-        await completeProcessStep({routeId:route.id,stepId:step.id,processedQty:40,defectQty:0,workDate:'2026-09-03',employeeIds:[employee.id],requireParticipants:true,allowAdvanceReporting:true,idempotencyKey:`${prefix}-${step.id}`,expectedRouteVersion:current.version,userId:actor.id,actor:prefix});
+        await completeProcessStep({routeId:route.id,stepId:step.id,processedQty:40,defectQty:0,workDate:'2026-09-03',employeeIds:[employee.id],requireParticipants:true,autoAssignLabor:mode==='published-deployment-with-claims',allowAdvanceReporting:true,idempotencyKey:`${prefix}-${step.id}`,expectedRouteVersion:current.version,userId:actor.id,actor:prefix});
       }
-      const originalReports=await prisma.processCompletion.findMany({where:{routeId:route.id},orderBy:{id:'asc'},select:{id:true,completedAt:true,processedQty:true,workDate:true}});
+      const historicalReportSelect={id:true,completedAt:true,processedQty:true,workDate:true,productTimeProfileId:true,productTimeEntryId:true,productTimeProfileVersion:true,standardSource:true,standardMillisecondsPerUnit:true,unitLabel:true,reportUnitLabel:true,unitsPerProduct:true} as const;
+      const originalReports=await prisma.processCompletion.findMany({where:{routeId:route.id},orderBy:{id:'asc'},select:historicalReportSelect});
       const originalLabor=await prisma.processLaborPool.findMany({where:{workOrderId:order.id},orderBy:{id:'asc'},include:{claims:true}});
       assert.equal(originalReports.length,3);assert.equal(originalLabor.length,3);
+      if(mode==='published-deployment-with-claims') assert.ok(originalLabor.every(pool=>pool.claims.length===1 && pool.claimedStandardLaborMilliseconds===40000n));
       assert.equal(await prisma.processCompletion.count({where:{routeId:route.id,coverageStatus:'PENDING'}}),2);
       assert.equal((await recover(route.id)).repairedRouteIds.includes(route.id),false,'no upstream input means no recovery');
-      if(mode==='published-deployment') {
+      if(mode!=='historical-recovery') {
         await prisma.productTimeProfile.update({where:{id:profile.id},data:{status:'archived'}});
         const next=await prisma.productTimeProfile.create({data:{drawingLibraryItemId:item.id,version:2,status:'published',publishedAt:new Date(),createdById:actor.id,entries:{create:profile.entries.filter((_,index)=>index!==1).map((entry,index)=>({processDefinitionId:entry.processDefinitionId,occurrenceKey:entry.occurrenceKey,position:index+1,sequenceGroup:index+1,timeBasis:'per_unit',unitMilliseconds:1000,occurrences:1,unitLabel:'套'}))}}});
         const deploy=()=>prisma.$transaction(tx=>deployPublishedProductTimeRoutesInTransaction(tx,{itemId:item.id,profileId:next.id,actorId:actor.id,sourceChangeId:prefix}),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,timeout:30000});
@@ -69,7 +71,7 @@ for (const mode of ['published-deployment','historical-recovery'] as const) {
       const movements=await prisma.processQuantityMovement.count({where:{workOrderId:order.id}});
       assert.equal((await recover(route.id)).repairedRouteIds.includes(route.id),false);
       assert.equal(await prisma.processQuantityMovement.count({where:{workOrderId:order.id}}),movements);
-      assert.deepEqual(await prisma.processCompletion.findMany({where:{routeId:route.id},orderBy:{id:'asc'},select:{id:true,completedAt:true,processedQty:true,workDate:true}}),originalReports);
+      assert.deepEqual(await prisma.processCompletion.findMany({where:{routeId:route.id},orderBy:{id:'asc'},select:historicalReportSelect}),originalReports);
       assert.deepEqual(await prisma.processLaborPool.findMany({where:{workOrderId:order.id},orderBy:{id:'asc'},include:{claims:true}}),originalLabor);
     } finally {
       await prisma.processLaborClaim.deleteMany({where:{pool:{workOrderId:order.id}}});
