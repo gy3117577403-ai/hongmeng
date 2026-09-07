@@ -219,6 +219,7 @@ export type ProcessCompletionContext = {
     processedQty: number;
     reportedQty: number;
     coveredReportedQty: number;
+    pendingSubmissionQty?: number;
     pendingCoverageQty: number;
     reportableQty: number;
     reportTargetQty: number;
@@ -1694,6 +1695,7 @@ export async function loadProcessCompletionContext(
         inputQty: stepAvailableInput,
         processedQty: supplemental ? totals.reportedQty : step.processedQty,
         reportedQty: totals.reportedQty,
+        pendingSubmissionQty: pending?._sum.reservedProductQty || 0,
         coveredReportedQty: supplemental ? totals.reportedQty : totals.coveredReportedQty,
         pendingCoverageQty: supplemental
           ? 0
@@ -3783,6 +3785,7 @@ async function performProcessCompletion(
   backfill?: ProductionBackfillAuthorization,
   recoverySubmissionId?: string,
   historicalWip?: import('@/lib/wip-reporting').HistoricalWipReportingAuthorization,
+  recoverySources?: import('@/lib/wip-reporting').WipRecoverySources,
 ): Promise<ProcessCompletionResult> {
   const existing = await tx.processCompletion.findUnique({
     where: { idempotencyKey: input.idempotencyKey },
@@ -4029,6 +4032,7 @@ async function performProcessCompletion(
     requestedAllocationId: input.wipAllocationId,
     excludeSubmissionId: recoverySubmissionId,
     historicalAuthorization: historicalWip,
+    recoverySources,
   });
   if (reportQuantityBasis === 'action') {
     try {
@@ -4395,9 +4399,9 @@ async function performProcessCompletion(
 export async function completeProcessStepInTransaction(
   tx: Prisma.TransactionClient,
   command: CompleteProcessStepCommand,
-  options: { recoverySubmissionId?: string; historicalWip?: import('@/lib/wip-reporting').HistoricalWipReportingAuthorization } = {},
+  options: { recoverySubmissionId?: string; historicalWip?: import('@/lib/wip-reporting').HistoricalWipReportingAuthorization; recoverySources?: import('@/lib/wip-reporting').WipRecoverySources } = {},
 ): Promise<ProcessCompletionResult> {
-  return performProcessCompletion(tx, parseProcessCompletionCommand(command), 'none', undefined, options.recoverySubmissionId, options.historicalWip);
+  return performProcessCompletion(tx, parseProcessCompletionCommand(command), 'none', undefined, options.recoverySubmissionId, options.historicalWip, options.recoverySources);
 }
 
 export async function completeProcessStep(

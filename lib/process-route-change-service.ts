@@ -4016,7 +4016,7 @@ export async function completeProcessSupplementObligationInTransaction(
   tx: Prisma.TransactionClient,
   command: CompleteProcessSupplementObligationCommand,
   backfill?: ProductionBackfillAuthorization,
-  options?: { historicalWip?: HistoricalWipReportingAuthorization },
+  options?: { historicalWip?: HistoricalWipReportingAuthorization; recoverySources?: import('@/lib/wip-reporting').WipRecoverySources },
 ) {
   const identity = mutationIdentity(command);
   const obligationId = clean(command.obligationId, 80);
@@ -4277,6 +4277,7 @@ export async function completeProcessSupplementObligationInTransaction(
       unitsPerProduct: obligation.unitsPerProduct,
       excludeSubmissionId: command.recoverySubmissionId,
       historicalAuthorization: options?.historicalWip,
+      recoverySources: options?.recoverySources,
     });
     if (reportQuantities.reportedGoodUnitQty > remainingActionQty) {
       throw new ProcessRouteChangeServiceError(

@@ -33,6 +33,7 @@ import {
 import { productionEmployeeWhere } from '@/lib/production-workforce';
 import { materialSequenceGroup } from '@/lib/process-material-sequence';
 import { wipEntryCheckpointClosesRoute } from '@/lib/wip-completion-checkpoint';
+import { loadWipScheduleBalances } from '@/lib/wip-schedule-balance';
 
 const OPEN_LOT_STATUSES: SemiFinishedScheduleStatus[] = [
   SemiFinishedScheduleStatus.UNSCHEDULED,
@@ -704,23 +705,14 @@ export async function scheduleWipLotInTransaction(tx: Prisma.TransactionClient, 
   }
   const stepCreates: Prisma.WipWeekAllocationStepCreateWithoutAllocationInput[] = [];
   let totalMilliseconds = 0n;
+  const balances = await loadWipScheduleBalances(tx, lot.id);
   for (const step of lot.steps) {
-    const skippedQuantity = Math.max(0, lot.quantity - step.remainingQty);
-    const coveredBefore = Math.max(0, coveredQuantity - skippedQuantity);
-    const coveredAfter = Math.max(0, Math.min(step.remainingQty, coveredQuantity + quantity - skippedQuantity));
-    const plannedQty = Math.max(0, coveredAfter - Math.min(step.remainingQty, coveredBefore));
+    const balance = balances.find(row => row.lotStepId === step.id);
+    const plannedQty = Math.min(quantity, balance?.availableQty || 0);
     if (plannedQty <= 0) continue;
-    const beforeMs = proportionalMilliseconds(
-      step.remainingStandardMilliseconds,
-      Math.min(step.remainingQty, coveredBefore),
-      step.remainingQty,
-    );
-    const afterMs = proportionalMilliseconds(
-      step.remainingStandardMilliseconds,
-      coveredAfter,
-      step.remainingQty,
-    );
-    const plannedStandardMilliseconds = afterMs > beforeMs ? afterMs - beforeMs : 0n;
+    const coveredBefore = Math.max(0, step.remainingQty - (balance?.availableQty || 0));
+    const plannedStandardMilliseconds = proportionalMilliseconds(step.remainingStandardMilliseconds, coveredBefore + plannedQty, step.remainingQty)
+      - proportionalMilliseconds(step.remainingStandardMilliseconds, coveredBefore, step.remainingQty);
     totalMilliseconds += plannedStandardMilliseconds;
     stepCreates.push({
       lotStep: { connect: { id: step.id } },
@@ -1052,16 +1044,20 @@ export async function rescheduleWipAllocationInTransaction(tx: Prisma.Transactio
   } else if (source.team) {
     assertProductionTeam(input.productionScope, source.team);
   }
+  const balances = await loadWipScheduleBalances(tx, source.lotId, source.id);
   const stepCreates = source.steps
     .filter(step => step.status !== WipRequirementStatus.CANCELLED)
     .map(step => ({
       lotStep: { connect: { id: step.lotStepId } },
-      plannedQty: Math.max(0, step.plannedQty - step.completedQty),
-      plannedStandardMilliseconds: step.plannedStandardMilliseconds - step.completedStandardMilliseconds,
+      plannedQty: Math.min(Math.max(0, step.plannedQty - step.completedQty), balances.find(row => row.lotStepId === step.lotStepId)?.availableQty || 0),
+      plannedStandardMilliseconds: proportionalMilliseconds(step.plannedStandardMilliseconds - step.completedStandardMilliseconds,
+        Math.min(Math.max(0, step.plannedQty - step.completedQty), balances.find(row => row.lotStepId === step.lotStepId)?.availableQty || 0),
+        Math.max(0, step.plannedQty - step.completedQty)),
       status: WipRequirementStatus.SCHEDULED,
     }))
     .filter(step => step.plannedQty > 0);
   const remainingMilliseconds = stepCreates.reduce((sum, step) => sum + step.plannedStandardMilliseconds, 0n);
+  if (source.steps.length && !stepCreates.length) throw new WipWarehouseError('原安排已没有可改排的工序余量，请刷新查看完成情况', 'WIP_NO_REMAINING_STEPS', 409);
   const sourceUpdate = await tx.wipWeekAllocation.updateMany({
     where: {
       id: source.id,
@@ -1865,7 +1861,17 @@ export async function listWipWarehouse(input: {
     };
   }).filter(candidate => candidate.availableQuantity > 0);
 
-  const serializedLots = lots.map(serializeLot);
+  const pendingSubmissions = await prisma.processReportSubmission.groupBy({ by: ['stepId'],
+    where: { workOrderId: { in: lots.map(lot => lot.workOrderId) }, status: 'PENDING', completionId: null }, _sum: { reservedProductQty: true } });
+  const serializedLots = lots.map(lot => {
+    const serialized = serializeLot(lot);
+    return { ...serialized, steps: serialized.steps.map(step => {
+      const scheduledQty = serialized.allocations.filter(row => ['ACTIVE', 'IN_PROGRESS'].includes(row.status))
+        .reduce((sum, allocation) => sum + (allocation.steps.find(row => row.stepId === step.stepId)?.remainingQty || 0), 0);
+      return { ...step, scheduledQty, availableQty: Math.max(0, step.remainingQty - scheduledQty),
+        pendingQty: pendingSubmissions.find(row => row.stepId === step.stepId)?._sum.reservedProductQty || 0 };
+    }) };
+  });
   const currentWeek = chinaWeekRange(new Date());
   const weeks = Array.from({ length: 12 }, (_, index) => {
     const start = new Date(currentWeek.start);

@@ -15,8 +15,9 @@ export type ReportRecoverySourceOption = {
   key: string; lotId: string; lotNo: string; allocationId: string | null;
   targetWeekStartDate: string | null; targetWeekEndDate: string | null;
   remainingQty: number; version: number;
-  action: 'USE_ALLOCATION' | 'RESCHEDULE_REMAINING' | 'SCHEDULE_REMAINING' | 'FUTURE_CONFIRMATION' | 'HISTORICAL_CONFIRMATION';
+  action: 'USE_ALLOCATION' | 'RESCHEDULE_REMAINING' | 'SCHEDULE_REMAINING' | 'FUTURE_CONFIRMATION' | 'HISTORICAL_CONFIRMATION' | 'COMBINE_SOURCES';
   label: string;
+  parts?: Array<ReportRecoverySourceOption & { quantity: number }>;
 };
 export type ReportSubmissionPreview = {
   submission: ReportSubmissionDto;

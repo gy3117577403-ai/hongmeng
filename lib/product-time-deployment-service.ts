@@ -64,6 +64,9 @@ export type ProductTimeDeploymentConflictDTO = {
 };
 
 export type ProductTimeDeploymentRouteDTO = {
+  selected?: boolean;
+  retainedReports?: { processName: string; quantity: number; count: number }[];
+  reportUrl?: string | null;
   workOrderId: string;
   workOrderCode: string;
   state: 'unstarted' | 'in_progress' | 'completed';
@@ -85,6 +88,7 @@ export type ProductTimeDeploymentRouteDTO = {
 };
 
 export type ProductTimeDeploymentImpactDTO = {
+  scope?: ProductTimeDeploymentScope;
   workOrders: { total: number; unstarted: number; inProgress: number; completed: number };
   historicalReports: number;
   affectedEmployees: number;
@@ -99,6 +103,7 @@ export type ProductTimeDeploymentImpactDTO = {
 };
 
 export type ProductTimeDeploymentPreviewDTO = {
+  scope?: ProductTimeDeploymentScope;
   previewToken: string;
   itemId: string;
   draftProfileId: string;
@@ -112,6 +117,17 @@ export type ProductTimeDeploymentPreviewDTO = {
   conflicts: ProductTimeDeploymentConflictDTO[];
   routes: ProductTimeDeploymentRouteDTO[];
 };
+
+export type ProductTimeDeploymentScope = { mode: 'all' | 'selected' | 'work_orders'; workOrderIds: string[] };
+export function normalizeProductTimeDeploymentScope(value: unknown): ProductTimeDeploymentScope {
+  if (value == null) return { mode: 'all', workOrderIds: [] };
+  const raw = value as Partial<ProductTimeDeploymentScope>;
+  if (!['all', 'selected', 'work_orders'].includes(String(raw.mode)) || !Array.isArray(raw.workOrderIds)
+    || raw.workOrderIds.some(id => typeof id !== 'string' || !id.trim())) throw new ProductTimeDeploymentError('请选择有效的同步范围', 400, 'PRODUCT_TIME_SCOPE_INVALID');
+  const workOrderIds = raw.mode === 'all' ? [] : [...new Set(raw.workOrderIds)].sort();
+  if (raw.mode === 'work_orders' && !workOrderIds.length) throw new ProductTimeDeploymentError('请至少选择一张要修改的工单', 400, 'PRODUCT_TIME_SCOPE_EMPTY');
+  return { mode: raw.mode!, workOrderIds };
+}
 
 export type ProductTimeDeploymentDTO = {
   id: string;
@@ -175,6 +191,7 @@ const routeInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
     orderBy: [{ position: 'asc' }, { id: 'asc' }],
     include: {
       productTimeEntry: { select: { occurrenceKey: true } },
+      reportingSubmissions: { where: { status: 'PENDING' }, select: { id: true, completionId: true, reservedProductQty: true } },
       supplementObligation: {
         select: {
           id: true,
@@ -197,6 +214,7 @@ const routeInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
           principalEmployeeId: true,
           completedAt: true,
           processedQty: true,
+          withdrawalRequests: { where: { status: { in: ['PENDING', 'BLOCKED'] } }, select: { id: true } },
           participants: { select: { employeeId: true } },
           laborPool: {
             select: {
@@ -743,8 +761,11 @@ function previewFromContext(
   itemId: string,
   context: Awaited<ReturnType<typeof loadPreviewContext>>,
   policiesInput: unknown = {},
+  scopeInput?: unknown,
 ): ProductTimeDeploymentPreviewDTO {
   const { profile, previous, routes } = context;
+  const scope = normalizeProductTimeDeploymentScope(scopeInput);
+  if (scope.workOrderIds.some(id => !routes.some(route => route.workOrderId === id))) throw new ProductTimeDeploymentError('所选工单不属于此产品或已失效，请刷新', 409, 'PRODUCT_TIME_SCOPE_INVALID');
   const policies = normalizeProductTimeInsertPolicies(policiesInput);
   const diffs = buildDiffs(previous, profile, policies);
   const conflicts: ProductTimeDeploymentConflictDTO[] = [];
@@ -760,6 +781,11 @@ function previewFromContext(
     const state = routeState(route);
     const routeFacts = routeHasFacts(route);
     const drift = routeDeploymentDrift(route, profile);
+    if (scope.mode !== 'all' && !scope.workOrderIds.includes(route.workOrderId)) return {
+      workOrderId: route.workOrderId, workOrderCode: route.workOrder.code, state, status: 'unchanged' as const,
+      selected: false, qrUpdated: false, routeVersionBefore: route.version, routeVersionAfter: route.version,
+      error: '未选择，保留当前工艺版本',
+    };
     if (state === 'completed') {
       keptCompleted += 1;
       return {
@@ -794,6 +820,14 @@ function previewFromContext(
     ]);
     let routeReports = 0;
     const routeEmployees = new Set<string>();
+    for (const removed of drift.removedSteps) for (const pending of removed.reportingSubmissions) conflicts.push({
+      code: 'PENDING_REPORT_ON_REMOVED_STEP', message: `${removed.processName} 有待处理申报${pending.reservedProductQty ? ` ${pending.reservedProductQty} 件` : ''}，请先处理原申报再替换；申报编号 ${pending.id}`,
+      workOrderId: route.workOrderId, workOrderCode: route.workOrder.code,
+    });
+    for (const removed of drift.removedSteps) for (const completion of removed.completions) for (const request of completion.withdrawalRequests) conflicts.push({
+      code: 'PENDING_WITHDRAWAL_ON_REMOVED_STEP', message: `${removed.processName} 有待完成的报工撤回，请先处理原撤回申请再替换；申请编号 ${request.id}`,
+      workOrderId: route.workOrderId, workOrderCode: route.workOrder.code,
+    });
     if (route.processRouteChanges.length) {
       conflicts.push({
         code: 'PENDING_ROUTE_CHANGE',
@@ -924,6 +958,10 @@ function previewFromContext(
       retiredProcesses: drift.removedSteps.length,
       updatedTimes: drift.timeChangedEntries.length,
       historicalReports: routeReports,
+      retainedReports: drift.removedSteps.filter(step => step.completions.length > 0).map(step => ({
+        processName: step.processName, quantity: step.completions.reduce((sum, completion) => sum + completion.processedQty, 0), count: step.completions.length,
+      })),
+      reportUrl: route.workOrder.qrTicket?.status === 'ACTIVE' ? `/field-report/${encodeURIComponent(route.workOrder.qrTicket.publicCode)}` : null,
       affectedEmployees: routeEmployees.size,
       supplementObligations: routeSupplements,
       systemCoveredQty: routeSystemCoveredQty,
@@ -934,10 +972,11 @@ function previewFromContext(
   });
 
   const stateCounts = { unstarted: 0, in_progress: 0, completed: 0 };
-  for (const route of routeDtos) stateCounts[route.state] += 1;
+  for (const route of routeDtos) if (route.selected !== false) stateCounts[route.state] += 1;
   const impact: ProductTimeDeploymentImpactDTO = {
+    scope,
     workOrders: {
-      total: routeDtos.length,
+      total: routeDtos.filter(route => route.selected !== false).length,
       unstarted: stateCounts.unstarted,
       inProgress: stateCounts.in_progress,
       completed: stateCounts.completed,
@@ -950,7 +989,7 @@ function previewFromContext(
     systemCoveredQty,
     actualRequiredQty,
     generatedLaborRecords: 0,
-    qrTickets: routes.filter(route => route.workOrder.qrTicket?.status === 'ACTIVE').length,
+    qrTickets: routes.filter(route => route.workOrder.qrTicket?.status === 'ACTIVE' && (scope.mode === 'all' || scope.workOrderIds.includes(route.workOrderId))).length,
     conflicts: conflicts.length,
   };
   const token = previewToken({
@@ -960,12 +999,14 @@ function previewFromContext(
     profileVersion: profile.version,
     previousProfileId: previous?.id || null,
     policies,
+    scope,
     diffs,
     routes: routes.map(route => ({ id: route.id, version: route.version })),
     conflicts,
   });
   return {
     previewToken: token,
+    scope,
     itemId,
     draftProfileId: profile.id,
     fromVersion: previous?.version || null,
@@ -984,8 +1025,9 @@ export async function previewProductTimeDeployment(
   itemId: string,
   tx: Tx | typeof prisma = prisma,
   policiesInput: unknown = {},
+  scopeInput?: unknown,
 ): Promise<ProductTimeDeploymentPreviewDTO> {
-  return previewFromContext(itemId, await loadPreviewContext(tx as Tx, itemId, 'draft'), policiesInput);
+  return previewFromContext(itemId, await loadPreviewContext(tx as Tx, itemId, 'draft'), policiesInput, scopeInput);
 }
 
 type CorrectionSummary = {
@@ -1307,115 +1349,6 @@ async function synchronizeHistoricalReportVersion(
     executions: executions.length,
     pools: poolIds.length,
     claims: 0,
-    employeeIds: [...employees],
-  };
-}
-
-async function deactivateRetiredStepReporting(
-  tx: Tx,
-  input: {
-    deploymentId: string;
-    stepId: string;
-    profile: ProductTimeProfileRecord;
-    actorId: string;
-    routeVersionAfter: number;
-  },
-): Promise<CorrectionSummary> {
-  const completions = await tx.processCompletion.findMany({
-    where: { stepId: input.stepId, voidedAt: null },
-    include: {
-      participants: { select: { employeeId: true } },
-      laborPool: {
-        include: {
-          claims: {
-            where: { status: ProcessLaborClaimStatus.ACTIVE },
-            orderBy: [{ claimedAt: 'asc' }, { id: 'asc' }],
-          },
-        },
-      },
-    },
-    orderBy: [{ completedAt: 'asc' }, { id: 'asc' }],
-  });
-  const executions = await tx.processExecution.findMany({
-    where: { stepId: input.stepId, voidedAt: null },
-    select: { id: true, employeeId: true },
-  });
-  const employees = new Set(executions.map(execution => execution.employeeId));
-  const now = new Date();
-  let pools = 0;
-  let claims = 0;
-  for (const completion of completions) {
-    if (completion.principalEmployeeId) employees.add(completion.principalEmployeeId);
-    for (const participant of completion.participants) employees.add(participant.employeeId);
-    await tx.processCompletion.update({
-      where: { id: completion.id },
-      data: {
-        productTimeProfileId: input.profile.id,
-        productTimeEntryId: null,
-        productTimeProfileVersion: input.profile.version,
-        routeVersion: input.routeVersionAfter,
-        standardSource: 'product_time_deployment_retired',
-        countsForEfficiency: false,
-      },
-    });
-    const pool = completion.laborPool;
-    if (!pool || pool.status === ProcessLaborPoolStatus.VOIDED) continue;
-    for (const claim of pool.claims) {
-      employees.add(claim.employeeId);
-      const key = `product-time-deployment:${input.deploymentId}:retire:${claim.id}`;
-      await tx.processLaborClaim.update({
-        where: { id: claim.id },
-        data: {
-          status: ProcessLaborClaimStatus.VOIDED,
-          voidedAt: now,
-          voidedById: input.actorId,
-          voidReason: `产品工序与工时 V${input.profile.version} 删除工序后撤销效率归集`,
-        },
-      });
-      await tx.processLaborClaim.create({
-        data: {
-          poolId: pool.id,
-          employeeId: claim.employeeId,
-          quantity: -claim.quantity,
-          standardLaborMilliseconds: -claim.standardLaborMilliseconds,
-          workDate: claim.workDate,
-          status: ProcessLaborClaimStatus.REVERSAL,
-          source: 'product_time_deployment_retired',
-          idempotencyKey: `${key}:reverse`.slice(0, 120),
-          claimedById: input.actorId,
-          claimedAt: now,
-          reversalOfId: claim.id,
-        },
-      });
-      claims += 1;
-    }
-    await tx.processLaborPool.update({
-      where: { id: pool.id },
-      data: {
-        status: ProcessLaborPoolStatus.VOIDED,
-        countsForEfficiency: false,
-        standardSource: 'product_time_deployment_retired',
-        productTimeProfileVersion: input.profile.version,
-        version: { increment: 1 },
-      },
-    });
-    pools += 1;
-  }
-  if (executions.length) {
-    await tx.processExecution.updateMany({
-      where: { id: { in: executions.map(execution => execution.id) }, voidedAt: null },
-      data: {
-        countsForEfficiency: false,
-        standardSource: 'product_time_deployment_retired',
-        productTimeProfileVersion: input.profile.version,
-      },
-    });
-  }
-  return {
-    completions: completions.length,
-    executions: executions.length,
-    pools,
-    claims,
     employeeIds: [...employees],
   };
 }
@@ -2280,17 +2213,8 @@ async function applyRouteDeployment(
     });
     bypassedQuantity += bypass.quantity;
     for (const step of groupSteps) {
-      if (stepHasFacts(step)) {
-        const correction = await deactivateRetiredStepReporting(tx, {
-          deploymentId: input.deploymentId,
-          stepId: step.id,
-          profile,
-          actorId: input.actorId,
-          routeVersionAfter: route.version + 1,
-        });
-        correctedReports += correction.completions;
-        for (const employeeId of correction.employeeIds) affectedEmployeeIds.add(employeeId);
-      }
+      // Retiring an operation changes future work, not the employee's earned labor.
+      // Corrections of an erroneous original report use the audited withdrawal flow.
       const retired = await retireRemovedStep(tx, step, input.deploymentRouteId);
       cancelledSupplement = cancelledSupplement || retired.cancelledSupplement;
       stepChanges.push({
@@ -2845,11 +2769,13 @@ export async function publishProductTimeDeployment(input: {
   expectedRevision: number;
   previewToken: string;
   policies?: unknown;
+  scope?: unknown;
 }): Promise<{ profileId: string; deployment: ProductTimeDeploymentDTO }> {
   const policies = normalizeProductTimeInsertPolicies(input.policies);
+  const scope = normalizeProductTimeDeploymentScope(input.scope);
   let outside: ProductTimeDeploymentPreviewDTO;
   try {
-    outside = await previewProductTimeDeployment(input.itemId, prisma, policies);
+    outside = await previewProductTimeDeployment(input.itemId, prisma, policies, scope);
   } catch (error) {
     if (error instanceof ProductTimeDeploymentError && error.code === 'DRAFT_NOT_FOUND') {
       const active = await prisma.productTimeDeployment.findFirst({
@@ -2889,7 +2815,7 @@ export async function publishProductTimeDeployment(input: {
           });
           if (alreadyActive) return alreadyActive.id;
           const context = await loadPreviewContext(tx, input.itemId, 'draft');
-          const currentPreview = previewFromContext(input.itemId, context, policies);
+          const currentPreview = previewFromContext(input.itemId, context, policies, scope);
           if (context.profile.revision !== input.expectedRevision) {
             throw new ProductTimeDeploymentError('产品工序与工时已被修改，请刷新后重试', 409, 'PRODUCT_TIME_CONFLICT');
           }
@@ -2942,6 +2868,13 @@ export async function publishProductTimeDeployment(input: {
                 },
               });
           for (const route of context.routes) {
+            if (scope.mode !== 'all' && !scope.workOrderIds.includes(route.workOrderId)) {
+              // Explicitly excluded routes must not be auto-upgraded on a later read.
+              if (scope.mode === 'selected' && routeState(route) !== 'completed') await tx.workOrderProcessRoute.update({
+                where: { id: route.id }, data: { routeSource: route.routeSource === 'work_order_override' ? route.routeSource : 'product_time_pinned' },
+              });
+              continue;
+            }
             const ledger = await tx.productTimeDeploymentRoute.create({
               data: {
                 deploymentId: deployment.id,
@@ -2962,6 +2895,9 @@ export async function publishProductTimeDeployment(input: {
               diffs: currentPreview.diffs,
               policies,
             });
+            if (scope.mode === 'work_orders' && !applied.unchanged) await tx.workOrderProcessRoute.update({
+              where: { id: route.id }, data: { routeSource: 'work_order_override' },
+            });
             await tx.productTimeDeploymentRoute.update({
               where: { id: ledger.id },
               data: {
@@ -2973,7 +2909,7 @@ export async function publishProductTimeDeployment(input: {
               },
             });
           }
-          await tx.productTimeProfile.updateMany({
+          if (scope.mode !== 'work_orders') await tx.productTimeProfile.updateMany({
             where: { drawingLibraryItemId: input.itemId, status: 'published' },
             data: { status: 'archived', updatedById: input.actorId },
           });
@@ -2984,7 +2920,7 @@ export async function publishProductTimeDeployment(input: {
               status: 'draft',
             },
             data: {
-              status: 'published',
+              status: scope.mode === 'work_orders' ? 'archived' : 'published',
               revision: { increment: 1 },
               publishedAt: new Date(),
               publishedById: input.actorId,
@@ -3010,6 +2946,7 @@ export async function publishProductTimeDeployment(input: {
                 profileVersion: context.profile.version,
                 routeCount: context.routes.length,
                 impact: currentPreview.impact,
+                scope: scope as unknown as Prisma.InputJsonValue,
               },
             },
           });
@@ -3078,6 +3015,7 @@ export async function retryProductTimeDeployment(input: {
       status: true,
       expectedRevision: true,
       diffs: true,
+      impact: true,
     },
   });
   if (!failed) throw new ProductTimeDeploymentError('部署记录不存在', 404, 'PRODUCT_TIME_DEPLOYMENT_NOT_FOUND');
@@ -3113,13 +3051,15 @@ export async function retryProductTimeDeployment(input: {
       .filter(diff => diff.kind === 'insert' && diff.policy)
       .map(diff => [diff.occurrenceKey, diff.policy]),
   );
-  const preview = await previewProductTimeDeployment(failed.drawingLibraryItemId, prisma, policies);
+  const scope = normalizeProductTimeDeploymentScope(jsonRecord(failed.impact).scope);
+  const preview = await previewProductTimeDeployment(failed.drawingLibraryItemId, prisma, policies, scope);
   const result = await publishProductTimeDeployment({
     itemId: failed.drawingLibraryItemId,
     actorId: input.actorId,
     expectedRevision: failed.expectedRevision,
     previewToken: preview.previewToken,
     policies,
+    scope,
   });
   return result.deployment;
 }

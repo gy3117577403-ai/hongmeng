@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma';
 import { chinaTodayDateKey, dateKeyFromDatabase, parseWorkDate } from '@/lib/attendance';
 import { chinaWeekRange } from '@/lib/production-planning';
 import type { HistoricalWipReportingAuthorization } from '@/lib/wip-reporting';
+import type { WipRecoverySources } from '@/lib/wip-reporting';
+import { loadWipScheduleBalances } from '@/lib/wip-schedule-balance';
 import { canAccessApiRoute } from '@/lib/api-route-access';
 import { hasCapability, resolveAccessContext, type AccessGrant } from '@/lib/department-access';
 import { legacyFallbackGrants } from '@/lib/legacy-access-policy';
@@ -240,7 +242,8 @@ async function sourceOptions(tx: Tx, stepId: string, workOrderId: string, workDa
     }
     const credited = requirement.allocationSteps.reduce((sum, item) => sum + item.credits.reduce((creditSum, credit) => creditSum + credit.quantity, 0), 0);
     const reserved = pending.rows.filter(item => item.sourceLotId === lot.id && !item.sourceAllocationId).reduce((sum, item) => sum + item.reservedProductQty, 0);
-    const unscheduled = Math.max(0, requirement.remainingQty - credited - allocatedRemaining - reserved);
+    const balance = (await loadWipScheduleBalances(tx, lot.id)).find(row => row.stepId === stepId);
+    const unscheduled = Math.max(0, Math.min(requirement.remainingQty - credited - allocatedRemaining - reserved, balance?.availableQty || 0));
     if (unscheduled > 0) options.push({ key: `lot:${lot.id}`, lotId: lot.id, lotNo: lot.lotNo, allocationId: null,
       targetWeekStartDate: null, targetWeekEndDate: null, remainingQty: unscheduled, version: lot.version,
       action: 'SCHEDULE_REMAINING', label: `${lot.lotNo} · 尚未排周 · 剩余 ${unscheduled} 件` });
@@ -316,15 +319,15 @@ async function serializable<T>(run: (tx: Tx) => Promise<T>): Promise<T> {
   }
 }
 
-async function executeCompletion(tx: Tx, command: Input, recoverySubmissionId?: string, historicalWip?: HistoricalWipReportingAuthorization): Promise<ProcessCompletionResult> {
-  if (!command.obligationId) return completeProcessStepInTransaction(tx, command, { recoverySubmissionId, historicalWip });
+async function executeCompletion(tx: Tx, command: Input, recoverySubmissionId?: string, historicalWip?: HistoricalWipReportingAuthorization, recoverySources?: WipRecoverySources): Promise<ProcessCompletionResult> {
+  if (!command.obligationId) return completeProcessStepInTransaction(tx, command, { recoverySubmissionId, historicalWip, recoverySources });
   const raw = await completeProcessSupplementObligationInTransaction(tx, {
     ...command, obligationId: command.obligationId, expectedVersion: command.expectedObligationVersion,
     publicCode: command.ticketCode, employeeIds: Array.isArray(command.employeeIds) ? command.employeeIds.map(String) : [],
     principalEmployeeId: command.principalEmployeeId ? String(command.principalEmployeeId) : undefined,
     workStartedAt: command.workStartedAt as string | undefined, workEndedAt: command.workEndedAt as string | undefined,
     reportSource: command.reportSource ?? ProcessCompletionSource.SUPPLEMENT_OBLIGATION, recoverySubmissionId,
-  }, undefined, { historicalWip });
+  }, undefined, { historicalWip, recoverySources });
   const [pool, route] = await Promise.all([
     tx.processLaborPool.findUnique({ where: { completionId: raw.completionId } }),
     tx.workOrderProcessRoute.findUniqueOrThrow({ where: { id: command.routeId }, select: { status: true } }),
@@ -411,7 +414,25 @@ async function previewInTx(tx: Tx, item: ProcessReportSubmission, viewerId: stri
   const submission = await dto(tx, item, viewerId);
   const contract = await getProcessStepPublishedContract(tx, { routeId: item.routeId, stepId: item.stepId });
   const current = contract.current || { reportQuantityBasis: submission.reportQuantityBasis, reportUnitLabel: submission.reportUnitLabel, unitsPerProduct: 1, timeBasis: null, standardMillisecondsPerUnit: null };
-  const options = await sourceOptions(tx, item.stepId, item.workOrderId, item.workDate, item.id);
+  const viewer = await loadActor(tx, viewerId);
+  const candidatesForViewer = await sourceOptions(tx, item.stepId, item.workOrderId, item.workDate, item.id);
+  const permissions = await Promise.all(candidatesForViewer.map(option => viewer
+    ? canResolveWorkOrder(tx, viewer, 'WIP_SOURCE_REQUIRED', item.workOrderId, option.allocationId) : false));
+  const options = candidatesForViewer.filter((_, index) => permissions[index]);
+  const requiredQty = Math.max(0, submission.processedQty - submission.defectQty);
+  // A merged option is an exact versioned plan, not permission to split or shrink the original report.
+  for (const lotId of [...new Set(options.map(option => option.lotId))]) {
+    const candidates = options.filter(option => option.lotId === lotId && !['FUTURE_CONFIRMATION', 'HISTORICAL_CONFIRMATION'].includes(option.action))
+      .sort((a, b) => Number(a.action === 'SCHEDULE_REMAINING') - Number(b.action === 'SCHEDULE_REMAINING') || a.key.localeCompare(b.key));
+    if (requiredQty <= 0 || candidates.some(option => option.remainingQty >= requiredQty)) continue;
+    let remaining = requiredQty;
+    const parts = candidates.map(option => { const quantity = Math.min(remaining, option.remainingQty); remaining -= quantity; return { ...option, quantity }; }).filter(part => part.quantity > 0);
+    if (remaining > 0 || parts.length < 2) continue;
+    const key = `combined:${crypto.createHash('sha256').update(JSON.stringify(parts.map(part => [part.key, part.version, part.quantity]))).digest('hex').slice(0, 32)}`;
+    options.unshift({ key, lotId, lotNo: parts[0].lotNo, allocationId: null, version: 0, remainingQty: requiredQty,
+      targetWeekStartDate: mondayKey(item.workDate), targetWeekEndDate: null, action: 'COMBINE_SOURCES', parts,
+      label: `合并承接原申报 ${requiredQty} 件：${parts.map(part => `${part.action === 'SCHEDULE_REMAINING' ? '补排' : '已排'} ${part.quantity}`).join(' + ')}` });
+  }
   const snapshot = item.snapshot as { reportQuantityBasis?: string; unitsPerProduct?: number };
   const published = contract.published;
   const invalidContract = current.reportQuantityBasis === 'action' && (current.unitsPerProduct <= 1 || current.timeBasis !== 'per_unit');
@@ -433,15 +454,18 @@ async function previewInTx(tx: Tx, item: ProcessReportSubmission, viewerId: stri
     ...(item.reasonCode === 'STANDARD_MISSING' || (!effectiveContract.standardMillisecondsPerUnit || effectiveContract.standardMillisecondsPerUnit <= 0)
       ? [{ code: 'RESOLVE_STANDARD' as const, label: '核定标准并计入工时' }] : []),
   ];
-  const viewer = await loadActor(tx, viewerId);
-  const canResolve = Boolean(viewer && item.status === 'PENDING' && (item.assigneeUserIds.includes(viewerId) || viewer.laborRole === 'ADMIN')
+  const blockers = needsRepair && !published ? [contract.message] : [];
+  if (needsWip && !quantityMappingRequired && !options.some(option => option.remainingQty >= Math.max(1, requiredQty))) {
+    blockers.push(`原申报需要 ${requiredQty} 件，当前没有足额的来源方案。请核对半成品剩余工序和安排后刷新，原申报保留。`);
+  }
+  const canResolve = Boolean(!blockers.length && viewer && item.status === 'PENDING' && (item.assigneeUserIds.includes(viewerId) || viewer.laborRole === 'ADMIN')
     && await canExecuteActions(tx, viewer, actions, item));
   submission.canResolve = canResolve;
   return { submission, canResolve, routeVersion: contract.routeVersion,
     actions,
     sourceOptions: options, standardPreview: { current, published },
     quantityMappingRequired,
-    blockers: needsRepair && !published ? [contract.message] : [],
+    blockers,
   };
 }
 
@@ -523,6 +547,7 @@ export async function resolveProcessReportSubmission(id: string, userId: string,
       if (input.expectedVersion !== item.version) fail('其他人已经更新此申报，请刷新后重新核对', 'PROCESS_SUBMISSION_VERSION_CONFLICT');
       const command = item.payload as unknown as Input;
       let historicalWip: HistoricalWipReportingAuthorization | undefined;
+      let recoverySources: WipRecoverySources | undefined;
       await assertOriginalActor(tx, command);
       if (!item.completionId && command.ticketCode) {
         const ticket = await tx.workOrderQrTicket.findFirst({ where: { publicCode: command.ticketCode, workOrderId: item.workOrderId, status: 'ACTIVE' }, select: { id: true } });
@@ -557,13 +582,30 @@ export async function resolveProcessReportSubmission(id: string, userId: string,
       if (preview.actions.some(action => action.code === 'CONFIRM_SOURCE')) {
         const selected = preview.sourceOptions.find(option => option.key === input.sourceKey);
         if (!selected) fail('请选择当前可用的半成品来源', 'PROCESS_SUBMISSION_SOURCE_REQUIRED');
+        const requiredQty = Math.max(0, Number(command.processedQty) - Number(command.defectQty || 0));
+        if (selected.remainingQty < requiredQty) fail(`所选来源只能承接 ${selected.remainingQty} 件，原申报需 ${requiredQty} 件；请选择合并承接方案`, 'WIP_REPORT_EXCEEDS_ALLOCATION');
         if (!await canResolveWorkOrder(tx, user, 'WIP_SOURCE_REQUIRED', item.workOrderId, selected.allocationId)) fail('所选来源超出当前账号班组权限', 'PROCESS_SUBMISSION_RESOLVE_FORBIDDEN', 403);
         if (input.sourceVersion !== selected.version) fail('半成品安排或剩余量已变化，请刷新预览', 'WIP_ALLOCATION_CHANGED');
         if (selected.action === 'FUTURE_CONFIRMATION' && !input.confirmAdvanceSchedule) fail('这是未来周安排，请明确确认提前续作，系统不会自动提前', 'WIP_ADVANCE_CONFIRMATION_REQUIRED');
         const common = { actorId: userId, actorName: user.displayName || user.username,
           productionScope: resolveProductionEntityScope(user), targetWeekStartDate: mondayKey(item.workDate),
           reason: `报工申报 ${item.id}：确认真实生产日期所在周续作`, idempotencyKey: `report-recovery:${item.id}:wip` };
-        if (selected.action === 'HISTORICAL_CONFIRMATION') {
+        if (selected.action === 'COMBINE_SOURCES') {
+          const parts = selected.parts || [];
+          if (parts.reduce((sum, part) => sum + part.quantity, 0) !== requiredQty) fail('数量已变化，请重新预览合并方案', 'PROCESS_SUBMISSION_PREVIEW_CHANGED');
+          recoverySources = { submissionId: item.id, parts: [] };
+          for (const part of parts) {
+            if (!await canResolveWorkOrder(tx, user, 'WIP_SOURCE_REQUIRED', item.workOrderId, part.allocationId)) fail('合并方案包含当前账号无权处理的安排', 'PROCESS_SUBMISSION_RESOLVE_FORBIDDEN', 403);
+            let allocationId = part.allocationId;
+            const piece = { ...common, idempotencyKey: `${common.idempotencyKey}:${part.key}` };
+            if (part.action === 'SCHEDULE_REMAINING') allocationId = (await scheduleWipLotInTransaction(tx, { ...piece, lotId: part.lotId, quantity: part.quantity })).id;
+            else if (part.action === 'RESCHEDULE_REMAINING') allocationId = (await rescheduleWipAllocationInTransaction(tx, { ...piece, allocationId })).id;
+            else if (part.action !== 'USE_ALLOCATION') fail('该来源需要单独确认生产日期', 'WIP_RECOVERY_SOURCES_INVALID');
+            recoverySources.parts.push({ allocationId: allocationId!, quantity: part.quantity });
+          }
+          command.wipAllocationId = recoverySources.parts[0].allocationId;
+        }
+        else if (selected.action === 'HISTORICAL_CONFIRMATION') {
           if (!input.confirmHistoricalWork || !selected.allocationId) fail('请明确确认这是已发生的历史作业，原剩余排程保持不变', 'WIP_HISTORICAL_CONFIRMATION_REQUIRED');
           historicalWip = { actorId: userId, submissionId: item.id, allocationId: selected.allocationId,
             expectedVersion: selected.version, workDateKey: dateKeyFromDatabase(item.workDate) };
@@ -603,7 +645,7 @@ export async function resolveProcessReportSubmission(id: string, userId: string,
           const obligation = await tx.processSupplementObligation.findUniqueOrThrow({ where: { id: command.obligationId }, select: { version: true } });
           command.expectedObligationVersion = obligation.version;
         }
-        result = await executeCompletion(tx, { ...command, expectedRouteVersion: route.version }, item.id, historicalWip);
+        result = await executeCompletion(tx, { ...command, expectedRouteVersion: route.version }, item.id, historicalWip, recoverySources);
       }
       if (result.laborPoolPendingStandard && !item.completionId) {
         const pendingCompletion = await tx.processCompletion.findUniqueOrThrow({ where: { id: result.completionId }, include: { laborPool: true } });

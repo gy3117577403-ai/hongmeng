@@ -148,6 +148,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/process-report-contract-integration.test.ts tests/process-report-submissions-integration.test.ts tests/process-report-submission-compound-integration.test.ts
+      - name: Unequal WIP recovery and process replacement scope integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/wip-partial-recovery-integration.test.ts tests/product-time-replacement-scope-integration.test.ts
       - name: System notification lifecycle PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -384,6 +388,20 @@ jobs:
             REPORT_RECOVERY_QA_WIP_FIXTURE=artifacts/reporting-recovery/wip-fixture.json \
             REPORT_RECOVERY_QA_BROWSER_OUTPUT=artifacts/reporting-recovery \
             node scripts/smoke-reporting-mobile-browser.mjs
+          RUN_DB_INTEGRATION=1 \
+            PROCESS_PENDING_RECOVERY_TEST_ORIGIN=http://127.0.0.1:3000 \
+            PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            npx tsx --test --test-concurrency=1 --test-name-pattern='1528|replace an|retiring a|scope is|publishing for|pending unposted' \
+            tests/wip-partial-recovery-integration.test.ts tests/product-time-replacement-scope-integration.test.ts \
+            | tee artifacts/reporting-recovery/release-wip-replacement-runtime.log
+          REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime \
+            REPORT_RECOVERY_QA_FIXTURE=artifacts/reporting-recovery/release-fixture.json \
+            node scripts/seed-route-replacement-smoke.cjs > artifacts/reporting-recovery/route-fixture.json
+          REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime \
+            REPORT_RECOVERY_QA_BASE=http://127.0.0.1:3000 \
+            ROUTE_REPLACEMENT_QA_FIXTURE=artifacts/reporting-recovery/route-fixture.json \
+            ROUTE_REPLACEMENT_QA_OUTPUT=artifacts/reporting-recovery/route-replacement \
+            node scripts/smoke-route-replacement-browser.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image

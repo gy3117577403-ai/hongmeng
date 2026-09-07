@@ -490,6 +490,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [reorderMode, setReorderMode] = useState(false);
   const [structuralUndo, setStructuralUndo] = useState<StructuralUndo | null>(null);
   const [moveGroupKey, setMoveGroupKey] = useState<string | null>(null);
+  const [replacementKey, setReplacementKey] = useState<string | null>(null);
+  const [deploymentScopeMode, setDeploymentScopeMode] = useState<'all' | 'selected' | 'work_orders'>('all');
+  const [deploymentWorkOrderIds, setDeploymentWorkOrderIds] = useState<string[]>([]);
+  const [deploymentChoices, setDeploymentChoices] = useState<Array<{ workOrderId: string; workOrderCode: string; state: string }>>([]);
   const [moveBeforeGroupKey, setMoveBeforeGroupKey] = useState<string | null>(null);
   const [newProcessName, setNewProcessName] = useState('');
   const [newProcessStage, setNewProcessStage] = useState<ProcessStageGroup>('backend');
@@ -1008,7 +1012,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         }
         if (next.status === 'active' && completedDeploymentRef.current !== next.id) {
           completedDeploymentRef.current = next.id;
-          setMessage(`产品工序与工时 V${next.profileVersion} 已发布，并同步到二维码和全部关联工单`);
+          setMessage(`产品工序与工时 V${next.profileVersion} 已生效，并同步到所选工单及二维码`);
           showToast('发布完成：二维码仍然有效，扫码会读取最新工序与工时', {
             tone: 'success',
             duration: 6000,
@@ -1176,8 +1180,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setLibraryOpen(true);
   }
 
+  useEffect(() => { setReplacementKey(null); setDeploymentScopeMode('all'); setDeploymentWorkOrderIds([]); setDeploymentChoices([]); }, [selectedItemId]);
+
   function closeProcessLibrary(): void {
     setLibraryOpen(false);
+    setReplacementKey(null);
     window.requestAnimationFrame(() => (libraryReturnFocusRef.current || libraryTriggerRef.current)?.focus());
   }
 
@@ -1187,6 +1194,18 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }
 
   function addDefinition(definition: ProcessDefinition): void {
+    if (replacementKey) {
+      const index = entries.findIndex(entry => entry.occurrenceKey === replacementKey);
+      if (index < 0) { closeProcessLibrary(); return; }
+      const old = entries[index];
+      if (old.processDefinitionId === definition.id) { setError('请选择与原工序不同的新工序'); return; }
+      const name = definitions.find(item => item.id === old.processDefinitionId)?.name || '原工序';
+      const next = entries.map((entry, i) => i === index ? { ...entry, processDefinitionId: definition.id,
+        occurrenceKey: crypto.randomUUID(), unitSeconds: '', remark: '' } : entry);
+      applyStructuralChange(next, `第 ${index + 1} 道 ${name} → ${definition.name}；请确认新工序标准时间，再同步`);
+      closeProcessLibrary();
+      return;
+    }
     const newEntry: EntryDraft = {
       processDefinitionId: definition.id,
       occurrenceKey: crypto.randomUUID(),
@@ -1432,7 +1451,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         summary?: ProductTimeDraftSyncSummary;
       };
       if (!response.ok || !data.profile || !data.summary) {
-        throw new Error(data.error || '草稿同步最新正式版本失败');
+        throw new Error(data.error || '合并正式版到草稿失败');
       }
       setDirty(false);
       setStructuralUndo(null);
@@ -1449,7 +1468,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       );
       await load(selectedItem.id);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '草稿同步最新正式版本失败');
+      setError(reason instanceof Error ? reason.message : '合并正式版到草稿失败');
     } finally {
       setDraftSyncing(false);
     }
@@ -1538,12 +1557,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }
 
   async function openPublishPreview(): Promise<void> {
-    if (!selectedItem || !activeDraft) {
-      setError('请先保存产品工时草稿');
-      return;
-    }
-    if (dirty) {
-      setError('当前内容尚未保存，请先保存草稿再发布');
+    if (!selectedItem) return;
+    const saved = dirty ? await saveDraft() : activeDraft;
+    if (!saved) {
+      if (!dirty) setError('请先保存产品工时草稿');
       return;
     }
     setDeploymentOpen(true);
@@ -1557,20 +1574,22 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          expectedRevision: activeDraft.revision,
+          expectedRevision: saved.revision,
           policies: {},
+          scope: { mode: deploymentScopeMode, workOrderIds: deploymentScopeMode === 'all' ? [] : deploymentWorkOrderIds },
         }),
       });
       const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
       if (data.code === 'PRODUCT_TIME_DRAFT_STALE') {
         setDeploymentOpen(false);
-        setError(data.error || '当前草稿已落后正式版本，请先同步最新正式版');
+        setError(data.error || '当前草稿已落后正式版本，请先将正式版合入草稿');
         await load(selectedItem.id);
         return;
       }
       const preview = deploymentPreviewFromPayload(data);
       if (!response.ok || !preview) throw new Error(data.error || '发布影响预览生成失败');
       setDeploymentPreview(preview);
+      setDeploymentChoices(preview.routes);
       if (!preview.canPublish) setDeploymentError('存在发布冲突，请先处理下方阻断项；系统不会静默跳过任何工单');
     } catch (reason) {
       setDeploymentError(reason instanceof Error ? reason.message : '发布影响预览生成失败');
@@ -1592,6 +1611,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setDeploymentError('存在冲突，不能发布；请按预览中的阻断项处理后重新生成预览');
       return;
     }
+    const currentScope = { mode: deploymentScopeMode, workOrderIds: deploymentScopeMode === 'all' ? [] : [...deploymentWorkOrderIds].sort() };
+    if (JSON.stringify(currentScope) !== JSON.stringify(deploymentPreview.scope || { mode: 'all', workOrderIds: [] })) {
+      setDeploymentError('同步范围已改变，请重新计算影响后确认'); return;
+    }
     setPublishing(true);
     setDeploymentError('');
     setError('');
@@ -1603,12 +1626,13 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           expectedRevision: activeDraft.revision,
           previewToken: deploymentPreview.previewToken,
           policies: {},
+          scope: { mode: deploymentScopeMode, workOrderIds: deploymentScopeMode === 'all' ? [] : deploymentWorkOrderIds },
         }),
       });
       const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
       if (data.code === 'PRODUCT_TIME_DRAFT_STALE') {
         setDeploymentOpen(false);
-        setError(data.error || '当前草稿已落后正式版本，请先同步最新正式版');
+        setError(data.error || '当前草稿已落后正式版本，请先将正式版合入草稿');
         await load(selectedItem.id);
         return;
       }
@@ -1621,7 +1645,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       if (!next) throw new Error(data.error || '产品工时发布启动失败');
       if (next.status === 'active') {
         completedDeploymentRef.current = next.id;
-        setMessage(`产品工序与工时 V${next.profileVersion} 已发布，并同步到二维码和全部关联工单`);
+        setMessage(`产品工序与工时 V${next.profileVersion} 已生效，并同步到所选工单及二维码`);
         showToast('发布完成：原二维码无需重印，扫码会读取最新工序与工时', {
           tone: 'success',
           duration: 6000,
@@ -1759,7 +1783,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       : '请输入大于 0 且不超过 86400 的秒数'
     : '输入后会自动换算为分钟或小时';
   const saveDisabledReason = saving || draftSyncing
-    ? draftSyncing ? '正在同步最新正式版' : '正在保存草稿'
+    ? draftSyncing ? '正在将正式版合入草稿' : '正在保存草稿'
     : !dirty
       ? '当前工序路线没有未保存修改'
       : !entries.length
@@ -1770,7 +1794,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const publishDisabledReason = deploymentBusy
     ? '当前正在发布同步'
     : staleDraft
-      ? `草稿已落后正式 V${activePublished?.version || ''}，请先同步最新正式版`
+      ? `草稿已落后正式 V${activePublished?.version || ''}，请先将正式版合入草稿`
     : dirty
       ? '请先保存当前工序草稿'
       : !activeDraft
@@ -1960,7 +1984,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                     <small>过期草稿不能直接下发。同步会先保存当前编辑，再补入最新正式工序和工时；双方同时修改的项目保留草稿值并提示复核。</small>
                   </span>
                   {canManageProductTimes
-                    ? <div className="product-time-draft-sync-actions"><button className="hm-workbench-button primary" type="button" disabled={draftSyncing || draftRebuilding || saving || deploymentBusy} onClick={() => void syncDraftWithPublished()}><RefreshCw className={draftSyncing ? 'spin' : ''} size={15} aria-hidden="true" />{draftSyncing ? '正在合并' : '同步最新正式版'}</button><button className="hm-workbench-button danger" type="button" disabled={draftSyncing || draftRebuilding || saving || deploymentBusy} onClick={openDraftRebuildConfirmation}><RotateCcw size={15} aria-hidden="true" />放弃草稿并重建</button></div>
+                    ? <div className="product-time-draft-sync-actions"><button className="hm-workbench-button primary" type="button" disabled={draftSyncing || draftRebuilding || saving || deploymentBusy} onClick={() => void syncDraftWithPublished()}><RefreshCw className={draftSyncing ? 'spin' : ''} size={15} aria-hidden="true" />{draftSyncing ? '正在合并' : '将正式版合入草稿'}</button><button className="hm-workbench-button danger" type="button" disabled={draftSyncing || draftRebuilding || saving || deploymentBusy} onClick={openDraftRebuildConfirmation}><RotateCcw size={15} aria-hidden="true" />放弃草稿并重建</button></div>
                     : <em>请联系工艺人员同步草稿</em>}
                 </div>}
 
@@ -2028,7 +2052,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                     return <article className={[invalid ? 'invalid' : '', draftSyncConflict ? 'draft-sync-conflict' : ''].filter(Boolean).join(' ')} key={entry.occurrenceKey}>
                       <div className="product-time-process-name">
                         <b>{String(index + 1).padStart(2, '0')}</b>
-                        <span><strong>{definition?.name || '工序已停用'}</strong><small>{definition ? stageText[definition.stageGroup] : '历史工序'}</small></span>
+                        <span><strong>{definition?.name || '工序已停用'}</strong>{canManageProductTimes && <button type="button" className="product-time-replace-button" onClick={event => { setReplacementKey(entry.occurrenceKey); openProcessLibrary(groupKey || null, false, event.currentTarget); }}>替换工序</button>}<small>{definition ? stageText[definition.stageGroup] : '历史工序'}</small></span>
                       </div>
                       <div className="product-time-standard-editor">
                         <label><span>工时口径</span><select disabled={!canManageProductTimes} value={entry.timeBasis} onChange={event => {
@@ -2073,20 +2097,20 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                   <em>{invalidEntryCount
                     ? `${invalidEntryCount} 道工序工时无效`
                     : staleDraft
-                      ? `草稿已落后正式 V${activePublished?.version}，请先使用“同步最新正式版”；系统已禁止直接下发。`
+                      ? `草稿已落后正式 V${activePublished?.version}，请先使用“将正式版合入草稿”；系统已禁止直接下发。`
                       : activeDraft
                         ? '保存草稿不会影响生产；正式发布前会预览全部工单、二维码和历史达成率影响。'
                       : activePublished
                         ? '当前为正式版本；后续修改会先形成草稿，不会静默改变二维码报工。'
-                        : '保存草稿后检查无误，再发布并同步到二维码和全部关联工单。'}</em>
+                        : '保存草稿后检查无误，再发布并同步到所选工单及二维码。'}</em>
                 </span>
                 {canManageProductTimes ? <div>
                   <button className="hm-workbench-button" type="button" disabled={!hasUnsavedChanges || saving} title={!hasUnsavedChanges ? '当前没有未保存修改' : '恢复当前产品已保存的工序与报价内容'} onClick={resetChanges}><RotateCcw size={15} aria-hidden="true" />放弃修改</button>
                   {activeDraft && activePublished && <button className="hm-workbench-button danger" type="button" disabled={draftSyncing || draftRebuilding || saving || deploymentBusy} title="保留原草稿审计记录，并按当前正式版本完整重建新草稿" onClick={openDraftRebuildConfirmation}><RotateCcw size={15} aria-hidden="true" />放弃草稿并重建</button>}
                   <button className="hm-workbench-button" type="button" disabled={Boolean(saveDisabledReason)} title={saveDisabledReason || undefined} onClick={() => void saveDraft()}><Save size={15} aria-hidden="true" />{saving ? '保存中' : '保存草稿'}</button>
-                  <button className="hm-workbench-button primary product-time-publish-button" type="button" disabled={Boolean(publishDisabledReason)} title={publishDisabledReason || '先查看差异和影响范围，再确认正式发布'} onClick={() => void openPublishPreview()}><QrCode size={15} aria-hidden="true" />{deploymentBusy ? '正在发布同步' : '预览发布影响'}</button>
+                  <button className="hm-workbench-button primary product-time-publish-button" type="button" disabled={Boolean(dirty ? saveDisabledReason : publishDisabledReason)} title={(dirty ? saveDisabledReason : publishDisabledReason) || '先查看差异和影响范围，再确认正式发布'} onClick={() => void openPublishPreview()}><QrCode size={15} aria-hidden="true" />{deploymentBusy ? '正在发布同步' : '保存并预览同步'}</button>
                 </div> : <strong>只读资料 · 如需调整请联系工艺人员</strong>}
-              </footer>
+              </footer>{(dirty ? saveDisabledReason : publishDisabledReason) && <p className="product-time-visible-reason" role="status">{dirty ? saveDisabledReason : publishDisabledReason}</p>}
             </>}
           </section>
 
@@ -2131,8 +2155,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
         {canManageProductTimes && libraryOpen && <button className="product-time-library-scrim" type="button" aria-label="关闭工序库" onClick={closeProcessLibrary} />}
         {canManageProductTimes && libraryOpen && <aside id="product-process-library" className="product-time-library open" aria-label="共享工序库">
-            <header><span><strong>共享工序库</strong><small>先选插入位置，再选择或新建工序</small></span><button ref={libraryCloseRef} type="button" title="关闭工序库" aria-label="关闭工序库" onClick={closeProcessLibrary}><X size={17} /></button></header>
-            <section className="product-time-library-target" aria-label="新增工序插入位置">
+            <header><span><strong>{replacementKey ? '选择替换工序' : '共享工序库'}</strong><small>{replacementKey ? '替换后保留原位置，请填写新工序的标准秒数' : '先选插入位置，再选择或新建工序'}</small></span><button ref={libraryCloseRef} type="button" title="关闭工序库" aria-label="关闭工序库" onClick={closeProcessLibrary}><X size={17} /></button></header>
+            {!replacementKey && <section className="product-time-library-target" aria-label="新增工序插入位置">
               <label><span>插入位置</span><select value={effectiveLibraryBeforeGroupKey || '__end__'} onChange={event => {
                 const value = event.target.value;
                 const nextKey = value === '__end__' ? null : value;
@@ -2148,7 +2172,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               </select></label>
               <label className="product-time-library-parallel"><input type="checkbox" disabled={libraryInsertionIndex === 0} checked={libraryParallelWithPrevious && libraryInsertionIndex > 0} onChange={event => setLibraryParallelWithPrevious(event.target.checked)} /><span>与前一工序组并行</span></label>
               <small>将插入为第 {libraryInsertionIndex + 1} 道{libraryParallelWithPrevious && libraryInsertionIndex > 0 ? '，并入前一并行组' : '，后续序号自动顺延'}。</small>
-            </section>
+            </section>}
             <label className="product-time-library-search"><Search size={15} aria-hidden="true" /><input value={libraryKeyword} onChange={event => setLibraryKeyword(event.target.value)} placeholder="搜索工序" /></label>
             <div className="product-time-stage-tabs">{(['all', 'frontend', 'backend', 'finish'] as const).map(value => <button key={value} className={libraryStage === value ? 'active' : ''} type="button" onClick={() => setLibraryStage(value)}>{value === 'all' ? '全部' : stageText[value]}</button>)}</div>
             <div className="product-time-definition-list hm-scroll-region" tabIndex={0}>{filteredDefinitions.map(definition => <button key={definition.id} type="button" onClick={() => addDefinition(definition)}><span><strong>{definition.name}</strong><small>{stageText[definition.stageGroup]}</small></span><Plus size={15} aria-hidden="true" /></button>)}{!filteredDefinitions.length && <p>没有可添加的工序</p>}</div>
@@ -2226,7 +2250,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             <p id="product-time-rebuild-confirm-description">系统会保留原草稿及其工序明细作为审计记录，再创建一个更高版本的新草稿；当前正式版本和生产工单不会在这一步被修改。</p>
             {(draftRebuildPrompt.hadRouteChanges || draftRebuildPrompt.hadQuotationChanges) && <p className="warning"><AlertTriangle size={16} aria-hidden="true" />当前页面还有未保存的{draftRebuildPrompt.hadRouteChanges && draftRebuildPrompt.hadQuotationChanges ? '工序路线和报价工时修改' : draftRebuildPrompt.hadRouteChanges ? '工序路线修改' : '报价工时修改'}，确认重建后也会一并放弃。若需保留，请先取消并保存。</p>}
             <label className="product-time-rebuild-confirmation"><span>请输入以下完整文字以二次确认</span><code>{draftRebuildPrompt.confirmationText}</code><input ref={draftRebuildInputRef} value={draftRebuildConfirmText} disabled={draftRebuilding} autoComplete="off" spellCheck={false} onChange={event => setDraftRebuildConfirmText(event.target.value)} placeholder={draftRebuildPrompt.confirmationText} aria-label="放弃草稿并重建确认文字" /></label>
-            <p className="muted">“同步最新正式版”会保留并合并人工修改；只有此重建操作会放弃草稿内容，且必须经过本次显式确认。</p>
+            <p className="muted">“将正式版合入草稿”会保留并合并人工修改；只有此重建操作会放弃草稿内容，且必须经过本次显式确认。</p>
           </div>
           <footer><button className="hm-workbench-button" type="button" disabled={draftRebuilding} onClick={closeDraftRebuildConfirmation}>取消，保留草稿</button><button className="hm-workbench-button danger" type="button" disabled={draftRebuilding || draftRebuildConfirmText.trim() !== draftRebuildPrompt.confirmationText} onClick={() => void rebuildDraftFromPublished()}><RotateCcw className={draftRebuilding ? 'spin' : ''} size={15} aria-hidden="true" />{draftRebuilding ? '正在重建' : '确认放弃并重建'}</button></footer>
         </section>
@@ -2388,7 +2412,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             <div>
               <QrCode aria-hidden="true" />
               <span>
-                <strong id="product-time-deployment-title">发布并同步二维码/全部工单</strong>
+                <strong id="product-time-deployment-title">预览工序变更与同步范围</strong>
                 <small>{selectedItem?.specification || '当前产品'} · {deployment ? `V${deployment.profileVersion}` : deploymentPreview ? `V${deploymentPreview.toVersion}` : '正在计算影响'}</small>
               </span>
             </div>
@@ -2403,6 +2427,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
           {deploymentError && <div className="product-time-deployment-error" role="alert"><AlertTriangle size={17} aria-hidden="true" /><span>{deploymentError}</span></div>}
 
+          {!deployment && <section className="product-time-scope-picker" aria-label="选择工序同步范围"><strong>本次生效范围</strong><select aria-label="生效范围" disabled={publishing || deploymentPreviewLoading} value={deploymentScopeMode} onChange={event => { setDeploymentScopeMode(event.target.value as typeof deploymentScopeMode); setDeploymentError('范围已改变，请点击重新计算影响'); }}><option value="all">产品标准＋全部未完成工单</option><option value="selected">产品标准＋勾选工单（不勾选则仅供未来工单）</option><option value="work_orders">仅勾选工单，产品标准保持原版本</option></select>{deploymentScopeMode !== 'all' && <div>{deploymentChoices.filter(route => route.state !== 'completed').map(route => <label key={route.workOrderId}><input type="checkbox" checked={deploymentWorkOrderIds.includes(route.workOrderId)} disabled={publishing || deploymentPreviewLoading} onChange={event => { setDeploymentWorkOrderIds(current => event.target.checked ? [...current, route.workOrderId] : current.filter(id => id !== route.workOrderId)); setDeploymentError('工单选择已改变，请重新计算影响'); }}/>{route.workOrderCode}</label>)}</div>}<small>每张工单单独核对；未选择的工单保留现有路线，原二维码无需重印。</small></section>}
           {deploymentPreviewLoading && <div className="product-time-deployment-loading"><LoaderCircle className="spin" size={26} aria-hidden="true" /><strong>正在核对全部关联工单</strong><span>计算每道新增工序的整单目标、实际待报量、完成状态和并发冲突…</span></div>}
 
           {!deploymentPreviewLoading && (deploymentPreview || deployment) && <div className="product-time-deployment-body hm-scroll-region" tabIndex={0}>
@@ -2440,8 +2465,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <div className="product-time-deployment-impact-grid">
                 <span><small>关联工单</small><strong>{deploymentImpact.workOrders.total}</strong><em>未报工 {deploymentImpact.workOrders.unstarted} · 在制 {deploymentImpact.workOrders.inProgress} · 已完成 {deploymentImpact.workOrders.completed}</em></span>
                 <span><small>原二维码</small><strong>{deploymentImpact.qrTickets}</strong><em>无需重印，扫码读取最新路线</em></span>
-                <span><small>受影响扫码报工</small><strong>{deploymentImpact.historicalReports}</strong><em>调序、删除或工时变化均同步有效口径，原始扫码事实保留</em></span>
-                <span><small>影响员工</small><strong>{deploymentImpact.affectedEmployees}</strong><em>{deploymentImpact.attainmentRecords} 条个人效率记录重算</em></span>
+                <span><small>受影响扫码报工</small><strong>{deploymentImpact.historicalReports}</strong><em>退役保留原报工及工时；工时修订单独核对影响</em></span>
+                <span><small>影响员工</small><strong>{deploymentImpact.affectedEmployees}</strong><em>{deploymentImpact.attainmentRecords} 条相关记录需核对</em></span>
                 <span><small>系统历史承接</small><strong>{deploymentImpact.systemCoveredQty ?? 0}</strong><em>未完成工单新增工序固定为 0，不替员工完成</em></span>
                 <span><small>新增工序实际待报</small><strong>{deploymentImpact.actualRequiredQty ?? 0}</strong><em>按每张未完成工单、每道新增工序的全套目标累计</em></span>
                 <span><small>保持已完成</small><strong>{deploymentImpact.keptCompleted ?? 0}</strong><em>已完成历史工单不由产品版本发布自动重开</em></span>
@@ -2450,7 +2475,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 <span className={deploymentImpact.conflicts ? 'conflict' : 'safe'}><small>发布冲突</small><strong>{deploymentImpact.conflicts}</strong><em>{deploymentImpact.conflicts ? '必须处理后才能正式生效' : '当前未发现阻断项'}</em></span>
               </div>
               {deploymentConflicts.length > 0 && <div className="product-time-deployment-conflicts">
-                {deploymentConflicts.map((conflict, index) => <article key={`${conflict.code}-${conflict.workOrderId || index}`}><AlertTriangle size={15} aria-hidden="true" /><span><strong>{conflict.workOrderCode || conflict.code}</strong><small>{conflict.message}</small></span></article>)}
+                {deploymentConflicts.map((conflict, index) => <article key={`${conflict.code}-${conflict.workOrderId || index}`}><AlertTriangle size={15} aria-hidden="true" /><span><strong>{conflict.workOrderCode || conflict.code}</strong><small>{conflict.message}</small>{conflict.code === 'PENDING_WITHDRAWAL_ON_REMOVED_STEP' && <a href="/workspace/workflow" target="_blank" rel="noreferrer">处理原撤回申请</a>}{conflict.code === 'PENDING_REPORT_ON_REMOVED_STEP' && <a href={`/workspace/reporting-recovery?keyword=${encodeURIComponent(selectedItem?.specification || '')}`} target="_blank" rel="noreferrer">处理原申报</a>}</span></article>)}
               </div>}
             </section>}
 
@@ -2462,9 +2487,9 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 {deploymentRoutes.map(route => <article key={route.workOrderId} className={route.status}>
                   <span><strong>{route.workOrderCode}</strong><small>{route.workOrderId.slice(0, 12)}</small></span>
                   <span>{productTimeDeploymentRouteStateText(route.state)}</span>
-                  <span><small>新增 {route.insertedProcesses || 0} · 调序 {route.movedProcesses || 0} · 退役 {route.retiredProcesses || 0} · 工时 {route.updatedTimes || 0}</small><small>系统承接 {route.systemCoveredQty || 0} · 待实报 {route.actualRequiredQty || 0} · 审计 {route.supplementObligations || 0}</small></span>
+                  <span><small>新增 {route.insertedProcesses || 0} · 调序 {route.movedProcesses || 0} · 退役 {route.retiredProcesses || 0} · 工时 {route.updatedTimes || 0}</small><small>系统承接 {route.systemCoveredQty || 0} · 待实报 {route.actualRequiredQty || 0} · 审计 {route.supplementObligations || 0}</small>{route.retainedReports?.map(report => <small key={report.processName} className="product-time-visible-reason">{report.processName} 已有 {report.count} 笔 / {report.quantity} 件报工：保留原工时；新增检验仍须实报。若原报工选错工序，请先撤回更正。{route.reportUrl && <a href={route.reportUrl} target="_blank" rel="noreferrer">查看原报工</a>}</small>)}</span>
                   <span><small>{deployment ? (route.qrUpdated ? '二维码已更新' : route.status === 'unchanged' ? '二维码无需更新' : '二维码未更新') : '发布后同步二维码'}</small><small>{route.routeVersionBefore == null ? '路线待生成' : `V${route.routeVersionBefore} → ${route.routeVersionAfter == null ? '待发布' : `V${route.routeVersionAfter}`}`}</small></span>
-                  <span><b>{deployment ? productTimeDeploymentRouteStatusText(route.status) : route.status === 'blocked' ? '冲突阻断' : '待同步'}</b>{route.error && <small title={route.error}>{route.error}</small>}</span>
+                  <span><b>{deployment ? productTimeDeploymentRouteStatusText(route.status) : route.selected === false ? '保留当前版本' : route.status === 'blocked' ? '冲突阻断' : '待同步'}</b>{route.error && <small title={route.error}>{route.error}</small>}</span>
                 </article>)}
                 {!deploymentRoutes.length && <p>当前产品没有需要同步的关联工单；发布仍会更新产品正式版本。</p>}
               </div>
@@ -2480,11 +2505,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 ? '发布未完整成功，旧正式版本继续有效；请处理冲突或重试失败项。'
                 : deploymentBusy
                   ? '正在原子同步；请勿重复发布。'
-                  : '确认后才会修改正式版本与关联路线；在制新增工序按整单全套建立真实补报义务，不改变既有物料数量。'}</span>
+                  : deploymentScopeMode === 'work_orders' ? '确认后只修改勾选工单的路线；产品标准保持原版本，原二维码继续使用。'
+                  : '确认后更新产品标准并同步所选范围；新增工序按实际生产数量报工。'}</span>
             <div>
               <button className="hm-workbench-button" type="button" onClick={closeDeployment}>{deploymentBusy ? '后台同步，关闭详情' : deployment?.status === 'active' ? '完成' : '关闭'}</button>
               {!deployment && <button className="hm-workbench-button" type="button" disabled={deploymentPreviewLoading || publishing} onClick={() => void openPublishPreview()}><RefreshCw size={15} aria-hidden="true" />重新计算影响</button>}
-              {!deployment && deploymentPreview && <button className="hm-workbench-button primary" type="button" disabled={publishing || !deploymentPreview.canPublish} onClick={() => void publish()}><QrCode size={15} aria-hidden="true" />{publishing ? '正在启动发布' : `确认发布并同步 ${((deploymentImpact?.workOrders.unstarted || 0) + (deploymentImpact?.workOrders.inProgress || 0))} 张未完成工单`}</button>}
+              {!deployment && deploymentPreview && <button className="hm-workbench-button primary" type="button" disabled={publishing || !deploymentPreview.canPublish || JSON.stringify({ mode: deploymentScopeMode, workOrderIds: deploymentScopeMode === 'all' ? [] : [...deploymentWorkOrderIds].sort() }) !== JSON.stringify(deploymentPreview.scope || { mode: 'all', workOrderIds: [] })} onClick={() => void publish()}><QrCode size={15} aria-hidden="true" />{publishing ? '正在启动发布' : `确认发布并同步 ${((deploymentImpact?.workOrders.unstarted || 0) + (deploymentImpact?.workOrders.inProgress || 0))} 张未完成工单`}</button>}
               {deployment?.status === 'failed' && failedDeploymentRoutes.length > 0 && <button className="hm-workbench-button primary" type="button" disabled={deploymentRetrying} onClick={() => void retryDeployment()}><RefreshCw className={deploymentRetrying ? 'spin' : ''} size={15} aria-hidden="true" />{deploymentRetrying ? '正在重试' : `一键重试 ${failedDeploymentRoutes.length} 个失败项`}</button>}
             </div>
           </footer>

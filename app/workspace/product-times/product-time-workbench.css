@@ -3732,3 +3732,11 @@ html:has(.hm-product-time-workbench) {
     color: #4d5b6d;
   }
 }
+/* Replacement and publication keep tablet actions and their scope in view. */
+.product-time-replace-button { margin-top: 6px; padding: 5px 10px; color: #a9480b; background: #fff4e8; border: 1px solid #ffd2ac; border-radius: 8px; cursor: pointer; }
+.product-time-visible-reason { margin: 0; padding: 8px 16px; color: #92400e; background: #fff7ed; }
+.product-time-scope-picker { margin: 12px 20px; padding: 14px; border: 1px solid #f4cfb1; border-radius: 12px; background: linear-gradient(135deg,#fffaf4,#fff); display: grid; gap: 10px; }
+.product-time-scope-picker select { width: 100%; min-height: 42px; border: 1px solid #dce2e9; border-radius: 8px; padding: 8px; background: #fff; }
+.product-time-scope-picker > div { display: flex; flex-wrap: wrap; max-height: 125px; overflow: auto; gap: 8px; }
+.product-time-scope-picker label { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 6px 10px; border: 1px solid #e6eaf0; border-radius: 8px; background: #fff; }
+.product-time-scope-picker small { color: #637080; }

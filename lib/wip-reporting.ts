@@ -14,6 +14,12 @@ export type HistoricalWipReportingAuthorization = {
   actorId: string; submissionId: string; allocationId: string; expectedVersion: number; workDateKey: string;
 };
 
+/** Built only by the locked pending-submission recovery transaction, never by HTTP parsing. */
+export type WipRecoverySources = {
+  submissionId: string;
+  parts: Array<{ allocationId: string; quantity: number; historical?: HistoricalWipReportingAuthorization }>;
+};
+
 export type WipReportingResolution = {
   allocationId: string;
   allocationStepId: string;
@@ -21,6 +27,7 @@ export type WipReportingResolution = {
   lotNo: string;
   creditQuantity: number;
   remainingAllocationQuantity: number;
+  parts?: Array<NonNullable<WipReportingResolution>>;
 } | null;
 
 export function resolveWipNativeSourceReportLimits(input: {
@@ -67,8 +74,29 @@ export async function resolveWipReportingAllocation(
     requestedAllocationId?: string | null;
     excludeSubmissionId?: string;
     historicalAuthorization?: HistoricalWipReportingAuthorization;
+    recoverySources?: WipRecoverySources;
   },
 ): Promise<WipReportingResolution> {
+  if (input.recoverySources) {
+    const { submissionId, parts } = input.recoverySources;
+    const submission = await tx.processReportSubmission.findFirst({ where: { id: submissionId, status: 'PENDING', completionId: null,
+      workOrderId: input.workOrderId, stepId: input.stepId, workDate: input.workDate }, select: { id: true } });
+    if (!submission || submissionId !== input.excludeSubmissionId || parts.length < 2 || parts.length > 30
+      || new Set(parts.map(part => part.allocationId)).size !== parts.length
+      || parts.some(part => !Number.isSafeInteger(part.quantity) || part.quantity <= 0)
+      || parts.reduce((sum, part) => sum + part.quantity, 0) !== input.processedQty) {
+      throw new WipWarehouseError('原申报数量与合并来源不一致，请刷新重新核对', 'WIP_RECOVERY_SOURCES_INVALID', 409);
+    }
+    const resolutions: Array<NonNullable<WipReportingResolution>> = [];
+    for (const part of parts) {
+      const resolution = await resolveWipReportingAllocation(tx, { ...input, recoverySources: undefined,
+        processedQty: part.quantity, reportedProductQty: part.quantity, requestedAllocationId: part.allocationId,
+        historicalAuthorization: part.historical });
+      if (!resolution) throw new WipWarehouseError('合并来源已失效，请刷新预览', 'WIP_ALLOCATION_CHANGED', 409);
+      resolutions.push(resolution);
+    }
+    return { ...resolutions[0], creditQuantity: input.processedQty, parts: resolutions };
+  }
   const reportedProductQty = Math.max(0, input.reportedProductQty ?? input.processedQty);
   const reportedGoodUnitQty = Math.max(0, input.reportedGoodUnitQty || 0);
   if (reportedProductQty <= 0 && reportedGoodUnitQty <= 0) return null;
@@ -310,6 +338,11 @@ export async function creditWipCompletion(
   },
 ): Promise<void> {
   if (!input.resolution) return;
+  if (input.resolution.parts) {
+    for (const part of input.resolution.parts) await creditWipCompletion(tx, { ...input, resolution: part,
+      idempotencyKey: `${input.idempotencyKey}:${part.allocationId}` });
+    return;
+  }
   const allocationStep = await tx.wipWeekAllocationStep.findUnique({
     where: { id: input.resolution.allocationStepId },
     select: {

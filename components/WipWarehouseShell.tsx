@@ -116,6 +116,9 @@ type Lot = {
     processName: string;
     position: number;
     remainingQty: number;
+    pendingQty?: number;
+    scheduledQty?: number;
+    availableQty?: number;
     remainingHours: number;
     status: string;
   }>;
@@ -605,11 +608,7 @@ export default function WipWarehouseShell({
       CUSTOMER_CHANGE: '客户交期调整',
       OTHER: '其他原因',
     };
-    const reason = `${reasonLabels[rescheduleDraft.reasonCode]}：${rescheduleDraft.note.trim()}`;
-    if (rescheduleDraft.note.trim().length < 2) {
-      setRescheduleError('请填写至少 2 个字的改排说明');
-      return;
-    }
+    const reason = `${reasonLabels[rescheduleDraft.reasonCode]}${rescheduleDraft.note.trim() ? `：${rescheduleDraft.note.trim()}` : ''}`;
     setSaving(true);
     setRescheduleError('');
     try {
@@ -798,9 +797,9 @@ export default function WipWarehouseShell({
           <header><span><small>{selectedLot.lotNo}</small><strong>{selectedLot.specification}</strong><em>{selectedLot.productName}</em></span><i className={selectedLot.scheduleStatus.toLowerCase()}>{statusLabel(selectedLot.scheduleStatus)}</i></header>
           <section className="wip-origin-card"><span><small>来源生产周</small><strong>{selectedLot.sourceWeekStartDate} 至 {selectedLot.sourceWeekEndDate}</strong></span><span><small>原则</small><strong>已报工与员工工时不迁移</strong></span>{data.permissions.canWrite && !['COMPLETED', 'CANCELLED'].includes(selectedLot.scheduleStatus) && <button type="button" className="wip-return-order" disabled={saving} onClick={openReturnToOrder}><RotateCcw size={14} />撤销转仓并回归原订单</button>}</section>
           {selectedLot.materialStatusSnapshot && <p className="wip-material-note"><AlertTriangle size={15} />{selectedLot.materialStatusSnapshot}</p>}
-          <section className="wip-step-list"><header><strong>剩余工序与工时</strong><em>{selectedLot.steps.length} 道</em></header>{selectedLot.steps.map(step => <article key={step.id}><b>{String(step.position).padStart(2, '0')}</b><span><strong>{step.processName}</strong><small>剩余 {step.remainingQty} 件</small></span><em>{step.remainingHours} 小时</em></article>)}</section>
+          <section className="wip-step-list"><header><strong>剩余工序与工时</strong><em>{selectedLot.steps.length} 道</em></header>{selectedLot.steps.map(step => <article key={step.id}><b>{String(step.position).padStart(2, '0')}</b><span><strong>{step.processName}</strong><small>未完成 {step.remainingQty} 件 · 已排 {step.scheduledQty || 0} 件</small>{(step.pendingQty || 0) > 0 && <small>待处理申报 {step.pendingQty} 件 · <a href={`/workspace/reporting-recovery?keyword=${encodeURIComponent(selectedLot.specification)}`}>查看原申报</a></small>}</span><em>{step.remainingHours} 小时</em></article>)}</section>
           {data.permissions.canWrite && selectedLot.unscheduledQuantity > 0 && <section className="wip-schedule-form">
-            <header><strong>排入目标生产周</strong><small>未排仓内不计任何周计划</small></header>
+            <header><strong>排入目标生产周</strong><small>按每道工序真实余量安排</small></header><div className="wip-schedule-breakdown">{selectedLot.steps.map(step => <p key={step.id}>{step.processName}：本次安排 <strong>{Math.min(Math.max(0, Number(scheduleDraft.quantity) || 0), step.availableQty || 0)}</strong> 件 / 可排 {step.availableQty || 0} 件</p>)}</div>
             <div><label>数量<input type="number" min="1" max={selectedLot.unscheduledQuantity} value={scheduleDraft.quantity} onChange={event => setScheduleDraft({ ...scheduleDraft, quantity: event.target.value })} /></label><label>目标周<select value={scheduleDraft.week} onChange={event => setScheduleDraft({ ...scheduleDraft, week: event.target.value })}><option value="">请选择</option>{data.weeks.map(week => <option key={week.startDate} value={week.startDate}>{week.label} · {week.startDate} 至 {week.endDate}</option>)}</select></label></div>
             <label>执行班组<select value={scheduleDraft.teamId} onChange={event => setScheduleDraft({ ...scheduleDraft, teamId: event.target.value })}><option value="">暂不指定</option>{data.teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
             <label>原因<input maxLength={300} value={scheduleDraft.reason} onChange={event => setScheduleDraft({ ...scheduleDraft, reason: event.target.value })} /></label>
@@ -874,7 +873,7 @@ export default function WipWarehouseShell({
           <section className="wip-reschedule-section"><header><span><b>3</b><strong>执行信息与原因</strong></span><small>用于计划追踪和审计</small></header><div className="wip-reschedule-fields"><label>执行班组<select value={rescheduleDraft.teamId} disabled={saving} onChange={event => setRescheduleDraft({ ...rescheduleDraft, teamId: event.target.value })}><option value="">暂不指定</option>{data.teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label><label>原因类别<select value={rescheduleDraft.reasonCode} disabled={saving} onChange={event => setRescheduleDraft({ ...rescheduleDraft, reasonCode: event.target.value as RescheduleDraft['reasonCode'] })}><option value="MATERIAL_CHANGE">物料到货变化</option><option value="CAPACITY_BALANCE">产能调整</option><option value="CUSTOMER_CHANGE">客户交期调整</option><option value="OTHER">其他原因</option></select></label><label className="wide">改排说明<textarea maxLength={300} value={rescheduleDraft.note} disabled={saving} onChange={event => setRescheduleDraft({ ...rescheduleDraft, note: event.target.value })} /></label></div></section>
           {rescheduleError && <p className="wip-reschedule-error" role="alert"><AlertTriangle size={15} />{rescheduleError}</p>}
         </div>
-        <footer><span>提交后，可直接跳转核对计划中心和生产执行</span><button type="button" disabled={saving} onClick={closeReschedule}>取消</button><button type="button" className="primary" disabled={saving || !rescheduleDraft.targetWeekStartDate || rescheduleDraft.note.trim().length < 2} onClick={() => void commitReschedule()} data-testid="wip-reschedule-submit">{saving ? <><LoaderCircle className="spin" size={16} />正在改排</> : <><CalendarClock size={16} />确认改排剩余任务</>}</button></footer>
+        <footer><span>提交后，可直接跳转核对计划中心和生产执行</span><button type="button" disabled={saving} onClick={closeReschedule}>取消</button><button type="button" className="primary" disabled={saving || !rescheduleDraft.targetWeekStartDate} onClick={() => void commitReschedule()} data-testid="wip-reschedule-submit">{saving ? <><LoaderCircle className="spin" size={16} />正在改排</> : <><CalendarClock size={16} />确认改排剩余任务</>}</button></footer>
       </>}
     </section></div>}
 

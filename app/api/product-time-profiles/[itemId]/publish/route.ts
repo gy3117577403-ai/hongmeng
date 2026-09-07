@@ -28,6 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
       expectedRevision,
       previewToken,
       policies: body.policies,
+      scope: body.scope,
     });
     const profile = await prisma.productTimeProfile.findUnique({
       where: { id: result.profileId },

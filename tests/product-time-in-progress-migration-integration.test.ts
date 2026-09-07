@@ -330,25 +330,22 @@ test(
         6,
       );
       const retiredCompletion = await prisma.processCompletion.findUniqueOrThrow({ where: { id: completionB.id } });
-      assert.equal(retiredCompletion.countsForEfficiency, false);
-      assert.equal(retiredCompletion.productTimeProfileId, v2.id);
-      assert.equal(retiredCompletion.productTimeEntryId, null);
-      assert.equal(retiredCompletion.productTimeProfileVersion, 2);
-      assert.equal(retiredCompletion.routeVersion, 1);
+      assert.equal(retiredCompletion.countsForEfficiency, true);
+      assert.equal(retiredCompletion.productTimeProfileId, completionB.productTimeProfileId);
+      assert.equal(retiredCompletion.productTimeEntryId, completionB.productTimeEntryId);
+      assert.equal(retiredCompletion.productTimeProfileVersion, completionB.productTimeProfileVersion);
+      assert.equal(retiredCompletion.routeVersion, completionB.routeVersion);
       const retiredPool = await prisma.processLaborPool.findUniqueOrThrow({ where: { id: pool.id } });
-      assert.equal(retiredPool.status, ProcessLaborPoolStatus.VOIDED);
-      assert.equal(retiredPool.countsForEfficiency, false);
+      assert.equal(retiredPool.status, pool.status);
+      assert.equal(retiredPool.countsForEfficiency, true);
       assert.equal(retiredPool.eligibleQty, 4);
       assert.equal(retiredPool.totalStandardLaborMilliseconds, 4_000n);
       const allocationRows = await prisma.processLaborClaim.findMany({
         where: { poolId: pool.id },
         orderBy: { createdAt: 'asc' },
       });
-      assert.equal(allocationRows.find(row => row.id === originalAllocation.id)?.status, ProcessLaborClaimStatus.VOIDED);
-      assert.equal(
-        allocationRows.find(row => row.status === ProcessLaborClaimStatus.REVERSAL)?.standardLaborMilliseconds,
-        -4_000n,
-      );
+      assert.equal(allocationRows.find(row => row.id === originalAllocation.id)?.status, ProcessLaborClaimStatus.ACTIVE);
+      assert.equal(allocationRows.filter(row => row.status === ProcessLaborClaimStatus.REVERSAL).length, 0);
       const bypassActivity = await prisma.processRouteActivity.findFirstOrThrow({
         where: { routeId: order.processRoute.id, action: 'product_time_deleted_step_quantity_bypassed' },
       });

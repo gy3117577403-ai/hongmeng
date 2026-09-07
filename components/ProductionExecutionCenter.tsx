@@ -611,6 +611,7 @@ type ProcessCompletionContext = {
     processedQty: number;
     reportedQty: number;
     coveredReportedQty: number;
+    pendingSubmissionQty?: number;
     pendingCoverageQty: number;
     reportableQty: number;
     reportTargetQty: number;
@@ -4632,7 +4633,8 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
               const strictBlocked = context?.reportingPolicy === 'strict_sequence'
                 && routeStep?.status !== 'current';
               const statusHint = noRemaining
-                ? ' · 已报完'
+                ? routeStep?.pendingSubmissionQty ? ` · 待处理占用 ${formatProductionQuantity(routeStep.pendingSubmissionQty)}`
+                  : pending > 0 ? ` · 已报待核销 ${formatProductionQuantity(pending)}` : ' · 已报完'
                 : reportable === undefined
                   ? ''
                   : actionStep
@@ -4645,6 +4647,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       </section>}
 
       {loading && <div className="process-completion-loading"><RefreshCw size={18} aria-hidden="true" /><span>正在核对工序数量与历史流转...</span></div>}
+      {context?.routeSteps.some(step => (step.pendingSubmissionQty || 0) > 0) && <section className="process-completion-source-note"><strong>已有申报正在处理，占用数量无需重复报工</strong><p>{context.routeSteps.filter(step => (step.pendingSubmissionQty || 0) > 0).map(step => `${step.processName} ${step.pendingSubmissionQty} 件`).join('；')}</p><a href={`/workspace/reporting-recovery?keyword=${encodeURIComponent(order.specification || order.productName)}`} target="_blank" rel="noreferrer">查看原申报与处理进度</a></section>}
       {!loading && error && !context && <section className="process-completion-blocked" role="alert">
         <AlertTriangle size={22} aria-hidden="true" />
         <div><strong>当前工序暂不能流转</strong><p>{error}</p><small>系统不会修改生产目标，也不会跳过已发布工艺路线。请核对工艺路线或计划来源后重试。</small></div>

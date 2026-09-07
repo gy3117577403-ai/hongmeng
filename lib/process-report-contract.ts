@@ -97,7 +97,8 @@ export async function getProcessStepPublishedContract(
   const occurrenceKey = step.productTimeEntry?.occurrenceKey;
   if (!itemId || !occurrenceKey) return blocked('PROCESS_REPORT_OCCURRENCE_UNRESOLVED', '缺少稳定的产品工序实例关联');
   const profile = await tx.productTimeProfile.findFirst({
-    where: { drawingLibraryItemId: itemId, status: 'published' },
+    where: { drawingLibraryItemId: itemId, ...(['product_time_pinned', 'work_order_override'].includes(step.route.routeSource)
+      ? { id: step.route.productTimeProfileId || '' } : { status: 'published' }) },
     orderBy: [{ version: 'desc' }, { publishedAt: 'desc' }], include: productTimeProfileInclude,
   });
   const entries = profile?.entries.filter(entry => entry.occurrenceKey === occurrenceKey
@@ -143,7 +144,8 @@ export async function repairUnreportedProcessStepContract(
     return blocked('PROCESS_REPORT_OCCURRENCE_UNRESOLVED', '缺少稳定工序实例关联，不能按名称或位置猜测标准');
   }
   const profile = await tx.productTimeProfile.findFirst({
-    where: { drawingLibraryItemId: itemId, status: 'published' },
+    where: { drawingLibraryItemId: itemId, ...(['product_time_pinned', 'work_order_override'].includes(step.route.routeSource)
+      ? { id: step.route.productTimeProfileId || '' } : { status: 'published' }) },
     orderBy: [{ version: 'desc' }, { publishedAt: 'desc' }],
     include: productTimeProfileInclude,
   });

@@ -1946,6 +1946,7 @@ export type ProductTimeDeploymentConflictDTO = {
 };
 
 export type ProductTimeDeploymentImpactDTO = {
+  scope?: { mode: 'all' | 'selected' | 'work_orders'; workOrderIds: string[] };
   workOrders: {
     total: number;
     unstarted: number;
@@ -1965,6 +1966,9 @@ export type ProductTimeDeploymentImpactDTO = {
 };
 
 export type ProductTimeDeploymentRouteDTO = {
+  retainedReports?: { processName: string; quantity: number; count: number }[];
+  reportUrl?: string | null;
+  selected?: boolean;
   workOrderId: string;
   workOrderCode: string;
   state: ProductTimeDeploymentWorkOrderState;
@@ -1986,6 +1990,7 @@ export type ProductTimeDeploymentRouteDTO = {
 };
 
 export type ProductTimeDeploymentPreviewDTO = {
+  scope?: { mode: 'all' | 'selected' | 'work_orders'; workOrderIds: string[] };
   previewToken: string;
   itemId: string;
   draftProfileId: string;
