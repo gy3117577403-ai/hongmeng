@@ -561,6 +561,7 @@ export async function setNotificationCompletedState(
   | { status: 'updated'; completedAt: Date | null; completionKind: NotificationCompletionKind | null; canRestore: boolean }
   | { status: 'not_found' }
   | { status: 'not_restorable' }
+  | { status: 'source_pending' }
 > {
   const run = async (tx: Prisma.TransactionClient) => {
     const recipient = await tx.systemNotificationRecipient.findUnique({
@@ -581,6 +582,17 @@ export async function setNotificationCompletedState(
     if (!recipient) return { status: 'not_found' as const };
 
     let sourceResolutionReason: string | null = null;
+    if (recipient.notification.sourceType === 'process_reporting_submission') {
+      const submission = recipient.notification.sourceId
+        ? await tx.processReportSubmission.findUnique({ where: { id: recipient.notification.sourceId }, select: { status: true } })
+        : null;
+      if (submission?.status === 'COMPLETED' || submission?.status === 'CANCELLED') {
+        sourceResolutionReason = submission.status === 'COMPLETED' ? '原报工已核销并完成工时入账' : '原申报已取消';
+      } else if (completed) {
+        // Acknowledging a message is not a successful business recovery.
+        return { status: 'source_pending' as const };
+      }
+    }
     if (
       recipient.notification.sourceType === 'process_route_change'
       && recipient.notification.sourceId

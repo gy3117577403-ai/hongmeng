@@ -5,6 +5,14 @@ import {
 } from '@prisma/client';
 import { WipWarehouseError, refreshWipLotStatus } from '@/lib/wip-warehouse';
 import { wipEntryCheckpointClosesRoute } from '@/lib/wip-completion-checkpoint';
+import { pendingProcessReportReservations } from '@/lib/process-report-reservations';
+import { chinaTodayDateKey, dateKeyFromDatabase } from '@/lib/attendance';
+import { chinaWeekRange } from '@/lib/production-planning';
+
+/** Internal recovery-only authorization. Never read this value from a reporting HTTP body. */
+export type HistoricalWipReportingAuthorization = {
+  actorId: string; submissionId: string; allocationId: string; expectedVersion: number; workDateKey: string;
+};
 
 export type WipReportingResolution = {
   allocationId: string;
@@ -57,6 +65,8 @@ export async function resolveWipReportingAllocation(
     reportableUnitQty?: number;
     unitsPerProduct?: number;
     requestedAllocationId?: string | null;
+    excludeSubmissionId?: string;
+    historicalAuthorization?: HistoricalWipReportingAuthorization;
   },
 ): Promise<WipReportingResolution> {
   const reportedProductQty = Math.max(0, input.reportedProductQty ?? input.processedQty);
@@ -74,7 +84,7 @@ export async function resolveWipReportingAllocation(
     select: {
       id: true,
       remainingQty: true,
-      lot: { select: { id: true, lotNo: true, containerCode: true } },
+      lot: { select: { id: true, lotNo: true, containerCode: true, enteredAt: true } },
       allocationSteps: {
         where: { status: { not: 'CANCELLED' } },
         select: {
@@ -85,6 +95,7 @@ export async function resolveWipReportingAllocation(
             select: {
               id: true,
               status: true,
+              version: true,
               targetWeekStartDate: true,
               targetWeekEndDate: true,
             },
@@ -95,6 +106,22 @@ export async function resolveWipReportingAllocation(
     },
   });
   if (!lotSteps.length) return null;
+
+  const historical = input.historicalAuthorization;
+  if (historical) {
+    const submission = await tx.processReportSubmission.findFirst({ where: {
+      id: historical.submissionId, status: 'PENDING', completionId: null,
+      workOrderId: input.workOrderId, stepId: input.stepId, workDate: input.workDate,
+    }, select: { id: true } });
+    const selectedLot = lotSteps.find(step => step.allocationSteps.some(allocationStep => allocationStep.allocation.id === historical.allocationId));
+    const allocation = selectedLot?.allocationSteps.find(step => step.allocation.id === historical.allocationId)?.allocation;
+    if (!submission || historical.submissionId !== input.excludeSubmissionId || historical.allocationId !== input.requestedAllocationId
+      || historical.workDateKey !== dateKeyFromDatabase(input.workDate) || !selectedLot || !allocation
+      || allocation.version !== historical.expectedVersion || historical.workDateKey >= chinaTodayDateKey(chinaWeekRange(new Date()).start)
+      || input.workDate >= allocation.targetWeekStartDate || chinaTodayDateKey(selectedLot.lot.enteredAt) > historical.workDateKey) {
+      throw new WipWarehouseError('历史作业确认条件已变化，需核对真实日期、入仓日期及当前排程余额', 'WIP_HISTORICAL_CONFIRMATION_INVALID', 409);
+    }
+  }
 
   let outstandingWipQuantity = 0;
   const currentOptions: Array<{
@@ -117,8 +144,9 @@ export async function resolveWipReportingAllocation(
       const remaining = Math.max(0, allocationStep.plannedQty - allocationStep.completedQty);
       if (
         remaining > 0
-        && allocationStep.allocation.targetWeekStartDate <= input.workDate
-        && allocationStep.allocation.targetWeekEndDate >= input.workDate
+        && ((allocationStep.allocation.targetWeekStartDate <= input.workDate
+        && allocationStep.allocation.targetWeekEndDate >= input.workDate)
+        || historical?.allocationId === allocationStep.allocation.id)
       ) {
         currentOptions.push({
           allocationId: allocationStep.allocation.id,
@@ -131,9 +159,14 @@ export async function resolveWipReportingAllocation(
     }
   }
 
+  const pending = await pendingProcessReportReservations(tx, input.stepId, input.excludeSubmissionId);
+  // The caller's global limit already excludes pending product reservations. WIP pending
+  // quantities must also leave outstanding inventory here, otherwise native is reduced twice.
+  const pendingWip = pending.rows.filter(row => row.sourceKind === 'WIP')
+    .reduce((sum, row) => sum + row.reservedProductQty, 0);
   const nativeLimits = resolveWipNativeSourceReportLimits({
     reportableQty: input.reportableQty,
-    outstandingWipQuantity,
+    outstandingWipQuantity: Math.max(0, outstandingWipQuantity - pendingWip),
     reportableUnitQty: input.reportableUnitQty,
     unitsPerProduct: input.unitsPerProduct,
   });
@@ -147,6 +180,10 @@ export async function resolveWipReportingAllocation(
         409,
       );
     }
+    const reserved = pending.rows.filter(row => row.sourceAllocationId === selected.allocationId
+      || (!row.sourceAllocationId && row.sourceLotId === selected.lotId))
+      .reduce((sum, row) => sum + row.reservedProductQty, 0);
+    selected.remaining = Math.max(0, selected.remaining - reserved);
     if (input.processedQty > selected.remaining) {
       throw new WipWarehouseError(
         `本次半成品报工不能超过该排程剩余数量 ${selected.remaining}`,

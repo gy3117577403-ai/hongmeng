@@ -1,4 +1,8 @@
 'use client';
+import { useProcessReportDraft, ProcessReportRequestError } from '@/components/useProcessReportDraft';
+import { ProcessReportDraftNotice } from '@/components/ProcessReportDraftNotice';
+import { processReportReceiptText, RECOVERABLE_PROCESS_REPORT_CODES, type ProcessReportDraft } from '@/lib/process-report-draft';
+import './process-report-recovery.css';
 import { productionProcessProgress } from '@/lib/production-process-progress';
 import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
 import { canManageProductionControl, canAdjustProductionDates, type ProductionControlView } from '@/lib/production-control';
@@ -7,7 +11,7 @@ import { canManageProductionControl, canAdjustProductionDates, type ProductionCo
 import { AlertTriangle, ArrowLeft, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, MoreHorizontal, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useToastBridge } from '@/components/ToastProvider';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
@@ -955,12 +959,6 @@ function todayShanghaiDateKey(): string {
   }).format(new Date());
 }
 
-function wipReportDate(continuation: ProductionPlanningWipContinuationDTO): string {
-  const today = todayShanghaiDateKey();
-  if (today < continuation.targetWeekStartDate) return continuation.targetWeekStartDate;
-  if (today > continuation.targetWeekEndDate) return continuation.targetWeekEndDate;
-  return today;
-}
 
 function movedOutSourceNativeReportLimit(order: ProductionOrder): number | null {
   if (order.wipContinuation || !order.wipMovedOutSummary) return null;
@@ -1374,6 +1372,21 @@ export default function ProductionExecutionCenter({
   const [completionError, setCompletionError] = useState('');
   const [completionStepId, setCompletionStepId] = useState('');
   const [completionIdempotencyKey, setCompletionIdempotencyKey] = useState('');
+  const [completionPendingReceipt, setCompletionPendingReceipt] = useState<{ id: string; message: string } | null>(null);
+  const [completionDraftScope, setCompletionDraftScope] = useState('');
+  const [completionDraftRestore, setCompletionDraftRestore] = useState<ProcessReportDraft<ProcessCompletionForm> | null>(null);
+  const [completionPendingAllowed, setCompletionPendingAllowed] = useState(false);
+  const completionDraftStore = useProcessReportDraft<ProcessCompletionForm>(user.id, 'desktop:', (body, draft) => {
+    setToast(processReportReceiptText(body));
+    if (body.pending && body.submission) setCompletionPendingReceipt({ id: body.submission.id, message: processReportReceiptText(body) });
+    if (completionDraftScope === draft.scope) { closeProcessCompletion(true); setCompletionDraftRestore(null); }
+    productionBoardCache.clear(); setRefreshToken(value => value + 1);
+  });
+  const saveReportDraft = completionDraftStore.save;
+  const completionAwaitingUpload = completionDraftStore.queued.some(item => item.scope === completionDraftScope);
+  useEffect(() => {
+    if (completionForm && completionDraftScope && !completionDraftRestore && !completionSaving && !completionLoading) saveReportDraft(completionDraftScope, completionForm, completionIdempotencyKey);
+  }, [completionForm, completionDraftScope, completionDraftRestore, completionSaving, completionLoading, completionIdempotencyKey, saveReportDraft]);
   const [arrangementRequest, setArrangementRequest] = useState<ProductionArrangementRequest | null>(null);
   const [arrangementForm, setArrangementForm] = useState<ProductionArrangementForm>({
     workDate: chinaDateKey(), shiftCode: 'DAY', teamId: '', employeeIds: [], includeWaitingUpstream: true,
@@ -2519,6 +2532,9 @@ export default function ProductionExecutionCenter({
     if (completionSaving && !force) return;
     completionRequestRef.current += 1;
     setCompletionOrder(null);
+    setCompletionDraftScope('');
+    setCompletionDraftRestore(null);
+    setCompletionPendingAllowed(false);
     setCompletionContext(null);
     setCompletionForm(null);
     setCompletionError('');
@@ -2537,14 +2553,20 @@ export default function ProductionExecutionCenter({
     const requestId = completionRequestRef.current + 1;
     completionRequestRef.current = requestId;
     const previousForm = completionForm;
+    const sameSelection = completionContext?.step.id === step.id && completionOrder?.id === order.id;
+    const draftScope = `desktop:${order.id}:${step.id}:${order.wipContinuation?.allocationId || 'native'}`;
+    const savedDraft = completionDraftStore.read(draftScope);
+    setCompletionDraftScope(draftScope);
+    setCompletionDraftRestore(savedDraft);
+    setCompletionPendingAllowed(false);
     const workDate = previousForm?.workDate
-      || (order.wipContinuation ? wipReportDate(order.wipContinuation) : todayShanghaiDateKey());
+      || todayShanghaiDateKey();
     const defectDisposition = previousForm?.defectDisposition || 'rework';
     setCompletionStepId(step.id);
     setCompletionContext(null);
     setCompletionForm(null);
     setCompletionError('');
-    setCompletionIdempotencyKey(globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    setCompletionIdempotencyKey(savedDraft?.idempotencyKey || (sameSelection ? completionIdempotencyKey : '') || globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
     setCompletionLoading(true);
     try {
       const params = new URLSearchParams({ stepId: step.id });
@@ -2606,7 +2628,7 @@ export default function ProductionExecutionCenter({
           : [];
       setCompletionContext(effectiveContext);
       const actionReporting = effectiveContext.step.reportQuantityBasis === 'action';
-      setCompletionForm({
+      setCompletionForm(sameSelection && previousForm ? previousForm : {
         processedQty: actionReporting ? '0' : effectiveReportableQty > 0 ? String(effectiveReportableQty) : '',
         defectQty: '0',
         reportedUnitQty: '0',
@@ -2644,8 +2666,8 @@ export default function ProductionExecutionCenter({
     await loadProcessCompletionContext(order, step.id);
   }
 
-  async function saveProcessCompletion(): Promise<void> {
-    if (!completionOrder || !completionContext || !completionForm) return;
+  async function saveProcessCompletion(allowPending = false): Promise<void> {
+    if (!completionOrder || !completionContext || !completionForm || completionDraftRestore || completionAwaitingUpload) return;
     if (isFullyMovedOutProductionSource(completionOrder)) {
       setCompletionError('该来源订单的剩余任务已全部转入半成品仓，不能从原订单普通报工；请关闭后进入目标周紫色续作行');
       return;
@@ -2726,10 +2748,9 @@ export default function ProductionExecutionCenter({
     setCompletionSaving(true);
     setCompletionError('');
     try {
-      const response = await fetch(`/api/process-management/routes/${completionContext.routeId}/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const body = await completionDraftStore.send(completionDraftScope, completionForm, completionIdempotencyKey, `/api/process-management/routes/${completionContext.routeId}/completions`, {
+          allowPending,
+          source: completionOrder.wipContinuation ? { kind: 'WIP', lotId: completionOrder.wipContinuation.lotId, allocationId: completionOrder.wipContinuation.allocationId } : { kind: 'NATIVE' },
           stepId: completionContext.step.id,
           processedQty,
           defectQty,
@@ -2746,10 +2767,15 @@ export default function ProductionExecutionCenter({
           obligationId: supplement?.id,
           expectedObligationVersion: supplement?.version,
           wipAllocationId: completionOrder.wipContinuation?.allocationId || undefined,
-        }),
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok || !body.data) throw new Error(body.error || '工序完成转序失败');
+      if (body.pending) {
+        setToast(processReportReceiptText(body));
+        if (body.submission) setCompletionPendingReceipt({ id: body.submission.id, message: processReportReceiptText(body) });
+        closeProcessCompletion(true);
+        productionBoardCache.clear(); setRefreshToken(value => value + 1);
+        return;
+      }
+      if (!body.data) throw new Error('报工回执缺少结果，请在报工记录核对。');
       const goodQty = processedQty - defectQty;
       const goodTransferredQty = Math.max(
         0,
@@ -2803,6 +2829,7 @@ export default function ProductionExecutionCenter({
       setRefreshToken(value => value + 1);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : '工序完成转序失败';
+      if (reason instanceof ProcessReportRequestError) setCompletionPendingAllowed(reason.canSubmitPending || RECOVERABLE_PROCESS_REPORT_CODES.has(reason.code));
       setCompletionError(message);
       if (message.includes('已被其他操作更新') || message.includes('版本')) {
         productionBoardCache.clear();
@@ -3534,6 +3561,8 @@ export default function ProductionExecutionCenter({
         close={() => closeProductionReassignment()}
         save={() => void saveProductionReassignment()}
       />}
+      {completionPendingReceipt && <section className="process-report-upload-banner" role="status"><strong>报工受理结果</strong><span>{completionPendingReceipt.message}</span><Link href={`/workspace/reporting-recovery?id=${encodeURIComponent(completionPendingReceipt.id)}`}>查看申报进度</Link><button type="button" onClick={() => setCompletionPendingReceipt(null)}>知道了</button></section>}
+      {(completionDraftStore.queued.length > 0 || completionDraftStore.notice) && <section className="process-report-upload-banner" role="status"><strong>{completionDraftStore.queued.length ? `本机待上传 ${completionDraftStore.queued.length} 笔 · 尚未确认入账` : '报工记录提示'}</strong><span>{completionDraftStore.notice || '联网后用原编号续传；未点击提交的草稿不会自动发送。'}</span>{completionDraftStore.queued.length > 0 && <button type="button" disabled={completionDraftStore.recovering} onClick={() => void completionDraftStore.retryQueued()}>核对并续传</button>}</section>}
       {completionOrder && <ProcessCompletionDialog
         order={completionOrder}
         activeSteps={completionOrder.wipContinuation
@@ -3548,9 +3577,13 @@ export default function ProductionExecutionCenter({
         setValue={setCompletionForm}
         loading={completionLoading}
         saving={completionSaving}
+        locked={completionAwaitingUpload || Boolean(completionDraftRestore)}
+        recoveryNotice={<>{completionDraftRestore && !completionLoading && completionContext && completionForm && <ProcessReportDraftNotice draft={completionDraftRestore} restore={() => { setCompletionForm(completionDraftRestore.value); setCompletionIdempotencyKey(completionDraftRestore.idempotencyKey); setCompletionDraftRestore(null); setCompletionError('已恢复本机内容，请核对实际日期、数量、人员和来源。'); }} discard={() => { completionDraftStore.clear(completionDraftScope); setCompletionDraftRestore(null); }} />}{completionAwaitingUpload && <section className="process-report-recovery-notice" role="status"><div><strong>本机待上传，结果尚未确认</strong><p>原数量和原编号已保留；确认受理前请勿另建一笔。</p></div><button type="button" disabled={completionDraftStore.recovering} onClick={() => void completionDraftStore.retryQueued()}>核对并续传</button></section>}</>}
+        canSubmitPending={completionPendingAllowed}
+        submitPending={() => void saveProcessCompletion(true)}
         error={completionError}
         close={() => closeProcessCompletion()}
-        save={() => void saveProcessCompletion()}
+        save={() => void saveProcessCompletion(Boolean(completionOrder.wipContinuation && completionForm && (completionForm.workDate < completionOrder.wipContinuation.targetWeekStartDate || completionForm.workDate > completionOrder.wipContinuation.targetWeekEndDate)))}
       />}
     </main>
   );
@@ -4378,7 +4411,7 @@ function ProductionReassignmentDialog({ request, sourceEmployees, context, value
   </div>;
 }
 
-function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectStep, context, value, setValue, loading, saving, error, close, save }: {
+function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectStep, context, value, setValue, loading, saving, locked, recoveryNotice, canSubmitPending, submitPending, error, close, save }: {
   order: ProductionOrder;
   activeSteps: WorkOrderProcessRouteDTO['steps'];
   selectedStepId: string;
@@ -4388,6 +4421,10 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   setValue: (value: ProcessCompletionForm) => void;
   loading: boolean;
   saving: boolean;
+  locked: boolean;
+  recoveryNotice: ReactNode;
+  canSubmitPending: boolean;
+  submitPending: () => void;
   error: string;
   close: () => void;
   save: () => void;
@@ -4506,10 +4543,11 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
     : selectedStep
       ? `报工 ${selectedStep.processName}`
       : '登记工序报工';
-  const submitText = '确认报工并自动记工';
+  const pendingSource = Boolean(order.wipContinuation && value && (value.workDate < order.wipContinuation.targetWeekStartDate || value.workDate > order.wipContinuation.targetWeekEndDate));
+  const submitText = pendingSource ? '提交待处理申报' : '确认报工并自动记工';
   const waitsForParallelGroup = !!context
     && (order.processRoute?.steps.filter(step => step.sequenceGroup === context.step.sequenceGroup).length || 0) > 1;
-  const goodDestinationHint = supplement
+  const goodDestinationHint = pendingSource ? '来源确认后再核销流转' : supplement
     ? '登记真实工时，不重复转序或增加成品'
     : advanceReporting
     ? `先记录报工，前序补齐后自动进入 ${nextProcessText}`
@@ -4578,11 +4616,13 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       </header>
 
       <div className="process-completion-scroll">
+      {recoveryNotice}
+      {order.wipContinuation && <section className="process-report-recovery-notice"><div><strong>报工来源：半成品 {order.wipContinuation.lotNo}</strong><p>计划周 {order.wipContinuation.targetWeekStartDate} 至 {order.wipContinuation.targetWeekEndDate} · 本次实际生产日期 {value?.workDate || '正在读取'}{pendingSource ? '。本次日期不在原计划周，将提交待确认续作申报，数量与工时暂不计入正式报工。' : '。按所选批次剩余数量核销。'}</p></div></section>}
 
       {activeSteps.length > 1 && <section className="process-completion-step-picker" aria-label="选择本次报工工序">
         <label htmlFor="process-completion-step">
           <span>本次报工工序</span>
-          <select id="process-completion-step" value={selectedStepId} disabled={saving} aria-busy={loading} onChange={event => selectStep(event.target.value)}>
+          <select id="process-completion-step" value={selectedStepId} disabled={saving || locked} aria-busy={loading} onChange={event => selectStep(event.target.value)}>
             {activeSteps.map(step => {
               const routeStep = context?.routeSteps.find(item => item.id === step.id);
               const reportable = routeStep?.reportableQty;
@@ -4639,26 +4679,26 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
           </section>
 
           <section className="process-completion-quantity-panel" aria-label="本次完成数量">
-            <header><div><strong>{actionReporting ? '实际动作与整套流转' : '本次报工数量'}</strong><small>{actionReporting ? `剩余合格动作 ${formatProductionQuantity(context.reportableUnitQty)} ${reportUnitLabel}；整套剩余 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : supplement ? `整单目标 ${formatProductionQuantity(supplement.actualRequiredQty)} ${unitLabel}；剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : `剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}；当前已到料可核销 ${formatProductionQuantity(context.remainingInputQty)} ${unitLabel}`}</small></div><label className="process-completion-work-date"><span><CalendarDays size={16} aria-hidden="true" />生产日期</span><input type="date" max={todayShanghaiDateKey()} value={value.workDate} disabled={saving} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label></header>
+            <header><div><strong>{actionReporting ? '实际动作与整套流转' : '本次报工数量'}</strong><small>{actionReporting ? `剩余合格动作 ${formatProductionQuantity(context.reportableUnitQty)} ${reportUnitLabel}；整套剩余 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : supplement ? `整单目标 ${formatProductionQuantity(supplement.actualRequiredQty)} ${unitLabel}；剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : `剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}；当前已到料可核销 ${formatProductionQuantity(context.remainingInputQty)} ${unitLabel}`}</small></div><label className="process-completion-work-date"><span><CalendarDays size={16} aria-hidden="true" />生产日期</span><input type="date" max={todayShanghaiDateKey()} value={value.workDate} disabled={saving || locked} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label></header>
             {actionReporting && <p className="process-completion-action-note">实际动作量用于计算工时；只有形成完整产品的数量才推进下一工序。每套标准为 {formatProductionQuantity(context.step.unitsPerProduct)} {reportUnitLabel}。</p>}
             <div className={`process-completion-quantity-grid${actionReporting ? ' action' : ''}`}>
               {actionReporting && <>
                 <label>
                   <span>实际动作数量</span>
-                  <div><input autoFocus inputMode="numeric" pattern="[0-9]*" min="0" max={context.reportableUnitQty} step="1" value={value.reportedUnitQty} disabled={saving} onChange={event => setValue({ ...value, reportedUnitQty: event.target.value })} /><em>{reportUnitLabel}</em></div>
+                  <div><input autoFocus inputMode="numeric" pattern="[0-9]*" min="0" max={context.reportableUnitQty} step="1" value={value.reportedUnitQty} disabled={saving || locked} onChange={event => setValue({ ...value, reportedUnitQty: event.target.value })} /><em>{reportUnitLabel}</em></div>
                 </label>
                 <label>
                   <span>动作不良</span>
-                  <div><input inputMode="numeric" pattern="[0-9]*" min="0" max={reportedUnitQty || undefined} step="1" value={value.reportedDefectUnitQty} disabled={saving} onChange={event => setValue({ ...value, reportedDefectUnitQty: event.target.value })} /><em>{reportUnitLabel}</em></div>
+                  <div><input inputMode="numeric" pattern="[0-9]*" min="0" max={reportedUnitQty || undefined} step="1" value={value.reportedDefectUnitQty} disabled={saving || locked} onChange={event => setValue({ ...value, reportedDefectUnitQty: event.target.value })} /><em>{reportUnitLabel}</em></div>
                 </label>
               </>}
               <label>
                 <span>{actionReporting ? '形成完整产品' : '实际报工'}</span>
-                <div><input autoFocus={!actionReporting} inputMode="numeric" pattern="[0-9]*" min={actionReporting ? 0 : 1} max={context.reportableQty} step="1" value={value.processedQty} disabled={saving} onChange={event => setValue({ ...value, processedQty: event.target.value })} /><em>{unitLabel}</em></div>
+                <div><input autoFocus={!actionReporting} inputMode="numeric" pattern="[0-9]*" min={actionReporting ? 0 : 1} max={context.reportableQty} step="1" value={value.processedQty} disabled={saving || locked} onChange={event => setValue({ ...value, processedQty: event.target.value })} /><em>{unitLabel}</em></div>
               </label>
               <label>
                 <span>{supplement ? '整套不良（不重复分支）' : actionReporting ? '整套不良' : '不良品'}</span>
-                <div><input inputMode="numeric" pattern="[0-9]*" min="0" max={supplement ? 0 : processedQty || context.reportableQty} step="1" value={value.defectQty} disabled={saving || !!supplement} onChange={event => setValue({ ...value, defectQty: event.target.value })} /><em>{unitLabel}</em></div>
+                <div><input inputMode="numeric" pattern="[0-9]*" min="0" max={supplement ? 0 : processedQty || context.reportableQty} step="1" value={value.defectQty} disabled={saving || locked || !!supplement} onChange={event => setValue({ ...value, defectQty: event.target.value })} /><em>{unitLabel}</em></div>
               </label>
               <div className="process-completion-good" aria-live="polite"><span>{actionReporting ? '本次合格动作 / 整套良品' : '本次良品'}</span><strong>{actionReporting ? <>{formatProductionQuantity(reportedGoodUnitQty)} <small>{reportUnitLabel}</small> · {formatProductionQuantity(goodQty)} <small>{unitLabel}</small></> : <>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></>}</strong><em>{goodDestinationHint}</em></div>
             </div>
@@ -4666,21 +4706,21 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
 
           {defectQty > 0 && <fieldset className="process-completion-disposition">
             <legend>不良品后续处理</legend>
-            <label className={value.defectDisposition === 'rework' ? 'selected' : ''}><input type="radio" name="defectDisposition" value="rework" checked={value.defectDisposition === 'rework'} disabled={saving} onChange={() => setValue({ ...value, defectDisposition: 'rework' })} /><span><strong>返工</strong><small>从当前工序重新处理</small></span></label>
-            {!order.parentWorkOrderId && <label className={value.defectDisposition === 'scrap_replenish' ? 'selected' : ''}><input type="radio" name="defectDisposition" value="scrap_replenish" checked={value.defectDisposition === 'scrap_replenish'} disabled={saving} onChange={() => setValue({ ...value, defectDisposition: 'scrap_replenish' })} /><span><strong>报废补产</strong><small>从首道工序重新生产</small></span></label>}
+            <label className={value.defectDisposition === 'rework' ? 'selected' : ''}><input type="radio" name="defectDisposition" value="rework" checked={value.defectDisposition === 'rework'} disabled={saving || locked} onChange={() => setValue({ ...value, defectDisposition: 'rework' })} /><span><strong>返工</strong><small>从当前工序重新处理</small></span></label>
+            {!order.parentWorkOrderId && <label className={value.defectDisposition === 'scrap_replenish' ? 'selected' : ''}><input type="radio" name="defectDisposition" value="scrap_replenish" checked={value.defectDisposition === 'scrap_replenish'} disabled={saving || locked} onChange={() => setValue({ ...value, defectDisposition: 'scrap_replenish' })} /><span><strong>报废补产</strong><small>从首道工序重新生产</small></span></label>}
           </fieldset>}
 
           <section className="process-completion-work-session" aria-label="本次现场作业记录">
             <header><div><strong>作业人员</strong><small>报工提交后，标准工时会直接按人数与数量自动分摊到员工达成率</small></div><span className={value.employeeIds.length ? 'selected' : ''}>{value.employeeIds.length} 人</span></header>
             {context.workerPreset && <div className="process-completion-worker-preset">
               <div><Users size={17} aria-hidden="true" /><span><strong>本周预选人员</strong><small>{context.workerPreset.scope === 'STEP' ? '当前工单工序专属配置' : `${context.workerPreset.weekStartDate} 当周工序配置`} · {context.workerPreset.employees.length} 人</small></span></div>
-              <button type="button" disabled={saving || !context.workerPreset.employees.length} onClick={() => setValue({ ...value, employeeIds: context.workerPreset!.employees.map(employee => employee.id) })}>一键选中预选</button>
+              <button type="button" disabled={saving || locked || !context.workerPreset.employees.length} onClick={() => setValue({ ...value, employeeIds: context.workerPreset!.employees.map(employee => employee.id) })}>一键选中预选</button>
             </div>}
             {!!selectedEmployees.length && <div className="process-completion-selected-employees">
-              {selectedEmployees.map(employee => <span className={preferredEmployeeIds.has(employee.id) ? 'preferred' : ''} key={employee.id}>{employee.name}{preferredEmployeeIds.has(employee.id) && <em>预选</em>}<button type="button" disabled={saving} aria-label={`移除${employee.name}`} onClick={() => setValue({ ...value, employeeIds: value.employeeIds.filter(id => id !== employee.id) })}><X size={13} aria-hidden="true" /></button></span>)}
+              {selectedEmployees.map(employee => <span className={preferredEmployeeIds.has(employee.id) ? 'preferred' : ''} key={employee.id}>{employee.name}{preferredEmployeeIds.has(employee.id) && <em>预选</em>}<button type="button" disabled={saving || locked} aria-label={`移除${employee.name}`} onClick={() => setValue({ ...value, employeeIds: value.employeeIds.filter(id => id !== employee.id) })}><X size={13} aria-hidden="true" /></button></span>)}
             </div>}
             <div className="process-completion-employee-picker">
-              <label><Search size={16} aria-hidden="true" /><input value={employeeSearch} disabled={saving} onChange={event => setEmployeeSearch(event.target.value)} placeholder="搜索姓名、工号或班组" /></label>
+              <label><Search size={16} aria-hidden="true" /><input value={employeeSearch} disabled={saving || locked} onChange={event => setEmployeeSearch(event.target.value)} placeholder="搜索姓名、工号或班组" /></label>
               <div className="process-completion-employee-list">
                 {!!filteredPreferredEmployees.length && <p className="process-completion-employee-group-label"><span>本周预选</span><b>{filteredPreferredEmployees.length} 人</b></p>}
                 {filteredPreferredEmployees.map(employee => {
@@ -4689,7 +4729,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
                     <input
                       type="checkbox"
                       checked={checked}
-                      disabled={saving}
+                      disabled={saving || locked}
                       onChange={() => setValue({
                         ...value,
                         employeeIds: checked
@@ -4707,7 +4747,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
                     <input
                       type="checkbox"
                       checked={checked}
-                      disabled={saving}
+                      disabled={saving || locked}
                       onChange={() => setValue({
                         ...value,
                         employeeIds: checked
@@ -4720,10 +4760,10 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
                 })}
                 {!filteredEmployees.length && <p>没有匹配的员工</p>}
               </div>
-              {!employeeKeyword && filteredEmployees.length > 6 && <button className="process-completion-show-employees" type="button" disabled={saving} onClick={() => setShowAllEmployees(current => !current)}>{showAllEmployees ? '收起人员列表' : `查看全部 ${filteredEmployees.length} 人`}</button>}
+              {!employeeKeyword && filteredEmployees.length > 6 && <button className="process-completion-show-employees" type="button" disabled={saving || locked} onClick={() => setShowAllEmployees(current => !current)}>{showAllEmployees ? '收起人员列表' : `查看全部 ${filteredEmployees.length} 人`}</button>}
             </div>
             {needsWorkerExceptionConfirmation && <label className="process-completion-worker-warning">
-              <input type="checkbox" checked={workerExceptionConfirmed} disabled={saving} onChange={event => setWorkerExceptionConfirmed(event.target.checked)} />
+              <input type="checkbox" checked={workerExceptionConfirmed} disabled={saving || locked} onChange={event => setWorkerExceptionConfirmed(event.target.checked)} />
               <AlertTriangle size={17} aria-hidden="true" />
               <span><strong>包含 {selectedNonPreferredEmployees.length} 名非预选人员</strong><small>允许报工并会正常同步员工工时，请确认他们确实参与了本次作业。</small></span>
               <b>已核对</b>
@@ -4731,9 +4771,9 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
             <details className="process-completion-more">
               <summary>更多现场信息 <span>班组、工位、备注</span></summary>
               <div>
-                <label><span>班组</span><input maxLength={80} value={value.team} disabled={saving} onChange={event => setValue({ ...value, team: event.target.value })} placeholder="例如：前端一组" /></label>
-                <label><span>工位 / 设备</span><input maxLength={80} value={value.workstation} disabled={saving} onChange={event => setValue({ ...value, workstation: event.target.value })} placeholder="例如：裁线 C-03" /></label>
-                <label className="wide"><span>现场备注</span><textarea rows={2} maxLength={500} value={value.remark} disabled={saving} onChange={event => setValue({ ...value, remark: event.target.value })} placeholder="记录换线、设备、交接或质量情况" /></label>
+                <label><span>班组</span><input maxLength={80} value={value.team} disabled={saving || locked} onChange={event => setValue({ ...value, team: event.target.value })} placeholder="例如：前端一组" /></label>
+                <label><span>工位 / 设备</span><input maxLength={80} value={value.workstation} disabled={saving || locked} onChange={event => setValue({ ...value, workstation: event.target.value })} placeholder="例如：裁线 C-03" /></label>
+                <label className="wide"><span>现场备注</span><textarea rows={2} maxLength={500} value={value.remark} disabled={saving || locked} onChange={event => setValue({ ...value, remark: event.target.value })} placeholder="记录换线、设备、交接或质量情况" /></label>
               </div>
             </details>
           </section>
@@ -4742,10 +4782,10 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
 
         <aside className="process-completion-summary" aria-label="确认结果">
           <header><CheckCircle2 size={20} aria-hidden="true" /><div><strong>确认结果</strong><small>提交前请核对</small></div></header>
-          <div className={`process-completion-summary-hero${advanceReporting ? ' pending' : ''}`}><span>{actionReporting ? '合格动作 / 整套良品' : advanceReporting ? '本次先报工' : '本次良品'}</span><strong>{actionReporting ? <>{formatProductionQuantity(reportedGoodUnitQty)} <small>{reportUnitLabel}</small> · {formatProductionQuantity(goodQty)} <small>{unitLabel}</small></> : <>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></>}</strong><em>{supplement ? '计入补报义务，不重复转序' : advanceReporting ? `前序补齐后自动核销至 ${nextProcessText}` : waitsForParallelGroup ? `齐套后进入 ${nextProcessText}` : `进入 ${nextProcessText}`}</em></div>
+          <div className={`process-completion-summary-hero${advanceReporting ? ' pending' : ''}`}><span>{actionReporting ? '合格动作 / 整套良品' : advanceReporting ? '本次先报工' : '本次良品'}</span><strong>{actionReporting ? <>{formatProductionQuantity(reportedGoodUnitQty)} <small>{reportUnitLabel}</small> · {formatProductionQuantity(goodQty)} <small>{unitLabel}</small></> : <>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></>}</strong><em>{pendingSource ? '来源确认后再核销流转' : supplement ? '计入补报义务，不重复转序' : advanceReporting ? `前序补齐后自动核销至 ${nextProcessText}` : waitsForParallelGroup ? `齐套后进入 ${nextProcessText}` : `进入 ${nextProcessText}`}</em></div>
           <dl>
             <div><dt>{actionReporting ? '动作 / 整套不良' : '不良品'}</dt><dd className={defectQty > 0 || reportedDefectUnitQty > 0 ? 'danger' : ''}>{actionReporting ? `${formatProductionQuantity(reportedDefectUnitQty)} ${reportUnitLabel} / ${formatProductionQuantity(defectQty)} ${unitLabel}` : `${formatProductionQuantity(defectQty)} ${unitLabel}`}</dd></div>
-            <div><dt>自动记工</dt><dd>{laborSummary}</dd></div>
+            <div><dt>{pendingSource ? '工时核算' : '自动记工'}</dt><dd>{pendingSource ? standardLaborMilliseconds > 0 ? `待确认；预计 ${durationText(standardLaborMilliseconds)}` : '待确认后核定' : laborSummary}</dd></div>
             <div><dt>作业人员</dt><dd className={!selectedEmployees.length ? 'warning' : ''}>{selectedEmployees.length ? `${selectedEmployees.length} 人` : '未选择'}</dd></div>
             <div><dt>生产日期</dt><dd>{dateText(value.workDate)}</dd></div>
           </dl>
@@ -4763,12 +4803,12 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
         </aside>
       </div>}
 
-      {error && context && <div className="form-error" role="alert">{error}</div>}
+      {error && context && <div className="form-error" role="alert">{error}{canSubmitPending && !locked && <button type="button" disabled={saving || invalid} onClick={submitPending}>提交待处理申报</button>}</div>}
       </div>
       <footer className="dialog-actions">
-        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : needsWorkerExceptionConfirmation && !workerExceptionConfirmed ? '请确认本次非预选作业人员' : supplement ? `将补报 ${formatProductionQuantity(processedQty)} ${unitLabel}并记入 ${selectedEmployees.length} 人真实工时，不重复转序` : actionReporting ? `将登记 ${formatProductionQuantity(reportedGoodUnitQty)} ${reportUnitLabel}合格动作、${formatProductionQuantity(goodQty)} ${unitLabel}整套良品` : advanceReporting ? `将先登记 ${formatProductionQuantity(processedQty)} ${unitLabel}，待前序自动核销` : `将报工并自动记入 ${selectedEmployees.length} 人工时`}</span>
+        <span className={!invalid ? 'ready' : ''}>{pendingSource ? '实际日期保持不变，提交后由主管确认续作安排' : !context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : needsWorkerExceptionConfirmation && !workerExceptionConfirmed ? '请确认本次非预选作业人员' : supplement ? `将补报 ${formatProductionQuantity(processedQty)} ${unitLabel}并记入 ${selectedEmployees.length} 人真实工时，不重复转序` : actionReporting ? `将登记 ${formatProductionQuantity(reportedGoodUnitQty)} ${reportUnitLabel}合格动作、${formatProductionQuantity(goodQty)} ${unitLabel}整套良品` : advanceReporting ? `将先登记 ${formatProductionQuantity(processedQty)} ${unitLabel}，待前序自动核销` : `将报工并自动记入 ${selectedEmployees.length} 人工时`}</span>
         <button type="button" disabled={saving} onClick={close}>取消</button>
-        <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在报工...' : submitText}</button>
+        <button className="primary-button" type="button" disabled={loading || saving || locked || invalid} onClick={save}>{saving ? '正在报工...' : submitText}</button>
       </footer>
     </section>
   </div>;

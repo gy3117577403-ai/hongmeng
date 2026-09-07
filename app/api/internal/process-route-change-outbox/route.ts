@@ -4,6 +4,7 @@ import { backgroundMaintenanceGate } from '@/lib/maintenance-single-flight';
 import { dispatchProcessRouteChangeOutbox } from '@/lib/process-route-change-notifications';
 import { recoverStaleSupplementRouteCompletions } from '@/lib/process-supplement-completion-recovery';
 import { recoverStalePendingCompletionCoverage } from '@/lib/process-pending-coverage-recovery';
+import { reconcilePendingReportAssignees } from '@/lib/process-report-submissions';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,7 +41,10 @@ export async function POST(req: NextRequest) {
       : await recoverStalePendingCompletionCoverage({ afterId: coverageCursor, limit: 3 });
     if (coverageRecovery) coverageCursor = coverageRecovery.nextCursor;
     if (coverageRecovery?.repairedRouteIds.length || coverageRecovery?.failures.length) console.info('pending completion coverage recovery', JSON.stringify(coverageRecovery));
-    return { result, recovery, coverageRecovery };
+    const reportingAssignments = process.env.PROCESS_REPORT_RECOVERY_ENABLED === 'false' ? null
+      : await reconcilePendingReportAssignees(10);
+    if (reportingAssignments?.changed) console.info('reporting assignment recovery', JSON.stringify(reportingAssignments));
+    return { result, recovery, coverageRecovery, reportingAssignments };
   });
   if (!flight.started) {
     const response = NextResponse.json({

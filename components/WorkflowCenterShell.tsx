@@ -901,6 +901,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             ))}
           </div>
           <div className="workflow-command-actions">
+            <a href="/workspace/reporting-recovery"><Clock3 size={14} />报工待处理</a>
             {canReviewProcessChanges && <ProcessRouteChangeInbox initialChangeId={initialProcessRouteChangeId} />}
             {deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回生产执行</a>}
             {deepLink.fromPlanning && !deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回计划中心</a>}
@@ -1052,7 +1053,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                         ? (step.laborRemainingQuantity || 0) > 0
                                           ? `${step.latestEmployeeName ? `${step.latestEmployeeName} · ` : ''}待领 ${(step.laborRemainingQuantity || 0).toLocaleString()} ${laborUnitLabel}`
                                           : step.latestEmployeeName || '工时已自动记入'
-                                        : '工时尚未生成';
+                                        : processed > 0 ? '暂无有效计工记录' : '报工后自动计工';
                                     return <button
                                       type="button"
                                       key={step.key}

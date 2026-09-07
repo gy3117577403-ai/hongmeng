@@ -1,4 +1,4 @@
-import { creditWipCompletion, resolveWipReportingAllocation } from '@/lib/wip-reporting';
+import { creditWipCompletion, resolveWipReportingAllocation, type HistoricalWipReportingAuthorization } from '@/lib/wip-reporting';
 import { syncWipRequirementsAfterRouteEdit } from '@/lib/wip-route-sync';
 import {
   Prisma,
@@ -33,6 +33,8 @@ import {
   resolveProcessReportQuantities,
 } from '@/lib/process-report-quantity';
 import { materializeProcessActionConsumptions } from '@/lib/process-action-consumption';
+import { pendingProcessReportReservations } from '@/lib/process-report-reservations';
+import { completionLaborUnitsPerProduct, processReportContractTransitionIssue } from '@/lib/process-report-contract';
 import { normalizeWorkDate } from '@/lib/daily-plan-domain';
 import { calculateAttainmentBasisPoints } from '@/lib/process-time';
 import { prisma } from '@/lib/prisma';
@@ -208,6 +210,8 @@ export type ActivateProcessRouteChangeCommand = MutationIdentity & {
 };
 
 export type CompleteProcessSupplementObligationCommand = MutationIdentity & {
+  /** Internal recovery transaction only; never accept directly from a public request body. */
+  recoverySubmissionId?: string;
   wipAllocationId?: unknown;
   obligationId: string;
   routeId?: unknown;
@@ -1427,6 +1431,8 @@ async function calculateReviewedTimeImpactSnapshot(
         standardMillisecondsPerUnit: true,
         setupMilliseconds: true,
         unitsPerProduct: true,
+        reportQuantityBasis: true,
+        reportUnitLabel: true,
       },
     }),
     tx.processCompletion.findMany({
@@ -1434,6 +1440,8 @@ async function calculateReviewedTimeImpactSnapshot(
       select: {
         stepId: true,
         goodQty: true,
+        reportedGoodUnitQty: true,
+        reportQuantityBasis: true,
         completedAt: true,
         laborPool: { select: { eligibleQty: true, status: true } },
       },
@@ -1479,18 +1487,26 @@ async function calculateReviewedTimeImpactSnapshot(
     const stepCompletions = completions
       .filter(item => item.stepId === stepId)
       .sort((left, right) => left.completedAt.getTime() - right.completedAt.getTime());
+    const nextReportBasis = step.reportQuantityBasis === 'action' && (nextBasis !== 'per_unit' || nextUnits <= 1)
+      ? 'product' : step.reportQuantityBasis;
+    const contractIssue = processReportContractTransitionIssue(step, {
+      ...step, reportQuantityBasis: nextReportBasis, timeBasis: nextBasis, unitsPerProduct: nextUnits,
+    }, stepCompletions.length > 0 || executions.some(item => item.stepId === stepId));
+    if (contractIssue) throw new ProcessRouteChangeServiceError(contractIssue.message, 409, contractIssue.code);
     if (stepCompletions.length) {
-      const quantities = stepCompletions.map(item => (
-        item.laborPool && item.laborPool.status !== ProcessLaborPoolStatus.VOIDED
-          ? item.laborPool.eligibleQty
-          : item.goodQty
-      ));
+      const quantities = stepCompletions.map(item => ({
+        quantity: item.laborPool && item.laborPool.status !== ProcessLaborPoolStatus.VOIDED
+          ? item.laborPool.eligibleQty : item.reportQuantityBasis === 'action' ? item.reportedGoodUnitQty : item.goodQty,
+        basis: item.reportQuantityBasis,
+      }));
       const previousVariable = previousBasis === 'per_batch'
         ? BigInt(previousStandard) * BigInt(quantities.length)
-        : BigInt(previousStandard) * BigInt(quantities.reduce((sum, value) => sum + value, 0)) * BigInt(previousUnits);
+        : BigInt(previousStandard) * quantities.reduce((sum, value) => sum + BigInt(value.quantity)
+          * BigInt(completionLaborUnitsPerProduct(value.basis, previousUnits)), 0n);
       const nextVariable = nextBasis === 'per_batch'
         ? BigInt(nextStandard) * BigInt(quantities.length)
-        : BigInt(nextStandard) * BigInt(quantities.reduce((sum, value) => sum + value, 0)) * BigInt(nextUnits);
+        : BigInt(nextStandard) * quantities.reduce((sum, value) => sum + BigInt(value.quantity)
+          * BigInt(completionLaborUnitsPerProduct(value.basis, nextUnits)), 0n);
       previousStandardLaborMilliseconds += BigInt(previousSetup) + previousVariable;
       nextStandardLaborMilliseconds += BigInt(nextSetup) + nextVariable;
     }
@@ -2808,6 +2824,17 @@ async function correctStepHistoricalLabor(
   const executions = await tx.processExecution.findMany({
     where: { stepId: input.stepId, voidedAt: null },
   });
+  const activePools = await tx.processLaborPool.count({ where: { stepId: input.stepId,
+    OR: [{ status: { not: 'VOIDED' } }, { claims: { some: { status: 'ACTIVE' } } }] } });
+  const nextReportQuantityBasis = step.reportQuantityBasis === 'action'
+    && (nextTimeBasis !== 'per_unit' || nextUnitsPerProduct <= 1) ? 'product' : step.reportQuantityBasis;
+  const nextReportUnitLabel = nextReportQuantityBasis === 'action' ? step.reportUnitLabel : nextUnitLabel;
+  const contractIssue = processReportContractTransitionIssue(step, {
+    reportQuantityBasis: nextReportQuantityBasis, reportUnitLabel: nextReportUnitLabel,
+    timeBasis: nextTimeBasis, unitsPerProduct: nextUnitsPerProduct,
+  }, completions.length > 0 || executions.length > 0 || activePools > 0
+    || step.processedQty > 0 || step.goodOutputQty > 0 || step.defectOutputQty > 0 || step.releasedGoodQty > 0);
+  if (contractIssue) throw new ProcessRouteChangeServiceError(contractIssue.message, 409, contractIssue.code);
   const affectedEmployees = new Set(executions.map(item => item.employeeId));
   const now = new Date();
   const eligiblePools = completions
@@ -2835,12 +2862,13 @@ async function correctStepHistoricalLabor(
     // Setup time is a once-per-step (or once-per-batch) allowance.  A time
     // correction must not multiply it across every partial historical report.
     const effectiveSetup = pool.id === setupPoolId ? nextSetup : 0;
+    const laborUnitsPerProduct = completionLaborUnitsPerProduct(completion.reportQuantityBasis, nextUnitsPerProduct);
     const snapshot = calculateCompletionLaborSnapshot({
       timeBasis: nextTimeBasis,
       eligibleQty: pool.eligibleQty,
       standardMillisecondsPerUnit,
       setupMilliseconds: effectiveSetup,
-      unitsPerProduct: nextUnitsPerProduct,
+      unitsPerProduct: laborUnitsPerProduct,
     });
     let claimedQty = 0;
     let claimedLabor = 0n;
@@ -2910,7 +2938,7 @@ async function correctStepHistoricalLabor(
         status,
         standardMillisecondsPerUnit,
         setupMilliseconds: effectiveSetup,
-        unitsPerProduct: nextUnitsPerProduct,
+        unitsPerProduct: laborUnitsPerProduct,
         totalStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
         claimedStandardLaborMilliseconds: claimedLabor,
         remainingStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds - claimedLabor,
@@ -2958,6 +2986,8 @@ async function correctStepHistoricalLabor(
       unitLabel: nextUnitLabel,
       setupMilliseconds: nextSetup,
       unitsPerProduct: nextUnitsPerProduct,
+      reportQuantityBasis: nextReportQuantityBasis,
+      reportUnitLabel: nextReportUnitLabel,
       countsForEfficiency: nextCountsForEfficiency,
       standardSource: 'route_change',
       quantityVersion: { increment: 1 },
@@ -2979,6 +3009,8 @@ async function correctStepHistoricalLabor(
         standardMillisecondsPerUnit,
         setupMilliseconds: nextSetup,
         unitsPerProduct: nextUnitsPerProduct,
+        reportQuantityBasis: nextReportQuantityBasis,
+        reportUnitLabel: nextReportUnitLabel,
         unitLabel: nextUnitLabel,
         countsForEfficiency: nextCountsForEfficiency,
         version: { increment: 1 },
@@ -3194,6 +3226,10 @@ async function publishChangedProductProfile(
       if (after.unitsPerProduct != null) entry.occurrences = positiveInteger(after.unitsPerProduct, '单套工序次数');
       const nextActionMilliseconds = positiveMilliseconds(after.standardMillisecondsPerUnit);
       entry.actionMilliseconds = entry.timeBasis === 'per_unit' ? nextActionMilliseconds : null;
+      if (entry.timeBasis !== 'per_unit' || entry.occurrences <= 1) {
+        entry.reportQuantityBasis = 'product';
+        entry.reportUnitLabel = entry.unitLabel;
+      }
       entry.unitMilliseconds = entry.timeBasis === 'per_unit'
         ? nextActionMilliseconds * entry.occurrences
         : nextActionMilliseconds;
@@ -3651,7 +3687,18 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
               sequenceGroup: true,
               status: true,
               processedQty: true,
-              _count: { select: { completions: true } },
+              goodOutputQty: true,
+              defectOutputQty: true,
+              releasedGoodQty: true,
+              reportQuantityBasis: true,
+              reportUnitLabel: true,
+              timeBasis: true,
+              unitsPerProduct: true,
+              _count: { select: {
+                completions: { where: { voidedAt: null } },
+                executions: { where: { voidedAt: null } },
+                processLaborPools: { where: { OR: [{ status: { not: 'VOIDED' } }, { claims: { some: { status: 'ACTIVE' } } }] } },
+              } },
             },
           });
           const previousEntryIds = currentSteps
@@ -3704,6 +3751,17 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
             const usesActionCount = entry.timeBasis !== 'per_batch'
               && Boolean(entry.actionMilliseconds)
               && entry.occurrences > 1;
+            const nextContract = {
+              reportQuantityBasis: entry.reportQuantityBasis === 'action' && usesActionCount ? 'action' : 'product',
+              reportUnitLabel: entry.reportQuantityBasis === 'action' && usesActionCount
+                ? entry.reportUnitLabel || '个' : entry.unitLabel || '套',
+              timeBasis: entry.timeBasis === 'per_batch' ? 'per_batch' : 'per_unit',
+              unitsPerProduct: usesActionCount ? entry.occurrences : 1,
+            };
+            const contractIssue = processReportContractTransitionIssue(step, nextContract,
+              step.processedQty > 0 || step.goodOutputQty > 0 || step.defectOutputQty > 0 || step.releasedGoodQty > 0
+                || step._count.completions > 0 || step._count.executions > 0 || step._count.processLaborPools > 0);
+            if (contractIssue) throw new ProcessRouteChangeServiceError(contractIssue.message, 409, contractIssue.code);
             await tx.workOrderProcessStep.update({
               where: { id: step.id },
               data: {
@@ -3720,12 +3778,8 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
                   : entry.unitMilliseconds,
                 setupMilliseconds: entry.setupMilliseconds,
                 unitsPerProduct: usesActionCount ? entry.occurrences : 1,
-                ...(step.processedQty > 0 || step._count.completions > 0 ? {} : {
-                  reportQuantityBasis: entry.reportQuantityBasis === 'action' && usesActionCount
-                    ? 'action'
-                    : 'product',
-                  reportUnitLabel: entry.reportUnitLabel || '个',
-                }),
+                reportQuantityBasis: nextContract.reportQuantityBasis,
+                reportUnitLabel: nextContract.reportUnitLabel,
                 countsForEfficiency: entry.countsForEfficiency,
               },
             });
@@ -3955,6 +4009,15 @@ export async function completeProcessSupplementObligation(
   command: CompleteProcessSupplementObligationCommand,
   backfill?: ProductionBackfillAuthorization,
 ) {
+  return serializable(tx => completeProcessSupplementObligationInTransaction(tx, command, backfill));
+}
+
+export async function completeProcessSupplementObligationInTransaction(
+  tx: Prisma.TransactionClient,
+  command: CompleteProcessSupplementObligationCommand,
+  backfill?: ProductionBackfillAuthorization,
+  options?: { historicalWip?: HistoricalWipReportingAuthorization },
+) {
   const identity = mutationIdentity(command);
   const obligationId = clean(command.obligationId, 80);
   const routeId = clean(command.routeId, 80);
@@ -3988,6 +4051,7 @@ export async function completeProcessSupplementObligation(
     );
   }
   const principalEmployeeId = clean(command.principalEmployeeId, 80) || employeeIds[0];
+  const reportSource = command.reportSource || ProcessCompletionSource.SUPPLEMENT_OBLIGATION;
   if (!employeeIds.includes(principalEmployeeId)) {
     throw new ProcessRouteChangeServiceError(
       '主报工人必须包含在参与员工中',
@@ -3995,7 +4059,6 @@ export async function completeProcessSupplementObligation(
       'PROCESS_SUPPLEMENT_PRINCIPAL_INVALID',
     );
   }
-  return serializable(async tx => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`process-supplement:${obligationId}`}))`;
     const duplicate = await tx.processCompletion.findUnique({
       where: { idempotencyKey: identity.idempotencyKey },
@@ -4009,6 +4072,11 @@ export async function completeProcessSupplementObligation(
         defectQty: true,
         reportedUnitQty: true,
         reportedDefectUnitQty: true,
+        createdById: true,
+        principalEmployeeId: true,
+        reportSource: true,
+        reportingWipAllocationId: true,
+        voidedAt: true,
         wipCredits: { select: { allocationStep: { select: { allocationId: true } } } },
         participants: { orderBy: { position: 'asc' }, select: { employeeId: true } },
         laborPool: { select: { totalStandardLaborMilliseconds: true, claims: { where: { status: ProcessLaborClaimStatus.ACTIVE } } } },
@@ -4038,6 +4106,9 @@ export async function completeProcessSupplementObligation(
         && employeeIds.every(employeeId => duplicateEmployees.includes(employeeId));
       if (
         duplicate.supplementObligationId !== obligationId
+        || duplicate.createdById !== identity.userId
+        || duplicate.principalEmployeeId !== principalEmployeeId
+        || duplicate.reportSource !== reportSource
         || !duplicate.supplementObligation
         || duplicate.processedQty !== processedQty
         || duplicate.defectQty !== defectQty
@@ -4045,7 +4116,7 @@ export async function completeProcessSupplementObligation(
         || duplicate.reportedDefectUnitQty !== reportedDefectUnitQty
         || duplicate.workDate.getTime() !== workDate.getTime()
         || !sameEmployees
-        || (clean(command.wipAllocationId, 80) || '') !== (duplicate.wipCredits[0]?.allocationStep.allocationId || '')
+        || (clean(command.wipAllocationId, 80) || '') !== (duplicate.reportingWipAllocationId || duplicate.wipCredits[0]?.allocationStep.allocationId || '')
       ) {
         throw new ProcessRouteChangeServiceError(
           '请求标识已用于其他报工',
@@ -4053,6 +4124,7 @@ export async function completeProcessSupplementObligation(
           'PROCESS_SUPPLEMENT_IDEMPOTENCY_CONFLICT',
         );
       }
+      if (duplicate.voidedAt) throw new ProcessRouteChangeServiceError('原补充报工已撤回，不能复用原编号重新入账', 409, 'PROCESS_SUPPLEMENT_COMPLETION_VOIDED');
       return serializeSupplementCompletionResult({
         changeId: duplicate.supplementObligation.changeId,
         deploymentId: duplicate.supplementObligation.deploymentRoute?.deploymentId || null,
@@ -4072,6 +4144,12 @@ export async function completeProcessSupplementObligation(
         releasePolicy: duplicate.supplementObligation.releasePolicy,
         fulfillmentMode: duplicate.supplementObligation.fulfillmentMode,
       });
+    }
+    const pendingSubmission = await tx.processReportSubmission.findUnique({
+      where: { idempotencyKey: identity.idempotencyKey }, select: { id: true },
+    });
+    if (pendingSubmission && pendingSubmission.id !== command.recoverySubmissionId) {
+      throw new ProcessRouteChangeServiceError('本次申报已保存，请先查看报工待处理，勿重复报工', 409, 'PROCESS_SUBMISSION_PENDING');
     }
     const obligation = await tx.processSupplementObligation.findUnique({
       where: { id: obligationId },
@@ -4173,7 +4251,10 @@ export async function completeProcessSupplementObligation(
       reportedDefectUnitQty,
     });
     const actualRequiredQty = processSupplementActualRequiredQty(obligation);
-    const remainingQty = processSupplementRemainingQty(obligation);
+    const pendingReservations = await pendingProcessReportReservations(tx, obligation.displayStepId, command.recoverySubmissionId);
+    if (pendingReservations.hasUnmeasured) throw new ProcessRouteChangeServiceError('该工序已有数量口径待核对的申报，请先处理原申报，避免重复入账', 409, 'PROCESS_UNMEASURED_SUBMISSION_PENDING');
+    const obligationRemainingQty = processSupplementRemainingQty(obligation);
+    const remainingQty = Math.max(0, obligationRemainingQty - pendingReservations.productQty);
     if (processedQty > remainingQty) {
       throw new ProcessRouteChangeServiceError(
         `本次补充报工数量不能超过剩余数量 ${remainingQty}`,
@@ -4186,7 +4267,7 @@ export async function completeProcessSupplementObligation(
       basis: reportQuantityBasis,
       unitsPerProduct: obligation.unitsPerProduct,
     });
-    const remainingActionQty = Math.max(0, actionTargetQty - obligation.reportedGoodUnitQty);
+    const remainingActionQty = Math.max(0, actionTargetQty - obligation.reportedGoodUnitQty - pendingReservations.goodUnits);
     const wipResolution = await resolveWipReportingAllocation(tx, {
       workOrderId: obligation.workOrderId, stepId: obligation.displayStepId, workDate,
       processedQty: reportQuantities.productGoodQty, reportedProductQty: processedQty,
@@ -4194,6 +4275,8 @@ export async function completeProcessSupplementObligation(
       reportedGoodUnitQty: reportQuantityBasis === 'action' ? reportQuantities.reportedGoodUnitQty : undefined,
       reportableUnitQty: reportQuantityBasis === 'action' ? remainingActionQty : undefined,
       unitsPerProduct: obligation.unitsPerProduct,
+      excludeSubmissionId: command.recoverySubmissionId,
+      historicalAuthorization: options?.historicalWip,
     });
     if (reportQuantities.reportedGoodUnitQty > remainingActionQty) {
       throw new ProcessRouteChangeServiceError(
@@ -4219,7 +4302,7 @@ export async function completeProcessSupplementObligation(
         );
       }
     }
-    if (obligation.timeBasis === 'per_batch' && processedQty !== remainingQty) {
+    if (obligation.timeBasis === 'per_batch' && processedQty !== obligationRemainingQty) {
       throw new ProcessRouteChangeServiceError(
         '按批计时的补充工序必须一次报完剩余数量',
         409,
@@ -4260,6 +4343,7 @@ export async function completeProcessSupplementObligation(
         routeId: obligation.routeId,
         stepId: obligation.displayStepId,
         supplementObligationId: obligation.id,
+        reportingWipAllocationId: clean(command.wipAllocationId, 80) || null,
         workDate,
         completedAt: now,
         workStartedAt,
@@ -4276,7 +4360,7 @@ export async function completeProcessSupplementObligation(
         reportQuantityBasis,
         reportUnitLabel: obligation.reportUnitLabel,
         reportMode: ProcessCompletionReportMode.SEQUENTIAL,
-        reportSource: ProcessCompletionSource.SUPPLEMENT_OBLIGATION,
+        reportSource,
         coverageStatus: ProcessCompletionCoverageStatus.COVERED,
         coveredQty: processedQty,
         coveredGoodQty: processedQty,
@@ -4502,5 +4586,4 @@ export async function completeProcessSupplementObligation(
       releasePolicy: obligation.releasePolicy,
       fulfillmentMode: obligation.fulfillmentMode,
     });
-  });
 }

@@ -8,10 +8,11 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import {
-  completeProcessStep,
   completeProcessStepsBatch,
   ProcessCompletionServiceError,
 } from '@/lib/process-completion-service';
+import { submitProcessCompletion, reportingSubmissionReason } from '@/lib/process-report-submissions';
+import type { ReportingSourceInput } from '@/lib/process-report-submission-contract';
 import { prisma } from '@/lib/prisma';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
@@ -51,7 +52,7 @@ export async function POST(
       );
     }
     const ticket = await loadFieldReportTicket(params.code);
-    if (!ticket.route || !ticket.access.canReport) {
+    if (!ticket.route) {
       return NextResponse.json(
         { ok: false, error: ticket.access.message, code: 'FIELD_REPORT_READ_ONLY' },
         { status: 409 },
@@ -73,8 +74,15 @@ export async function POST(
       expectedRouteVersion?: unknown;
       wipAllocationId?: unknown;
       items?: unknown;
+      allowPending?: boolean;
+      source?: ReportingSourceInput;
+      expectedUserId?: unknown;
     };
     const employeeIds = ensureFieldReportParticipants(currentEmployee.id, body.employeeIds);
+    if (Array.isArray(body.items) && !ticket.access.canReport) return NextResponse.json({ ok: false, error: ticket.access.message, code: 'FIELD_REPORT_READ_ONLY' }, { status: 409 });
+    if (body.expectedUserId != null && body.expectedUserId !== user.id) {
+      return NextResponse.json({ ok: false, error: '当前登录账号已变化，请核对账号后重新打开报工页面', code: 'ACCOUNT_CHANGED' }, { status: 409 });
+    }
     const common = {
       routeId: ticket.route.id,
       workDate: body.workDate,
@@ -104,8 +112,13 @@ export async function POST(
             defectDisposition?: unknown;
           }>,
         })
-      : await completeProcessStep({
+      : await submitProcessCompletion({
           ...common,
+          ticketCode: params.code,
+          reportingAccessAllowed: ticket.access.canReport,
+          allowPending: body.allowPending === true,
+          source: body.source,
+          expectedUserId: body.expectedUserId,
           stepId: body.stepId,
           processedQty: body.processedQty,
           defectQty: body.defectQty,
@@ -113,6 +126,9 @@ export async function POST(
           reportedDefectUnitQty: body.reportedDefectUnitQty,
           defectDisposition: body.defectDisposition,
         });
+    if ('pending' in data) return data.pending
+      ? NextResponse.json({ ok: true, pending: true, submission: data.submission }, { status: 202 })
+      : NextResponse.json({ ok: true, data: data.data });
     return NextResponse.json({ ok: true, data });
   } catch (error) {
     if (error instanceof ForbiddenError) {
@@ -121,7 +137,7 @@ export async function POST(
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof WorkOrderQrServiceError || error instanceof ProcessCompletionServiceError) {
       return NextResponse.json(
-        { ok: false, error: error.message, code: error.code },
+        { ok: false, error: error.message, code: error.code, canSubmitPending: !!reportingSubmissionReason(error) },
         { status: error.status },
       );
     }

@@ -641,7 +641,7 @@ function proportionalMilliseconds(total: bigint, numerator: number, denominator:
   return total * BigInt(numerator) / BigInt(denominator);
 }
 
-export async function scheduleWipLot(input: {
+export type ScheduleWipLotInput = {
   lotId: unknown;
   quantity: unknown;
   targetWeekStartDate: unknown;
@@ -651,135 +651,141 @@ export async function scheduleWipLot(input: {
   actorName: string;
   idempotencyKey?: unknown;
   productionScope: ProductionEntityScope;
-}) {
+};
+
+export async function scheduleWipLot(input: ScheduleWipLotInput) {
+  return prisma.$transaction(tx => scheduleWipLotInTransaction(tx, input), {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 8_000,
+    timeout: 25_000,
+  });
+}
+
+/** Shares the caller transaction so confirmation, source settlement and reporting commit together. */
+export async function scheduleWipLotInTransaction(tx: Prisma.TransactionClient, input: ScheduleWipLotInput) {
   assertProductionScopeWrite(input.productionScope);
   const lotId = cleanText(input.lotId, 80);
   const quantity = positiveInteger(input.quantity, '排程数量');
   const targetWeek = validTargetWeek(input.targetWeekStartDate);
   const reason = requiredReason(input.reason);
   const requestKey = idempotencyKey(input.idempotencyKey, 'wip-schedule');
-  return prisma.$transaction(async tx => {
-    const replay = await tx.wipWeekAllocation.findUnique({ where: { idempotencyKey: requestKey } });
-    if (replay) return replay;
-    const lot = await tx.semiFinishedLot.findUnique({
-      where: { id: lotId },
-      include: {
-        steps: { where: { status: { not: 'CANCELLED' } }, orderBy: { position: 'asc' } },
-        allocations: {
-          include: { steps: true },
-          orderBy: { createdAt: 'asc' },
-        },
+
+  const replay = await tx.wipWeekAllocation.findUnique({ where: { idempotencyKey: requestKey } });
+  if (replay) return replay;
+  const lot = await tx.semiFinishedLot.findUnique({
+    where: { id: lotId },
+    include: {
+      steps: { where: { status: { not: 'CANCELLED' } }, orderBy: { position: 'asc' } },
+      allocations: {
+        include: { steps: true },
+        orderBy: { createdAt: 'asc' },
       },
-    });
-    if (!lot || lot.scheduleStatus === SemiFinishedScheduleStatus.CANCELLED) {
-      throw new WipWarehouseError('半成品批次不存在或已取消', 'WIP_LOT_NOT_FOUND', 404);
-    }
-    await lockProductionWorkOrder(tx, lot.workOrderId);
-    const coveredQuantity = lot.allocations.reduce((sum, allocation) => (
-      sum + effectiveAllocationQuantity(allocation)
-    ), 0);
-    const availableQuantity = Math.max(0, lot.quantity - coveredQuantity);
-    if (quantity > availableQuantity) {
-      throw new WipWarehouseError(`本次最多还能排 ${availableQuantity} 件`, 'WIP_SCHEDULE_EXCEEDS_AVAILABLE', 409);
-    }
-    const teamId = cleanText(input.teamId, 80) || null;
-    if (teamId) {
-      const team = await tx.productionTeam.findFirst({
-        where: { id: teamId, isActive: true },
-        select: { id: true, code: true, name: true, legacyTeamName: true },
-      });
-      if (!team) throw new WipWarehouseError('所选生产班组不存在或已停用', 'WIP_TEAM_INVALID', 409);
-      assertProductionTeam(input.productionScope, team);
-    }
-    const stepCreates: Prisma.WipWeekAllocationStepCreateWithoutAllocationInput[] = [];
-    let totalMilliseconds = 0n;
-    for (const step of lot.steps) {
-      const skippedQuantity = Math.max(0, lot.quantity - step.remainingQty);
-      const coveredBefore = Math.max(0, coveredQuantity - skippedQuantity);
-      const coveredAfter = Math.max(0, Math.min(step.remainingQty, coveredQuantity + quantity - skippedQuantity));
-      const plannedQty = Math.max(0, coveredAfter - Math.min(step.remainingQty, coveredBefore));
-      if (plannedQty <= 0) continue;
-      const beforeMs = proportionalMilliseconds(
-        step.remainingStandardMilliseconds,
-        Math.min(step.remainingQty, coveredBefore),
-        step.remainingQty,
-      );
-      const afterMs = proportionalMilliseconds(
-        step.remainingStandardMilliseconds,
-        coveredAfter,
-        step.remainingQty,
-      );
-      const plannedStandardMilliseconds = afterMs > beforeMs ? afterMs - beforeMs : 0n;
-      totalMilliseconds += plannedStandardMilliseconds;
-      stepCreates.push({
-        lotStep: { connect: { id: step.id } },
-        plannedQty,
-        plannedStandardMilliseconds,
-        status: WipRequirementStatus.SCHEDULED,
-      });
-    }
-    if (!stepCreates.length) {
-      throw new WipWarehouseError('该数量没有可排的剩余工序', 'WIP_NO_STEPS_TO_SCHEDULE', 409);
-    }
-    const allocation = await tx.wipWeekAllocation.create({
-      data: {
-        lotId: lot.id,
-        targetWeekStartDate: targetWeek.start,
-        targetWeekEndDate: targetWeek.end,
-        teamId,
-        quantity,
-        plannedStandardMilliseconds: totalMilliseconds,
-        reason,
-        scheduledById: input.actorId,
-        idempotencyKey: requestKey,
-        steps: { create: stepCreates },
-      },
-      include: { steps: true },
-    });
-    await tx.wipInventoryMovement.create({
-      data: {
-        lotId: lot.id,
-        movementType: 'SCHEDULE',
-        quantity,
-        fromLocation: lot.locationCode,
-        reason,
-        actorId: input.actorId,
-        idempotencyKey: `${requestKey}:movement`,
-      },
-    });
-    await tx.wipEvent.create({
-      data: {
-        lotId: lot.id,
-        allocationId: allocation.id,
-        eventType: 'SCHEDULE_WEEK',
-        reason,
-        afterData: {
-          targetWeekStartDate: targetWeek.startKey,
-          targetWeekEndDate: targetWeek.endKey,
-          quantity,
-          plannedStandardMilliseconds: bigintNumber(totalMilliseconds),
-          teamId,
-        },
-        actorId: input.actorId,
-        idempotencyKey: `${requestKey}:event`,
-      },
-    });
-    await recomputeLotScheduleStatus(tx, lot.id);
-    await tx.operationLog.create({
-      data: {
-        userId: input.actorId,
-        action: 'schedule_semi_finished_lot',
-        targetType: 'wip_week_allocation',
-        targetId: allocation.id,
-        detail: { lotId: lot.id, lotNo: lot.lotNo, actorName: input.actorName, targetWeek, quantity, reason },
-      },
-    });
-    return allocation;
-  }, {
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-    maxWait: 8_000,
-    timeout: 25_000,
+    },
   });
+  if (!lot || lot.scheduleStatus === SemiFinishedScheduleStatus.CANCELLED) {
+    throw new WipWarehouseError('半成品批次不存在或已取消', 'WIP_LOT_NOT_FOUND', 404);
+  }
+  await lockProductionWorkOrder(tx, lot.workOrderId);
+  const coveredQuantity = lot.allocations.reduce((sum, allocation) => (
+    sum + effectiveAllocationQuantity(allocation)
+  ), 0);
+  const availableQuantity = Math.max(0, lot.quantity - coveredQuantity);
+  if (quantity > availableQuantity) {
+    throw new WipWarehouseError(`本次最多还能排 ${availableQuantity} 件`, 'WIP_SCHEDULE_EXCEEDS_AVAILABLE', 409);
+  }
+  const teamId = cleanText(input.teamId, 80) || null;
+  if (teamId) {
+    const team = await tx.productionTeam.findFirst({
+      where: { id: teamId, isActive: true },
+      select: { id: true, code: true, name: true, legacyTeamName: true },
+    });
+    if (!team) throw new WipWarehouseError('所选生产班组不存在或已停用', 'WIP_TEAM_INVALID', 409);
+    assertProductionTeam(input.productionScope, team);
+  }
+  const stepCreates: Prisma.WipWeekAllocationStepCreateWithoutAllocationInput[] = [];
+  let totalMilliseconds = 0n;
+  for (const step of lot.steps) {
+    const skippedQuantity = Math.max(0, lot.quantity - step.remainingQty);
+    const coveredBefore = Math.max(0, coveredQuantity - skippedQuantity);
+    const coveredAfter = Math.max(0, Math.min(step.remainingQty, coveredQuantity + quantity - skippedQuantity));
+    const plannedQty = Math.max(0, coveredAfter - Math.min(step.remainingQty, coveredBefore));
+    if (plannedQty <= 0) continue;
+    const beforeMs = proportionalMilliseconds(
+      step.remainingStandardMilliseconds,
+      Math.min(step.remainingQty, coveredBefore),
+      step.remainingQty,
+    );
+    const afterMs = proportionalMilliseconds(
+      step.remainingStandardMilliseconds,
+      coveredAfter,
+      step.remainingQty,
+    );
+    const plannedStandardMilliseconds = afterMs > beforeMs ? afterMs - beforeMs : 0n;
+    totalMilliseconds += plannedStandardMilliseconds;
+    stepCreates.push({
+      lotStep: { connect: { id: step.id } },
+      plannedQty,
+      plannedStandardMilliseconds,
+      status: WipRequirementStatus.SCHEDULED,
+    });
+  }
+  if (!stepCreates.length) {
+    throw new WipWarehouseError('该数量没有可排的剩余工序', 'WIP_NO_STEPS_TO_SCHEDULE', 409);
+  }
+  const allocation = await tx.wipWeekAllocation.create({
+    data: {
+      lotId: lot.id,
+      targetWeekStartDate: targetWeek.start,
+      targetWeekEndDate: targetWeek.end,
+      teamId,
+      quantity,
+      plannedStandardMilliseconds: totalMilliseconds,
+      reason,
+      scheduledById: input.actorId,
+      idempotencyKey: requestKey,
+      steps: { create: stepCreates },
+    },
+    include: { steps: true },
+  });
+  await tx.wipInventoryMovement.create({
+    data: {
+      lotId: lot.id,
+      movementType: 'SCHEDULE',
+      quantity,
+      fromLocation: lot.locationCode,
+      reason,
+      actorId: input.actorId,
+      idempotencyKey: `${requestKey}:movement`,
+    },
+  });
+  await tx.wipEvent.create({
+    data: {
+      lotId: lot.id,
+      allocationId: allocation.id,
+      eventType: 'SCHEDULE_WEEK',
+      reason,
+      afterData: {
+        targetWeekStartDate: targetWeek.startKey,
+        targetWeekEndDate: targetWeek.endKey,
+        quantity,
+        plannedStandardMilliseconds: bigintNumber(totalMilliseconds),
+        teamId,
+      },
+      actorId: input.actorId,
+      idempotencyKey: `${requestKey}:event`,
+    },
+  });
+  await recomputeLotScheduleStatus(tx, lot.id);
+  await tx.operationLog.create({
+    data: {
+      userId: input.actorId,
+      action: 'schedule_semi_finished_lot',
+      targetType: 'wip_week_allocation',
+      targetId: allocation.id,
+      detail: { lotId: lot.id, lotNo: lot.lotNo, actorName: input.actorName, targetWeek, quantity, reason },
+    },
+  });
+  return allocation;
 }
 
 export async function assignWipAllocationWorkers(input: {
@@ -953,7 +959,7 @@ export async function assignWipAllocationWorkers(input: {
   });
 }
 
-export async function rescheduleWipAllocation(input: {
+export type RescheduleWipAllocationInput = {
   allocationId: unknown;
   targetWeekStartDate: unknown;
   teamId?: unknown;
@@ -962,194 +968,200 @@ export async function rescheduleWipAllocation(input: {
   actorName: string;
   idempotencyKey?: unknown;
   productionScope: ProductionEntityScope;
-}) {
+};
+
+export async function rescheduleWipAllocation(input: RescheduleWipAllocationInput) {
+  return prisma.$transaction(tx => rescheduleWipAllocationInTransaction(tx, input), {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 8_000,
+    timeout: 25_000,
+  });
+}
+
+/** Shares the caller transaction so confirmation, source settlement and reporting commit together. */
+export async function rescheduleWipAllocationInTransaction(tx: Prisma.TransactionClient, input: RescheduleWipAllocationInput) {
   assertProductionScopeWrite(input.productionScope);
   const allocationId = cleanText(input.allocationId, 80);
   const targetWeek = validTargetWeek(input.targetWeekStartDate);
   const reason = requiredReason(input.reason);
   const requestKey = idempotencyKey(input.idempotencyKey, 'wip-reschedule');
-  return prisma.$transaction(async tx => {
-    const replay = await tx.wipWeekAllocation.findUnique({ where: { idempotencyKey: requestKey } });
-    if (replay) {
-      const requestedTeamId = cleanText(input.teamId, 80) || replay.teamId;
-      if (
-        replay.sourceAllocationId !== allocationId
-        || chinaDate(replay.targetWeekStartDate) !== targetWeek.startKey
-        || replay.teamId !== requestedTeamId
-        || replay.reason !== reason
-      ) {
-        throw new WipWarehouseError(
-          '该请求编号已用于另一组改排参数，请刷新当前安排后重试',
-          'WIP_IDEMPOTENCY_CONFLICT',
-          409,
-        );
-      }
-      return replay;
-    }
-    const sourceBeforeLock = await tx.wipWeekAllocation.findUnique({
-      where: { id: allocationId },
-      select: { lot: { select: { workOrderId: true } } },
-    });
-    if (!sourceBeforeLock) {
-      throw new WipWarehouseError('原排程不存在或已经完成/改排，不能再次改排', 'WIP_ALLOCATION_NOT_EDITABLE', 409);
-    }
-    await lockProductionWorkOrder(tx, sourceBeforeLock.lot.workOrderId);
-    // The work-order advisory lock serializes every WIP mutation for this
-    // product. Re-read after acquiring it so a second click cannot continue
-    // from the stale ACTIVE snapshot it observed before waiting.
-    const source = await tx.wipWeekAllocation.findUnique({
-      where: { id: allocationId },
-      include: {
-        lot: true,
-        team: { select: { id: true, code: true, name: true, legacyTeamName: true } },
-        steps: { orderBy: { createdAt: 'asc' } },
-        workers: {
-          where: { status: 'ACTIVE' },
-          orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }, { id: 'asc' }],
-          select: { employeeId: true, position: true },
-        },
-      },
-    });
+
+  const replay = await tx.wipWeekAllocation.findUnique({ where: { idempotencyKey: requestKey } });
+  if (replay) {
+    const requestedTeamId = cleanText(input.teamId, 80) || replay.teamId;
     if (
-      !source
-      || (source.status !== WipWeekAllocationStatus.ACTIVE
-        && source.status !== WipWeekAllocationStatus.IN_PROGRESS)
+      replay.sourceAllocationId !== allocationId
+      || chinaDate(replay.targetWeekStartDate) !== targetWeek.startKey
+      || replay.teamId !== requestedTeamId
+      || replay.reason !== reason
     ) {
-      throw new WipWarehouseError('原排程不存在或已经完成/改排，不能再次改排', 'WIP_ALLOCATION_NOT_EDITABLE', 409);
+      throw new WipWarehouseError(
+        '该请求编号已用于另一组改排参数，请刷新当前安排后重试',
+        'WIP_IDEMPOTENCY_CONFLICT',
+        409,
+      );
     }
-    if (chinaDate(source.targetWeekStartDate) === targetWeek.startKey) {
-      throw new WipWarehouseError('目标周与原排程周相同，无需改排', 'WIP_RESCHEDULE_SAME_WEEK', 409);
-    }
-    const remainingQuantity = Math.max(0, source.quantity - source.completedQty);
-    if (remainingQuantity <= 0) {
-      throw new WipWarehouseError('原排程已经全部完成，没有可改排数量', 'WIP_RESCHEDULE_NOTHING_REMAINING', 409);
-    }
-    const teamId = cleanText(input.teamId, 80) || source.teamId;
-    if (teamId) {
-      const team = await tx.productionTeam.findFirst({
-        where: { id: teamId, isActive: true },
-        select: { id: true, code: true, name: true, legacyTeamName: true },
-      });
-      if (!team) throw new WipWarehouseError('所选生产班组不存在或已停用', 'WIP_TEAM_INVALID', 409);
-      assertProductionTeam(input.productionScope, team);
-    } else if (source.team) {
-      assertProductionTeam(input.productionScope, source.team);
-    }
-    const stepCreates = source.steps
-      .filter(step => step.status !== WipRequirementStatus.CANCELLED)
-      .map(step => ({
-        lotStep: { connect: { id: step.lotStepId } },
-        plannedQty: Math.max(0, step.plannedQty - step.completedQty),
-        plannedStandardMilliseconds: step.plannedStandardMilliseconds - step.completedStandardMilliseconds,
-        status: WipRequirementStatus.SCHEDULED,
-      }))
-      .filter(step => step.plannedQty > 0);
-    const remainingMilliseconds = stepCreates.reduce((sum, step) => sum + step.plannedStandardMilliseconds, 0n);
-    const sourceUpdate = await tx.wipWeekAllocation.updateMany({
-      where: {
-        id: source.id,
-        version: source.version,
-        status: { in: [WipWeekAllocationStatus.ACTIVE, WipWeekAllocationStatus.IN_PROGRESS] },
-      },
-      data: { status: WipWeekAllocationStatus.SUPERSEDED, supersededAt: new Date(), version: { increment: 1 } },
-    });
-    if (sourceUpdate.count !== 1) {
-      throw new WipWarehouseError('原排程已被其他操作改排，请刷新后查看最新安排', 'WIP_ALLOCATION_CHANGED', 409);
-    }
-    const changedAt = new Date();
-    await tx.wipWeekAllocationWorker.updateMany({
-      where: { allocationId: source.id, status: 'ACTIVE' },
-      data: {
-        status: 'CANCELLED',
-        activeKey: null,
-        cancelledById: input.actorId,
-        cancelledAt: changedAt,
-      },
-    });
-    const target = await tx.wipWeekAllocation.create({
-      data: {
-        lotId: source.lotId,
-        sourceAllocationId: source.id,
-        targetWeekStartDate: targetWeek.start,
-        targetWeekEndDate: targetWeek.end,
-        teamId,
-        quantity: remainingQuantity,
-        plannedStandardMilliseconds: remainingMilliseconds,
-        reason,
-        scheduledById: input.actorId,
-        idempotencyKey: requestKey,
-        steps: { create: stepCreates },
-      },
-    });
-    if (source.workers.length) {
-      await tx.wipWeekAllocationWorker.createMany({
-        data: source.workers.map((worker, position) => ({
-          allocationId: target.id,
-          employeeId: worker.employeeId,
-          position: worker.position ?? position,
-          status: 'ACTIVE',
-          activeKey: `${target.id}:${worker.employeeId}`,
-          assignedById: input.actorId,
-          assignedAt: changedAt,
-        })),
-      });
-    }
-    await tx.wipInventoryMovement.create({
-      data: {
-        lotId: source.lotId,
-        movementType: 'RESCHEDULE',
-        quantity: remainingQuantity,
-        fromLocation: source.lot.locationCode,
-        reason,
-        actorId: input.actorId,
-        idempotencyKey: `${requestKey}:movement`,
-      },
-    });
-    await tx.wipEvent.create({
-      data: {
-        lotId: source.lotId,
-        allocationId: target.id,
-        eventType: 'RESCHEDULE_WEEK',
-        reason,
-        beforeData: {
-          allocationId: source.id,
-          targetWeekStartDate: chinaDate(source.targetWeekStartDate),
-          completedQty: source.completedQty,
-          completedStandardMilliseconds: bigintNumber(source.completedStandardMilliseconds),
-        },
-        afterData: {
-          allocationId: target.id,
-          targetWeekStartDate: targetWeek.startKey,
-          quantity: remainingQuantity,
-          plannedStandardMilliseconds: bigintNumber(remainingMilliseconds),
-        },
-        actorId: input.actorId,
-        idempotencyKey: `${requestKey}:event`,
-      },
-    });
-    await recomputeLotScheduleStatus(tx, source.lotId);
-    await tx.operationLog.create({
-      data: {
-        userId: input.actorId,
-        action: 'reschedule_semi_finished_lot',
-        targetType: 'wip_week_allocation',
-        targetId: target.id,
-        detail: {
-          sourceAllocationId: source.id,
-          lotId: source.lotId,
-          actorName: input.actorName,
-          remainingQuantity,
-          targetWeekStartDate: targetWeek.startKey,
-          reason,
-        },
-      },
-    });
-    return target;
-  }, {
-    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-    maxWait: 8_000,
-    timeout: 25_000,
+    return replay;
+  }
+  const sourceBeforeLock = await tx.wipWeekAllocation.findUnique({
+    where: { id: allocationId },
+    select: { lot: { select: { workOrderId: true } } },
   });
+  if (!sourceBeforeLock) {
+    throw new WipWarehouseError('原排程不存在或已经完成/改排，不能再次改排', 'WIP_ALLOCATION_NOT_EDITABLE', 409);
+  }
+  await lockProductionWorkOrder(tx, sourceBeforeLock.lot.workOrderId);
+  // The work-order advisory lock serializes every WIP mutation for this
+  // product. Re-read after acquiring it so a second click cannot continue
+  // from the stale ACTIVE snapshot it observed before waiting.
+  const source = await tx.wipWeekAllocation.findUnique({
+    where: { id: allocationId },
+    include: {
+      lot: true,
+      team: { select: { id: true, code: true, name: true, legacyTeamName: true } },
+      steps: { orderBy: { createdAt: 'asc' } },
+      workers: {
+        where: { status: 'ACTIVE' },
+        orderBy: [{ position: 'asc' }, { assignedAt: 'asc' }, { id: 'asc' }],
+        select: { employeeId: true, position: true },
+      },
+    },
+  });
+  if (
+    !source
+    || (source.status !== WipWeekAllocationStatus.ACTIVE
+      && source.status !== WipWeekAllocationStatus.IN_PROGRESS)
+  ) {
+    throw new WipWarehouseError('原排程不存在或已经完成/改排，不能再次改排', 'WIP_ALLOCATION_NOT_EDITABLE', 409);
+  }
+  if (chinaDate(source.targetWeekStartDate) === targetWeek.startKey) {
+    throw new WipWarehouseError('目标周与原排程周相同，无需改排', 'WIP_RESCHEDULE_SAME_WEEK', 409);
+  }
+  const remainingQuantity = Math.max(0, source.quantity - source.completedQty);
+  if (remainingQuantity <= 0) {
+    throw new WipWarehouseError('原排程已经全部完成，没有可改排数量', 'WIP_RESCHEDULE_NOTHING_REMAINING', 409);
+  }
+  const teamId = cleanText(input.teamId, 80) || source.teamId;
+  if (teamId) {
+    const team = await tx.productionTeam.findFirst({
+      where: { id: teamId, isActive: true },
+      select: { id: true, code: true, name: true, legacyTeamName: true },
+    });
+    if (!team) throw new WipWarehouseError('所选生产班组不存在或已停用', 'WIP_TEAM_INVALID', 409);
+    assertProductionTeam(input.productionScope, team);
+  } else if (source.team) {
+    assertProductionTeam(input.productionScope, source.team);
+  }
+  const stepCreates = source.steps
+    .filter(step => step.status !== WipRequirementStatus.CANCELLED)
+    .map(step => ({
+      lotStep: { connect: { id: step.lotStepId } },
+      plannedQty: Math.max(0, step.plannedQty - step.completedQty),
+      plannedStandardMilliseconds: step.plannedStandardMilliseconds - step.completedStandardMilliseconds,
+      status: WipRequirementStatus.SCHEDULED,
+    }))
+    .filter(step => step.plannedQty > 0);
+  const remainingMilliseconds = stepCreates.reduce((sum, step) => sum + step.plannedStandardMilliseconds, 0n);
+  const sourceUpdate = await tx.wipWeekAllocation.updateMany({
+    where: {
+      id: source.id,
+      version: source.version,
+      status: { in: [WipWeekAllocationStatus.ACTIVE, WipWeekAllocationStatus.IN_PROGRESS] },
+    },
+    data: { status: WipWeekAllocationStatus.SUPERSEDED, supersededAt: new Date(), version: { increment: 1 } },
+  });
+  if (sourceUpdate.count !== 1) {
+    throw new WipWarehouseError('原排程已被其他操作改排，请刷新后查看最新安排', 'WIP_ALLOCATION_CHANGED', 409);
+  }
+  const changedAt = new Date();
+  await tx.wipWeekAllocationWorker.updateMany({
+    where: { allocationId: source.id, status: 'ACTIVE' },
+    data: {
+      status: 'CANCELLED',
+      activeKey: null,
+      cancelledById: input.actorId,
+      cancelledAt: changedAt,
+    },
+  });
+  const target = await tx.wipWeekAllocation.create({
+    data: {
+      lotId: source.lotId,
+      sourceAllocationId: source.id,
+      targetWeekStartDate: targetWeek.start,
+      targetWeekEndDate: targetWeek.end,
+      teamId,
+      quantity: remainingQuantity,
+      plannedStandardMilliseconds: remainingMilliseconds,
+      reason,
+      scheduledById: input.actorId,
+      idempotencyKey: requestKey,
+      steps: { create: stepCreates },
+    },
+  });
+  if (source.workers.length) {
+    await tx.wipWeekAllocationWorker.createMany({
+      data: source.workers.map((worker, position) => ({
+        allocationId: target.id,
+        employeeId: worker.employeeId,
+        position: worker.position ?? position,
+        status: 'ACTIVE',
+        activeKey: `${target.id}:${worker.employeeId}`,
+        assignedById: input.actorId,
+        assignedAt: changedAt,
+      })),
+    });
+  }
+  await tx.wipInventoryMovement.create({
+    data: {
+      lotId: source.lotId,
+      movementType: 'RESCHEDULE',
+      quantity: remainingQuantity,
+      fromLocation: source.lot.locationCode,
+      reason,
+      actorId: input.actorId,
+      idempotencyKey: `${requestKey}:movement`,
+    },
+  });
+  await tx.wipEvent.create({
+    data: {
+      lotId: source.lotId,
+      allocationId: target.id,
+      eventType: 'RESCHEDULE_WEEK',
+      reason,
+      beforeData: {
+        allocationId: source.id,
+        targetWeekStartDate: chinaDate(source.targetWeekStartDate),
+        completedQty: source.completedQty,
+        completedStandardMilliseconds: bigintNumber(source.completedStandardMilliseconds),
+      },
+      afterData: {
+        allocationId: target.id,
+        targetWeekStartDate: targetWeek.startKey,
+        quantity: remainingQuantity,
+        plannedStandardMilliseconds: bigintNumber(remainingMilliseconds),
+      },
+      actorId: input.actorId,
+      idempotencyKey: `${requestKey}:event`,
+    },
+  });
+  await recomputeLotScheduleStatus(tx, source.lotId);
+  await tx.operationLog.create({
+    data: {
+      userId: input.actorId,
+      action: 'reschedule_semi_finished_lot',
+      targetType: 'wip_week_allocation',
+      targetId: target.id,
+      detail: {
+        sourceAllocationId: source.id,
+        lotId: source.lotId,
+        actorName: input.actorName,
+        remainingQuantity,
+        targetWeekStartDate: targetWeek.startKey,
+        reason,
+      },
+    },
+  });
+  return target;
 }
 
 export type WipUnschedulePreview = {

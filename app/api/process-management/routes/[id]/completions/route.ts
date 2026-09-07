@@ -8,11 +8,12 @@ import {
 } from '@/lib/auth';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import {
-  completeProcessStep,
   loadProcessCompletionContext,
   ProcessCompletionServiceError,
 } from '@/lib/process-completion-service';
-import { completeProcessSupplementObligation } from '@/lib/process-route-change-service';
+import { submitProcessCompletion, reportingSubmissionReason } from '@/lib/process-report-submissions';
+import type { ReportingSourceInput } from '@/lib/process-report-submission-contract';
+import { prisma } from '@/lib/prisma';
 import { processRouteChangeErrorResponse } from '@/lib/process-route-change-api';
 import { dispatchProcessRouteChangeOutboxBestEffort } from '@/lib/process-route-change-notifications';
 
@@ -21,7 +22,7 @@ export const dynamic = 'force-dynamic';
 
 function serviceError(error: ProcessCompletionServiceError) {
   return NextResponse.json(
-    { ok: false, error: error.message, code: error.code },
+    { ok: false, error: error.message, code: error.code, canSubmitPending: !!reportingSubmissionReason(error) },
     { status: error.status },
   );
 }
@@ -80,34 +81,21 @@ export async function POST(
       wipAllocationId?: unknown;
       obligationId?: unknown;
       expectedObligationVersion?: unknown;
+      allowPending?: boolean;
+      source?: ReportingSourceInput;
+      expectedUserId?: unknown;
     };
     const actor = user.displayName || user.username;
-    const data = body.obligationId
-      ? await completeProcessSupplementObligation({
-          obligationId: String(body.obligationId),
-          wipAllocationId: body.wipAllocationId,
+    const obligation = body.obligationId ? await prisma.processSupplementObligation.findFirst({ where: { id: String(body.obligationId), routeId: params.id }, select: { id: true, displayStepId: true } }) : null;
+    if (body.obligationId && !obligation) return NextResponse.json({ ok: false, error: '补充工序不属于此工单', code: 'PROCESS_SUPPLEMENT_REQUIRED' }, { status: 404 });
+    const data = await submitProcessCompletion({
+          obligationId: obligation?.id,
+          expectedObligationVersion: body.expectedObligationVersion,
+          allowPending: body.allowPending === true,
+          source: body.source,
+          expectedUserId: body.expectedUserId,
           routeId: params.id,
-          expectedVersion: body.expectedObligationVersion,
-          expectedRouteVersion: body.expectedRouteVersion,
-          processedQty: body.processedQty,
-          defectQty: body.defectQty,
-          reportedUnitQty: body.reportedUnitQty,
-          reportedDefectUnitQty: body.reportedDefectUnitQty,
-          defectDisposition: body.defectDisposition,
-          workDate: body.workDate,
-          employeeIds: Array.isArray(body.employeeIds)
-            ? body.employeeIds.map(employeeId => String(employeeId))
-            : [],
-          team: body.team,
-          workstation: body.workstation,
-          remark: body.remark,
-          idempotencyKey: body.idempotencyKey,
-          userId: user.id,
-          actor,
-        })
-      : await completeProcessStep({
-          routeId: params.id,
-          stepId: body.stepId,
+          stepId: obligation?.displayStepId || body.stepId,
           processedQty: body.processedQty,
           defectQty: body.defectQty,
           reportedUnitQty: body.reportedUnitQty,
@@ -126,10 +114,9 @@ export async function POST(
           userId: user.id,
           actor,
         });
-    if ('changeId' in data && data.changeId) {
-      await dispatchProcessRouteChangeOutboxBestEffort({ changeId: data.changeId, limit: 2 });
-    }
-    return NextResponse.json({ ok: true, data });
+    if (!data.pending && 'changeId' in data.data && typeof data.data.changeId === 'string') await dispatchProcessRouteChangeOutboxBestEffort({ changeId: data.data.changeId, limit: 2 });
+    return data.pending ? NextResponse.json({ ok: true, pending: true, submission: data.submission }, { status: 202 })
+      : NextResponse.json({ ok: true, data: data.data });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof ForbiddenError) return forbidden(error.message);

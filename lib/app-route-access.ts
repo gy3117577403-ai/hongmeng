@@ -43,6 +43,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/workspace/capability-showcase', anyOf: ['ACCOUNT_SELF'] },
   { prefix: '/workspace/material-library', anyOf: ['QUALITY'] },
   { prefix: '/workspace/quality-tasks', anyOf: ['ACCOUNT_SELF'] },
+  { prefix: '/workspace/reporting-recovery', anyOf: ['ACCOUNT_SELF', 'FIELD_REPORT'] },
   { prefix: '/workspace/quality-confirmation', anyOf: ['QUALITY'], action: 'EXECUTE_WORKFLOW' },
   { prefix: '/workspace/quality', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/workspace/issues', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },

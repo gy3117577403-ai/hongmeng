@@ -22,6 +22,7 @@ import {
   ProcessCompletionDomainError,
 } from '@/lib/process-completion-domain';
 import { autoAssignCompletionLaborPool } from '@/lib/process-completion-service';
+import { completionLaborUnitsPerProduct, processReportContractTransitionIssue } from '@/lib/process-report-contract';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
 import type {
@@ -443,7 +444,7 @@ export async function listProcessLaborPools(input: {
   };
 }
 
-export async function resolveProcessLaborPoolStandard(command: {
+export type ResolveProcessLaborPoolStandardCommand = {
   poolId: string;
   expectedVersion: unknown;
   timeBasis: unknown;
@@ -451,9 +452,23 @@ export async function resolveProcessLaborPoolStandard(command: {
   setupMilliseconds?: unknown;
   unitsPerProduct?: unknown;
   countsForEfficiency?: unknown;
-  reason: unknown;
+  reason?: unknown;
   userId: string;
-}): Promise<{ pool: ProcessLaborPoolDTO }> {
+};
+
+export async function resolveProcessLaborPoolStandard(command: ResolveProcessLaborPoolStandardCommand): Promise<{ pool: ProcessLaborPoolDTO }> {
+  try {
+    return await prisma.$transaction(tx => resolveProcessLaborPoolStandardInTransaction(tx, command),
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    throw normalizeTransactionError(error);
+  }
+}
+
+export async function resolveProcessLaborPoolStandardInTransaction(
+  tx: Prisma.TransactionClient,
+  command: ResolveProcessLaborPoolStandardCommand,
+): Promise<{ pool: ProcessLaborPoolDTO }> {
   const poolId = cleanProcessText(command.poolId, 80);
   const expectedVersion = parseExpectedPoolVersion(command.expectedVersion);
   const timeBasis = command.timeBasis === 'per_unit' || command.timeBasis === 'per_batch'
@@ -462,7 +477,7 @@ export async function resolveProcessLaborPoolStandard(command: {
   const standardMillisecondsPerUnit = Number(command.standardMillisecondsPerUnit);
   const setupMilliseconds = Number(command.setupMilliseconds ?? 0);
   const unitsPerProduct = Number(command.unitsPerProduct ?? 1);
-  const reason = cleanProcessText(command.reason, 500);
+  const reason = cleanProcessText(command.reason, 500) || '核对现场申报后补齐标准工时';
   if (!poolId) throw new ProcessLaborServiceError('缺少工时池标识', 400, 'PROCESS_LABOR_POOL_REQUIRED');
   if (!timeBasis) {
     throw new ProcessLaborServiceError('请选择按件或按批工时口径', 400, 'PROCESS_LABOR_TIME_BASIS_INVALID');
@@ -478,7 +493,6 @@ export async function resolveProcessLaborPoolStandard(command: {
   }
 
   try {
-    await prisma.$transaction(async tx => {
       const [actor, pool] = await Promise.all([
         tx.user.findUnique({
           where: { id: command.userId },
@@ -499,8 +513,16 @@ export async function resolveProcessLaborPoolStandard(command: {
               select: {
                 routeId: true,
                 status: true,
+                retiredAt: true,
                 inputQty: true,
                 processedQty: true,
+                reportQuantityBasis: true,
+                reportUnitLabel: true,
+                timeBasis: true,
+                unitsPerProduct: true,
+                standardMillisecondsPerUnit: true,
+                productTimeEntryId: true,
+                productTimeProfileVersion: true,
                 route: {
                   select: {
                     status: true,
@@ -520,6 +542,26 @@ export async function resolveProcessLaborPoolStandard(command: {
       if (pool.version !== expectedVersion) {
         throw new ProcessLaborServiceError('工时池已更新，请刷新后重试', 409, 'PROCESS_LABOR_VERSION_CONFLICT');
       }
+      if (pool.completion.voidedAt) {
+        throw new ProcessLaborServiceError('原报工已撤回，不能再补记工时', 409, 'PROCESS_LABOR_COMPLETION_VOIDED');
+      }
+      const contractIssue = processReportContractTransitionIssue(pool.completion,
+        { ...pool.completion, timeBasis, unitsPerProduct }, true);
+      if (contractIssue) throw new ProcessLaborServiceError(contractIssue.message, 409, contractIssue.code);
+      const obligation = pool.completion.supplementObligationId
+        ? await tx.processSupplementObligation.findUnique({ where: { id: pool.completion.supplementObligationId } }) : null;
+      // This confirms the original report. A newer step/obligation standard remains authoritative for future reports.
+      const hasMissingStandard = (value: { timeBasis: string | null; standardMillisecondsPerUnit: number | null }) =>
+        !value.timeBasis || value.standardMillisecondsPerUnit == null || value.standardMillisecondsPerUnit <= 0;
+      const sharesQuantityContract = (value: { reportQuantityBasis: string; reportUnitLabel: string; timeBasis: string | null; unitsPerProduct: number }) =>
+        value.reportQuantityBasis === pool.completion.reportQuantityBasis
+        && (value.reportQuantityBasis !== 'action' || value.reportUnitLabel === pool.completion.reportUnitLabel)
+        && !processReportContractTransitionIssue(value, { ...value, timeBasis, unitsPerProduct }, true);
+      const updateStepStandard = !pool.step.retiredAt && hasMissingStandard(pool.step) && sharesQuantityContract(pool.step)
+        && pool.step.productTimeEntryId === pool.completion.productTimeEntryId
+        && pool.step.productTimeProfileVersion === pool.completion.productTimeProfileVersion;
+      const updateObligationStandard = obligation?.status === 'ACTIVE'
+        && hasMissingStandard(obligation) && sharesQuantityContract(obligation);
       if (
         pool.status !== ProcessLaborPoolStatus.LOCKED
         || pool.standardSource !== 'pending_standard'
@@ -567,7 +609,7 @@ export async function resolveProcessLaborPoolStandard(command: {
             eligibleQty: pool.eligibleQty,
             standardMillisecondsPerUnit,
             setupMilliseconds,
-            unitsPerProduct,
+            unitsPerProduct: completionLaborUnitsPerProduct(pool.completion.reportQuantityBasis, unitsPerProduct),
           });
         } catch (error) {
           if (error instanceof ProcessCompletionDomainError) {
@@ -607,32 +649,34 @@ export async function resolveProcessLaborPoolStandard(command: {
           timeBasis,
           standardMillisecondsPerUnit: labor.standardMillisecondsPerUnit,
           setupMilliseconds: labor.setupMilliseconds,
-          unitsPerProduct: labor.unitsPerProduct,
+          unitsPerProduct,
           countsForEfficiency: command.countsForEfficiency !== false,
           standardSource: 'manual_backfill',
           standardTimeId: null,
           standardVersion: null,
-          productTimeProfileId: null,
-          productTimeEntryId: null,
-          productTimeProfileVersion: null,
         },
       });
-      await tx.workOrderProcessStep.update({
+      if (updateStepStandard) await tx.workOrderProcessStep.update({
         where: { id: pool.stepId },
         data: {
           timeBasis,
           standardMillisecondsPerUnit: labor.standardMillisecondsPerUnit,
           setupMilliseconds: labor.setupMilliseconds,
-          unitsPerProduct: labor.unitsPerProduct,
+          unitsPerProduct,
           countsForEfficiency: command.countsForEfficiency !== false,
           standardSource: 'manual_backfill',
           standardTimeId: null,
           standardVersion: null,
-          productTimeProfileId: null,
-          productTimeEntryId: null,
-          productTimeProfileVersion: null,
         },
       });
+      if (updateObligationStandard && obligation) {
+        const updatedObligation = await tx.processSupplementObligation.updateMany({
+          where: { id: obligation.id, status: 'ACTIVE', version: obligation.version },
+          data: { timeBasis, standardMillisecondsPerUnit, setupMilliseconds, unitsPerProduct,
+            countsForEfficiency: command.countsForEfficiency !== false, version: { increment: 1 } },
+        });
+        if (updatedObligation.count !== 1) throw new ProcessLaborServiceError('补充工序已变化，请刷新后核对', 409, 'PROCESS_SUPPLEMENT_VERSION_CONFLICT');
+      }
       await tx.workOrderProcessRoute.update({
         where: { id: pool.step.routeId },
         data: { version: { increment: 1 } },
@@ -660,6 +704,9 @@ export async function resolveProcessLaborPoolStandard(command: {
             standardMillisecondsPerUnit,
             setupMilliseconds,
             unitsPerProduct,
+            stepStandardUpdated: updateStepStandard,
+            obligationStandardUpdated: Boolean(updateObligationStandard),
+            currentStandardPolicy: '仅补齐同一数量口径且仍缺失的当前标准；较新标准保留，历史核定仅用于原报工',
             countsForEfficiency: command.countsForEfficiency !== false,
             reason,
             autoAssignedEmployeeCount: automatic.employeeCount,
@@ -667,8 +714,9 @@ export async function resolveProcessLaborPoolStandard(command: {
           },
         },
       });
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-    return { pool: serializeProcessLaborPool(await loadPool(poolId)) };
+    return { pool: serializeProcessLaborPool(await tx.processLaborPool.findUniqueOrThrow({
+      where: { id: poolId }, include: processLaborPoolInclude,
+    })) };
   } catch (error) {
     throw normalizeTransactionError(error);
   }

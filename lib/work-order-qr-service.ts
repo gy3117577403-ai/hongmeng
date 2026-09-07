@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { loadReportingWipSources, type ReportingWipSource } from '@/lib/reporting-source-context';
 import {
   Prisma,
   WorkOrderQrPrintMaterial,
@@ -229,6 +230,7 @@ export type FieldReportTicketView = {
     }>;
     steps: Array<{ stepId: string; remainingQty: number }>;
   }>;
+  wipSources?: ReportingWipSource[];
   access: {
     canReport: boolean;
     state: 'READY' | 'WAITING_START' | 'COMPLETED' | 'REVOKED' | 'BLOCKED';
@@ -1202,6 +1204,7 @@ export async function loadFieldReportTicket(
   }
   const order = ticket.workOrder;
   const route = order.processRoute;
+  const wipSources = route ? await loadReportingWipSources(prisma, order.id) : [];
   const wipAllocations = route ? await prisma.wipWeekAllocation.findMany({
     where: {
       lot: { workOrderId: order.id, scheduleStatus: { not: 'CANCELLED' } },
@@ -1351,6 +1354,7 @@ export async function loadFieldReportTicket(
         remainingQty: Math.max(0, step.plannedQty - step.completedQty),
       })),
     })),
+    wipSources,
     access: resolveFieldReportAccess({
       ticketStatus: ticket.status,
       workOrder: order,

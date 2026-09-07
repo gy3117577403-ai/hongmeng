@@ -8,6 +8,16 @@ function context(grant: AccessGrant) {
   return resolveAccessContext([grant], { now: '2026-08-10T08:00:00.000Z' });
 }
 
+test('field-only accounts can reach their reporting receipts without acquiring process management rights', () => {
+  const field = context({ profile: 'FIELD_REPORTER', grantType: 'PRIMARY', scopeKey: 'EMPLOYEE:operator' });
+  assert.equal(canAccessApiRoute(field, '/api/process-report-submissions', 'GET'), true);
+  assert.equal(canAccessApiRoute(field, '/api/process-report-submissions/own-receipt/preview', 'GET'), true);
+  // Handler ownership and current workflow capability are still enforced after this entry gate.
+  assert.equal(canAccessApiRoute(field, '/api/process-report-submissions/own-receipt/resolve', 'POST'), true);
+  assert.equal(canAccessApiRoute(field, '/api/product-time-profiles/product/publish', 'POST'), false);
+  assert.equal(canAccessApiRoute(field, '/api/process-management/routes/route/completions', 'POST'), false);
+});
+
 test('document direction writes use the source owner instead of broader work-order access', () => {
   const reader = context({ profile: 'DRAWING_LIBRARY_READER', grantType: 'PRIMARY', scopeKey: 'GLOBAL' });
   const editor = context({ profile: 'DRAWING_LIBRARY_EDITOR', grantType: 'PRIMARY', scopeKey: 'GLOBAL' });

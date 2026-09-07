@@ -27,6 +27,8 @@ type ApiRule = {
 /** Specific routes must appear before their broader namespace. */
 export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/me', anyOf: ['ACCOUNT_SELF'] },
+  // Entity ownership, assignment and current reporting rights are checked by each handler.
+  { prefix: '/api/process-report-submissions', anyOf: ['ACCOUNT_SELF', 'FIELD_REPORT'], action: 'READ' },
   { prefix: '/api/quality-data', anyOf: ['QUALITY_DATA'] },
   { prefix: '/api/notifications', anyOf: ['NOTIFICATIONS'] },
   { prefix: '/api/users', anyOf: ['ACCOUNT_ADMIN'] },

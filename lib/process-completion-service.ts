@@ -55,6 +55,8 @@ import {
   resolveWipReportingAllocation,
 } from '@/lib/wip-reporting';
 import { WipWarehouseError } from '@/lib/wip-warehouse';
+import { pendingProcessReportReservations } from '@/lib/process-report-reservations';
+import { loadReportingWipSources } from '@/lib/reporting-source-context';
 
 export class ProcessCompletionServiceError extends Error {
   readonly status: number;
@@ -150,6 +152,7 @@ export type ProcessCompletionBatchResult = {
 };
 
 export type ProcessCompletionContext = {
+  sourceLimits: { nativeReportableQty: number; nativeReportableUnitQty: number; outstandingWipQuantity: number; pendingQty: number };
   routeId: string;
   routeVersion: number;
   reportingPolicy: 'free_sequence' | 'strict_sequence';
@@ -622,6 +625,8 @@ function targetQuantity(order: Parameters<typeof resolveEffectiveFrontendTransfe
     'PROCESS_TARGET_QUANTITY_REQUIRED',
   );
 }
+
+export const processCompletionTargetQuantity = targetQuantity;
 
 export function resolveCompletedQuantityDelta(input: {
   previousCompletedQty: number;
@@ -1307,6 +1312,7 @@ function assertIdempotentPayload(
   completion: ReplayCompletionRecord,
   input: ParsedCompletionCommand,
 ): void {
+  if (completion.voidedAt) throw new ProcessCompletionServiceError('该报工已经撤回，不能重放为成功；请使用新的申报编号', 409, 'PROCESS_COMPLETION_VOIDED');
   const storedEmployeeIds = completion.participants.map(item => item.employeeId).sort();
   const inputEmployeeIds = [...input.employeeIds].sort();
   const storedWipAllocationIds = completion.wipCredits.map(item => item.allocationStep.allocationId);
@@ -1328,7 +1334,7 @@ function assertIdempotentPayload(
     && completionPrincipalIdentityMatches(completion, input)
     && storedEmployeeIds.length === inputEmployeeIds.length
     && storedEmployeeIds.every((id, index) => id === inputEmployeeIds[index])
-    && (!input.wipAllocationId || storedWipAllocationIds.includes(input.wipAllocationId));
+    && (input.wipAllocationId || null) === (completion.reportingWipAllocationId || storedWipAllocationIds[0] || null);
   if (!matches) {
     throw new ProcessCompletionServiceError(
       '请求标识已用于另一笔完成记录，请重新提交',
@@ -1376,7 +1382,7 @@ export async function loadProcessCompletionContext(
 ): Promise<ProcessCompletionContext> {
   const routeId = cleanText(routeIdInput, 80);
   const stepId = cleanText(stepIdInput, 80);
-  const [route, employees, completionTotals] = await Promise.all([
+  const [route, employees, completionTotals, pendingTotals] = await Promise.all([
     prisma.workOrderProcessRoute.findUnique({
       where: { id: routeId },
       include: {
@@ -1447,6 +1453,8 @@ export async function loadProcessCompletionContext(
         reportedDefectUnitQty: true,
       },
     }),
+    prisma.processReportSubmission.groupBy({ by: ['stepId'], where: { routeId, status: 'PENDING', completionId: null },
+      _sum: { reservedProductQty: true, reservedGoodUnits: true } }),
   ]);
   if (!route) {
     throw new ProcessCompletionServiceError(
@@ -1546,7 +1554,8 @@ export async function loadProcessCompletionContext(
       ? processSupplementActualRequiredQty(selected.supplementObligation)
       : target
     : target;
-  const reportableQty = Math.max(0, selectedTarget - selectedTotals.reportedQty);
+  const pendingReservations = await pendingProcessReportReservations(prisma, selected.id);
+  const reportableQty = Math.max(0, selectedTarget - selectedTotals.reportedQty - pendingReservations.productQty);
   const selectedReportQuantityBasis = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
     ? normalizeProcessReportQuantityBasis(selected.supplementObligation?.reportQuantityBasis)
     : normalizeProcessReportQuantityBasis(selected.reportQuantityBasis);
@@ -1555,7 +1564,10 @@ export async function loadProcessCompletionContext(
     basis: selectedReportQuantityBasis,
     unitsPerProduct: selected.unitsPerProduct,
   });
-  const reportableUnitQty = Math.max(0, reportTargetQty - selectedTotals.reportedGoodUnitQty);
+  const reportableUnitQty = Math.max(0, reportTargetQty - selectedTotals.reportedGoodUnitQty - pendingReservations.goodUnits);
+  const wipSources = await loadReportingWipSources(prisma, route.workOrder.id);
+  const unassignedWipReserved = pendingReservations.rows.filter(row => row.sourceKind === 'WIP' && !row.sourceLotId).reduce((sum, row) => sum + row.reservedProductQty, 0);
+  const outstandingWipQuantity = Math.max(0, wipSources.reduce((sum, lot) => sum + (lot.steps.find(step => step.stepId === selected.id)?.remainingQty || 0), 0) - unassignedWipReserved);
   if (
     allowAdvanceReporting
     && reportableQty <= 0
@@ -1586,6 +1598,9 @@ export async function loadProcessCompletionContext(
     routeId: route.id,
     routeVersion: route.version,
     reportingPolicy,
+    sourceLimits: { nativeReportableQty: Math.max(0, reportableQty - outstandingWipQuantity),
+      nativeReportableUnitQty: Math.max(0, reportableUnitQty - outstandingWipQuantity * (selectedReportQuantityBasis === 'action' ? selected.unitsPerProduct : 1)),
+      outstandingWipQuantity, pendingQty: pendingReservations.productQty },
     step: {
       id: selected.id,
       processName: selected.processName,
@@ -1619,6 +1634,7 @@ export async function loadProcessCompletionContext(
       unitsPerProduct: selected.unitsPerProduct,
     },
     routeSteps: route.steps.map(step => {
+      const pending = pendingTotals.find(item => item.stepId === step.id);
       const totals = totalByStep.get(step.id) || {
         reportedQty: 0,
         reportedGoodQty: 0,
@@ -1682,12 +1698,12 @@ export async function loadProcessCompletionContext(
         pendingCoverageQty: supplemental
           ? 0
           : Math.max(0, totals.reportedQty - totals.coveredReportedQty),
-        reportableQty: Math.max(0, stepTarget - totals.reportedQty),
+        reportableQty: Math.max(0, stepTarget - totals.reportedQty - (pending?._sum.reservedProductQty || 0)),
         reportTargetQty: stepReportTargetQty,
         reportedUnitQty: totals.reportedUnitQty,
         reportedGoodUnitQty: totals.reportedGoodUnitQty,
         reportedDefectUnitQty: totals.reportedDefectUnitQty,
-        reportableUnitQty: Math.max(0, stepReportTargetQty - totals.reportedGoodUnitQty),
+        reportableUnitQty: Math.max(0, stepReportTargetQty - totals.reportedGoodUnitQty - (pending?._sum.reservedGoodUnits || 0)),
         availableCoverageQty: supplemental
           ? Math.max(0, stepTarget - totals.reportedQty)
           : Math.max(0, stepAvailableInput - step.processedQty),
@@ -3765,6 +3781,8 @@ async function performProcessCompletion(
   input: ParsedCompletionCommand,
   sessionPreparation: SharedTerminalSessionPreparation = 'none',
   backfill?: ProductionBackfillAuthorization,
+  recoverySubmissionId?: string,
+  historicalWip?: import('@/lib/wip-reporting').HistoricalWipReportingAuthorization,
 ): Promise<ProcessCompletionResult> {
   const existing = await tx.processCompletion.findUnique({
     where: { idempotencyKey: input.idempotencyKey },
@@ -3779,6 +3797,12 @@ async function performProcessCompletion(
       await assertSharedTerminalPinSession(tx, input, 'replay');
     }
     return resultForExistingCompletion(tx, existing);
+  }
+  const pendingSubmission = await tx.processReportSubmission.findUnique({
+    where: { idempotencyKey: input.idempotencyKey }, select: { id: true, status: true },
+  });
+  if (pendingSubmission && pendingSubmission.id !== recoverySubmissionId) {
+    throw new ProcessCompletionServiceError('本次申报已保存，请查看报工待处理，勿重复报工', 409, 'PROCESS_SUBMISSION_PENDING');
   }
   if (sessionPreparation === 'replay-batch') {
     throw new ProcessCompletionServiceError(
@@ -3934,7 +3958,9 @@ async function performProcessCompletion(
     },
   });
   const reportedQty = reported._sum.processedQty || 0;
-  const reportableQty = Math.max(0, targetQty - reportedQty);
+  const pendingReservations = await pendingProcessReportReservations(tx, current.id, recoverySubmissionId);
+  if (pendingReservations.hasUnmeasured) throw new ProcessCompletionServiceError('该工序已有数量口径待核对的申报，请先处理原申报，避免重复入账', 409, 'PROCESS_UNMEASURED_SUBMISSION_PENDING');
+  const reportableQty = Math.max(0, targetQty - reportedQty - pendingReservations.productQty);
   if (input.processedQty > reportableQty) {
     throw new ProcessCompletionServiceError(
       `本次报工不能超过该工序剩余可报数量 ${reportableQty}`,
@@ -3980,7 +4006,7 @@ async function performProcessCompletion(
     unitsPerProduct: current.unitsPerProduct,
   });
   const reportedGoodUnitQtyBefore = reported._sum.reportedGoodUnitQty || 0;
-  const reportableUnitQty = Math.max(0, reportTargetQty - reportedGoodUnitQtyBefore);
+  const reportableUnitQty = Math.max(0, reportTargetQty - reportedGoodUnitQtyBefore - pendingReservations.goodUnits);
   if (reportQuantities.reportedGoodUnitQty > reportableUnitQty) {
     throw new ProcessCompletionServiceError(
       `本次合格动作数量不能超过剩余可报数量 ${reportableUnitQty}`,
@@ -4001,6 +4027,8 @@ async function performProcessCompletion(
     reportableUnitQty: reportQuantityBasis === 'action' ? reportableUnitQty : undefined,
     unitsPerProduct: current.unitsPerProduct,
     requestedAllocationId: input.wipAllocationId,
+    excludeSubmissionId: recoverySubmissionId,
+    historicalAuthorization: historicalWip,
   });
   if (reportQuantityBasis === 'action') {
     try {
@@ -4052,6 +4080,7 @@ async function performProcessCompletion(
   const goodOutputBeforeCompletion = current.goodOutputQty;
   const completion = await tx.processCompletion.create({
     data: {
+      reportingWipAllocationId: input.wipAllocationId,
       workOrderId: route.workOrderId,
       routeId: route.id,
       stepId: current.id,
@@ -4360,6 +4389,15 @@ async function performProcessCompletion(
     },
   });
   return result;
+}
+
+/** Use only inside the caller's serializable business transaction. */
+export async function completeProcessStepInTransaction(
+  tx: Prisma.TransactionClient,
+  command: CompleteProcessStepCommand,
+  options: { recoverySubmissionId?: string; historicalWip?: import('@/lib/wip-reporting').HistoricalWipReportingAuthorization } = {},
+): Promise<ProcessCompletionResult> {
+  return performProcessCompletion(tx, parseProcessCompletionCommand(command), 'none', undefined, options.recoverySubmissionId, options.historicalWip);
 }
 
 export async function completeProcessStep(

@@ -1,4 +1,5 @@
 'use client';
+import './process-report-recovery.css';
 
 import {
   AlertTriangle,
@@ -26,6 +27,10 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useProcessReportDraft, ProcessReportRequestError } from '@/components/useProcessReportDraft';
+import { ProcessReportDraftNotice } from '@/components/ProcessReportDraftNotice';
+import { defaultProcessReportSource, reportSourceCanCoverSteps, processReportSourceDateState, processReportSourceLabel, type ProcessReportSourceChoice } from '@/lib/process-report-source-options';
+import { processReportReceiptText, RECOVERABLE_PROCESS_REPORT_CODES, type ProcessReportDraft } from '@/lib/process-report-draft';
 import { FieldReportRouteChangeProposal } from '@/components/field-report/FieldReportRouteChangeProposal';
 import { ABNORMAL_TIME_CATEGORIES } from '@/lib/attendance';
 import { resolveFieldReportStepPresentation } from '@/lib/field-report-progress';
@@ -68,7 +73,11 @@ type ReportForm = {
   workstation: string;
   remark: string;
   wipAllocationId: string;
+  sourceKey: string;
+  wipLotId: string;
 };
+
+type MobileReportDraft = { form: ReportForm; batchItems: BatchStepForm[]; reportMode: 'single' | 'batch' };
 
 type BatchStepForm = {
   stepId: string;
@@ -284,6 +293,8 @@ function formFor(context: ProcessCompletionContext, currentEmployee: EmployeeOpt
     workstation: '',
     remark: '',
     wipAllocationId: '',
+    sourceKey: '',
+    wipLotId: '',
   };
 }
 
@@ -310,7 +321,22 @@ export default function FieldReportMobile({
   const [showAllEmployees, setShowAllEmployees] = useState(false);
   const [exceptionConfirmed, setExceptionConfirmed] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState('');
-  const [success, setSuccess] = useState<{ title: string; detail: string } | null>(null);
+  const [success, setSuccess] = useState<{ title: string; detail: string; submissionId?: string } | null>(null);
+  const [draftScope, setDraftScope] = useState('');
+  const [restoreDraft, setRestoreDraft] = useState<ProcessReportDraft<MobileReportDraft> | null>(null);
+  const [sourceTouched, setSourceTouched] = useState(false);
+  const [sourceNotice, setSourceNotice] = useState('');
+  const [pendingAllowed, setPendingAllowed] = useState(false);
+  const draftStore = useProcessReportDraft<MobileReportDraft>(user.id, `mobile:${code}:`, (body, recovered) => {
+    setSuccess({ title: body.pending ? body.submission?.reasonCode === 'STANDARD_MISSING' ? '数量已登记，工时待核定' : '已申报待处理' : '报工结果已确认', detail: processReportReceiptText(body), submissionId: body.submission?.id });
+    if (recovered.scope === draftScope) { setSheetOpen(false); setForm(null); setRestoreDraft(null); setDraftScope(''); }
+    void load(undefined, true);
+  });
+  const saveReportDraft = draftStore.save;
+  const awaitingUpload = draftStore.queued.some(item => item.scope === draftScope);
+  useEffect(() => {
+    if (sheetOpen && form && draftScope && !restoreDraft && !saving) saveReportDraft(draftScope, { form, batchItems, reportMode }, idempotencyKey);
+  }, [sheetOpen, form, draftScope, restoreDraft, saving, batchItems, reportMode, idempotencyKey, saveReportDraft]);
   const [fullQuantityConfirmOpen, setFullQuantityConfirmOpen] = useState(false);
   const [correction, setCorrection] = useState<CompletionCorrectionState | null>(null);
   const [abnormalDraft, setAbnormalDraft] = useState<FieldAbnormalTimeDraft | null>(null);
@@ -402,15 +428,41 @@ export default function FieldReportMobile({
   const selectedSupplement = payload?.context?.step.supplementObligation
     || stepSupplementSnapshot(selectedStepSnapshot);
   const currentEmployeeId = payload?.currentEmployee?.id || '';
-  const availableWipAllocations = (payload?.ticket.wipAllocations || []).filter(allocation => (
-    Boolean(form?.workDate)
-    && allocation.targetWeekStartDate <= form!.workDate
-    && allocation.targetWeekEndDate >= form!.workDate
-    && (reportMode === 'batch'
-      ? batchItems.some(item => allocation.steps.some(step => step.stepId === item.stepId && step.remainingQty > 0))
-      : allocation.steps.some(step => step.stepId === payload?.context?.step.id && step.remainingQty > 0))
-  ));
-  const selectedWipAllocation = availableWipAllocations.find(allocation => allocation.id === form?.wipAllocationId) || null;
+  const sourceStepIds = reportMode === 'batch' ? batchItems.map(item => item.stepId) : selectedStep ? [selectedStep.id] : [];
+  const sourceChoices: ProcessReportSourceChoice[] = [];
+  if (payload?.context && form) {
+    const lots = payload.ticket.wipSources || [];
+    const nativeLimits = sourceStepIds.map(stepId => {
+      const step = routeSteps.find(item => item.id === stepId);
+      const wipOutstanding = lots.reduce((sum, lot) => sum + (lot.steps.find(item => item.stepId === stepId)?.remainingQty || 0), 0);
+      const selectedLimits = stepId === payload.context!.step.id ? payload.context!.sourceLimits : undefined;
+      return { stepId, quantity: selectedLimits?.nativeReportableQty ?? Math.max(0, (step?.reportableQty || 0) - wipOutstanding), actionQuantity: selectedLimits?.nativeReportableUnitQty ?? Math.max(0, (step?.reportableUnitQty || 0) - wipOutstanding * (step?.unitsPerProduct || 1)) };
+    });
+    sourceChoices.push({ key: 'native', kind: 'NATIVE', availability: 'READY', limits: nativeLimits });
+    for (const lot of lots) {
+      for (const allocation of lot.allocations.filter(item => ['ACTIVE', 'IN_PROGRESS'].includes(item.status))) {
+        const limits = allocation.steps.map(item => { const step = routeSteps.find(candidate => candidate.id === item.stepId); return { stepId: item.stepId, quantity: Math.min(item.remainingQty, step?.reportableQty || 0), actionQuantity: Math.min(item.remainingQty * (step?.unitsPerProduct || 1), step?.reportableUnitQty || 0) }; });
+        sourceChoices.push({ key: `wip:${lot.lotId}:${allocation.id}`, kind: 'WIP', lotId: lot.lotId, lotNo: lot.lotNo, allocationId: allocation.id, availability: processReportSourceDateState(allocation.targetWeekStartDate, allocation.targetWeekEndDate, form.workDate), startDate: allocation.targetWeekStartDate, endDate: allocation.targetWeekEndDate, limits });
+      }
+      if (lot.unscheduledQuantity > 0) {
+        const limits = lot.steps.map(item => { const step = routeSteps.find(candidate => candidate.id === item.stepId); const quantity = Math.min(Math.max(0, item.remainingQty - lot.allocations.reduce((sum, allocation) => sum + (allocation.steps.find(candidate => candidate.stepId === item.stepId)?.remainingQty || 0), 0)), step?.reportableQty || 0); return { stepId: item.stepId, quantity, actionQuantity: Math.min(quantity * (step?.unitsPerProduct || 1), step?.reportableUnitQty || 0) }; });
+        sourceChoices.push({ key: `wip:${lot.lotId}:unscheduled`, kind: 'WIP', lotId: lot.lotId, lotNo: lot.lotNo, availability: 'UNSCHEDULED', limits });
+      }
+    }
+  }
+  const selectedSource = sourceChoices.find(item => item.key === form?.sourceKey);
+  const selectedSourceLimit = selectedSource?.limits.find(item => item.stepId === selectedStep?.id);
+  const needsPendingSource = Boolean(selectedSource && selectedSource.availability !== 'READY');
+  const sourceChoicesKey = JSON.stringify(sourceChoices);
+  const sourceStepIdsKey = sourceStepIds.join(',');
+  useEffect(() => {
+    if (!sheetOpen || !form || sourceTouched || restoreDraft || form.sourceKey) return;
+    const choices = JSON.parse(sourceChoicesKey) as ProcessReportSourceChoice[];
+    const key = defaultProcessReportSource(choices, sourceStepIdsKey.split(',').filter(Boolean));
+    const choice = choices.find(item => item.key === key);
+    if (choice) setForm(current => current && !current.sourceKey ? { ...current, sourceKey: choice.key, wipLotId: choice.lotId || '', wipAllocationId: choice.allocationId || '' } : current);
+  }, [sheetOpen, form, sourceTouched, restoreDraft, sourceChoicesKey, sourceStepIdsKey]);
+  const selectedWipAllocation = payload?.ticket.wipAllocations?.find(allocation => allocation.id === form?.wipAllocationId) || null;
   const assignedWipWorkerIds = selectedWipAllocation?.workers.map(worker => worker.employeeId) || [];
   const preferredIds = new Set([
     ...(payload?.context?.workerPreset?.employees.map(employee => employee.id) || []),
@@ -463,7 +515,10 @@ export default function FieldReportMobile({
       })
     : payload.context.step.status !== 'current' || processedQty > payload.context.remainingInputQty
   ));
-  const invalid = !payload?.context || !payload.currentEmployee || !form
+  const sourceInvalid = !selectedSource || !reportSourceCanCoverSteps(selectedSource, sourceStepIds) || (reportMode === 'batch'
+    ? batchItems.some(item => Number(item.processedQty) > (selectedSource.limits.find(step => step.stepId === item.stepId)?.quantity ?? 0))
+    : processedQty > (selectedSourceLimit?.quantity ?? 0) || (actionReporting && reportedGoodUnitQty > (selectedSourceLimit?.actionQuantity ?? 0)));
+  const invalid = sourceInvalid || Boolean(restoreDraft) || awaitingUpload || !payload?.context || !payload.currentEmployee || !form
     || (reportMode === 'batch'
       ? batchItems.length < 2 || invalidBatchItems
       : actionReporting
@@ -488,6 +543,11 @@ export default function FieldReportMobile({
     if (!nextPayload?.context || !nextPayload.currentEmployee) return;
     setReportMode('single');
     setBatchItems([]);
+    setPendingAllowed(false);
+    setSourceTouched(false); setSourceNotice('');
+    const scope = `mobile:${code}:${nextPayload.context.routeId}:${stepId}`;
+    setDraftScope(scope);
+    setRestoreDraft(draftStore.read(scope));
     setForm(formFor(nextPayload.context, nextPayload.currentEmployee));
     setIdempotencyKey(newIdempotencyKey());
     setSheetOpen(true);
@@ -598,6 +658,11 @@ export default function FieldReportMobile({
     setShowAllEmployees(false);
     setExceptionConfirmed(false);
     setReportMode('batch');
+    setPendingAllowed(false);
+    setSourceTouched(false); setSourceNotice('');
+    const scope = `mobile:${code}:${payload.context.routeId}:batch:${batchSelectedSteps.map(step => step.id).sort().join(',')}`;
+    setDraftScope(scope);
+    setRestoreDraft(draftStore.read(scope));
     setForm({
       ...formFor(payload.context, payload.currentEmployee),
       processedQty: '0',
@@ -641,7 +706,7 @@ export default function FieldReportMobile({
       setFullQuantityConfirmOpen(true);
       return;
     }
-    void submit();
+    void submit(needsPendingSource);
   }
 
   async function openCorrection(completion: RecentCompletion): Promise<void> {
@@ -748,7 +813,7 @@ export default function FieldReportMobile({
     }
   }
 
-  async function submit(): Promise<void> {
+  async function submit(allowPending = false): Promise<void> {
     if (invalid || !payload?.context || !form || !payload.currentEmployee) return;
     setSaving(true);
     setFormError('');
@@ -776,10 +841,9 @@ export default function FieldReportMobile({
       const endpoint = supplement
         ? `/api/field-report/tickets/${encodeURIComponent(code)}/supplement-obligations/${encodeURIComponent(supplement.id)}/completions`
         : `/api/field-report/tickets/${encodeURIComponent(code)}/completions`;
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const body = await draftStore.send(draftScope, { form, batchItems, reportMode }, idempotencyKey, endpoint, {
+          allowPending,
+          source: selectedSource?.kind === 'WIP' ? { kind: 'WIP', lotId: selectedSource.lotId, allocationId: selectedSource.allocationId } : { kind: 'NATIVE' },
           ...requestBody,
           workDate: form.workDate,
           employeeIds: form.employeeIds,
@@ -790,15 +854,13 @@ export default function FieldReportMobile({
           expectedRouteVersion: payload.context.routeVersion,
           expectedVersion: supplement?.version,
           wipAllocationId: form.wipAllocationId || undefined,
-        }),
       });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        if (response.status === 409) {
-          const selectedId = reportMode === 'single' ? payload.context.step.id : undefined;
-          await load(selectedId, true);
-        }
-        throw new Error(body.error || '报工提交失败');
+      setDraftScope('');
+      if (body.pending) {
+        setSheetOpen(false); setForm(null); setBatchItems([]); setSelectedStepIds([]); setBatchSelecting(false);
+        setSuccess({ title: body.submission?.reasonCode === 'STANDARD_MISSING' ? '数量已登记，工时待核定' : '已申报待处理', detail: processReportReceiptText(body), submissionId: body.submission?.id });
+        await load(undefined, true);
+        return;
       }
       const pending = Number(body.data?.pendingCoverageQty || 0);
       const employeeCount = Number(body.data?.autoAssignedEmployeeCount || form.employeeIds.length);
@@ -822,6 +884,10 @@ export default function FieldReportMobile({
       });
       await load(undefined, true);
     } catch (reason) {
+      if (reason instanceof ProcessReportRequestError) {
+        setPendingAllowed(reason.canSubmitPending || RECOVERABLE_PROCESS_REPORT_CODES.has(reason.code));
+        if (reason.status === 409 && !reason.uncertain) await load(reportMode === 'single' ? payload.context.step.id : undefined, true);
+      }
       setFormError(reason instanceof Error ? reason.message : '报工提交失败');
     } finally {
       setSaving(false);
@@ -844,6 +910,7 @@ export default function FieldReportMobile({
       <button type="button" onClick={() => void logout()} aria-label="切换登录账号"><LogOut size={18} /><em>切换</em></button>
     </header>
 
+    {(draftStore.queued.length > 0 || draftStore.notice) && <section className="process-report-recovery-notice" role="status"><div><strong>{draftStore.queued.length ? `本机待上传 ${draftStore.queued.length} 笔 · 尚未确认入账` : '报工记录提示'}</strong><p>{draftStore.notice || '联网后使用原编号续传，请勿另建重复报工。未点击提交的草稿不会自动发送。'}</p></div>{draftStore.queued.length > 0 && <button type="button" disabled={draftStore.recovering} onClick={() => void draftStore.retryQueued()}>{draftStore.recovering ? '正在核对…' : '核对并续传'}</button>}</section>}
     <section className="field-report-identity">
       {payload.currentEmployee ? <><UserRoundCheck size={20} /><span><small>当前报工身份</small><strong>{payload.currentEmployee.employeeNo} · {payload.currentEmployee.name}</strong></span><BadgeCheck size={20} /></> : <><AlertTriangle size={20} /><span><small>当前账号</small><strong>{user.displayName}</strong></span><em>只读</em></>}
     </section>
@@ -967,14 +1034,14 @@ export default function FieldReportMobile({
 
     <footer className="field-report-footer"><PackageCheck size={17} /><span>一工单一码 · 所有报工记录实时同步生产执行、流程中心和员工达成率</span></footer>
 
-    {success && <div className="field-report-success" role="dialog" aria-modal="true"><section><CheckCircle2 size={48} /><strong>{success.title}</strong><p>{success.detail}</p><button type="button" onClick={() => setSuccess(null)}>知道了，继续报工</button></section></div>}
+    {success && <div className="field-report-success" role="dialog" aria-modal="true"><section><CheckCircle2 size={48} /><strong>{success.title}</strong><p>{success.detail}</p>{success.submissionId && <a href={`/workspace/reporting-recovery?id=${encodeURIComponent(success.submissionId)}`}>查看申报进度与处理人</a>}<button type="button" onClick={() => setSuccess(null)}>知道了，继续报工</button></section></div>}
 
     {fullQuantityConfirmOpen && <div className="field-report-confirm-backdrop" role="presentation">
       <section className="field-report-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="field-report-full-qty-title">
         <AlertTriangle size={42} />
         <strong id="field-report-full-qty-title">确认报完全部剩余数量？</strong>
         <p>{reportMode === 'batch' ? '至少一道所选工序填了该工序全部剩余数量。' : actionReporting && reportedGoodUnitQty === payload.context?.reportableUnitQty ? `本次填写了全部剩余 ${quantity(payload.context?.reportableUnitQty || 0)} ${payload.context?.step.reportUnitLabel || '个'}合格动作。` : `本次填写了全部剩余 ${quantity(payload.context?.reportableQty || 0)} ${ticket.workOrder.unitLabel}。`} 请确认不是误触；提交后仍可从报工明细发起纠错。</p>
-        <div><button type="button" disabled={saving} onClick={() => setFullQuantityConfirmOpen(false)}>返回核对</button><button type="button" disabled={saving} onClick={() => { setFullQuantityConfirmOpen(false); void submit(); }}>确认全部报工</button></div>
+        <div><button type="button" disabled={saving} onClick={() => setFullQuantityConfirmOpen(false)}>返回核对</button><button type="button" disabled={saving} onClick={() => { setFullQuantityConfirmOpen(false); void submit(needsPendingSource); }}>{needsPendingSource ? '确认本次申报' : '确认全部报工'}</button></div>
       </section>
     </div>}
 
@@ -1034,17 +1101,20 @@ export default function FieldReportMobile({
       <section className="field-report-sheet" role="dialog" aria-modal="true" aria-labelledby="field-report-sheet-title">
         <header><span><small>{reportMode === 'batch' ? '批量工序报工' : hasReportableQuantity && ticket.access.canReport ? payload.context.reportingPolicy === 'strict_sequence' ? '严格按流程报工' : '工序自由报工' : '报工记录与纠错'}</small><strong id="field-report-sheet-title">{reportMode === 'batch' ? `${batchItems.length} 道工序` : payload.context.step.processName}</strong><em>{reportMode === 'batch' ? '一次提交 · 分别记账' : `第 ${payload.context.step.position} 道`}</em></span><button type="button" disabled={saving} aria-label="关闭报工窗口" onClick={() => setSheetOpen(false)}><X size={22} /></button></header>
         <div className="field-report-sheet-scroll">
+          {restoreDraft && <ProcessReportDraftNotice draft={restoreDraft} restore={() => { setForm(restoreDraft.value.form); setBatchItems(restoreDraft.value.batchItems); setReportMode(restoreDraft.value.reportMode); setIdempotencyKey(restoreDraft.idempotencyKey); setRestoreDraft(null); setFormError('已恢复本机内容，请核对实际日期、数量、人员和来源后提交。'); }} discard={() => { draftStore.clear(draftScope); setRestoreDraft(null); }} />}
+          {awaitingUpload && <div className="process-report-recovery-notice" role="status"><div><strong>本机待上传，结果尚未确认</strong><p>这笔请求已冻结，继续操作会使用原数量和原编号。确认受理后才允许再建报工。</p></div><button type="button" disabled={draftStore.recovering} onClick={() => void draftStore.retryQueued()}>核对并续传</button></div>}
           {reportMode === 'batch' && <section className="field-report-batch-summary"><ListChecks size={22} /><span><strong>{batchItems.map(item => item.processName).join('、')}</strong><small>系统将按工艺顺序提交，连续工序自动正常流转，跨序工序进入待前序覆盖。</small></span></section>}
-          {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-date-card"><CalendarDays size={24} /><label><span>生产日期</span><input type="date" max={todayKey()} value={form.workDate} disabled={saving} onChange={event => setForm({ ...form, workDate: event.target.value, wipAllocationId: '' })} /></label><strong>请务必核对</strong></section>}
+          {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-date-card"><CalendarDays size={24} /><label><span>生产日期</span><input type="date" max={todayKey()} value={form.workDate} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={event => { setSourceTouched(true); setSourceNotice('实际生产日期已改变，请重新核对并选择报工来源。'); setForm({ ...form, workDate: event.target.value, wipAllocationId: '', wipLotId: '', sourceKey: '' }); }} /></label><strong>请务必核对</strong></section>}
 
-          {availableWipAllocations.length > 0 && <section className="field-report-source-card">
-            <header><PackageCheck size={23} /><span><strong>报工来源</strong><small>请选择“原订单”或具体“半成品批次”，系统按所选来源扣减数量</small></span></header>
+          <section className="field-report-source-card">
+            <header><PackageCheck size={23} /><span><strong>报工来源与可用数量</strong><small>按真实生产日期登记，选择本次实际加工的原订单或半成品批次</small></span></header>
             <div className="field-report-source-options" role="radiogroup" aria-label="选择报工来源">
-              <button type="button" role="radio" aria-checked={!form.wipAllocationId} className={!form.wipAllocationId ? 'selected native' : 'native'} disabled={saving} onClick={() => setForm({ ...form, wipAllocationId: '' })}><CircleDot size={18} /><span><strong>原订单未转出数量</strong><small>不消耗任何半成品批次</small></span><em>原订单</em></button>
-              {availableWipAllocations.map(allocation => <button type="button" role="radio" aria-checked={form.wipAllocationId === allocation.id} className={form.wipAllocationId === allocation.id ? 'selected wip' : 'wip'} disabled={saving} key={allocation.id} onClick={() => setForm({ ...form, wipAllocationId: allocation.id })}><CircleDot size={18} /><span><strong>半成品批次 {allocation.lotNo}</strong><small>{allocation.containerCode ? `容器 ${allocation.containerCode} · ` : ''}{allocation.targetWeekStartDate} 至 {allocation.targetWeekEndDate} · {allocation.quantity} 件</small><small>{allocation.workers.length ? `计划人员：${allocation.workers.map(worker => worker.name).join('、')}` : '人员待安排，现场仍可核对实际作业人'}</small></span><em>半成品</em></button>)}
+              {sourceChoices.map(choice => { const eligible = reportSourceCanCoverSteps(choice, sourceStepIds); const limit = choice.limits.find(item => item.stepId === selectedStep?.id); return <button type="button" role="radio" aria-checked={form.sourceKey === choice.key} key={choice.key} disabled={saving || awaitingUpload || Boolean(restoreDraft) || !eligible} className={`${form.sourceKey === choice.key ? 'selected ' : ''}${choice.kind === 'NATIVE' ? 'native' : 'wip'}${choice.availability !== 'READY' ? ' source-waiting' : ''}`} onClick={() => { setSourceTouched(true); setSourceNotice(''); setPendingAllowed(false); setFormError(''); setForm({ ...form, sourceKey: choice.key, wipLotId: choice.lotId || '', wipAllocationId: choice.allocationId || '' }); }}><CircleDot size={18}/><span><strong>{choice.kind === 'NATIVE' ? '原订单未转出数量' : `半成品批次 ${choice.lotNo}`}</strong><small>{choice.kind === 'NATIVE' ? eligible ? '不消耗半成品数量' : '无原订单可报余额，请选择半成品来源' : processReportSourceLabel(choice)}</small>{choice.startDate && <small>原计划 {choice.startDate} 至 {choice.endDate}</small>}<small className="source-balance">{reportMode === 'single' ? `本工序可用 ${quantity(limit?.quantity || 0)} ${ticket.workOrder.unitLabel}${actionReporting ? ` · 动作 ${quantity(limit?.actionQuantity || 0)}` : ''}` : eligible ? '覆盖所选工序，请逐道核对余额' : '不能覆盖全部所选工序，请分别报工'}</small></span><em>{choice.kind === 'NATIVE' ? '原订单' : choice.availability === 'READY' ? '半成品' : '待确认'}</em></button>; })}
             </div>
-            <footer>同一个产品二维码继续使用，页面只展示中文业务选项</footer>
-          </section>}
+            {!selectedSource && <p className="source-empty">{sourceChoices.filter(item => reportSourceCanCoverSteps(item, sourceStepIds)).length ? '请明确选择本次实际加工来源。' : '当前没有可用来源，请刷新余额或联系主管核对仓内安排；已填写内容会保留。'}</p>}
+            {(sourceNotice || needsPendingSource) && <p className="source-state-note" role="status">{sourceNotice || '可先提交待处理申报，由主管确认续作安排。实际日期保持不变，受理前不计入正式完工和员工工时；无需填写额外说明。'}</p>}
+            <footer>同一个工单二维码继续使用。未来计划与多个批次不会自动改排或混用。</footer>
+          </section>
 
           {advanceReporting && <section className="field-report-advance"><AlertTriangle size={21} /><span><strong>本次属于提前报工</strong><small>允许先报当前工序，数量不会变成负数；前序补齐后系统自动覆盖并恢复正常流转。</small></span></section>}
           {selectedSupplement && <section className="field-report-advance supplement"><GitPullRequestArrow size={21} /><span><strong>NEW · 剩余数量实际报工</strong><small>{selectedSupplement.systemCoveredQty > 0 ? `系统已承接 ${quantity(selectedSupplement.systemCoveredQty)}，本次只记录剩余 ${quantity(selectedSupplement.actualRequiredQty)} 的实际人员与工时；` : ''}原后序已报完成保持不变。</small></span></section>}
@@ -1065,7 +1135,7 @@ export default function FieldReportMobile({
                 <b>{completion.reportQuantityBasis === 'action'
                   ? <>{quantity(completion.reportedUnitQty)} <small>{completion.reportUnitLabel}</small><em>{quantity(completion.processedQty)} {ticket.workOrder.unitLabel}</em></>
                   : <>{quantity(completion.processedQty)} <small>{ticket.workOrder.unitLabel}</small></>}</b>
-                <button type="button" disabled={saving} onClick={() => void openCorrection(completion)}><RotateCcw size={15} />{selfQrReport ? '申请撤回误报' : '报告数量有误'}</button>
+                <button type="button" disabled={saving || awaitingUpload || Boolean(restoreDraft)} onClick={() => void openCorrection(completion)}><RotateCcw size={15} />{selfQrReport ? '申请撤回误报' : '报告数量有误'}</button>
               </article>;
             })}</div>
             {!payload.context.recentCompletions.length && <p>该工序还没有报工记录。</p>}
@@ -1074,16 +1144,16 @@ export default function FieldReportMobile({
           {reportMode === 'batch' ? <>
             <section className="field-report-quantity-card field-report-batch-quantity">
               <header><span><strong>统一报工数量</strong><small>修改后将同步到全部选中工序，下面仍可逐道调整。</small></span><em>{batchItems.length} 道工序</em></header>
-              <div><label><span>每道工序数量</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" value={form.processedQty} disabled={saving} onFocus={event => event.currentTarget.select()} onChange={event => setCommonBatchQuantity(event.target.value)} /><em>{ticket.workOrder.unitLabel}</em></div></label></div>
+              <div><label><span>每道工序数量</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" value={form.processedQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onFocus={event => event.currentTarget.select()} onChange={event => setCommonBatchQuantity(event.target.value)} /><em>{ticket.workOrder.unitLabel}</em></div></label></div>
               <footer><span>将生成独立报工记录</span><strong>{batchItems.length} <small>条</small></strong></footer>
             </section>
             <section className="field-report-batch-items">
               <header><span><strong>逐道核对</strong><small>有差异时可单独修改数量或不良品。</small></span></header>
               {batchItems.map((item, index) => <article key={item.stepId}>
                 <span><b>{String(item.position).padStart(2, '0')}</b><strong>{item.processName}</strong></span>
-                <label><small>报工</small><div><input inputMode="numeric" pattern="[0-9]*" min="0" value={item.processedQty} disabled={saving} onFocus={event => event.currentTarget.select()} onChange={event => setBatchItems(items => items.map((entry, itemIndex) => itemIndex === index ? { ...entry, processedQty: event.target.value } : entry))} /><em>{ticket.workOrder.unitLabel}</em></div></label>
-                <label><small>不良</small><div><input inputMode="numeric" pattern="[0-9]*" min="0" value={item.defectQty} disabled={saving} onChange={event => setBatchItems(items => items.map((entry, itemIndex) => itemIndex === index ? { ...entry, defectQty: event.target.value } : entry))} /><em>{ticket.workOrder.unitLabel}</em></div></label>
-                {Number(item.defectQty) > 0 && <select value={item.defectDisposition} disabled={saving} aria-label={`${item.processName}不良品处理方式`} onChange={event => setBatchItems(items => items.map((entry, itemIndex) => itemIndex === index ? { ...entry, defectDisposition: event.target.value as 'rework' | 'scrap_replenish' } : entry))}><option value="rework">返工</option>{!ticket.workOrder.parentWorkOrderId && <option value="scrap_replenish">报废补产</option>}</select>}
+                <label><small>报工</small><div><input inputMode="numeric" pattern="[0-9]*" min="0" value={item.processedQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onFocus={event => event.currentTarget.select()} onChange={event => setBatchItems(items => items.map((entry, itemIndex) => itemIndex === index ? { ...entry, processedQty: event.target.value } : entry))} /><em>{ticket.workOrder.unitLabel}</em></div></label>
+                <label><small>不良</small><div><input inputMode="numeric" pattern="[0-9]*" min="0" value={item.defectQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={event => setBatchItems(items => items.map((entry, itemIndex) => itemIndex === index ? { ...entry, defectQty: event.target.value } : entry))} /><em>{ticket.workOrder.unitLabel}</em></div></label>
+                {Number(item.defectQty) > 0 && <select value={item.defectDisposition} disabled={saving || awaitingUpload || Boolean(restoreDraft)} aria-label={`${item.processName}不良品处理方式`} onChange={event => setBatchItems(items => items.map((entry, itemIndex) => itemIndex === index ? { ...entry, defectDisposition: event.target.value as 'rework' | 'scrap_replenish' } : entry))}><option value="rework">返工</option>{!ticket.workOrder.parentWorkOrderId && <option value="scrap_replenish">报废补产</option>}</select>}
               </article>)}
             </section>
           </> : ticket.access.canReport && hasReportableQuantity ? <section className={`field-report-quantity-card${actionReporting ? ' action-quantity' : ''}`}>
@@ -1091,14 +1161,14 @@ export default function FieldReportMobile({
             {actionReporting ? <>
               <p className="field-report-action-guidance">实际动作量用于计算工时；整套完成量才推进下一工序。每套标准为 {quantity(payload.context.step.unitsPerProduct)} {payload.context.step.reportUnitLabel}。</p>
               <div className="field-report-action-grid">
-                <label><span>实际动作数量</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" value={form.reportedUnitQty} disabled={saving} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, reportedUnitQty: event.target.value })} /><em>{payload.context.step.reportUnitLabel}</em></div></label>
-                <label><span>动作不良</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={reportedUnitQty} value={form.reportedDefectUnitQty} disabled={saving} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, reportedDefectUnitQty: event.target.value })} /><em>{payload.context.step.reportUnitLabel}</em></div></label>
-                <label><span>形成完整产品</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={payload.context.reportableQty} value={form.processedQty} disabled={saving} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, processedQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>
-                <label><span>整套不良</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty} value={form.defectQty} disabled={saving} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, defectQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>
+                <label><span>实际动作数量</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" value={form.reportedUnitQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, reportedUnitQty: event.target.value })} /><em>{payload.context.step.reportUnitLabel}</em></div></label>
+                <label><span>动作不良</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={reportedUnitQty} value={form.reportedDefectUnitQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, reportedDefectUnitQty: event.target.value })} /><em>{payload.context.step.reportUnitLabel}</em></div></label>
+                <label><span>形成完整产品</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={payload.context.reportableQty} value={form.processedQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, processedQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>
+                <label><span>整套不良</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty} value={form.defectQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, defectQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>
               </div>
               <footer><span>本次合格动作 / 整套良品</span><strong>{quantity(reportedGoodUnitQty)} <small>{payload.context.step.reportUnitLabel}</small> · {quantity(goodQty)} <small>{ticket.workOrder.unitLabel}</small></strong></footer>
             </> : <>
-              <div><label><span>实际报工</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={payload.context.reportableQty} value={form.processedQty} disabled={saving} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, processedQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>{!selectedSupplement && <label><span>不良品</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty} value={form.defectQty} disabled={saving} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, defectQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>}</div>
+              <div><label><span>实际报工</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={payload.context.reportableQty} value={form.processedQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, processedQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>{!selectedSupplement && <label><span>不良品</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty} value={form.defectQty} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onFocus={event => event.currentTarget.select()} onChange={event => setForm({ ...form, defectQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>}</div>
               <footer><span>{selectedSupplement ? '本次补充报工' : '本次良品'}</span><strong>{quantity(selectedSupplement ? processedQty : goodQty)} <small>{ticket.workOrder.unitLabel}</small></strong></footer>
             </>}
           </section> : <section className="field-report-history-only"><CheckCircle2 size={22} /><span><strong>该工序当前没有剩余可报数量</strong><small>仍可查看上方记录并发起纠错；撤回成功后数量会重新开放。</small></span></section>}
@@ -1107,26 +1177,26 @@ export default function FieldReportMobile({
             ['rework', '返工', '从当前工序重新处理'],
             ...(!ticket.workOrder.parentWorkOrderId ? [['scrap_replenish', '报废补产', '创建补产分支工单'] as const] : []),
             ['quality_pending', '质量待判', '暂停并等待质量确认'],
-          ] as const).map(option => <label className={form.defectDisposition === option[0] ? 'selected' : ''} key={option[0]}><input type="radio" name="field-defect" checked={form.defectDisposition === option[0]} disabled={saving} onChange={() => setForm({ ...form, defectDisposition: option[0] })} /><span><strong>{option[1]}</strong><small>{option[2]}</small></span></label>)}</fieldset>}
+          ] as const).map(option => <label className={form.defectDisposition === option[0] ? 'selected' : ''} key={option[0]}><input type="radio" name="field-defect" checked={form.defectDisposition === option[0]} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={() => setForm({ ...form, defectDisposition: option[0] })} /><span><strong>{option[1]}</strong><small>{option[2]}</small></span></label>)}</fieldset>}
 
           {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-workers">
             <header><span><strong>作业人员</strong><small>本人已锁定，协作人员可继续添加；工时自动平均分配。</small></span><em>{form.employeeIds.length} 人</em></header>
             {payload.currentEmployee && <div className="field-report-self"><UserRoundCheck size={20} /><span><small>登录身份自动带入</small><strong>{payload.currentEmployee.employeeNo} · {payload.currentEmployee.name}</strong></span><b>本人</b></div>}
-            {selectedWipAllocation?.workers.length ? <div className="field-report-preset wip"><Users size={18} /><span><strong>半成品计划人员</strong><small>{selectedWipAllocation.workers.map(worker => worker.name).join('、')}</small></span><button type="button" disabled={saving} onClick={() => setForm({ ...form, employeeIds: [...new Set([currentEmployeeId, ...selectedWipAllocation.workers.map(worker => worker.employeeId)])] })}>一键添加</button></div> : payload.context.workerPreset && <div className="field-report-preset"><Users size={18} /><span><strong>本周预选人员</strong><small>{payload.context.workerPreset.employees.map(employee => employee.name).join('、') || '暂无'}</small></span><button type="button" disabled={saving || !payload.context.workerPreset.employees.length} onClick={() => setForm({ ...form, employeeIds: [...new Set([currentEmployeeId, ...payload.context!.workerPreset!.employees.map(employee => employee.id)])] })}>一键添加</button></div>}
-            <label className="field-report-worker-search"><Search size={17} /><input value={employeeSearch} disabled={saving} onChange={event => setEmployeeSearch(event.target.value)} placeholder="搜索姓名、工号或班组" /></label>
+            {selectedWipAllocation?.workers.length ? <div className="field-report-preset wip"><Users size={18} /><span><strong>半成品计划人员</strong><small>{selectedWipAllocation.workers.map(worker => worker.name).join('、')}</small></span><button type="button" disabled={saving || awaitingUpload || Boolean(restoreDraft)} onClick={() => setForm({ ...form, employeeIds: [...new Set([currentEmployeeId, ...selectedWipAllocation.workers.map(worker => worker.employeeId)])] })}>一键添加</button></div> : payload.context.workerPreset && <div className="field-report-preset"><Users size={18} /><span><strong>本周预选人员</strong><small>{payload.context.workerPreset.employees.map(employee => employee.name).join('、') || '暂无'}</small></span><button type="button" disabled={saving || awaitingUpload || Boolean(restoreDraft) || !payload.context.workerPreset.employees.length} onClick={() => setForm({ ...form, employeeIds: [...new Set([currentEmployeeId, ...payload.context!.workerPreset!.employees.map(employee => employee.id)])] })}>一键添加</button></div>}
+            <label className="field-report-worker-search"><Search size={17} /><input value={employeeSearch} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={event => setEmployeeSearch(event.target.value)} placeholder="搜索姓名、工号或班组" /></label>
             <div className="field-report-worker-grid">{visibleEmployees.filter(employee => employee.id !== currentEmployeeId).map(employee => {
               const checked = form.employeeIds.includes(employee.id);
               const preferred = preferredIds.has(employee.id);
-              return <label className={`${checked ? 'selected ' : ''}${preferred ? 'preferred' : ''}`} key={employee.id}><input type="checkbox" checked={checked} disabled={saving} onChange={() => { setExceptionConfirmed(false); setForm({ ...form, employeeIds: checked ? form.employeeIds.filter(id => id !== employee.id) : [...form.employeeIds, employee.id] }); }} /><span><strong>{employee.name}{preferred && <em>预选</em>}</strong><small>{employee.employeeNo} · {employee.team || employee.position || '班组待维护'}</small></span></label>;
+              return <label className={`${checked ? 'selected ' : ''}${preferred ? 'preferred' : ''}`} key={employee.id}><input type="checkbox" checked={checked} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={() => { setExceptionConfirmed(false); setForm({ ...form, employeeIds: checked ? form.employeeIds.filter(id => id !== employee.id) : [...form.employeeIds, employee.id] }); }} /><span><strong>{employee.name}{preferred && <em>预选</em>}</strong><small>{employee.employeeNo} · {employee.team || employee.position || '班组待维护'}</small></span></label>;
             })}</div>
             {!employeeSearch && orderedEmployees.length > 8 && <button className="field-report-show-workers" type="button" onClick={() => setShowAllEmployees(value => !value)}>{showAllEmployees ? '收起人员列表' : `查看全部 ${orderedEmployees.length} 名生产员工`}<ChevronDown size={16} /></button>}
-            {nonPreferredCollaborators.length > 0 && <label className="field-report-worker-confirm"><input type="checkbox" checked={exceptionConfirmed} disabled={saving} onChange={event => setExceptionConfirmed(event.target.checked)} /><AlertTriangle size={18} /><span><strong>包含非预选协作人员</strong><small>请确认 {nonPreferredCollaborators.map(employee => employee.name).join('、')} 确实参与本次作业。</small></span></label>}
+            {nonPreferredCollaborators.length > 0 && <label className="field-report-worker-confirm"><input type="checkbox" checked={exceptionConfirmed} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={event => setExceptionConfirmed(event.target.checked)} /><AlertTriangle size={18} /><span><strong>包含非预选协作人员</strong><small>请确认 {nonPreferredCollaborators.map(employee => employee.name).join('、')} 确实参与本次作业。</small></span></label>}
           </section>}
 
-          {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <details className="field-report-more"><summary>补充现场信息 <span>班组、工位、备注</span></summary><div><label><span>班组</span><input value={form.team} maxLength={80} disabled={saving} onChange={event => setForm({ ...form, team: event.target.value })} /></label><label><span>工位 / 设备</span><input value={form.workstation} maxLength={80} disabled={saving} onChange={event => setForm({ ...form, workstation: event.target.value })} /></label><label><span>现场备注</span><textarea value={form.remark} rows={2} maxLength={500} disabled={saving} onChange={event => setForm({ ...form, remark: event.target.value })} /></label></div></details>}
-          {formError && <div className="field-report-form-error" role="alert">{formError}</div>}
+          {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <details className="field-report-more"><summary>补充现场信息 <span>班组、工位、备注</span></summary><div><label><span>班组</span><input value={form.team} maxLength={80} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={event => setForm({ ...form, team: event.target.value })} /></label><label><span>工位 / 设备</span><input value={form.workstation} maxLength={80} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={event => setForm({ ...form, workstation: event.target.value })} /></label><label><span>现场备注</span><textarea value={form.remark} rows={2} maxLength={500} disabled={saving || awaitingUpload || Boolean(restoreDraft)} onChange={event => setForm({ ...form, remark: event.target.value })} /></label></div></details>}
+          {formError && <div className="field-report-form-error" role="alert">{formError}{pendingAllowed && !invalid && <button type="button" disabled={saving || awaitingUpload || Boolean(restoreDraft)} onClick={() => void submit(true)}>提交待处理申报</button>}</div>}
         </div>
-        {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <footer><span>{invalid ? nonPreferredCollaborators.length && !exceptionConfirmed ? '请核对非预选协作人员' : actionReporting ? '请填写实际动作数量；形成整套后再填写整套数量' : '数量默认 0，请输入本次实际完成数量' : `将为 ${form.employeeIds.length} 人自动记入标准工时`}</span><button type="button" disabled={saving || invalid} onClick={requestSubmit}>{saving ? <><LoaderCircle className="spin" size={19} />正在提交...</> : <><CheckCircle2 size={19} />{reportMode === 'batch' ? `确认批量报工 ${batchItems.length} 道` : '确认报工并自动记工'}</>}</button></footer>}
+        {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <footer><span>{awaitingUpload ? '已保留原数量和原编号，正在核对受理结果' : invalid ? sourceInvalid ? '请先选择有余额的实际加工来源' : nonPreferredCollaborators.length && !exceptionConfirmed ? '请核对非预选协作人员' : actionReporting ? '请填写实际动作数量；形成整套后再填写整套数量' : '数量默认 0，请输入本次实际完成数量' : needsPendingSource ? '已申报待处理后，请在申报进度查看主管确认结果' : `将为 ${form.employeeIds.length} 人自动记入标准工时`}</span><button type="button" disabled={saving || invalid} onClick={requestSubmit}>{saving ? <><LoaderCircle className="spin" size={19} />正在提交...</> : <><CheckCircle2 size={19} />{needsPendingSource ? '提交待处理申报' : reportMode === 'batch' ? `确认批量报工 ${batchItems.length} 道` : '确认报工并自动记工'}</>}</button></footer>}
       </section>
     </div>}
   </main>;

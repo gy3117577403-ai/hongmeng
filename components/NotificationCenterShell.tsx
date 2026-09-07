@@ -549,7 +549,7 @@ export default function NotificationCenterShell({ user }: { user: CurrentUserDTO
                           {item.sourceType && <span>来源：{item.sourceType}</span>}
                         </div>
                         <div>
-                          {!completed && <button type="button" disabled={saving} onClick={() => void updateCompletedState(item)}>
+                          {!completed && item.sourceType !== 'process_reporting_submission' && <button type="button" disabled={saving} onClick={() => void updateCompletedState(item)}>
                             {saving ? <LoaderCircle className="nc-spin" /> : <CheckCircle2 />}{saving ? '保存中' : '设为已完成'}
                           </button>}
                           {canRestore && <button type="button" disabled={saving} onClick={() => void updateCompletedState(item)}>

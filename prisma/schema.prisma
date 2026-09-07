@@ -507,6 +507,8 @@ enum RecruitmentInterviewStatus {
 }
 
 model User {
+  reportingSubmissions            ProcessReportSubmission[] @relation("ReportSubmissionCreator")
+  resolvedReportingSubmissions    ProcessReportSubmission[] @relation("ReportSubmissionResolver")
   id                              String                                 @id @default(uuid())
   username                        String                                 @unique
   passwordHash                    String                                 @map("password_hash")
@@ -711,6 +713,7 @@ model UserAccessGrant {
 }
 
 model WorkOrder {
+  reportingSubmissions         ProcessReportSubmission[]
   id                           String                               @id @default(uuid())
   code                         String                               @unique
   businessCode                 String?                              @unique @map("business_code")
@@ -935,6 +938,7 @@ model ProcessTemplateStep {
 }
 
 model WorkOrderProcessRoute {
+  reportingSubmissions         ProcessReportSubmission[]
   id                           String                               @id @default(uuid())
   workOrderId                  String                               @unique @map("work_order_id")
   templateId                   String?                              @map("template_id")
@@ -975,6 +979,7 @@ model WorkOrderProcessRoute {
 }
 
 model WorkOrderProcessStep {
+  reportingSubmissions         ProcessReportSubmission[]
   id                           String                               @id @default(uuid())
   routeId                      String                               @map("route_id")
   processDefinitionId          String?                              @map("process_definition_id")
@@ -2178,7 +2183,51 @@ model ProcessExecution {
   @@map("process_executions")
 }
 
+model ProcessReportSubmission {
+  id                  String    @id @default(uuid())
+  idempotencyKey      String    @unique @map("idempotency_key")
+  payloadFingerprint String    @map("payload_fingerprint")
+  status             String    @default("PENDING")
+  reasonCode         String    @map("reason_code")
+  workOrderId        String    @map("work_order_id")
+  routeId            String    @map("route_id")
+  stepId             String    @map("step_id")
+  workDate           DateTime  @map("work_date") @db.Date
+  createdById        String    @map("created_by_id")
+  assigneeUserIds     String[]  @map("assignee_user_ids")
+  resolvedById       String?   @map("resolved_by_id")
+  completionId       String?   @unique @map("completion_id")
+  sourceKind         String    @map("source_kind")
+  sourceLotId        String?   @map("source_lot_id")
+  sourceAllocationId String?   @map("source_allocation_id")
+  reservedProductQty Int       @default(0) @map("reserved_product_qty")
+  reservedGoodUnits  Int       @default(0) @map("reserved_good_units")
+  payload            Json
+  snapshot           Json
+  resolution         Json?
+  result             Json?
+  lastError          String?   @map("last_error")
+  version            Int       @default(0)
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  completedAt        DateTime? @map("completed_at")
+  workOrder          WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  route              WorkOrderProcessRoute @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  step               WorkOrderProcessStep @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  createdBy          User @relation("ReportSubmissionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  resolvedBy         User? @relation("ReportSubmissionResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  completion         ProcessCompletion? @relation(fields: [completionId], references: [id], onDelete: Restrict)
+
+  @@index([stepId, status])
+  @@index([createdById, status, createdAt])
+  @@index([status, createdAt])
+  @@index([sourceAllocationId, status])
+  @@map("process_report_submissions")
+}
+
 model ProcessCompletion {
+  recoverySubmission           ProcessReportSubmission?
+  reportingWipAllocationId      String?                              @map("reporting_wip_allocation_id")
   id                           String                               @id @default(uuid())
   workOrderId                  String                               @map("work_order_id")
   routeId                      String                               @map("route_id")

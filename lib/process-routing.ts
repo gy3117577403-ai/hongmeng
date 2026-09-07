@@ -13,6 +13,7 @@ import {
   type ProductTimeProfileRecord,
 } from '@/lib/product-time';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
+import { processReportContractTransitionIssue } from '@/lib/process-report-contract';
 import { legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
 import {
@@ -1855,6 +1856,22 @@ async function synchronizeRemainingActiveProductTimeStandards(
   // while a new, removed, or moved occurrence is still missing makes the route
   // claim a profile version it does not actually implement.
   if (reviewRequired) return activeRouteSyncSkipped(true);
+  // Withdrawal may refresh other unfinished steps as well. Only the withdrawn
+  // occurrence is fact-free; another step's live action history must not change units.
+  const matchedIds = matchedSteps.map(({ step }) => step.id);
+  const reportFacts = await Promise.all([
+    tx.processCompletion.findMany({ where: { stepId: { in: matchedIds }, voidedAt: null }, select: { stepId: true }, distinct: ['stepId'] }),
+    tx.processExecution.findMany({ where: { stepId: { in: matchedIds }, voidedAt: null }, select: { stepId: true }, distinct: ['stepId'] }),
+    tx.processLaborPool.findMany({ where: { stepId: { in: matchedIds },
+      OR: [{ status: { not: 'VOIDED' } }, { claims: { some: { status: 'ACTIVE' } } }] }, select: { stepId: true }, distinct: ['stepId'] }),
+  ]);
+  const reportedStepIds = new Set(reportFacts.flat().map(fact => fact.stepId));
+  for (const { step, entry } of matchedSteps) {
+    const issue = processReportContractTransitionIssue(step, productTimeStandardSnapshot(input.profile, entry),
+      reportedStepIds.has(step.id) || step.processedQty > 0
+        || step.goodOutputQty > 0 || step.defectOutputQty > 0 || step.releasedGoodQty > 0);
+    if (issue) return activeRouteSyncSkipped(true);
+  }
   const alreadySynchronized = routeProductTimeMetadataMatches(input.route, input.profile)
     && matchedSteps.every(({ step, entry }) => productTimeStepSnapshotMatches(step, input.profile, entry));
   if (alreadySynchronized) return activeRouteSyncSkipped(reviewRequired);

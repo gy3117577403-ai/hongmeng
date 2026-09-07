@@ -150,9 +150,12 @@ test('WIP mobile reporting uses Chinese source choices and target-week worker as
   const service = readFileSync(resolve(repositoryRoot, 'lib/wip-warehouse.ts'), 'utf8');
   const migration = readFileSync(resolve(repositoryRoot, 'prisma/migrations/202609030003_wip_worker_assignments/migration.sql'), 'utf8');
 
-  assert.match(mobile, /<strong>报工来源<\/strong>/);
+  assert.match(mobile, /<strong>报工来源与可用数量<\/strong>/);
   assert.match(mobile, /原订单未转出数量/);
-  assert.match(mobile, /半成品批次 \{allocation\.lotNo\}/);
+  assert.match(mobile, /defaultProcessReportSource\(choices, sourceStepIdsKey/);
+  assert.match(mobile, /reportSourceCanCoverSteps\(choice, sourceStepIds\)/);
+  assert.match(mobile, /无原订单可报余额，请选择半成品来源/);
+  assert.match(mobile, /半成品批次 \$\{choice\.lotNo\}/);
   assert.doesNotMatch(mobile, /半成品批次（报半成品时必须明确选择）/);
   assert.match(warehouse, /action:\s*'assign_workers'/);
   assert.match(warehouse, /保存人员安排/);

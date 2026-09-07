@@ -432,9 +432,28 @@ test(
         userId: actor.id,
         actor: actor.displayName || actor.username,
       };
+      const reservation = await prisma.processReportSubmission.create({ data: {
+        idempotencyKey: firstCompletionCommand.idempotencyKey, payloadFingerprint: `${prefix}-pending`, status: 'PENDING',
+        reasonCode: 'WIP_SOURCE_REQUIRED', workOrderId, routeId, stepId: insertedStep.id,
+        workDate: new Date('2026-08-11T00:00:00.000Z'), createdById: actor.id, assigneeUserIds: [actor.id],
+        sourceKind: 'NATIVE', reservedProductQty: 8, reservedGoodUnits: 8, payload: {}, snapshot: {},
+      } });
+      await assert.rejects(completeProcessSupplementObligation(firstCompletionCommand),
+        (error: unknown) => error instanceof Error && 'code' in error && error.code === 'PROCESS_SUBMISSION_PENDING');
+      await prisma.processReportSubmission.update({ where: { id: reservation.id }, data: { idempotencyKey: `${prefix}-other-pending` } });
+      await assert.rejects(completeProcessSupplementObligation(firstCompletionCommand),
+        (error: unknown) => error instanceof Error && 'code' in error && error.code === 'PROCESS_SUPPLEMENT_QTY_EXCEEDED');
+      await prisma.processReportSubmission.update({ where: { id: reservation.id }, data: { reservedProductQty: 0, reservedGoodUnits: 0 } });
+      await assert.rejects(completeProcessSupplementObligation(firstCompletionCommand),
+        (error: unknown) => error instanceof Error && 'code' in error && error.code === 'PROCESS_UNMEASURED_SUBMISSION_PENDING');
+      await prisma.processReportSubmission.delete({ where: { id: reservation.id } });
       const firstSupplement = await completeProcessSupplementObligation(firstCompletionCommand);
       firstSupplementCompletionId = firstSupplement.completionId;
       const firstReplay = await completeProcessSupplementObligation(firstCompletionCommand);
+      await assert.rejects(completeProcessSupplementObligation({ ...firstCompletionCommand, userId: randomUUID() }),
+        (error: unknown) => error instanceof Error && 'code' in error && error.code === 'PROCESS_SUPPLEMENT_IDEMPOTENCY_CONFLICT');
+      await assert.rejects(completeProcessSupplementObligation({ ...firstCompletionCommand, reportSource: ProcessCompletionSource.QR_MOBILE }),
+        (error: unknown) => error instanceof Error && 'code' in error && error.code === 'PROCESS_SUPPLEMENT_IDEMPOTENCY_CONFLICT');
       assert.equal(firstReplay.completionId, firstSupplement.completionId);
       assert.equal(firstReplay.routeVersion, firstSupplement.routeVersion);
       assert.equal(firstSupplement.status, 'ACTIVE');
@@ -664,6 +683,7 @@ test(
       assert.equal((await prisma.workOrderProcessRoute.findUniqueOrThrow({ where: { id: routeId } })).status, 'completed');
     } finally {
       if (workOrderId) {
+        await prisma.processReportSubmission.deleteMany({ where: { workOrderId } });
         if (dailyPlanId) {
           await prisma.dailyPlanRevision.deleteMany({ where: { planId: dailyPlanId } });
           await prisma.dailyTaskAssignment.deleteMany({ where: { task: { planId: dailyPlanId } } });

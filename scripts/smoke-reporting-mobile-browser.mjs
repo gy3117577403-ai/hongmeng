@@ -1,0 +1,93 @@
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+const origin = process.env.REPORT_RECOVERY_QA_BASE || 'http://127.0.0.1:33133';
+if (!['127.0.0.1', 'localhost'].includes(new URL(origin).hostname)) throw Error('Disposable runtime required');
+const fixture = JSON.parse(readFileSync(process.env.REPORT_RECOVERY_QA_FIXTURE, 'utf8').replace(/^\uFEFF/, ''));
+const wip = JSON.parse(readFileSync(process.env.REPORT_RECOVERY_QA_WIP_FIXTURE, 'utf8').replace(/^\uFEFF/, ''));
+const dir = process.env.REPORT_RECOVERY_QA_BROWSER_OUTPUT || 'output/playwright/reporting-recovery'; mkdirSync(dir, { recursive: true });
+const codeFile = dir + '/mobile-code.generated.cjs';
+function cli(args) {
+  const command = process.platform === 'win32' ? process.execPath : 'npx';
+  const prefix = process.platform === 'win32' ? [join(dirname(process.execPath), 'node_modules/npm/bin/npx-cli.js')] : [];
+  const result = spawnSync(command, [...prefix, '--yes', '--package', '@playwright/cli@0.1.19', 'playwright-cli', '-s=reporting-mobile-release', ...args], { encoding: 'utf8', timeout: 240000, windowsHide: true });
+  const output = ((result.stdout || '') + (result.stderr || '')).replace(/### Ran Playwright code\r?\n```[\s\S]*?```(?:\r?\n)?/g, '').replaceAll(fixture.password, '[disposable-password]');
+  if (args[0] === 'run-code') writeFileSync(dir + '/mobile-runtime.txt', output);
+  if (result.error || result.status) throw Error(result.error?.message || output);
+  return output;
+}
+try {
+  cli(['open', origin + '/login']);
+  const code = `async page => {
+    const origin=${JSON.stringify(origin)}, f=${JSON.stringify(fixture)}, w=${JSON.stringify(wip)}, checks=[], errors=[], requests=[];
+    page.setDefaultTimeout(60000);page.on('pageerror',e=>errors.push(String(e)));
+    const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label)};
+    let apiCookie='';
+    const login=async kind=>{const r=await page.request.post(origin+'/api/auth/login',{headers:{Origin:origin},data:{username:f.users[kind].username,password:f.password}});check(r.status()===200,'login '+kind);apiCookie=(r.headers()['set-cookie']||'').match(/hm_session=[^;]+/)?.[0]||''};
+    const get=async path=>{const r=await page.request.get(origin+path,{headers:{Cookie:apiCookie}});if(r.status()!==200)throw Error(path+' '+r.status()+' '+await r.text());return r.json()};
+    const snap=async name=>page.screenshot({path:${JSON.stringify(dir)}+'/'+name+'.png'});
+    const open=async kind=>{await page.goto(origin+'/field-report/'+w.orders[kind].publicCode);await page.getByRole('button',{name:'选择此工序报工',exact:true}).click();await page.locator('.field-report-source-card').waitFor()};
+    const sheet=()=>page.locator('.field-report-sheet');
+    const qty=()=>sheet().locator('.field-report-quantity-card input').first();
+    const radio=()=>sheet().getByRole('radio');
+    try {
+      await login('operator');await page.setViewportSize({width:390,height:844});await open('expired');
+      check(await radio().filter({hasText:'原订单未转出数量'}).isDisabled(),'fully transferred native source disabled');
+      check(await sheet().locator('[role=radio][aria-checked=true]').count()===0,'expired source never silently preselected');
+      check((await sheet().locator('.field-report-date-card input').inputValue())===f.workDate,'actual date stays today');
+      await qty().fill('6');await sheet().getByRole('button',{name:'关闭报工窗口'}).click();
+      await page.getByRole('button',{name:'选择此工序报工',exact:true}).click();await sheet().getByRole('button',{name:'恢复并核对'}).click();
+      check(await qty().inputValue()==='6','closed mobile quantity draft restores');
+      await sheet().locator('.field-report-date-card input').fill(w.lastWeekEnd);
+      check(await sheet().locator('[role=radio][aria-checked=true]').count()===0,'date change requires source reconfirmation');
+      await sheet().locator('.field-report-date-card input').fill(f.workDate);
+      await radio().filter({hasText:w.orders.expired.lots[0].lotNo}).click();
+      await sheet().locator('.field-report-source-card').scrollIntoViewIfNeeded();await snap('phone-expired-source');
+      check(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+2),'phone source no horizontal overflow');
+      await sheet().getByRole('button',{name:'提交待处理申报',exact:true}).click();
+      await page.locator('.field-report-success').waitFor();check((await page.locator('.field-report-success').innerText()).includes('尚未计入正式报工和员工工时'),'pending receipt does not claim completion');await snap('phone-pending-receipt');
+      let ticket=(await get('/api/field-report/tickets/'+w.orders.expired.publicCode+'?stepId='+w.orders.expired.stepId)).data;
+      check(ticket.context.reportableQty===34,'pending quantity is reserved from subsequent reports');
+      check(ticket.context.recentCompletions.length===0,'pending WIP receipt creates no formal completion');
+      await open('multiple');check(await sheet().locator('[role=radio][aria-checked=true]').count()===0,'multiple legal lots require explicit selection');
+      await qty().fill('3');await radio().filter({hasText:w.orders.multiple.lots[0].lotNo}).click();await snap('phone-multiple-sources');
+      await sheet().getByRole('button',{name:'关闭报工窗口'}).click();
+      await login('other');await open('multiple');check(await sheet().getByRole('button',{name:'恢复并核对'}).count()===0,'other account cannot see previous account draft');check(await qty().inputValue()==='0','other account starts an empty form');
+      await login('operator');await open('multiple');await sheet().getByRole('button',{name:'恢复并核对'}).click();check(await qty().inputValue()==='3','original account can recover its own saved form');
+      await open('unscheduled');check((await sheet().locator('.field-report-source-card').innerText()).includes('仓内未排周'),'unscheduled lot remains visible with a next action');await snap('phone-unscheduled-source');
+      await open('future');check(await sheet().locator('[role=radio][aria-checked=true]').count()===0,'future plan not silently activated');check((await sheet().locator('.field-report-source-card').innerText()).includes('未来计划'),'future plan shown explicitly');
+      await open('current');check(await sheet().locator('[role=radio][aria-checked=true]').count()===1,'single current legal lot is preselected');
+      let loseResponse=true;
+      await page.route('**/api/field-report/tickets/'+w.orders.current.publicCode+'/completions',async route=>{
+        if(route.request().method()!=='POST')return route.continue();
+        requests.push(JSON.parse(route.request().postData()));
+        if(loseResponse){loseResponse=false;const r=await route.fetch();check(r.status()===200,'first request committed before simulated response loss: '+r.status()+' '+(r.status()===200?'':await r.text()));return route.abort('failed')}
+        return route.continue();
+      });
+      await qty().fill('40');await sheet().getByRole('button',{name:'确认报工并自动记工',exact:true}).click();await page.getByRole('button',{name:'确认全部报工',exact:true}).click();
+      await sheet().getByText('本机待上传，结果尚未确认',{exact:true}).waitFor();await sheet().getByText('本机待上传，结果尚未确认',{exact:true}).scrollIntoViewIfNeeded();await sheet().getByRole('button',{name:'正在提交...',exact:true}).waitFor({state:'hidden'});await snap('phone-local-upload');
+      await page.reload();await page.locator('.field-report-success').waitFor();
+      check(requests.length===2 && requests[0].idempotencyKey===requests[1].idempotencyKey,'lost response replays the same idempotency key');
+      check(JSON.stringify(requests[0])===JSON.stringify(requests[1]),'retry uses identical frozen payload');
+      ticket=(await get('/api/field-report/tickets/'+w.orders.current.publicCode+'?stepId='+w.orders.current.stepId)).data;
+      check(ticket.context.recentCompletions.length===1 && ticket.context.reportedQty===40,'final completion retry does not duplicate quantity');
+      check(ticket.ticket.access.state==='COMPLETED','completed QR returns successful replay receipt');await snap('phone-network-recovered');
+      await login('admin');await page.setViewportSize({width:1366,height:1024});
+      await page.goto(origin+'/production?scope=current&weekStart='+w.weekStart+'&weekEnd='+w.weekEnd+'&workOrderId='+w.orders.desktop.id+'&wipAllocationId='+w.orders.desktop.lots[0].allocationId);
+      const row=page.locator('[data-wip-allocation-id="'+w.orders.desktop.lots[0].allocationId+'"]');await row.waitFor();await row.locator('.production-dispatch-row-actions button.primary').click();
+      const desktop=page.locator('.process-completion-dialog');await desktop.locator('.process-completion-work-date input').waitFor();
+      check(await desktop.locator('.process-completion-work-date input').inputValue()===f.workDate,'desktop WIP report defaults to the actual date');
+      await desktop.locator('.process-completion-work-date input').fill(w.lastWeekEnd);
+      check(await desktop.getByRole('button',{name:'提交待处理申报',exact:true}).count()===1,'desktop work outside plan week clearly routes to pending submission');
+      await desktop.locator('.process-completion-quantity-grid input').first().fill('7');await desktop.getByRole('button',{name:'取消',exact:true}).click();
+      await row.locator('.production-dispatch-row-actions button.primary').click();await desktop.getByRole('button',{name:'恢复并核对',exact:true}).click();
+      check(await desktop.locator('.process-completion-quantity-grid input').first().inputValue()==='7','desktop closed form restores its entered quantity');
+      check(await desktop.locator('.process-completion-work-date input').inputValue()===w.lastWeekEnd,'desktop restored draft retains the entered actual work date');await snap('tablet-reporting-source');
+      check(!errors.length,'no uncaught browser errors: '+errors.join(';'));return {passed:true,checks,orders:w.orders};
+    } catch(error){await snap('mobile-failure');throw error}
+  }`;
+  writeFileSync(codeFile, code);
+  const result = cli(['run-code', '--filename', codeFile]);
+  if (!/"passed":\s*true/.test(result)) throw Error(result);
+  console.log(result);
+} finally { rmSync(codeFile, { force: true }); cli(['close']); }

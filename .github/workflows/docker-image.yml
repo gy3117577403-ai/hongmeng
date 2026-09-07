@@ -144,6 +144,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/process-route-change-integration.test.ts tests/process-route-change-review-lifecycle-integration.test.ts tests/process-route-change-move-integration.test.ts tests/process-route-change-duplicate-occurrence-integration.test.ts tests/process-completion-supplement-flow-integration.test.ts tests/product-time-full-deployment-integration.test.ts tests/product-time-in-progress-migration-integration.test.ts tests/full-workorder-supplement-rebaseline-integration.test.ts tests/product-time-deployment-version-conflict-integration.test.ts
+      - name: Reporting recovery contract and receipt PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/process-report-contract-integration.test.ts tests/process-report-submissions-integration.test.ts tests/process-report-submission-compound-integration.test.ts
       - name: System notification lifecycle PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -358,6 +362,28 @@ jobs:
           QUALITY_WORKBENCH_QA_BASE=http://127.0.0.1:3000 \
             QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/release-fixture.json \
             node scripts/smoke-quality-workbench-browser.mjs
+          mkdir -p artifacts/reporting-recovery
+          docker exec -i -e REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime hongmeng-release-smoke node \
+            < scripts/seed-reporting-recovery-smoke.cjs > artifacts/reporting-recovery/release-fixture.json
+          REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime \
+            REPORT_RECOVERY_QA_BASE=http://127.0.0.1:3000 \
+            REPORT_RECOVERY_QA_FIXTURE=artifacts/reporting-recovery/release-fixture.json \
+            REPORT_RECOVERY_QA_OUTPUT=artifacts/reporting-recovery/release-http.json \
+            node scripts/smoke-reporting-recovery.mjs
+          REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime \
+            REPORT_RECOVERY_QA_BASE=http://127.0.0.1:3000 \
+            REPORT_RECOVERY_QA_FIXTURE=artifacts/reporting-recovery/release-fixture.json \
+            REPORT_RECOVERY_QA_BROWSER_OUTPUT=artifacts/reporting-recovery \
+            node scripts/smoke-reporting-recovery-browser.mjs
+          REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime \
+            REPORT_RECOVERY_QA_FIXTURE=artifacts/reporting-recovery/release-fixture.json \
+            node scripts/seed-reporting-wip-smoke.cjs > artifacts/reporting-recovery/wip-fixture.json
+          REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime \
+            REPORT_RECOVERY_QA_BASE=http://127.0.0.1:3000 \
+            REPORT_RECOVERY_QA_FIXTURE=artifacts/reporting-recovery/release-fixture.json \
+            REPORT_RECOVERY_QA_WIP_FIXTURE=artifacts/reporting-recovery/wip-fixture.json \
+            REPORT_RECOVERY_QA_BROWSER_OUTPUT=artifacts/reporting-recovery \
+            node scripts/smoke-reporting-mobile-browser.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -640,6 +666,14 @@ jobs:
             QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/mirror-fixture.json \
             QUALITY_WORKBENCH_QA_OUTPUT=artifacts/quality-workbench/mirror-http.json \
             node scripts/smoke-quality-workbench.mjs
+          mkdir -p artifacts/reporting-recovery
+          docker exec -i -e REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime "$app_name" node \
+            < scripts/seed-reporting-recovery-smoke.cjs > artifacts/reporting-recovery/mirror-fixture.json
+          REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime \
+            REPORT_RECOVERY_QA_BASE=http://127.0.0.1:3300 \
+            REPORT_RECOVERY_QA_FIXTURE=artifacts/reporting-recovery/mirror-fixture.json \
+            REPORT_RECOVERY_QA_OUTPUT=artifacts/reporting-recovery/mirror-http.json \
+            node scripts/smoke-reporting-recovery.mjs
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
@@ -647,6 +681,16 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture and quality data lifecycle smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload reporting recovery acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reporting-recovery-${{ github.ref_name }}
+          path: |
+            artifacts/reporting-recovery/*http.json
+            artifacts/reporting-recovery/*runtime.txt
+            artifacts/reporting-recovery/*.png
+          if-no-files-found: warn
       - name: Upload quality workbench acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

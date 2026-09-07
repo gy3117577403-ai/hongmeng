@@ -48,6 +48,9 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       if (result.status === 'not_restorable') {
         return NextResponse.json({ ok: false, error: '该消息由业务状态自动收口，不能手动恢复' }, { status: 409 });
       }
+      if (result.status === 'source_pending') {
+        return NextResponse.json({ ok: false, code: 'REPORT_SUBMISSION_PENDING', error: '该报工仍待处理，请前往处理页完成核销；完成后消息将自动收口' }, { status: 409 });
+      }
       return NextResponse.json({
         ok: true,
         completed,

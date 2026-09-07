@@ -37,6 +37,7 @@ import {
 } from '@/lib/process-route-change-daily-task-sync';
 import { productTimeRouteActivation } from '@/lib/process-routing';
 import { prisma } from '@/lib/prisma';
+import { completionLaborUnitsPerProduct, processReportContractTransitionIssue } from '@/lib/process-report-contract';
 
 type Tx = Prisma.TransactionClient;
 
@@ -213,6 +214,10 @@ const routeInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
         where: { voidedAt: null },
         select: { id: true, employeeId: true },
       },
+      processLaborPools: {
+        where: { OR: [{ status: { not: 'VOIDED' } }, { claims: { some: { status: 'ACTIVE' } } }] },
+        select: { id: true },
+      },
       _count: {
         select: {
           dailyProcessTasks: true,
@@ -295,6 +300,12 @@ function stepHasFacts(step: DeploymentStepRecord): boolean {
     || step._count.targetQuantityMovements > 0;
 }
 
+// Material transfers and voided pools preserve historical references, but do not freeze the reporting unit.
+function stepHasEffectiveReports(step: DeploymentStepRecord): boolean {
+  return step.completions.length > 0 || step.executions.length > 0 || step.processLaborPools.length > 0
+    || step.processedQty > 0 || step.goodOutputQty > 0 || step.defectOutputQty > 0 || step.releasedGoodQty > 0;
+}
+
 function routeHasFacts(route: DeploymentRouteRecord): boolean {
   return route.steps.some(stepHasFacts)
     || route.status === 'completed'
@@ -354,10 +365,8 @@ function stepStandardMatchesEntry(
     && step.setupMilliseconds === standard.setupMilliseconds
     && step.unitsPerProduct === standard.unitsPerProduct
     && step.unitLabel === standard.unitLabel
-    && (stepHasFacts(step) || (
-      step.reportQuantityBasis === standard.reportQuantityBasis
-      && step.reportUnitLabel === standard.reportUnitLabel
-    ))
+    && step.reportQuantityBasis === standard.reportQuantityBasis
+    && step.reportUnitLabel === standard.reportUnitLabel
     && step.countsForEfficiency === standard.countsForEfficiency;
 }
 
@@ -800,6 +809,13 @@ function previewFromContext(
         });
       }
       if (key) keys.add(key);
+      const desired = key ? profile.entries.find(entry => entry.occurrenceKey === key
+        && entry.processDefinitionId === step.processDefinitionId) : null;
+      if (desired) {
+        const issue = processReportContractTransitionIssue(step, entryStandard(desired), stepHasEffectiveReports(step));
+        if (issue) conflicts.push({ ...issue, message: `${step.processName}：${issue.message}`,
+          workOrderId: route.workOrderId, workOrderCode: route.workOrder.code });
+      }
       if (routeFacts && step.executionMode === ProcessStepExecutionMode.NORMAL && !key) {
         conflicts.push({
           code: 'ROUTE_OCCURRENCE_IDENTITY_MISSING',
@@ -1041,7 +1057,7 @@ async function correctHistoricalStandard(
 
   for (const completion of completions) {
     const completionSetup = completion.id === setupCompletionId ? standard.setupMilliseconds : 0;
-    const laborUnitsPerProduct = completion.reportQuantityBasis === 'action' ? 1 : standard.unitsPerProduct;
+    const laborUnitsPerProduct = completionLaborUnitsPerProduct(completion.reportQuantityBasis, standard.unitsPerProduct);
     await tx.processCompletion.update({
       where: { id: completion.id },
       data: {
@@ -1991,6 +2007,8 @@ async function applyRouteDeployment(
   for (const entry of profile.entries) {
     const existing = currentByKey.get(entry.occurrenceKey);
     if (existing && existing.processDefinitionId === entry.processDefinitionId) {
+      const contractIssue = processReportContractTransitionIssue(existing, entryStandard(entry), stepHasEffectiveReports(existing));
+      if (contractIssue) throw new ProductTimeDeploymentError(`${existing.processName}：${contractIssue.message}`, 409, contractIssue.code);
       retainedIds.add(existing.id);
       stepIdByKey.set(entry.occurrenceKey, existing.id);
       const changedTime = !stepStandardMatchesEntry(existing, entry);
@@ -2034,13 +2052,8 @@ async function applyRouteDeployment(
           position: entry.position,
           sequenceGroup: entry.sequenceGroup,
           ...productTimeStandardSnapshot(profile, entry),
-          // Quantity reporting is a ledger contract, not merely a display
-          // preference. Once facts exist, keep the original reporting basis so
-          // historical quantities and labor claims never change units.
-          ...(stepHasFacts(existing) ? {
-            reportQuantityBasis: existing.reportQuantityBasis,
-            reportUnitLabel: existing.reportUnitLabel,
-          } : {}),
+          // Apply the complete validated contract. Keeping only the old basis while
+          // replacing units/time creates an impossible action + one-per-set step.
           // A later publication that does not change this step's standard must
           // preserve the durable deployment marker that originally introduced
           // or changed it. Pure ordering changes do not claim a time change.

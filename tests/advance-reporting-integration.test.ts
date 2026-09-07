@@ -332,8 +332,8 @@ test(
   },
 );
 
-test(
-  'a pending-standard completion auto-records labor immediately after the standard is repaired',
+for (const standardScenario of ['still_missing', 'newer_standard', 'different_action_contract'] as const) test(
+  `a pending-standard completion records its original labor while preserving current standards: ${standardScenario}`,
   { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
   async () => {
     const prefix = `ITAS-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -429,6 +429,13 @@ test(
       assert.equal(lockedPool.status, 'LOCKED');
       assert.equal(lockedPool.standardSource, 'pending_standard');
 
+      if (standardScenario === 'newer_standard') await prisma.workOrderProcessStep.update({
+        where: { id: step.id }, data: { timeBasis: 'per_unit', standardMillisecondsPerUnit: 9_000, standardSource: 'newer_published_standard' },
+      });
+      if (standardScenario === 'different_action_contract') await prisma.workOrderProcessStep.update({
+        where: { id: step.id }, data: { timeBasis: 'per_unit', reportQuantityBasis: 'action', reportUnitLabel: '个', unitsPerProduct: 3 },
+      });
+
       await resolveProcessLaborPoolStandard({
         poolId,
         expectedVersion: lockedPool.version,
@@ -452,6 +459,25 @@ test(
       assert.equal(resolvedPool.claims.length, 1);
       assert.equal(resolvedPool.claims[0].employeeId, employee.id);
       assert.equal(resolvedPool.claims[0].source, 'completion_auto');
+      const [currentStep, originalCompletion, audit] = await Promise.all([
+        prisma.workOrderProcessStep.findUniqueOrThrow({ where: { id: step.id } }),
+        prisma.processCompletion.findUniqueOrThrow({ where: { id: completionId } }),
+        prisma.operationLog.findFirstOrThrow({ where: { targetId: poolId, action: 'resolve_process_labor_standard' } }),
+      ]);
+      assert.equal(originalCompletion.standardMillisecondsPerUnit, 6_000);
+      assert.equal(originalCompletion.reportQuantityBasis, 'product');
+      assert.equal((audit.detail as { stepStandardUpdated: boolean }).stepStandardUpdated, standardScenario === 'still_missing');
+      if (standardScenario === 'still_missing') {
+        assert.equal(currentStep.standardMillisecondsPerUnit, 6_000);
+        assert.equal(currentStep.standardSource, 'manual_backfill');
+      } else if (standardScenario === 'newer_standard') {
+        assert.equal(currentStep.standardMillisecondsPerUnit, 9_000);
+        assert.equal(currentStep.standardSource, 'newer_published_standard');
+      } else {
+        assert.equal(currentStep.standardMillisecondsPerUnit, null);
+        assert.equal(currentStep.reportQuantityBasis, 'action');
+        assert.equal(currentStep.unitsPerProduct, 3);
+      }
     } finally {
       if (poolId) {
         await prisma.processLaborClaim.deleteMany({ where: { poolId } });

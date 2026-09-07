@@ -107,6 +107,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/workspace/approvals', label: '重大审批', icon: ClipboardCheck },
       { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
       { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
+      { href: '/workspace/reporting-recovery', label: '报工待处理', icon: ClipboardCheck },
       { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse, modeSwitchable: true },
       { href: '/workspace/procurement', label: '物料跟进', icon: PackageSearch },
       { href: '/workspace/product-times', label: '产品工序与工时', icon: Clock3 },

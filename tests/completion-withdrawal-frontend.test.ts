@@ -13,7 +13,7 @@ test('field reporting submits a dedicated withdrawal request and can cancel the 
   const component = source('components/FieldReportMobile.tsx');
   const submitStart = component.indexOf('async function submitCorrection');
   const submitEnd = component.indexOf('async function cancelCorrectionRequest', submitStart);
-  const cancelEnd = component.indexOf('async function submit()', submitEnd);
+  const cancelEnd = component.indexOf('async function submit(', submitEnd);
   assert.ok(submitStart >= 0 && submitEnd > submitStart && cancelEnd > submitEnd);
 
   const submit = component.slice(submitStart, submitEnd);
