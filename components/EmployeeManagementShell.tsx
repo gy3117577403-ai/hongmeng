@@ -35,6 +35,7 @@ import {
   MoreHorizontal,
   Network,
   PencilLine,
+  PanelRightOpen,
   Phone,
   Plus,
   QrCode,
@@ -291,7 +292,7 @@ const hrNavigation: HrNavItem[] = [
 
 const directoryDetailTabs: Array<{ id: DirectoryDetailTab; label: string; icon: LucideIcon }> = [
   { id: 'basic', label: '基本信息', icon: UserRound },
-  { id: 'appointment', label: '任职与权限', icon: BriefcaseBusiness },
+  { id: 'appointment', label: '任职信息', icon: BriefcaseBusiness },
   { id: 'attendance', label: '考勤记录', icon: CalendarClock },
   { id: 'collaboration', label: '协作职责', icon: Network },
 ];
@@ -733,6 +734,14 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   const [selectedRecruitmentCandidateId, setSelectedRecruitmentCandidateId] = useState('');
   const [selectedRecruitmentInterviewId, setSelectedRecruitmentInterviewId] = useState('');
   const [numberReorderOpen, setNumberReorderOpen] = useState(false);
+  const [rolePanelOpen, setRolePanelOpen] = useState(false);
+  const [organizationOpen, setOrganizationOpen] = useState(true);
+  const [directoryMenuOpen, setDirectoryMenuOpen] = useState(false);
+  const rolePanelRef = useRef<HTMLElement>(null);
+  const roleTriggerRef = useRef<HTMLButtonElement>(null);
+  const savingRef = useRef(false);
+  const [discardPrompt, setDiscardPrompt] = useState<{ resolve: (discard: boolean) => void } | null>(null);
+  const discardPromptRef = useRef<HTMLElement>(null);
   const [employmentDialog, setEmploymentDialog] = useState<EmploymentDialogMode>(null);
   const [employmentPreview, setEmploymentPreview] = useState<EmploymentActionResponse | null>(null);
   const [employmentPreviewLoading, setEmploymentPreviewLoading] = useState(false);
@@ -746,7 +755,6 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   });
   const workbenchRef = useRef<HTMLElement>(null);
   const employmentDialogRef = useRef<HTMLElement>(null);
-  const allowNextHistoryNavigationRef = useRef(false);
   useToastBridge(toast, setToast);
 
   useEffect(() => {
@@ -909,12 +917,12 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }, [loadHumanResources]);
 
   useEffect(() => {
-    if (creating || !selectedEmployee) return;
+    if (creating || directoryEditing || !selectedEmployee) return;
     const nextDraft = toDraft(selectedEmployee);
     setDraft(nextDraft);
     setBaseline(nextDraft);
     setFormError('');
-  }, [creating, selectedEmployee]);
+  }, [creating, directoryEditing, selectedEmployee]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -926,7 +934,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }, [dirty]);
 
   useEffect(() => {
-    function applyHistoryLocation(): void {
+    async function applyHistoryLocation(): Promise<void> {
       const params = new URLSearchParams(window.location.search);
       const requestedView = params.get('view') as HrView | null;
       const nextView = requestedView && availableNavigation.some(item => item.id === requestedView)
@@ -936,8 +944,9 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       const nextEditing = nextView === 'directory' && (mode === 'edit' || mode === 'create');
       const nextCreating = nextView === 'directory' && mode === 'create';
 
-      if (!allowNextHistoryNavigationRef.current && (directoryEditing || creating) && dirty) {
-        if (!window.confirm('当前员工档案有未保存修改，确认放弃并返回吗？')) {
+      if ((directoryEditing || creating) && dirty) {
+        const discard = await new Promise<boolean>(resolve => setDiscardPrompt({ resolve }));
+        if (!discard) {
           const restoreUrl = new URL(window.location.href);
           restoreUrl.searchParams.set('view', 'directory');
           if (selectedEmployeeId) restoreUrl.searchParams.set('employeeId', selectedEmployeeId);
@@ -948,7 +957,6 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
         }
       }
 
-      allowNextHistoryNavigationRef.current = false;
       if (dirty) setDraft(baseline);
       setView(nextView);
       setCreating(nextCreating);
@@ -994,6 +1002,55 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       previouslyFocused?.focus();
     };
   }, [employmentDialog, employmentSaving]);
+
+  useEffect(() => {
+    if (!rolePanelOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    rolePanelRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    function handleKey(event: KeyboardEvent): void {
+      if (event.key === 'Escape') { event.preventDefault(); setRolePanelOpen(false); }
+      if (event.key !== 'Tab' || !rolePanelRef.current) return;
+      const targets = Array.from(rolePanelRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], [tabindex="0"]'));
+      const first = targets[0];
+      const last = targets[targets.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('keydown', handleKey); previous?.focus(); };
+  }, [rolePanelOpen]);
+
+  useEffect(() => {
+    if (!directoryMenuOpen) return;
+    function dismiss(event: MouseEvent): void {
+      if (!(event.target as Element).closest('.hr-directory-more')) setDirectoryMenuOpen(false);
+    }
+    function escape(event: KeyboardEvent): void {
+      if (event.key === 'Escape') { setDirectoryMenuOpen(false); document.getElementById('hr-directory-more-trigger')?.focus(); }
+    }
+    document.addEventListener('click', dismiss);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('click', dismiss); document.removeEventListener('keydown', escape); };
+  }, [directoryMenuOpen]);
+
+  useEffect(() => {
+    if (!discardPrompt) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const buttons = discardPromptRef.current?.querySelectorAll<HTMLButtonElement>('button');
+    buttons?.[0]?.focus();
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === 'Escape') {
+        event.preventDefault(); discardPrompt?.resolve(false); setDiscardPrompt(null);
+      }
+      if (event.key === 'Tab' && buttons?.length) {
+        const first = buttons[0]; const last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); previous?.focus(); };
+  }, [discardPrompt]);
 
   const summary = useMemo(() => ({
     total: employees.length,
@@ -1385,11 +1442,13 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     }
   }
 
-  function changeView(nextView: HrView, directoryEmployeeId?: string): void {
+  async function changeView(nextView: HrView, directoryEmployeeId?: string): Promise<void> {
     if (!availableNavigation.some(item => item.id === nextView)) return;
     if (nextView === view && directoryEmployeeId === undefined) return;
-    if (view === 'directory' && nextView !== 'directory' && !confirmDiscard()) return;
+    if (view === 'directory' && nextView !== 'directory' && !await confirmDiscard()) return;
     if (view === 'directory' && nextView !== 'directory' && dirty) setDraft(baseline);
+    setRolePanelOpen(false);
+    setDirectoryMenuOpen(false);
     setView(nextView);
     if (nextView !== 'directory') {
       setCreating(false);
@@ -1412,12 +1471,13 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     window.history.pushState({ hrView: nextView }, '', url);
   }
 
-  function confirmDiscard(): boolean {
-    return !dirty || window.confirm('当前员工档案有未保存修改，确认放弃吗？');
+  async function confirmDiscard(): Promise<boolean> {
+    if (savingRef.current) return false;
+    return !dirty || await new Promise<boolean>(resolve => setDiscardPrompt({ resolve }));
   }
 
-  function chooseEmployee(employee: EmployeeDTO): void {
-    if (!confirmDiscard()) return;
+  async function chooseEmployee(employee: EmployeeDTO): Promise<void> {
+    if (!await confirmDiscard()) return;
     setCreating(false);
     setDirectoryEditing(false);
     setSelectedEmployeeId(employee.id);
@@ -1435,8 +1495,8 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     }
   }
 
-  function beginCreate(): void {
-    if (!confirmDiscard()) return;
+  async function beginCreate(): Promise<void> {
+    if (!await confirmDiscard()) return;
     const baseUrl = new URL(window.location.href);
     baseUrl.searchParams.set('view', 'directory');
     baseUrl.searchParams.delete('mode');
@@ -1469,17 +1529,12 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     requestAnimationFrame(() => document.getElementById('hr-employee-name')?.focus());
   }
 
-  function exitDirectoryEditor(): void {
-    if (!confirmDiscard()) return;
+  async function exitDirectoryEditor(): Promise<void> {
+    if (!await confirmDiscard()) return;
     setDraft(baseline);
     setFormError('');
     setCreating(false);
     setDirectoryEditing(false);
-    if (window.history.state?.hrModeEntry) {
-      allowNextHistoryNavigationRef.current = true;
-      window.history.back();
-      return;
-    }
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'directory');
     url.searchParams.delete('mode');
@@ -1487,21 +1542,44 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     window.history.replaceState({ hrView: 'directory' }, '', url);
   }
 
-  function returnToHrHome(): void {
-    changeView('overview');
+  async function refreshDirectory(): Promise<void> {
+    if (!await confirmDiscard()) return;
+    if (dirty) setDraft(baseline);
+    setDirectoryEditing(false);
+    setCreating(false);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('mode');
+    window.history.replaceState({ hrView: 'directory' }, '', url);
+    void loadHumanResources();
   }
 
-  function beginNumberReorder(): void {
-    if (!confirmDiscard()) return;
+  function focusMissingField(): void {
+    if (!selectedEmployee && !creating) return;
+    if (!editorUnlocked) beginDirectoryEdit();
+    const fields = [
+      ['name', 'basic'], ['hireDate', 'basic'], ['department', 'appointment'],
+      ['position', 'appointment'], ['team', 'appointment'],
+    ] as const;
+    const missing = fields.find(([key]) => !draft[key].trim()) || fields[0];
+    setDirectoryDetailTab(missing[1]);
+    requestAnimationFrame(() => document.getElementById('hr-employee-' + missing[0])?.focus());
+  }
+
+  async function beginNumberReorder(): Promise<void> {
+    if (!await confirmDiscard()) return;
     if (dirty) setDraft(baseline);
     setNumberReorderOpen(true);
   }
 
   async function saveEmployee(): Promise<void> {
+    if (savingRef.current || !editorUnlocked) return;
     if (!draft.name.trim()) {
+      setDirectoryDetailTab('basic');
+      requestAnimationFrame(() => document.getElementById('hr-employee-name')?.focus());
       setFormError('请填写员工姓名');
       return;
     }
+    savingRef.current = true;
     setSaving(true);
     setFormError('');
     try {
@@ -1524,19 +1602,22 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       setDraft(nextDraft);
       setBaseline(nextDraft);
       setToast(wasCreating ? `员工档案已创建，员工编号 ${savedEmployee.employeeNo}` : '员工档案已保存');
-      if (window.history.state?.hrModeEntry) {
-        allowNextHistoryNavigationRef.current = true;
-        window.history.back();
-      } else {
-        const url = new URL(window.location.href);
-        url.searchParams.set('view', 'directory');
-        url.searchParams.set('employeeId', savedEmployee.id);
-        url.searchParams.delete('mode');
-        window.history.replaceState({ hrView: 'directory' }, '', url);
-      }
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', 'directory');
+      url.searchParams.set('employeeId', savedEmployee.id);
+      url.searchParams.delete('mode');
+      window.history.replaceState({ hrView: 'directory' }, '', url);
+      requestAnimationFrame(() => document.getElementById('hr-edit-profile')?.focus());
     } catch (reason) {
-      setFormError(reason instanceof Error ? reason.message : '保存员工档案失败');
+      const message = reason instanceof Error ? reason.message : '保存员工档案失败';
+      setFormError(message);
+      const field = /手机/.test(message) ? ['mobile', 'basic'] : /入职/.test(message) ? ['hireDate', 'basic'] : /部门/.test(message) ? ['department', 'appointment'] : null;
+      if (field) {
+        setDirectoryDetailTab(field[1] as DirectoryDetailTab);
+        requestAnimationFrame(() => document.getElementById('hr-employee-' + field[0])?.focus());
+      }
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -1794,7 +1875,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
             </header>
             <div>
               {recentEmployees.map(employee => (
-                <button type="button" key={employee.id} onClick={() => { chooseEmployee(employee); changeView('directory', employee.id); }}>
+                <button type="button" key={employee.id} onClick={async () => { await chooseEmployee(employee); await changeView('directory', employee.id); }}>
                   <span className="hr-person-avatar">{employee.name.slice(0, 1)}</span>
                   <span><strong>{employee.name}</strong><small>{employee.department || '部门待维护'} · {employee.position || '岗位待维护'}</small></span>
                   <span><em className={employee.isActive ? 'ok' : ''}>{employee.isActive ? '在岗' : '离职'}</em><small>{formatDateTime(employee.updatedAt)}</small></span>
@@ -1919,17 +2000,10 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       && departmentName(employee) === profileDepartment
       && (!draft.team.trim() || (employee.team?.trim() || '班组待维护') === profileTeam)
     ));
-    const roleComposition = [...profileTeamMembers.reduce((grouped, employee) => {
-      const role = employee.position?.trim() || '岗位待维护';
-      grouped.set(role, (grouped.get(role) || 0) + 1);
-      return grouped;
-    }, new Map<string, number>()).entries()]
-      .map(([role, count]) => ({ role, count }))
-      .sort((left, right) => right.count - left.count)
-      .slice(0, 4);
+
 
     return (
-      <div className="hr-view hr-directory-view">
+      <div className={`hr-view hr-directory-view${editorUnlocked ? ' is-editing' : ''}`}>
         <section className="hr-directory-commandbar" aria-label="员工档案概览与筛选">
           <div className="hr-directory-summary">
             <article>
@@ -1954,7 +2028,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
             </article>
           </div>
           <div className="hr-directory-tools">
-            <label><Search size={17} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、姓名、手机号、部门、岗位或班组" /></label>
+            <label><Search size={17} /><input value={keyword} onChange={event => setKeyword(event.target.value)} aria-label="搜索员工" placeholder="搜索姓名、编号、部门或手机号" /></label>
             <select aria-label="员工状态" value={filter} onChange={event => setFilter(event.target.value as EmployeeFilter)}>
               <option value="all">全部员工</option>
               <option value="active">在岗员工</option>
@@ -1973,19 +2047,23 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                 {selectedTeam || selectedDepartment} ×
               </button>
             )}
-            <button type="button" className="hr-icon-button" title="刷新员工档案" onClick={() => void loadHumanResources()}><RefreshCw size={17} /></button>
-            <button type="button" className="hr-secondary-button hr-reorder-trigger" onClick={beginNumberReorder}><ListOrdered size={17} />编号重排</button>
+            <button type="button" className="hr-icon-button" title="刷新员工档案" aria-label="刷新员工档案" disabled={saving || loading} onClick={refreshDirectory}><RefreshCw size={17} /></button>
+            {canManageAccounts && <a className="hr-secondary-button hr-directory-accounts" href="/workspace/employees/accounts"><UserRoundCog size={17} />账号管理</a>}
+            <div className="hr-directory-more">
+              <button type="button" id="hr-directory-more-trigger" className="hr-icon-button" aria-label="更多操作" aria-expanded={directoryMenuOpen} aria-controls="hr-directory-more-actions" disabled={saving} onClick={() => setDirectoryMenuOpen(current => !current)}><MoreHorizontal size={18} /></button>
+              {directoryMenuOpen && <div className="hr-directory-more-actions" id="hr-directory-more-actions"><button type="button" onClick={() => { setDirectoryMenuOpen(false); beginNumberReorder(); }}><ListOrdered size={17} />员工编号重排</button></div>}
+            </div>
             <button type="button" className="hr-primary-button" onClick={beginCreate}><Plus size={17} />新增员工</button>
           </div>
         </section>
 
         <div className="hr-directory-grid">
-          <aside className="hr-directory-organization">
+          <aside className={`hr-directory-organization${organizationOpen ? '' : ' is-collapsed'}`}>
             <header>
               <div><span className="hr-eyebrow">组织导航</span><h2>组织与人员</h2></div>
-              <span title="组织筛选会同步更新下方人员列表"><FolderTree /></span>
+              <button type="button" className="hr-icon-button" aria-label={organizationOpen ? '收起组织筛选' : '展开组织筛选'} aria-expanded={organizationOpen} aria-controls="hr-organization-tree" onClick={() => setOrganizationOpen(current => !current)}><FolderTree /></button>
             </header>
-            <div className="hr-organization-tree hm-scroll-region" tabIndex={0}>
+            <div id="hr-organization-tree" className="hr-organization-tree hm-scroll-region" tabIndex={0} hidden={!organizationOpen}>
               <button
                 type="button"
                 className={!selectedDepartment ? 'active root' : 'root'}
@@ -2008,11 +2086,11 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                       setSelectedTeam('');
                     }}
                   >
-                    <ChevronDown />
+                    {selectedDepartment === department.name ? <ChevronDown /> : <ChevronRight />}
                     <span>{department.name}</span>
                     <em>{department.total}</em>
                   </button>
-                  {(selectedDepartment === department.name || !selectedDepartment) && department.teams.map(team => (
+                  {(selectedDepartment === department.name) && department.teams.map(team => (
                     <button
                       type="button"
                       className={`team ${selectedDepartment === department.name && selectedTeam === team.name ? 'active' : ''}`}
@@ -2041,6 +2119,8 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                     type="button"
                     key={employee.id}
                     data-employee-id={employee.id}
+                    aria-pressed={selectedEmployeeId === employee.id && !creating}
+                    disabled={saving}
                     onClick={() => chooseEmployee(employee)}
                   >
                     <span className="hr-person-avatar">{employee.name.slice(0, 1)}</span>
@@ -2049,7 +2129,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                       <small>{employee.employeeNo} · {employee.position || '岗位待维护'}</small>
                     </span>
                     <i className={employee.isActive ? 'ok' : ''} title={statusLabel(employee)} />
-                    <span className="hr-employee-more" aria-hidden="true"><MoreHorizontal /></span>
+                    <span className="hr-employee-employment">{employee.isActive ? '在职' : '离职'}</span>
                   </button>
                 ))}
                 {!loading && !filteredEmployees.length && (
@@ -2064,7 +2144,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
             </div>
           </aside>
 
-          <section className="hr-employee-profile">
+          <section className="hr-employee-profile" aria-label="员工档案" aria-busy={saving}>
             <header className="hr-profile-identity">
               <span className="hr-profile-avatar">{profileName.slice(0, 1)}</span>
               <div className="hr-profile-identity-copy">
@@ -2072,7 +2152,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                   <h1>{profileName}</h1>
                   <strong>{profileEmployeeNo || '编号待生成'}</strong>
                 </div>
-                <p>{profilePosition}</p>
+                <p>{profilePosition}<button type="button" className="hr-completeness-hint" onClick={focusMissingField} disabled={saving || (!selectedEmployee && !creating)}><BadgeCheck size={14} />{profileMissingCount ? '待补 ' + profileMissingCount + ' 项' : '档案完整'}<span>{profileCompleteness}%</span></button></p>
                 <span>
                   <em className={draft.isActive ? 'ok' : ''}>{draft.isActive ? '在职' : '已离职'}</em>
                   <em className={draft.attendanceEnabled ? 'ok' : ''}>{draft.attendanceEnabled ? '考勤启用' : '未启用考勤'}</em>
@@ -2080,15 +2160,15 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                 <small><Building2 />{profileDepartment} · {profileTeam} · {draft.hireDate ? `入职 ${formatDate(draft.hireDate)}` : '入职日期待维护'}</small>
               </div>
               <div className="hr-profile-actions">
-                <button
+                {!editorUnlocked && <button
                   type="button"
-                  className="hr-primary-button"
+                  id="hr-edit-profile" className="hr-primary-button"
                   disabled={creating || directoryEditing || !selectedEmployee}
                   onClick={beginDirectoryEdit}
                 >
-                  <PencilLine />{directoryEditing ? '编辑中' : '编辑档案'}
-                </button>
-                {profileEmployee && <a href={`/workspace/attendance?employeeId=${encodeURIComponent(profileEmployee.id)}`}><CalendarClock />考勤记录</a>}
+                  <PencilLine />编辑档案
+                </button>}
+                <button type="button" ref={roleTriggerRef} className="hr-secondary-button" aria-expanded={rolePanelOpen} aria-controls="hr-role-panel" onClick={() => setRolePanelOpen(true)}><PanelRightOpen />岗位与账号</button>
                 {profileEmployee && (
                   <button
                     type="button"
@@ -2102,12 +2182,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               </div>
             </header>
 
-            <button type="button" className="hr-profile-completeness" onClick={() => setDirectoryDetailTab('basic')}>
-              <BadgeCheck />
-              <span><strong>档案完整度 {profileCompleteness}%</strong><small>{profileMissingCount ? `还有 ${profileMissingCount} 项基础信息待补充` : '员工基础信息已完整'}</small></span>
-              <i><b style={{ width: `${profileCompleteness}%` }} /></i>
-              <ChevronRight />
-            </button>
+
 
             <nav className="hr-profile-tabs" aria-label="员工档案详情">
               {directoryDetailTabs.map(tab => {
@@ -2120,79 +2195,55 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               })}
             </nav>
 
-            <div className="hr-profile-scroll hm-scroll-region">
+            <div className="hr-profile-scroll hm-scroll-region" key={`${selectedEmployeeId}-${creating}`} tabIndex={0} aria-label="档案内容">
               {directoryDetailTab === 'basic' && (
                 <section className="hr-profile-section">
                   <header><div><span className="hr-eyebrow">人员档案</span><h2>基本信息</h2></div><IdCard /></header>
-                  <div className="hr-profile-form-grid">
+                  {editorUnlocked ? <div className="hr-profile-form-grid hr-basic-editor">
                     <fieldset>
                       <legend><UserRound />身份信息</legend>
-                      <label className="hr-auto-number-control">
-                        <span>员工编号</span>
-                        <input
-                          value={creating ? (nextEmployeeNoLoading ? '正在计算…' : nextEmployeeNo || '保存时自动分配') : draft.employeeNo}
-                          readOnly
-                          aria-readonly="true"
-                        />
-                        <small>{creating ? '创建档案时正式分配，离职后不回收' : '系统唯一编号，普通档案编辑中不可修改'}</small>
-                      </label>
-                      <label><span>员工姓名 *</span><input id="hr-employee-name" value={draft.name} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="填写真实姓名" /></label>
-                      <label><span>入职时间</span><input type="date" value={draft.hireDate} disabled={!editorUnlocked} onChange={event => setDraft(current => ({ ...current, hireDate: event.target.value }))} /></label>
+                      <label className="hr-auto-number-control"><span>员工编号</span><input aria-label="员工编号" value={creating ? (nextEmployeeNoLoading ? '正在计算…' : nextEmployeeNo || '保存时自动分配') : draft.employeeNo} readOnly /><small>系统自动分配，离职后不回收</small></label>
+                      <label><span>员工姓名 *</span><input id="hr-employee-name" value={draft.name} disabled={saving} aria-invalid={!!formError && !draft.name.trim()} maxLength={80} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="填写真实姓名" /></label>
+                      <label><span>入职时间</span><input id="hr-employee-hireDate" type="date" value={draft.hireDate} disabled={saving} onChange={event => setDraft(current => ({ ...current, hireDate: event.target.value }))} /></label>
                     </fieldset>
                     <fieldset>
-                      <legend><Building2 />组织归属</legend>
-                      <label><span>部门</span><input value={draft.department} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, department: event.target.value }))} placeholder="例如 生产部" /></label>
-                      <label><span>班组</span><input value={draft.team} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, team: event.target.value }))} placeholder="例如 前端一组" /></label>
-                      <label>
-                        <span>考勤分组</span>
-                        <select value={draft.attendanceGroup} disabled={!editorUnlocked} onChange={event => setDraft(current => ({ ...current, attendanceGroup: event.target.value as AttendanceGroup }))}>
-                          {ATTENDANCE_GROUP_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
-                        </select>
-                        <small>仅用于考勤登记分组与批量操作，不改变报工或达成率口径</small>
-                      </label>
+                      <legend><Phone />联系信息</legend>
+                      <label className="hr-contact-control"><span>手机号（选填）</span><input id="hr-employee-mobile" type="tel" inputMode="tel" autoComplete="tel" value={draft.mobile} disabled={saving} maxLength={24} onChange={event => setDraft(current => ({ ...current, mobile: event.target.value }))} placeholder="用于业务联系" /><small>仅用于业务联系，不在人员列表公开完整号码</small></label>
+                      <div className="hr-profile-readonly"><span>系统内通知</span><strong>{draft.isActive && draft.notificationEnabled ? '已启用' : '已暂停'}</strong></div>
+                      <button type="button" className="hr-text-button" onClick={() => setDirectoryDetailTab('appointment')}>继续填写任职信息<ArrowRight size={16} /></button>
                     </fieldset>
-                    <fieldset>
-                      <legend><BriefcaseBusiness />岗位信息</legend>
-                      <label><span>岗位</span><input value={draft.position} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, position: event.target.value }))} placeholder="例如 压接操作员" /></label>
-                      <div className="hr-profile-readonly">
-                        <span>生产报工</span>
-                        <strong>{productionReportingEligible ? '可实名扫码报工' : '不具备生产报工资格'}</strong>
-                        <small>{productionReportingEligible ? '账号开通后使用员工编号登录' : `${profileDepartment}仍按部门权限进入后台工作台`}</small>
-                      </div>
-                      <label className="hr-contact-control">
-                        <span>手机号（选填）</span>
-                        <input
-                          type="tel"
-                          inputMode="tel"
-                          autoComplete="tel"
-                          value={draft.mobile}
-                          disabled={!editorUnlocked}
-                          maxLength={24}
-                          onChange={event => setDraft(current => ({ ...current, mobile: event.target.value }))}
-                          placeholder="用于业务联系（选填）"
-                        />
-                        <small><Phone />仅用于业务通知，不在人员列表公开完整号码</small>
-                      </label>
-                      <div className="hr-contact-status">
-                        <span className={draft.isActive && draft.notificationEnabled ? 'ready' : ''}><Send />系统内通知 {draft.isActive && draft.notificationEnabled ? '已启用' : '已暂停'}</span>
-                        <span className={profileEmployee?.wecomUserId ? 'bound' : ''}><MessageSquareText />企业微信 {profileEmployee?.wecomUserId ? '已绑定' : '未接入（未来）'}</span>
-                      </div>
-                    </fieldset>
-                  </div>
-                  <div className="hr-editor-note"><BadgeCheck /><div><strong>人员主档是账号与权限的唯一来源</strong><span>部门、兼岗和代班变更后同步权限；手机号仅用于业务联系与未来通知。</span></div></div>
-                  {formError && <div className="hr-editor-error" role="alert"><AlertTriangle size={16} />{formError}</div>}
+                  </div> : <>
+                    <dl className="hr-profile-facts">
+                      <div><dt>员工编号</dt><dd>{draft.employeeNo || '—'}<small>唯一员工编号</small></dd></div>
+                      <div><dt>员工姓名</dt><dd>{draft.name || '请选择员工'}</dd></div>
+                      <div><dt>入职时间</dt><dd>{draft.hireDate ? formatDate(draft.hireDate) : '待补充'}{!draft.hireDate && selectedEmployee && <button type="button" onClick={focusMissingField}>补充信息<ArrowRight size={14} /></button>}</dd></div>
+                      <div><dt>手机号</dt><dd>{draft.mobile || '未填写'}<small>仅用于业务联系</small></dd></div>
+                      <div><dt>系统内通知</dt><dd>{draft.isActive && draft.notificationEnabled ? '已启用' : '已暂停'}</dd></div>
+                      {profileEmployee?.wecomUserId && <div><dt>企业微信</dt><dd>已绑定</dd></div>}
+                    </dl>
+                    <section className="hr-profile-appointment-card"><header><div><span className="hr-eyebrow">当前任职</span><h3>{profileDepartment} · {profilePosition}</h3></div><button type="button" className="hr-text-button" onClick={() => setDirectoryDetailTab('appointment')}>查看任职信息<ArrowRight size={16} /></button></header><p>{profileTeam} · {draft.attendanceEnabled ? '考勤已启用' : '考勤未启用'}</p></section>
+                  </>}
+                  <details className="hr-profile-policy"><summary><ShieldCheck size={16} />档案与账号联动说明</summary><p>部门、兼岗和代班变更后同步现有权限。离职员工的历史考勤继续保留。</p></details>
                 </section>
               )}
 
               {directoryDetailTab === 'appointment' && (
                 <section className="hr-profile-section">
-                  <header><div><span className="hr-eyebrow">组织、账号与权限</span><h2>任职与权限</h2></div><BriefcaseBusiness /></header>
-                  <div className="hr-appointment-overview">
+                  <header><div><span className="hr-eyebrow">组织、账号与权限</span><h2>任职信息</h2></div><BriefcaseBusiness /></header>
+                  {editorUnlocked ? <div className="hr-profile-form-grid hr-appointment-editor">
+                    <fieldset><legend><Building2 />组织与岗位</legend>
+                      <label><span>部门</span><input id="hr-employee-department" value={draft.department} disabled={saving} maxLength={80} onChange={event => setDraft(current => ({ ...current, department: event.target.value }))} placeholder="例如 生产部" /></label>
+                      <label><span>岗位</span><input id="hr-employee-position" value={draft.position} disabled={saving} maxLength={80} onChange={event => setDraft(current => ({ ...current, position: event.target.value }))} placeholder="例如 压接操作员" /></label>
+                    </fieldset><fieldset><legend><UsersRound />班组与考勤分组</legend>
+                      <label><span>班组</span><input id="hr-employee-team" value={draft.team} disabled={saving} maxLength={80} onChange={event => setDraft(current => ({ ...current, team: event.target.value }))} placeholder="例如 前端一组" /></label>
+                      <label><span>考勤分组</span><select value={draft.attendanceGroup} disabled={saving} onChange={event => setDraft(current => ({ ...current, attendanceGroup: event.target.value as AttendanceGroup }))}>{ATTENDANCE_GROUP_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}</select><small>用于考勤登记分组与批量操作</small></label>
+                    </fieldset>
+                  </div> : <div className="hr-appointment-overview">
                     <article><small>所属部门</small><strong>{profileDepartment}</strong><span>组织归属</span></article>
                     <article><small>当前岗位</small><strong>{profilePosition}</strong><span>岗位配置</span></article>
                     <article><small>所在班组</small><strong>{profileTeam}</strong><span>{profileTeamMembers.length} 名在岗成员</span></article>
                     <article><small>入职日期</small><strong>{draft.hireDate ? formatDate(draft.hireDate) : '待维护'}</strong><span>{profileEmployee ? `档案建立 ${formatDate(profileEmployee.createdAt)}` : '保存后建立档案'}</span></article>
-                  </div>
+                  </div>}
                   {profileEmployee ? (
                     <section className="hr-account-permission-card">
                       <header>
@@ -2229,9 +2280,9 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                   ) : (
                     <div className="hr-account-permission-empty"><ShieldCheck /><span><strong>创建员工后配置账号与权限</strong><small>账号由管理员开通，部门权限将从人员主档自动继承。</small></span></div>
                   )}
-                  <div className="hr-editor-switches">
+                  {editorUnlocked ? <div className="hr-editor-switches">
                     <label>
-                      <input type="checkbox" disabled={!editorUnlocked || !draft.isActive} checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
+                      <input type="checkbox" disabled={saving || !editorUnlocked || !draft.isActive} checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
                       <span><strong>启用员工考勤</strong><small>所有部门均可登记出勤；生产部进入达成率，其他部门仅统计出勤。</small></span>
                     </label>
                     <div className="hr-attainment-policy">
@@ -2239,7 +2290,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                       <label>
                         <span>统计分账</span>
                         <select
-                          disabled={!editorUnlocked || !draft.isActive || !draft.attendanceEnabled}
+                          disabled={saving || !editorUnlocked || !draft.isActive || !draft.attendanceEnabled}
                           value={draft.attainmentStream}
                           onChange={event => {
                             const attainmentStream = event.target.value as AttainmentStream;
@@ -2266,7 +2317,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                             min="0"
                             max="100"
                             step="0.1"
-                            disabled={!editorUnlocked || !draft.isActive || !draft.attendanceEnabled || draft.attainmentStream === 'excluded'}
+                            disabled={saving || !editorUnlocked || !draft.isActive || !draft.attendanceEnabled || draft.attainmentStream === 'excluded'}
                             value={draft.attainmentFactorBasisPoints / 100}
                             onChange={event => {
                               const factor = Math.max(0, Math.min(10000, Math.round(Number(event.target.value || 0) * 100)));
@@ -2292,6 +2343,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                       </div>
                     )}
                   </div>
+                  : <dl className="hr-profile-facts hr-appointment-facts"><div><dt>考勤状态</dt><dd>{draft.attendanceEnabled ? '已启用' : '未启用'}</dd></div><div><dt>考勤分组</dt><dd>{ATTENDANCE_GROUP_OPTIONS.find(option => option.value === draft.attendanceGroup)?.label || '未设置'}</dd></div><div><dt>达成率分账</dt><dd>{draft.attainmentStream === 'batch' ? '批量生产' : draft.attainmentStream === 'sample' ? '样品组' : '不计入'}</dd></div><div><dt>默认计入比例</dt><dd>{draft.attainmentFactorBasisPoints / 100}%</dd></div></dl>}
                   <div className={`hr-editor-note ${!draft.isActive && !productionDepartment ? 'warning' : ''}`.trim()}><ShieldCheck /><div><strong>生产报工资格由人事档案自动判断</strong><span>{productionReportingDescription}</span></div></div>
                 </section>
               )}
@@ -2345,14 +2397,15 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               )}
             </div>
 
-            <footer className="hr-profile-footer">
-              <span>{dirty ? '有未保存修改' : creating ? '填写信息后创建档案' : directoryEditing ? '编辑模式' : '查看模式 · 点击“编辑档案”后修改'}</span>
-              {editorUnlocked ? <div className="hr-profile-footer-actions"><button type="button" className="hr-secondary-button" disabled={saving} onClick={exitDirectoryEditor}><X size={16} />取消</button><button type="button" className="hr-primary-button" disabled={saving || (!creating && !selectedEmployee)} onClick={() => void saveEmployee()}>{saving ? <Loader2 className="spin" size={17} /> : <Save size={17} />}{saving ? '保存中…' : creating ? '创建员工' : '保存员工档案'}</button></div> : <button type="button" className="hr-primary-button" disabled={!selectedEmployee} onClick={beginDirectoryEdit}><PencilLine size={17} />编辑档案</button>}
-            </footer>
+            {editorUnlocked && <footer className="hr-profile-footer">
+              <div className="hr-profile-save-status" aria-live="polite">{formError ? <span className="hr-save-error" role="alert"><AlertTriangle size={16} />{formError}</span> : <span>{saving ? '正在保存，请稍候' : dirty ? '有未保存修改' : creating ? '填写信息后创建档案' : '编辑中'}</span>}</div>
+              <div className="hr-profile-footer-actions"><button type="button" className="hr-secondary-button" disabled={saving} onClick={exitDirectoryEditor}>取消</button><button type="button" className="hr-primary-button" disabled={saving || (!creating && !selectedEmployee)} onClick={() => void saveEmployee()}>{saving ? <Loader2 className="spin" size={17} /> : <Save size={17} />}{saving ? '保存中…' : creating ? '创建员工' : '保存员工档案'}</button></div>
+            </footer>}
           </section>
 
-          <aside className="hr-role-profile">
-            <header><button type="button" title="返回人事首页" onClick={returnToHrHome}><ChevronRight /></button><div><span className="hr-eyebrow">人员主档联动</span><h2>岗位、账号与权限</h2></div></header>
+          {rolePanelOpen && <div className="hr-role-panel-backdrop" onClick={event => { if (event.target === event.currentTarget) setRolePanelOpen(false); }}>
+          <aside ref={rolePanelRef} id="hr-role-panel" className="hr-role-profile" role="dialog" aria-modal="true" aria-labelledby="hr-role-panel-title">
+            <header><div><span className="hr-eyebrow">{profileName} · {profileEmployeeNo}</span><h2 id="hr-role-panel-title">岗位与账号</h2></div><button type="button" className="hr-icon-button" aria-label="关闭岗位与账号" onClick={() => setRolePanelOpen(false)}><X /></button></header>
             <section>
               <h3>岗位归属</h3>
               <div className="hr-role-path">
@@ -2393,22 +2446,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                 <span className={productionReportingEligible ? 'ok' : ''}><UserRoundCheck />{productionReportingEligible ? '具备生产报工资格' : '不具备生产报工资格'}</span>
               </div>
             </section>
-            <section className="hr-role-team">
-              <h3>团队构成 <small>共 {profileTeamMembers.length} 人</small></h3>
-              {roleComposition.length ? (
-                <div>
-                  {roleComposition.map((item, index) => (
-                    <span key={item.role}>
-                      <i style={{ '--role-tone': `${index * 64 + 214}` } as React.CSSProperties} />
-                      <strong>{item.role}</strong>
-                      <em>{item.count} 人</em>
-                      <small>{profileTeamMembers.length ? Math.round((item.count / profileTeamMembers.length) * 100) : 0}%</small>
-                    </span>
-                  ))}
-                </div>
-              ) : <p className="hr-role-empty">当前组织归属下暂无可统计人员。</p>}
-            </section>
-          </aside>
+          </aside></div>}
         </div>
       </div>
     );
@@ -3048,7 +3086,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   return (<>
-    <main ref={workbenchRef} className="hr-workbench hm-workbench-root">
+    <main ref={workbenchRef} className="hr-workbench hr-workbench-v5 hm-workbench-root">
       <div className="hr-shell">
         <nav className="hr-module-tabs" aria-label="人事管理功能导航">
           <div className="hr-module-tab-list">
@@ -3075,10 +3113,10 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               {availableNavigation.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}
             </select>
           </label>
+          {canManageAccounts && view !== 'directory' && <a className="hr-module-accounts hr-secondary-button" href="/workspace/employees/accounts"><UserRoundCog size={17} /><span>账号管理</span></a>}
         </nav>
 
         <section className="hr-content">
-          {canManageAccounts && <div className="hr-account-management-entry"><a href="/workspace/employees/accounts"><UserRoundCog size={17} />员工账号管理与密码重置<ChevronRight size={16} /></a></div>}
           {error && <div className="hr-page-error" role="alert"><AlertTriangle size={17} />{error}<button type="button" onClick={() => void loadHumanResources()}>重新加载</button></div>}
           {auxiliaryWarning && !error && <div className="hr-auxiliary-warning" title={auxiliaryWarning}><AlertTriangle size={14} /><span>部分辅助数据暂不可用，员工档案仍可正常使用</span></div>}
           {renderActiveView()}
@@ -3087,6 +3125,13 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
 
       {loading && <div className="hr-loading"><Loader2 className="spin" size={17} />正在汇总人事数据</div>}
     </main>
+    {discardPrompt && <div className="hr-discard-backdrop">
+      <section ref={discardPromptRef} className="hr-discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="hr-discard-title" aria-describedby="hr-discard-description">
+        <span><PencilLine size={24} /></span><h2 id="hr-discard-title">保留当前修改？</h2>
+        <p id="hr-discard-description">这份员工档案有未保存的修改。离开后，本次填写的内容不会保存。</p>
+        <footer><button type="button" onClick={() => { discardPrompt.resolve(false); setDiscardPrompt(null); }}>继续编辑</button><button type="button" onClick={() => { discardPrompt.resolve(true); setDiscardPrompt(null); }}>放弃修改</button></footer>
+      </section>
+    </div>}
     {employmentDialog && selectedEmployee && (
       <div className="hr-employment-dialog-backdrop" role="presentation">
         <section ref={employmentDialogRef} className={`hr-employment-dialog ${employmentDialog}`} role="dialog" aria-modal="true" aria-labelledby="hr-employment-dialog-title">

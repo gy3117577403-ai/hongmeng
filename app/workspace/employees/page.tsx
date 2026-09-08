@@ -2,6 +2,7 @@ import EmployeeManagementShell from '@/components/EmployeeManagementShell';
 import { requirePageAccess } from '@/lib/page-access';
 import './employee-workbench.css';
 import '../responsibilities/responsibility-collaboration.css';
+import './employee-directory.css';
 
 export const dynamic = 'force-dynamic';
 
