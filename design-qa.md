@@ -39,4 +39,10 @@ Verified login, profile editing, two-tab updates, persistent data after save, au
 
 No physical tablet or full mobile keyboard test was performed. Existing business-specific workflows on other HR pages were not exhaustively re-run in the browser; CI and the existing integration suite cover their own regression contracts.
 
+## Published artifact confirmation
+
+The exact `v1.34.139` image from source `2e94aeaf5dfdf2e92b62454cf78544e9256ea4b5` was anonymously pulled by digest and started with a new isolated PostgreSQL database and MinIO. The release browser reproduced the accepted layout and successfully saved/reloaded/restored a synthetic employee. Final evidence: `artifacts/hr-directory-v134139/release-tablet-final.png`, `release-1366x768-edit.png`, `release-container-verification.json` and `release-runtime-smoke.json` (27 HTTP checks, 141 applied existing migrations). The final release tab reported no browser errors.
+
+Reduced-motion emulation disabled the drawer animation, and Tab/Shift+Tab remained within the open panel in the source browser pass. Emulation overrides were cleared after validation.
+
 final result: passed
