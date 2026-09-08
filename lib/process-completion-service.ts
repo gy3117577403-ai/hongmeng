@@ -18,6 +18,7 @@ import {
   resolveCompletionQuantities,
 } from '@/lib/process-completion-domain';
 import { prisma } from '@/lib/prisma';
+import { reconcileQuantityStepStatuses } from '@/lib/process-step-lifecycle';
 import { reconcileBypassedRouteOperations } from '@/lib/process-route-material-reconciliation';
 import { materialSequenceGroup, projectMaterialSequence } from '@/lib/process-material-sequence';
 import {
@@ -30,6 +31,7 @@ import {
 import { normalizeProcessStageGroup, processStageForGroup } from '@/lib/process-routing';
 import {
   compatibleStageForQuantities,
+  stageForLifecycleState,
   resolveEffectiveFrontendTransferredQty,
 } from '@/lib/production-stage-flow';
 import {
@@ -1626,7 +1628,8 @@ export async function loadProcessCompletionContext(
         status: selected.supplementObligation.status,
         version: selected.supplementObligation.version,
       } : null,
-      status: selected.status,
+      status: selected.executionMode === 'NORMAL' && selectedTotals.reportedQty > selectedTotals.coveredReportedQty
+        ? 'current' : selected.status,
       startedAt: selected.startedAt?.toISOString() || null,
       reportQuantityBasis: selectedReportQuantityBasis,
       reportUnitLabel: selectedReportQuantityBasis === 'action'
@@ -1685,7 +1688,8 @@ export async function loadProcessCompletionContext(
           status: supplemental.status,
           version: supplemental.version,
         } : null,
-        status: step.status,
+        status: step.executionMode === 'NORMAL' && totals.reportedQty > totals.coveredReportedQty
+          ? 'current' : step.status,
         unitLabel: step.unitLabel,
         reportQuantityBasis: stepReportQuantityBasis,
         reportUnitLabel: stepReportQuantityBasis === 'action'
@@ -2054,74 +2058,6 @@ async function createDefectBranch(
   };
 }
 
-async function reconcileQuantityStepStatuses(
-  tx: Prisma.TransactionClient,
-  steps: QuantityStep[],
-  input: {
-    targetQty: number;
-    userId: string | null;
-    now: Date;
-  },
-): Promise<boolean> {
-  const pendingReports = await tx.processCompletion.findMany({
-    where: { stepId: { in: steps.map(step => step.id) }, voidedAt: null, coverageStatus: { in: ['PENDING', 'PARTIAL'] } },
-    select: { stepId: true }, distinct: ['stepId'],
-  });
-  const pendingStepIds = new Set(pendingReports.map(report => report.stepId));
-  const ordinarySteps = steps.filter(step => step.executionMode === 'NORMAL');
-  const groups = [...new Set(ordinarySteps.map(step => step.sequenceGroup))].sort((a, b) => a - b);
-  let priorGroupClosed = true;
-  for (const group of groups) {
-    const groupSteps = ordinarySteps.filter(step => step.sequenceGroup === group);
-    const groupClosed: boolean = priorGroupClosed && groupSteps.every(step => (
-      step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
-        ? step.status === 'completed' || step.status === 'skipped'
-        : step.processedQty >= step.inputQty && !pendingStepIds.has(step.id)
-    ));
-    for (const step of groupSteps) {
-      // A late-inserted supplemental step is closed by its independent
-      // obligation ledger. Its input/processed quantities intentionally stay
-      // outside the ordinary material-flow ledger, so zero input must never
-      // cause this reconciler to auto-skip it.
-      if (step.executionMode === 'SUPPLEMENTAL_OBLIGATION') continue;
-      let nextStatus = step.status;
-      if (pendingStepIds.has(step.id)) nextStatus = 'current';
-      else if (groupClosed) nextStatus = step.inputQty > 0 ? 'completed' : 'skipped';
-      else if (step.inputQty > step.processedQty) nextStatus = 'current';
-      else if (step.status !== 'completed' && step.status !== 'skipped') nextStatus = 'current';
-      if (nextStatus !== step.status || (groupClosed && !step.completedAt)) {
-        await tx.workOrderProcessStep.update({
-          where: { id: step.id },
-          data: {
-            status: nextStatus,
-            ...(nextStatus === 'completed' || nextStatus === 'skipped'
-              ? {
-                  completedAt: step.completedAt || input.now,
-                  completedById: step.completedById || input.userId,
-                }
-              : {
-                  startedAt: step.startedAt || input.now,
-                  completedAt: null,
-                  completedById: null,
-                }),
-          },
-        });
-        step.status = nextStatus;
-        if (nextStatus === 'completed' || nextStatus === 'skipped') {
-          step.completedAt = step.completedAt || input.now;
-          step.completedById = step.completedById || input.userId;
-        } else {
-          step.startedAt = step.startedAt || input.now;
-          step.completedAt = null;
-          step.completedById = null;
-        }
-      }
-    }
-    priorGroupClosed = groupClosed;
-  }
-  return steps.every(step => step.status === 'completed' || step.status === 'skipped');
-}
-
 /** Reconcile lifecycle and replay available normal-report coverage. Supplemental
  * reports themselves never move material or create an ordinary completion. */
 export async function reconcileSupplementRouteCompletion(
@@ -2191,14 +2127,14 @@ export async function reconcileSupplementRouteCompletion(
     );
   }
 
-  if (coverage) {
+  {
     await updateCompletionWorkOrders(tx, {
       route, targetQty: targetQuantity(route.workOrder),
-      finishedGoodDelta: coverage.finishedGoodDelta, frontendTransferDelta: coverage.frontendTransferDelta,
+      finishedGoodDelta: coverage?.finishedGoodDelta || 0, frontendTransferDelta: coverage?.frontendTransferDelta || 0,
       routeCompleted, actor: input.actor, now: input.now,
       propagateFinishedToAncestors: route.workOrder.branchType !== 'REWORK',
     });
-    for (const returned of coverage.reworkReturns) {
+    for (const returned of coverage?.reworkReturns || []) {
       if (!input.userId) throw new ProcessCompletionServiceError('返工回流需人工核对', 409, 'PROCESS_COVERAGE_RECOVERY_REWORK');
       await returnReworkOutputToParent(tx, { ...returned, sourceRoute: route, userId: input.userId, actor: input.actor, now: input.now });
     }
@@ -2680,21 +2616,6 @@ async function loadDirectRouteReleaseCap(
     );
   }
   return directRouteCap;
-}
-
-function stageForLifecycleState(input: {
-  targetQty: number;
-  frontendTransferredQty: number;
-  completedQty: number;
-  lifecycleCompleted: boolean;
-}) {
-  const quantityStage = compatibleStageForQuantities({
-    targetQty: input.targetQty,
-    frontendTransferredQty: input.frontendTransferredQty,
-    completedQty: input.completedQty,
-  });
-  if (quantityStage !== 'completed' || input.lifecycleCompleted) return quantityStage;
-  return input.frontendTransferredQty >= input.targetQty ? 'backend' : 'frontend';
 }
 
 async function updateCompletionWorkOrders(

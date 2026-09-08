@@ -3227,7 +3227,7 @@ export default function ProductionExecutionCenter({
               {scope === 'current' && summary?.executionCountBreakdown
                 ? <i
                     aria-label={`本周执行 ${summary.executionCountBreakdown.nativeCurrent}，遗留执行 ${summary.executionCountBreakdown.carryover}，半成品续作 ${summary.executionCountBreakdown.wipContinuation}，合计 ${summary.executionCountBreakdown.total}`}
-                    title="本周执行 + 遗留执行 + 半成品续作 = 当前执行合计"
+                    title="本周主单 + 遗留主单 + 半成品续作 = 概览合计；返工等子单另计入下方执行列表"
                   >执行{summary.executionCountBreakdown.nativeCurrent}+遗留{summary.executionCountBreakdown.carryover}+半成品{summary.executionCountBreakdown.wipContinuation}={summary.executionCountBreakdown.total}</i>
                 : Boolean(displayedCurrentCarryoverCount) && <em>+ 遗留 {displayedCurrentCarryoverCount}</em>}
             </button>
@@ -3395,7 +3395,7 @@ export default function ProductionExecutionCenter({
             <button className={density === 'comfortable' ? 'active' : ''} type="button" aria-label="舒适列表" title="舒适列表" onClick={() => { setDensity('comfortable'); setPage(1); }}><Rows3 size={16} aria-hidden="true" /></button>
             <button className={density === 'compact' ? 'active' : ''} type="button" aria-label="紧凑列表" title="紧凑列表" onClick={() => { setDensity('compact'); setPage(1); }}><ListChecks size={16} aria-hidden="true" /></button>
           </div>
-          <span className="production-dispatch-result" aria-label={initialBoardLoading ? '工单数量加载中' : !board ? '工单数量尚未获取' : undefined}>{board ? board.pagination.total : '—'} 项</span>
+          <span className="production-dispatch-result" title="筛选后的执行项，含返工等子单；顶部概览统计主单及半成品续作" aria-label={initialBoardLoading ? '工单数量加载中' : !board ? '工单数量尚未获取' : undefined}>{board ? board.pagination.total : '—'} 项（含子单）</span>
         </section>
         {!!filterChips.length && <div className="production-filter-chips production-dispatch-filter-chips" aria-label="已应用筛选">{filterChips.map(chip => <button key={chip.key} type="button" onClick={() => { chip.remove(); setPage(1); }} title={`移除${chip.label}`}>{chip.label}<span>×</span></button>)}<button className="clear" type="button" onClick={() => { setTargetWorkOrderId(''); setAdvanced(emptyAdvanced); setQuick([]); setKeyword(''); setPage(1); }}>清空全部</button></div>}
         <section className="production-arrangement-filters" aria-label="生产安排筛选" aria-busy={initialBoardLoading}>
@@ -3450,7 +3450,7 @@ export default function ProductionExecutionCenter({
                   ? <><span role="alert">{loadMoreError}</span><button type="button" onClick={() => { loadMoreFailedRef.current = false; setLoadMoreError(''); if (loadMoreNeedsRefresh) setRefreshToken(value => value + 1); else setLoadMoreRetryToken(value => value + 1); }}>{loadMoreNeedsRefresh ? '刷新当前查询' : '重试加载下一页'}</button></>
                   : dispatchHasMore
                   ? <><Loader2 size={14} aria-hidden="true" /><span>{loadingMore ? '正在从服务器加载下一页' : `继续下滑加载 · 已取 ${dispatchAllItems.length}/${board?.pagination.total || dispatchAllItems.length} 单`}</span></>
-                  : <><CheckCircle2 size={14} aria-hidden="true" /><span>无更多数据 · 共 {board?.pagination.total || dispatchAllItems.length} 单</span></>}
+                  : <><CheckCircle2 size={14} aria-hidden="true" /><span>无更多数据 · 共 {board?.pagination.total || dispatchAllItems.length} 个执行项（含子单）</span></>}
               </div>}
             </div>
           </section>

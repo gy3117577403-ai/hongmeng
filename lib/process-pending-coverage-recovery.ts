@@ -2,19 +2,17 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { reconcileSupplementRouteCompletion } from '@/lib/process-completion-service';
 import { syncDailyTasksAfterProcessRouteChange } from '@/lib/process-route-change-daily-task-sync';
+import { createSystemNotification, eligibleUserIdsForCapability } from '@/lib/system-notifications';
 
 const candidateWhere = (): Prisma.WorkOrderProcessRouteWhereInput => ({
   status: 'in_progress',
   workOrder: { deletedAt: null, planClearedAt: null, productionPausedAt: null, branchType: null, status: { notIn: ['cancelled'] }, planType: { in: ['weekly_plan', 'managed_plan'] } },
-  supplementObligations: { none: { status: 'ACTIVE' } },
-  steps: {
-    some: { retiredAt: null, executionMode: 'NORMAL', OR: [
-      { inputQty: { gt: prisma.workOrderProcessStep.fields.processedQty } },
-      { inputQty: 0, processedQty: 0 },
-    ],
-      completions: { some: { voidedAt: null, coverageStatus: { in: ['PENDING', 'PARTIAL'] }, defectQty: 0 } } },
-    none: { retiredAt: null, executionMode: 'NORMAL', reportQuantityBasis: 'action' },
-  },
+  OR: [
+    { steps: { some: { retiredAt: null, executionMode: 'NORMAL',
+      completions: { some: { voidedAt: null, coverageStatus: { in: ['PENDING', 'PARTIAL'] }, defectQty: 0 } } } } },
+    { workOrder: { OR: [{ stage: 'completed' }, { completedAt: { not: null } }] } },
+  ],
+  steps: { none: { retiredAt: null, executionMode: 'NORMAL', reportQuantityBasis: 'action' } },
   completions: { none: { voidedAt: null, coverageStatus: { in: ['PENDING', 'PARTIAL'] }, defectQty: { gt: 0 } } },
 });
 
@@ -37,19 +35,34 @@ export async function recoverStalePendingCompletionCoverage(options: { routeId?:
       const repaired = await prisma.$transaction(async tx => {
         const route = await tx.workOrderProcessRoute.findFirst({ where: { ...candidateWhere(), id: candidate.id, version: candidate.version }, select: { id: true, version: true, workOrderId: true } });
         if (!route) return false;
+        const orderBefore = await tx.workOrder.findUniqueOrThrow({ where: { id: route.workOrderId }, select: { stage: true, completedAt: true } });
         const before = await tx.processCompletion.aggregate({ where: { routeId: route.id, voidedAt: null }, _sum: { coveredQty: true } });
         const movementCount = await tx.processQuantityMovement.count({ where: { workOrderId: route.workOrderId } });
         const reconciliation = await reconcileSupplementRouteCompletion(tx, { routeId: route.id, expectedRouteVersion: route.version, userId: null, actor: '系统已有报工核销恢复', now: new Date() });
         const after = await tx.processCompletion.aggregate({ where: { routeId: route.id, voidedAt: null }, _sum: { coveredQty: true } });
         const coveredQuantityDelta = (after._sum.coveredQty || 0) - (before._sum.coveredQty || 0);
-        if (coveredQuantityDelta <= 0 && !reconciliation.materialReconciliation.convertedStepIds.length) throw new Error('NO_COVERAGE_PROGRESS');
+        const orderAfter = await tx.workOrder.findUniqueOrThrow({ where: { id: route.workOrderId }, select: { stage: true, completedAt: true, businessCode: true, code: true, specification: true } });
+        const lifecycleChanged = orderBefore.stage !== orderAfter.stage || orderBefore.completedAt?.getTime() !== orderAfter.completedAt?.getTime();
+        if (coveredQuantityDelta <= 0 && !reconciliation.materialReconciliation.convertedStepIds.length
+          && !reconciliation.changedStepIds.length && !lifecycleChanged) throw new Error('NO_COVERAGE_PROGRESS');
         const taskSync = await syncDailyTasksAfterProcessRouteChange(tx, { routeId: route.id, changeId: `pending-coverage:${route.id}:${route.version}`, actorId: null, reason: '上游数量已到位，核销既有报工并同步工序完成状态' });
         const detail = { previousRouteVersion: route.version, ...reconciliation, coveredQuantityDelta,
           completedQtyDelta: reconciliation.coverage?.finishedGoodDelta || 0,
           quantityMovementCount: await tx.processQuantityMovement.count({ where: { workOrderId: route.workOrderId } }) - movementCount,
-          completionCount: 0, taskSync };
+          completionCount: 0, lifecycleChanged, taskSync };
         await tx.processRouteActivity.create({ data: { routeId: route.id, action: 'recover_pending_completion_coverage', content: '核销已存在的报工并同步完成状态；保留原报工与已记工时', detail } });
         await tx.operationLog.create({ data: { action: 'recover_pending_completion_coverage', targetType: 'WorkOrderProcessRoute', targetId: route.id, detail } });
+        if (reconciliation.materialReconciliation.convertedStepIds.length || lifecycleChanged) {
+          const recipientUserIds = await eligibleUserIdsForCapability(tx, 'PROCESS', 'UPDATE');
+          await createSystemNotification(tx, {
+            eventType: 'PROCESS_ROUTE_COVERAGE_RECOVERED', dedupeKey: `route-coverage:${route.id}:${route.version}`,
+            category: 'SYSTEM', title: `${orderAfter.specification || orderAfter.businessCode || orderAfter.code} 核销与状态已恢复`,
+            body: reconciliation.routeCompleted ? '已有报工已完成核销，整单已按全部有效工序确认完成。'
+              : `已恢复原有报工核销，工单保持生产中。${reconciliation.materialReconciliation.outstandingQuantity > 0 ? `仍有 ${reconciliation.materialReconciliation.outstandingQuantity} 套工序工作量需按实际作业报工。` : '请继续完成剩余工序。'}原报工和员工工时未重复生成。`,
+            sourceType: 'WorkOrderProcessRoute', sourceId: route.id, targetRoute: `/workspace/workflows?workOrderId=${route.workOrderId}`,
+            recipientUserIds, metadata: detail,
+          });
+        }
         return true;
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 1000, timeout: 5000 });
       if (repaired) result.repairedRouteIds.push(candidate.id); else result.skipped++;

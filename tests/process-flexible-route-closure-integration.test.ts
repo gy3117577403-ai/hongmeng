@@ -21,7 +21,7 @@ async function recover(routeId: string) {
   return (await response.json() as { coverageRecovery: Awaited<ReturnType<typeof recoverStalePendingCompletionCoverage>> }).coverageRecovery;
 }
 
-export async function fixture(indices = [0, 1, 3, 4]) {
+export async function fixture(indices = [0, 1, 3, 4], targetQty = 40) {
   const prefix = `IT-FLEX-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const origin = process.env.PROCESS_PENDING_RECOVERY_TEST_ORIGIN;
   const testPassword = 'Disposable-Flex-2026!';
@@ -49,14 +49,14 @@ export async function fixture(indices = [0, 1, 3, 4]) {
   let profile = await prisma.productTimeProfile.create({ data: { drawingLibraryItemId: item.id, version: 1, status: 'published', publishedAt: new Date(), createdById: actor.id, entries: { create: entryData(indices) } }, include: { entries: { orderBy: { position: 'asc' } } } });
   const order = await prisma.workOrder.create({ data: {
     code: prefix, customerName: item.customerName, productName: 'flexible route', specification: prefix,
-    drawingLibraryItemId: item.id, stage: 'frontend', status: 'processing', productionTargetQty: 40,
-    uncompletedQty: '40', completedQty: '0', planType: 'managed_plan', planActive: true, startedAt: new Date(),
+    drawingLibraryItemId: item.id, stage: 'frontend', status: 'processing', productionTargetQty: targetQty,
+    uncompletedQty: String(targetQty), completedQty: '0', planType: 'managed_plan', planActive: true, startedAt: new Date(),
     processRoute: { create: { templateName: prefix, templateVersion: 1, routeSource: 'product_time_profile', productTimeProfileId: profile.id,
       productTimeProfileVersion: 1, reportingPolicy: 'free_sequence', status: 'in_progress', confirmedAt: new Date(), confirmedById: actor.id, startedAt: new Date(),
       steps: { create: profile.entries.map((entry, index) => ({ processDefinitionId: entry.processDefinitionId, processCode: definitions[indices[index]].code,
         processName: definitions[indices[index]].name, stageGroup: definitions[indices[index]].stageGroup, position: index + 1, sequenceGroup: index + 1,
         productTimeProfileId: profile.id, productTimeEntryId: entry.id, productTimeProfileVersion: 1, standardSource: 'product_profile', timeBasis: 'per_unit',
-        standardMillisecondsPerUnit: 1000, unitLabel: '套', unitsPerProduct: 1, countsForEfficiency: true, inputQty: index === 0 ? 40 : 0,
+        standardMillisecondsPerUnit: 1000, unitLabel: '套', unitsPerProduct: 1, countsForEfficiency: true, inputQty: index === 0 ? targetQty : 0,
         status: index === 0 ? 'current' : 'pending' })) },
     } },
   }, include: { processRoute: { include: { steps: { orderBy: { position: 'asc' } } } } } });
@@ -94,11 +94,11 @@ export async function fixture(indices = [0, 1, 3, 4]) {
   async function assertClosed() {
     const current = await state();
     assert.equal(current.status, 'completed'); assert.equal(current.workOrder.stage, 'completed'); assert.equal(current.workOrder.status, 'done');
-    assert.ok(current.workOrder.completedAt); assert.equal(current.workOrder.completedQty, '40');
+    assert.ok(current.workOrder.completedAt); assert.equal(current.workOrder.completedQty, String(targetQty));
     assert.equal(await prisma.processCompletion.count({ where: { routeId, step: { retiredAt: null }, voidedAt: null, coverageStatus: { not: 'COVERED' } } }), 0);
     const finished = await prisma.processQuantityMovement.findMany({ where: { workOrderId: order.id, type: 'FINISHED_GOOD', voidedAt: null }, include: { reversals: { where: { voidedAt: null } } } });
-    assert.equal(finished.reduce((sum, movement) => sum + movement.quantity - movement.reversals.reduce((total, reversal) => total + reversal.quantity, 0), 0), 40);
-    assert.ok(current.steps.every(step => step.inputQty <= 40 && step.processedQty <= step.inputQty && step.releasedGoodQty <= step.goodOutputQty));
+    assert.equal(finished.reduce((sum, movement) => sum + movement.quantity - movement.reversals.reduce((total, reversal) => total + reversal.quantity, 0), 0), targetQty);
+    assert.ok(current.steps.every(step => step.inputQty <= targetQty && step.processedQty <= step.inputQty && step.releasedGoodQty <= step.goodOutputQty));
   }
   async function cleanup() {
     await prisma.processLaborClaim.deleteMany({ where: { pool: { workOrderId: order.id } } });
@@ -123,8 +123,113 @@ export async function fixture(indices = [0, 1, 3, 4]) {
     return origin ? (await api<{ data: Awaited<ReturnType<typeof withdrawProcessCompletion>> }>(`/api/process-management/routes/${routeId}/completions/${completionId}/withdraw`, command)).data
       : withdrawProcessCompletion(command);
   }
-  return { prefix, actor, employee, item, definitions, order, routeId, state, report, publish, withdraw, assertClosed, cleanup };
+  return { prefix, actor, employee, item, definitions, order, routeId, state, report, publish, withdraw, assertClosed, cleanup, api };
 }
+
+export async function historicalPartialFixture(withBypassEvidence = true) {
+  const f = await fixture([0, 3, 4], 2100);
+  // The first 1295 physically passed before the historical route edit. Keep
+  // those real transfer facts; the later 805 traverses the two added positions.
+  await f.report(0, 1295);
+  const original = await f.state();
+  for (const step of original.steps.filter(step => step.position > 1).reverse()) {
+    await prisma.workOrderProcessStep.update({ where: { id: step.id }, data: { position: step.position + 2, sequenceGroup: step.sequenceGroup + 2 } });
+  }
+  for (const index of [1, 2]) {
+    const definition = f.definitions[index];
+    await prisma.workOrderProcessStep.create({ data: { routeId: f.routeId, processDefinitionId: definition.id,
+      processCode: definition.code, processName: definition.name, stageGroup: definition.stageGroup,
+      position: index + 1, sequenceGroup: index + 1, timeBasis: 'per_unit', standardMillisecondsPerUnit: 30000,
+      unitLabel: '套', unitsPerProduct: 1, status: 'current' } });
+  }
+  if (withBypassEvidence) await prisma.processRouteActivity.create({ data: {
+    routeId: f.routeId, action: 'product_time_deleted_step_quantity_bypassed', content: '旧工序删除后1295件承接到检验',
+    detail: { quantity: 1295, targetStepIds: [original.steps.find(step => step.processName === '检验')!.id] },
+  } });
+  await f.report(1, 1700); await f.report(2, 2100); await f.report(0, 805); await f.report(1, 400);
+  await f.report(3, 2100); await f.report(4, 2100);
+  return f;
+}
+
+test('006: pending 400 withdrawal cannot close full finished goods; recover partial 805 coverage without duplicate reports or labor', { skip: !run }, async () => {
+  const f = await historicalPartialFixture();
+  try {
+    const beforeWithdrawal = await f.state();
+    assert.equal(beforeWithdrawal.workOrder.completedQty, '2100');
+    assert.equal(beforeWithdrawal.workOrder.stage, 'backend');
+    assert.equal(beforeWithdrawal.status, 'in_progress');
+    const withdrawnReport = await prisma.processCompletion.findFirstOrThrow({ where: { routeId: f.routeId, processedQty: 400 } });
+    assert.equal(withdrawnReport.coveredQty, 0);
+    assert.equal((await f.withdraw(withdrawnReport.id, '006-pending-withdraw')).status, 'WITHDRAWN');
+    const afterWithdrawal = await f.state();
+    assert.equal(afterWithdrawal.workOrder.stage, 'backend');
+    assert.equal(afterWithdrawal.workOrder.completedAt, null);
+    assert.equal(afterWithdrawal.steps.find(step => step.processName === '沾锡')?.status, 'current');
+    assert.equal(afterWithdrawal.steps.find(step => step.processName === '检沾锡')?.status, 'current');
+    // Emulate the old persisted closure projection, not a new report or transfer.
+    await prisma.workOrder.update({ where: { id: f.order.id }, data: { stage: 'completed', status: 'done' } });
+    const facts = await prisma.processCompletion.findMany({ where: { routeId: f.routeId }, select: { id: true, processedQty: true, completedAt: true, workDate: true, voidedAt: true }, orderBy: { id: 'asc' } });
+    const labor = await prisma.processLaborPool.findMany({ where: { workOrderId: f.order.id }, include: { claims: { orderBy: { id: 'asc' } } }, orderBy: { id: 'asc' } });
+    const movements = await prisma.processQuantityMovement.findMany({ where: { workOrderId: f.order.id }, orderBy: { id: 'asc' } });
+    const result = await recover(f.routeId);
+    assert.deepEqual(result.failures, []); assert.ok(result.repairedRouteIds.includes(f.routeId));
+    const restored = await f.state();
+    assert.equal(restored.workOrder.stage, 'backend'); assert.equal(restored.workOrder.completedAt, null);
+    assert.equal(restored.workOrder.completedQty, '2100'); assert.equal(restored.status, 'in_progress');
+    const crimp = restored.steps.find(step => step.processName === '沾锡')!;
+    const inspection = restored.steps.find(step => step.processName === '检沾锡')!;
+    assert.equal(crimp.supplementObligation?.reportedQty, 1700);
+    assert.equal(crimp.supplementObligation?.requiredQty, 2100);
+    assert.equal(inspection.supplementObligation?.reportedQty, 2100);
+    assert.equal(crimp.inputQty, 0, 'independent actual work cannot emit another material stream');
+    const retained = await prisma.processSupplementCoverage.findFirstOrThrow({ where: { displayStepId: crimp.id } });
+    assert.equal((retained.evidence as { retainedMaterial: { inputQty: number } }).retainedMaterial.inputQty, 805);
+    for (const stepId of [crimp.id, inspection.id]) {
+      const reports = await prisma.processCompletion.findMany({ where: { stepId, voidedAt: null }, include: { coverageAllocations: { where: { voidedAt: null } } } });
+      for (const report of reports) {
+        assert.equal(report.coveredQty, report.processedQty);
+        assert.equal(report.coverageAllocations.reduce((sum, row) => sum + row.quantity, 0), report.processedQty, '805 coverage is not allocated twice');
+      }
+    }
+    assert.deepEqual(await prisma.processCompletion.findMany({ where: { routeId: f.routeId }, select: { id: true, processedQty: true, completedAt: true, workDate: true, voidedAt: true }, orderBy: { id: 'asc' } }), facts);
+    assert.deepEqual(await prisma.processQuantityMovement.findMany({ where: { workOrderId: f.order.id }, orderBy: { id: 'asc' } }), movements);
+    assert.deepEqual(await prisma.processLaborPool.findMany({ where: { workOrderId: f.order.id }, include: { claims: { orderBy: { id: 'asc' } } }, orderBy: { id: 'asc' } }), labor);
+    const notification = await prisma.systemNotification.findFirst({ where: { sourceId: f.routeId, eventType: 'PROCESS_ROUTE_COVERAGE_RECOVERED' }, include: { recipients: true } });
+    assert.ok(notification?.recipients.some(row => row.userId === f.actor.id));
+    assert.equal((await recover(f.routeId)).repairedRouteIds.includes(f.routeId), false);
+    if (process.env.PROCESS_PENDING_RECOVERY_TEST_ORIGIN) {
+      await prisma.user.update({ where: { id: f.actor.id }, data: { employeeId: f.employee.id } });
+      const ticket = await prisma.workOrderQrTicket.create({ data: { workOrderId: f.order.id, publicCode: randomUUID().replaceAll('-', '') } });
+      await f.api(`/api/field-report/tickets/${ticket.publicCode}`);
+      await f.api(`/api/field-report/tickets/${ticket.publicCode}/supplement-obligations/${crimp.supplementObligation!.id}/completions`, {
+        expectedRouteVersion: (await f.state()).version, expectedVersion: crimp.supplementObligation!.version,
+        processedQty: 400, defectQty: 0, employeeIds: [f.employee.id], expectedUserId: f.actor.id,
+        workDate: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10),
+        idempotencyKey: `${f.prefix}-qr-final-400`, source: { kind: 'NATIVE' },
+      });
+    } else await f.report(1, 400);
+    await f.assertClosed();
+    // Correcting a report already converted to an independent actual obligation
+    // reopens its work, while the historic 805 transfer remains unchanged.
+    const originalCrimp = await prisma.processCompletion.findFirstOrThrow({ where: { stepId: crimp.id, processedQty: 1700, voidedAt: null } });
+    assert.equal((await f.withdraw(originalCrimp.id, '006-converted-withdraw')).status, 'WITHDRAWN');
+    assert.equal((await f.state()).workOrder.stage, 'backend');
+    assert.equal((await f.state()).workOrder.completedQty, '2100');
+    await f.report(1, 1700); await f.assertClosed();
+  } finally { await f.cleanup(); }
+});
+
+test('partial historical coverage without audited bypass evidence is not automatically credited', { skip: !run }, async () => {
+  const f = await historicalPartialFixture(false);
+  try {
+    await recover(f.routeId);
+    const state = await f.state();
+    assert.equal(state.steps.find(step => step.processName === '沾锡')?.executionMode, 'NORMAL');
+    assert.equal(state.steps.find(step => step.processName === '沾锡')?.processedQty, 805);
+    assert.equal(state.status, 'in_progress');
+    assert.equal(await prisma.processSupplementObligation.count({ where: { routeId: f.routeId } }), 0);
+  } finally { await f.cleanup(); }
+});
 
 test('partial reports survive repeated process reordering and insertion until exact final closure', { skip: !run }, async () => {
   const f = await fixture();

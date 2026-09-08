@@ -9,6 +9,8 @@ import {
 } from '@prisma/client';
 import { dateKeyFromDatabase } from '@/lib/attendance';
 import { prisma } from '@/lib/prisma';
+import { stageForLifecycleState } from '@/lib/production-stage-flow';
+import { reconcileQuantityStepStatuses } from '@/lib/process-step-lifecycle';
 import { syncProductTimeRouteFromPublishedProductTime } from '@/lib/process-routing';
 import { syncUnfinishedDailyTasksFromPublishedProductTime } from '@/lib/product-time-task-sync';
 import { legacyStatusForStage, type WorkOrderStage } from '@/lib/work-orders';
@@ -1697,46 +1699,9 @@ async function applyWithdrawal(
     step.quantityVersion += 1;
   }
 
-  const ordinarySteps = state.route.steps.filter(step => step.executionMode === 'NORMAL');
-  const groups = [...new Set(ordinarySteps.map(step => step.sequenceGroup))].sort((a, b) => a - b);
-  let priorClosed = true;
-  for (const group of groups) {
-    const steps = ordinarySteps.filter(step => step.sequenceGroup === group);
-    const groupClosed: boolean = priorClosed
-      && steps.every(step => (
-        step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
-          ? step.status === 'completed' || step.status === 'skipped'
-          : step.processedQty >= step.inputQty
-      ));
-    for (const step of steps) {
-      // Supplemental obligations keep an independent ledger and must remain a
-      // lifecycle gate without participating in ordinary quantity rollback.
-      if (step.executionMode === 'SUPPLEMENTAL_OBLIGATION') continue;
-      let status: string;
-      if (groupClosed) status = step.inputQty > 0 ? 'completed' : 'skipped';
-      else if (step.processedQty >= step.inputQty && step.inputQty > 0 && step.id !== state.stepId) status = 'completed';
-      else if (priorClosed && step.inputQty > step.processedQty) status = 'current';
-      else if (step.processedQty > 0) status = 'current';
-      else status = 'pending';
-      step.status = status;
-      await tx.workOrderProcessStep.update({
-        where: { id: step.id },
-        data: {
-          status,
-          ...(status === 'completed' || status === 'skipped'
-            ? { completedAt: step.completedAt || now }
-            : {
-                completedAt: null,
-                completedById: null,
-                ...(status === 'current'
-                  ? { startedAt: step.startedAt || now }
-                  : { startedAt: step.processedQty > 0 ? step.startedAt : null }),
-              }),
-        },
-      });
-    }
-    priorClosed = groupClosed;
-  }
+  await reconcileQuantityStepStatuses(tx, state.route.steps, {
+    targetQty: targetQuantity(state), userId: input.userId, now,
+  });
 
   if (state.laborPool) {
     for (const [index, claim] of state.laborPool.claims.entries()) {
@@ -1823,11 +1788,8 @@ async function applyWithdrawal(
     completedQty,
     currentFrontend - preview.impact.frontendTransferReductionQty,
   );
-  const stage: WorkOrderStage = completedQty >= target
-    ? 'completed'
-    : frontendTransferredQty >= target
-      ? 'backend'
-      : 'frontend';
+  const stage = stageForLifecycleState({ targetQty: target, completedQty,
+    frontendTransferredQty, lifecycleCompleted: false });
   await tx.workOrder.update({
     where: { id: order.id },
     data: {
@@ -1839,7 +1801,7 @@ async function applyWithdrawal(
       completedQty: String(completedQty),
       frontendTransferredQty,
       executionVersion: { increment: 1 },
-      completedAt: state.supplementObligationId ? null : stage === 'completed' ? order.completedAt : null,
+      completedAt: null,
       lastProgressAt: now,
       latestProgressRemark: `${state.step.processName}完工已撤回：${input.reason}`,
     },

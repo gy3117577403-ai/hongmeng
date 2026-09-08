@@ -14,6 +14,7 @@ export async function reconcileBypassedRouteOperations(
     include: {
       workOrder: true,
       steps: { where: { retiredAt: null }, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
+      activities: { where: { action: 'product_time_deleted_step_quantity_bypassed' }, select: { id: true, detail: true } },
     },
   });
   const result = { convertedStepIds: [] as string[], coveredQuantity: 0, outstandingQuantity: 0 };
@@ -23,18 +24,22 @@ export async function reconcileBypassedRouteOperations(
     || order.productionPausedAt || order.branchType || order.status === 'cancelled') return result;
   const ordinary = route.steps.filter(step => step.executionMode === 'NORMAL');
   const candidates = ordinary.filter(step => step.processDefinitionId && step.reportQuantityBasis !== 'action'
-    && [step.inputQty, step.processedQty, step.goodOutputQty, step.defectOutputQty, step.releasedGoodQty].every(qty => qty === 0));
+    && step.inputQty < target && step.inputQty === step.processedQty
+    && step.processedQty === step.goodOutputQty && step.goodOutputQty === step.releasedGoodQty
+    && step.defectOutputQty === 0);
   if (!candidates.length) return result;
   // Never infer whole-product identity across rework, scrap or split branches.
   if (await tx.workOrder.count({ where: { parentWorkOrderId: order.id, deletedAt: null,
     OR: [{ branchStatus: null }, { branchStatus: { not: 'CANCELLED' } }],
   } })
+    || await tx.semiFinishedLot.count({ where: { workOrderId: order.id } })
     || await tx.processCompletion.count({ where: { routeId: route.id, voidedAt: null, defectQty: { gt: 0 } } })) return result;
   const movements = await tx.processQuantityMovement.findMany({
     where: { workOrderId: order.id, voidedAt: null, type: { not: 'REVERSAL' } },
     include: { reversals: { where: { voidedAt: null }, select: { quantity: true } } },
   });
-  if (movements.some(movement => !['GOOD_TRANSFER', 'FINISHED_GOOD'].includes(movement.type))) return result;
+  if (movements.some(movement => !['GOOD_TRANSFER', 'FINISHED_GOOD'].includes(movement.type)
+    || movement.reversals.reduce((sum, reversal) => sum + reversal.quantity, 0) > movement.quantity)) return result;
   const byId = new Map(ordinary.map(step => [step.id, step]));
   const effectiveQuantity = (movement: typeof movements[number]) => movement.quantity
     - movement.reversals.reduce((total, reversal) => total + reversal.quantity, 0);
@@ -42,6 +47,8 @@ export async function reconcileBypassedRouteOperations(
   const finishedQuantity = finishedMovements.reduce((total, movement) => total + effectiveQuantity(movement), 0);
   const fullFinishedEvidence = finishedQuantity === target && Number(order.completedQty) === target;
   for (const step of candidates) {
+    if (await tx.processReportSubmission.count({ where: { stepId: step.id, status: 'PENDING' } })
+      || await tx.processCompletionWithdrawalRequest.count({ where: { completion: { stepId: step.id }, status: { in: ['PENDING', 'BLOCKED'] } } })) continue;
     // A full, unreversed transfer must cross the hole in the *current* route.
     // Zero input by itself is not evidence: normal upstream waiting stays put.
     const crossing = movements.filter(movement => {
@@ -58,13 +65,37 @@ export async function reconcileBypassedRouteOperations(
         - movement.reversals.reduce((total, reversal) => total + reversal.quantity, 0));
     }
     if (!fullFinishedEvidence && ![...channels.values()].some(quantity => quantity === target)) continue;
-    if (movements.some(movement => effectiveQuantity(movement) > 0
-      && (movement.sourceStepId === step.id || movement.targetStepId === step.id))) continue;
+    const partialMaterial = step.processedQty > 0;
+    const attached = movements.filter(movement => effectiveQuantity(movement) > 0
+      && (movement.sourceStepId === step.id || movement.targetStepId === step.id));
+    if (!partialMaterial && attached.length) continue;
+    if (partialMaterial) {
+      // A partly consumed historic stream requires both full finished-product
+      // provenance and an audited route bypass. Do not infer identity across
+      // an ordinary shortage, WIP, defects, action units or branches.
+      if (!fullFinishedEvidence || !route.activities.length) continue;
+      const incoming = attached.filter(movement => movement.targetStepId === step.id)
+        .reduce((sum, movement) => sum + effectiveQuantity(movement), 0);
+      const channels = new Map<string, number>();
+      for (const movement of attached.filter(movement => movement.sourceStepId === step.id)) {
+        const key = movement.targetStepId || 'finished';
+        channels.set(key, (channels.get(key) || 0) + effectiveQuantity(movement));
+      }
+      if (incoming !== step.inputQty || !channels.size
+        || [...channels.values()].some(quantity => quantity !== step.releasedGoodQty)) continue;
+    }
     const reports = await tx.processCompletion.findMany({
       where: { stepId: step.id, voidedAt: null }, orderBy: [{ completedAt: 'asc' }, { id: 'asc' }],
+      include: { coverageAllocations: { where: { voidedAt: null }, select: { quantity: true, goodQty: true, defectQty: true } } },
     });
-    if (reports.some(report => report.supplementObligationId || report.coveredQty !== 0
-      || report.defectQty !== 0 || report.goodQty !== report.processedQty || report.reportQuantityBasis === 'action')) continue;
+    if (reports.some(report => report.supplementObligationId || report.coveredQty < 0
+      || report.coveredQty > report.processedQty || report.coveredGoodQty !== report.coveredQty
+      || report.coveredDefectQty !== 0 || report.defectQty !== 0 || report.goodQty !== report.processedQty
+      || report.reportQuantityBasis === 'action'
+      || report.coverageAllocations.some(coverage => coverage.defectQty !== 0 || coverage.goodQty !== coverage.quantity)
+      || report.coverageAllocations.reduce((sum, coverage) => sum + coverage.quantity, 0) !== report.coveredQty)) continue;
+    const previouslyCoveredQty = reports.reduce((sum, report) => sum + report.coveredQty, 0);
+    if (previouslyCoveredQty !== step.processedQty) continue;
     const reportedQty = reports.reduce((total, report) => total + report.processedQty, 0);
     if (reportedQty > target) continue;
     const fulfilled = reportedQty === target;
@@ -91,8 +122,12 @@ export async function reconcileBypassedRouteOperations(
       previousRouteVersion: route.version, previousStepStatus: step.status,
       targetQuantity: target, crossingMovementIds: crossing.map(movement => movement.id),
       finishedMovementIds: fullFinishedEvidence ? finishedMovements.map(movement => movement.id) : [],
-      reports: reports.map(report => ({ id: report.id, processedQty: report.processedQty, previousCoverageStatus: report.coverageStatus })),
-      coveredQuantity: reportedQty, outstandingQuantity: target - reportedQty,
+      bypassActivityIds: route.activities.map(activity => activity.id),
+      retainedMaterial: { inputQty: step.inputQty, processedQty: step.processedQty, releasedGoodQty: step.releasedGoodQty,
+        movementIds: attached.map(movement => movement.id) },
+      reports: reports.map(report => ({ id: report.id, processedQty: report.processedQty,
+        previousCoveredQty: report.coveredQty, previousCoverageStatus: report.coverageStatus })),
+      coveredQuantity: reportedQty - previouslyCoveredQty, outstandingQuantity: target - reportedQty,
       completionCount: 0, quantityMovementCount: 0, completedQtyDelta: 0, laborPoolCount: 0,
     };
     await tx.processSupplementCoverage.create({ data: {
@@ -105,14 +140,18 @@ export async function reconcileBypassedRouteOperations(
         supplementObligationId: obligation.id, coveredQty: report.processedQty,
         coveredGoodQty: report.goodQty, coveredDefectQty: 0, coverageUpdatedAt: input.now, coverageStatus: 'COVERED',
       } });
-      await tx.processCompletionCoverage.create({ data: {
+      if (report.processedQty > report.coveredQty) await tx.processCompletionCoverage.create({ data: {
         reportCompletionId: report.id, triggerCompletionId: report.id,
-        quantity: report.processedQty, goodQty: report.goodQty, defectQty: 0,
+        quantity: report.processedQty - report.coveredQty, goodQty: report.goodQty - report.coveredGoodQty, defectQty: 0,
         idempotencyKey: `route-actual-reconciliation:${report.id}`,
       } });
     }
     await tx.workOrderProcessStep.update({ where: { id: step.id }, data: {
       executionMode: 'SUPPLEMENTAL_OBLIGATION', status: fulfilled ? 'completed' : 'current',
+      // The old material stream is immutable in movements and the retained
+      // snapshot above. The active display now represents actual work only,
+      // so it must not remain a second source of product-flow quantities.
+      inputQty: 0, processedQty: 0, goodOutputQty: 0, defectOutputQty: 0, releasedGoodQty: 0,
       startedAt: step.startedAt || input.now, completedAt: fulfilled ? reports.at(-1)?.completedAt : null,
       completedById: fulfilled ? reports.at(-1)?.createdById : null, quantityVersion: { increment: 1 },
     } });
@@ -122,7 +161,7 @@ export async function reconcileBypassedRouteOperations(
       detail: { obligationId: obligation.id, ...evidence },
     } });
     result.convertedStepIds.push(step.id);
-    result.coveredQuantity += reportedQty;
+    result.coveredQuantity += reportedQty - previouslyCoveredQty;
     result.outstandingQuantity += target - reportedQty;
   }
   return result;

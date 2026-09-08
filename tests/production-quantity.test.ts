@@ -6,6 +6,7 @@ import {
   parsePositiveProductionQuantity,
   productionStageSegments,
   resolveEffectiveFrontendTransferredQty,
+  stageForLifecycleState,
 } from '../lib/production-stage-flow';
 
 test('3000 / 2990 shows 99.7% and 10 remaining', () => {
@@ -142,4 +143,16 @@ test('invalid persisted quantity relationships are rejected instead of clamped',
     if (result.ok) continue;
     assert.equal(result.error.code, item.code);
   }
+});
+
+test('full finished goods may remain in production until route obligations and branches close', () => {
+  for (const frontendTransferredQty of [2100, null]) {
+    const result = resolveEffectiveFrontendTransferredQty({ productionTargetQty: 2100,
+      uncompletedQty: '2100', completedQty: '2100', frontendTransferredQty, stage: 'backend' });
+    assert.equal(result.ok, true);
+    if (result.ok) { assert.equal(result.state.overallStage, 'backend'); assert.equal(result.state.completedQty, 2100); }
+  }
+  const quantities = { targetQty: 2100, completedQty: 2100, frontendTransferredQty: 2100 };
+  assert.equal(stageForLifecycleState({ ...quantities, lifecycleCompleted: false }), 'backend');
+  assert.equal(stageForLifecycleState({ ...quantities, lifecycleCompleted: true }), 'completed');
 });

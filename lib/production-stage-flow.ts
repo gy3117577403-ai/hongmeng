@@ -99,6 +99,18 @@ export function compatibleStageForQuantities(input: {
   return 'backend';
 }
 
+/** Finished-product quantity is one ledger, not proof that the route is closed. */
+export function stageForLifecycleState(input: {
+  targetQty: number;
+  frontendTransferredQty: number;
+  completedQty: number;
+  lifecycleCompleted: boolean;
+}): WorkOrderStage {
+  const quantityStage = compatibleStageForQuantities(input);
+  if (quantityStage !== 'completed' || input.lifecycleCompleted) return quantityStage;
+  return input.frontendTransferredQty >= input.targetQty ? 'backend' : 'frontend';
+}
+
 export function productionStageSegments(input: {
   targetQty: number;
   frontendTransferredQty: number;
@@ -160,16 +172,16 @@ export function resolveEffectiveFrontendTransferredQty(input: ProductionStageFlo
       completedQty: completed.value,
       drawingPending: stage === 'not_issued',
     });
-    if (stage !== expectedStage) {
+    // Free reporting and route edits can leave work outstanding even after
+    // finished goods reached the target. The route lifecycle owns closure.
+    const awaitingRouteClosure = stage === 'backend' && expectedStage === 'completed';
+    if (stage !== expectedStage && !awaitingRouteClosure) {
       return failure({ code: 'STAGE_QUANTITY_CONFLICT', field: 'stage', message: '工单阶段与数量流转状态不一致' });
     }
   } else {
     transferred = stage === 'backend' || stage === 'completed' ? target.value : 0;
     if ((stage === 'not_issued' || stage === 'frontend') && completed.value > 0) {
       return failure({ code: 'LEGACY_STAGE_QUANTITY_CONFLICT', field: 'completedQty', message: '历史前端工单存在无法解释的完成数量' });
-    }
-    if (stage === 'backend' && completed.value === target.value && target.value > 0) {
-      return failure({ code: 'LEGACY_STAGE_QUANTITY_CONFLICT', field: 'stage', message: '历史后端工单数量已完成但阶段尚未完成' });
     }
     if (stage === 'completed' && completed.value !== target.value) {
       return failure({ code: 'LEGACY_STAGE_QUANTITY_CONFLICT', field: 'completedQty', message: '历史已完成工单的完成数量与目标数量不一致' });

@@ -137,6 +137,14 @@ test('default carryover includes only the previous working set and chains a prio
         where: { targetWeekStartDate: productionCarryoverDayWindow(target), status: PRODUCTION_CARRYOVER_ACTIVE },
       }), 2);
 
+      await tx.workOrder.update({ where: { id: completedPrevious.workOrderId! },
+        data: { stage: 'backend', status: 'processing', completedAt: null } });
+      const reopened = await reconcileProductionCarryovers(tx, { targetWeekStart: target });
+      assert.equal(reopened.reactivatedCount, 1, 'a corrected premature closure returns to the current working set');
+      const reopenedLink = await tx.productionCarryover.findUniqueOrThrow({ where: { id: completedLink.id } });
+      assert.equal(reopenedLink.status, PRODUCTION_CARRYOVER_ACTIVE);
+      assert.equal(reopenedLink.completedAt, null);
+
       throw new RollbackCarryoverFixture();
     }),
     RollbackCarryoverFixture,

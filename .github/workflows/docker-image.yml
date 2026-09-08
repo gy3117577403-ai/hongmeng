@@ -346,6 +346,11 @@ jobs:
             PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
             npx tsx --test --test-concurrency=1 tests/wip-route-edit-integration.test.ts \
             | tee artifacts/planning-progress-preview/release-flexible-route-runtime.log
+          RUN_DB_INTEGRATION=1 \
+            PROCESS_PENDING_RECOVERY_TEST_ORIGIN=http://127.0.0.1:3000 \
+            PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            npx tsx --test --test-concurrency=1 --test-name-pattern='006:|without audited' tests/process-flexible-route-closure-integration.test.ts \
+            | tee artifacts/planning-progress-preview/release-partial-closure-runtime.log
           mkdir -p artifacts/production-collaboration
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime hongmeng-release-smoke node \
             < scripts/seed-production-board-smoke.cjs > artifacts/production-collaboration/fixture.json
@@ -580,6 +585,7 @@ jobs:
 
           docker network create "$network" >/dev/null
           docker run -d --name "$postgres_name" --network "$network" --tmpfs /var/lib/postgresql/data \
+            -p 127.0.0.1:25437:5432 \
             -e POSTGRES_USER=postgres \
             -e POSTGRES_PASSWORD=postgres \
             -e POSTGRES_DB=hongmeng_sample_mirror \
@@ -633,7 +639,7 @@ jobs:
             -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
             -e S3_FORCE_PATH_STYLE=true \
             -e PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
-            -e PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS=2 \
+            -e PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS=600 \
             "$CHINA_MIRROR_IMAGE" >/dev/null
 
           app_ready=0
@@ -692,6 +698,12 @@ jobs:
             REPORT_RECOVERY_QA_FIXTURE=artifacts/reporting-recovery/mirror-fixture.json \
             REPORT_RECOVERY_QA_OUTPUT=artifacts/reporting-recovery/mirror-http.json \
             node scripts/smoke-reporting-recovery.mjs
+          RUN_DB_INTEGRATION=1 \
+            DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            PROCESS_PENDING_RECOVERY_TEST_ORIGIN=http://127.0.0.1:3300 \
+            PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            npx tsx --test --test-concurrency=1 --test-name-pattern='006:|without audited' tests/process-flexible-route-closure-integration.test.ts \
+            | tee artifacts/planning-progress-preview/mirror-partial-closure-runtime.log
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
