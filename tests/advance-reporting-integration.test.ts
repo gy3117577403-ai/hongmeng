@@ -267,7 +267,10 @@ test(
       assert.equal(reopenedSteps[0].status, 'current');
       assert.equal(reopenedSteps[1].inputQty, 0);
       assert.equal(reopenedSteps[1].processedQty, 0);
-      assert.equal(reopenedSteps[1].status, 'pending');
+      // The downstream worker's real report remains active and awaits coverage.
+      // Zero current material input must not relabel it as unstarted work.
+      assert.equal(reopenedSteps[1].status, 'current');
+      assert.equal(reopenedSteps[1].completedAt, null);
       assert.equal(activeCoverageRows.length, 0);
 
       const correctedUpstream = await completeProcessStep({

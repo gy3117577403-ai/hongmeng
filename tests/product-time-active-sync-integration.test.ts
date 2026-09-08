@@ -441,7 +441,14 @@ test(
       assert.equal(reopenedRoute.steps[0].standardMillisecondsPerUnit, 6_000);
       assert.equal(reopenedRoute.steps[0].productTimeEntryId, newProfile.entries[0].id);
       assert.equal(reopenedRoute.steps[0].productTimeProfileVersion, 2);
-      assert.equal(reopenedRoute.steps[1].status, 'pending');
+      // This legacy fixture has 1000 downstream input but no attributable
+      // transfer movement. Withdrawal preserves that input instead of guessing
+      // its source. Shared lifecycle status therefore remains actionable; it
+      // must not mark the unreported downstream work completed.
+      assert.equal(reopenedRoute.steps[1].inputQty, 1_000);
+      assert.equal(reopenedRoute.steps[1].processedQty, 0);
+      assert.equal(reopenedRoute.steps[1].status, 'current');
+      assert.equal(reopenedRoute.status, 'in_progress');
       assert.equal(reopenedRoute.steps[1].standardMillisecondsPerUnit, 45_000);
       assert.ok(reopenedRoute.completions[0].voidedAt);
       assert.equal(reopenedRoute.completions[0].standardMillisecondsPerUnit, 3_000);
