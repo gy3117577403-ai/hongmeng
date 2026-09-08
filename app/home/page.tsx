@@ -5,6 +5,7 @@ import { requirePageAccess } from '@/lib/page-access';
 import './home-dashboard.css';
 import './home-collaboration.css';
 import './home-command-center.css';
+import './home-industrial.css';
 
 export const dynamic = 'force-dynamic';
 

@@ -101,6 +101,8 @@ export type HomeDashboardData = {
   workstreams: HomeWorkstream[];
   todayNodes: HomeTimelineItem[];
   issues: HomeActionItem[];
+  /** Full open-issue count; null when unavailable or outside the viewer's access. */
+  issueCount: number | null;
   planChart: HomePlanChart;
   stageDistribution: HomeDistributionItem[];
   technicalDistribution: HomeDistributionItem[];

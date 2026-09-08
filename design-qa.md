@@ -1,55 +1,53 @@
-# 考勤分组工作台设计验收
-
-## 对照基线
-
-- source visual truth path: `C:\Users\31175\.codex\generated_images\01a05fe5-fde4-7013-9ca0-6fd16f31f27f\exec-0dcae80d-2106-4cae-89eb-bb2597687aa2.png`
-- implementation screenshot path: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\attendance-group-v134116\implementation-1366x1024.jpg`
-- full comparison path: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\attendance-group-v134116\comparison-full.jpg`
-- focused comparison path: `C:\Users\31175\Desktop\鸿蒙软件\artifacts\attendance-group-v134116\comparison-focus.jpg`
-- viewport: 1366 × 1024 CSS px，桌面横屏平板态
-- source pixels: 1487 × 1058；按 contain 归一化到 1366 × 1024
-- implementation pixels: 1366 × 1024；浏览器渲染为 1366 × 1024 CSS px，采集端 1.5 倍物理密度后归一化到 1 倍
-- state: 生产考勤 / 样品组 / 快速登记 / 已选择 2 人 / 已确认记录锁定 / 右侧组内处理中心可用
-
-## 可见对照结论
-
-### 全屏结构
-
-参考稿与实现均采用左侧深蓝平台导航、顶部考勤概览、横向人员分组、左侧快速登记表和右侧组内处理中心。实现保留现有系统的紧凑图标导航与命令栏，以避免改变既有全站导航习惯；主任务结构、橙色品牌重心、卡片层级和组内批量操作位置与第三款一致。
-
-### 聚焦区域
-
-聚焦对照覆盖分组卡片、人员勾选、四段式出勤状态、班次/工时、确认状态和右侧快捷操作。实现中已确认记录为绿色锁定态，草稿为黄色，待登记为红色；所选行有浅橙底和左侧强调线；正常、请假、缺勤、休息使用不同语义色。重要控件在聚焦图中可读，无裁切、遮挡或固定操作区丢失。
-
-## 必查表面
-
-- Fonts and typography: 沿用项目中文系统字体栈；标题、摘要数值、字段标签和辅助文案的字号/字重层级清楚。相较概念稿更紧凑，属于 1366 × 1024 生产工作台密度约束，不影响可读性。
-- Spacing and layout rhythm: 四个有效分组自动等宽铺满；表格与右侧处理中心对齐；卡片间距、圆角、描边和阴影保持统一；固定确认区完整可见。
-- Colors and visual tokens: 深蓝导航、橙色品牌主色、白/珠光表面与浅灰画布一致；正常绿色、请假橙色、缺勤红色、休息蓝灰色形成明确语义映射。
-- Image quality and asset fidelity: 页面没有照片或品牌插画；所有可见功能图标均来自项目现用 Lucide 图标库，无 emoji、占位图或手工绘制替代品。
-- Copy and content: 分组名称使用“前端生产 / 后端装配 / 样品组 / 未分组”；操作文案明确说明只作用于当前分组、已确认自动跳过、确认后锁定和历史纠正保留快照。
-
-## 比较历史
-
-### 第 1 轮
-
-- [P2] 分组卡按固定五列排布，当前只有四个有效分组时右侧出现无意义留白；分组层级弱于第三款。
-- [P2] 四段式状态统一使用橙色选中态，未清楚表达正常、请假、缺勤和休息的不同业务语义。
-- 修复：分组改为 `auto-fit` 自动铺满；增加 Lucide 人员组图标和激活浮层；状态按钮增加正常绿、请假橙、缺勤红、休息蓝灰的语义色，右侧快捷操作同步语义色。
-
-### 第 2 轮
-
-- post-fix visual evidence: `comparison-full.jpg` 与 `comparison-focus.jpg`
-- 未发现仍需处理的 P0/P1/P2。参考稿八名样品人员与实现五名样品人员属于演示数据差异；参考稿文字型左侧导航与实现现有图标型全站导航属于已存在的产品框架约束，不构成当前模块回归。
-- P3 follow-up: 若未来全站统一放宽信息密度，可整体提升 1px 小字号并增加一行可见人员；当前无需单独在考勤页破坏全站密度一致性。
-
-## 交互与运行证据
-
-- 已验证：样品组 → 前端生产 → 样品组切换，人员列表正确变化且旧选择自动清空。
-- 已验证：快速登记 / 明细表格切换。
-- 已验证：组内勾选 2 人后，右侧正常出勤、统一请假和统一加班快捷操作从禁用转为可用。
-- 已验证：已确认记录不可勾选且状态操作锁定。
-- 已检查浏览器控制台错误：0。
-- 未执行会写入数据库的提交动作；仅验证本地预览交互状态。
+# Homepage design QA — v1.34.136
 
 final result: passed
+
+## Source and comparison
+
+- Source visual truth: user attachment `C:/Windows/TEMP/codex-clipboard-63bf512f-11ef-43fb-b03a-51287db6b6d7.png` (1672 × 941 pixels, normalized to the 1673 × 941 comparison canvas). The first attachment is the previous homepage, not the visual target.
+- Rendered implementation: authenticated `/home` at `http://127.0.0.1:3106`, Windows in-app Chromium, light theme, isolated fixture account. No production data was used.
+- Desktop CSS viewport: 1673 × 941, device scale factor 1.5; native capture 2510 × 1412, normalized to 1673 × 941. Evidence: `artifacts/home-industrial-v134136/desktop-final-1673x941.png`.
+- Tablet CSS viewport: 1366 × 1024, device scale factor 1.5; native capture 2049 × 1536, normalized to 1366 × 1024. Evidence: `artifacts/home-industrial-v134136/tablet-final-1366x1024.png`.
+- Full comparison places normalized source and implementation together: `artifacts/home-industrial-v134136/design-comparison-full.png`.
+- Focused comparison puts each scene side by side at native CSS scale: `artifacts/home-industrial-v134136/design-comparison-scene.png`. Typography, card surfaces, central instrument, icons, and illustration were inspected in this larger crop.
+- Mobile CSS viewport: 390 × 844. Full document capture `artifacts/home-industrial-v134136/mobile-controls-final-native.png`; the 561-pixel content capture excludes the scrollbar. No horizontal overflow. Both message filters remain labelled and have 44-pixel targets.
+- State differs intentionally: the reference has an empty inbox and illustrative values; the implementation shows real API data from 24 disposable work orders, five pending notifications and three completed notifications. Exact numeric and message matching is not claimed. Existing navigation names and access rules are retained.
+
+## Findings and iteration history
+
+1. [P2, fixed] Initial card pseudo-elements covered the complete surface in gray. The bottom layer is now limited to 14 pixels; desktop and tablet final captures show opaque white cards with a thin foundation.
+2. [P2, fixed] Initial footer included a seventh narrow analytics entry and cramped the primary action. Six tracks now hold the weekly plan, four actual-data metrics and the workbench action. Metric buttons themselves open details.
+3. [P2, fixed] Dimming unselected cards made the illustration show through their content. Their opacity now stays at one; borders and shadows communicate focus. Rechecked in material focus and default views.
+4. [P2, fixed] Mobile inherited CSS hid the unread filter and filter labels. The final scoped overrides restore both controls. Browser inspection and the final mobile capture confirm the labels, 44-pixel height and working unread toggle.
+5. [P2, fixed] Competing Ctrl+K listeners caused an unwanted navigation/search reopening; the shared header skips its shortcut on the homepage. Search Escape now returns focus to its launch button. Drawers close before search opens.
+6. [P2, fixed] Unknown data could open drawers or metrics containing fallback zeroes. Error-state controls and open handlers now prevent those transitions; nullable issue totals carry an explicit unknown explanation.
+
+## Required fidelity surfaces
+
+- Fonts and typography: Chinese system UI fallback remains consistent across navigation, cards and inbox. Dark blue titles, readable secondary labels, tabular numeric hierarchy, and explicit truncation were checked in the focused comparison. The implementation uses slightly stronger small text than the pale reference to retain readability on a working tablet.
+- Spacing and layout: left navigation, search header, approximately two-thirds scene, right inbox and bottom metrics follow the target composition. Cards include separate task and navigation controls, increasing their content height intentionally. No obstructed controls or horizontal overflow at either desktop or tablet size.
+- Colors and tokens: white/cool gray surfaces, orange action accents, navy text, teal neutral states, amber attention and red unresolved issues form a consistent system. State text accompanies colors. Selection retains solid card backgrounds.
+- Image quality: two generated raster assets match the pale isometric factory direction. The floor and separate orange electronics workcell were inspected for crop and readability. Assets total 114,988 bytes as WebP. The workcell has a white background with multiply blending, not simulated transparency. A checkerboard first generation was rejected. UI, text and business numbers remain live DOM/SVG controls, never embedded in artwork.
+- Copy and content: weekly completion and non-overdue labels match their actual periods/formulas. Drawing totals describe work orders awaiting confirmation, not file counts; open issues use an aggregate rather than the preview length. No fabricated trends or machine telemetry are displayed. Existing module names intentionally differ from the conceptual reference.
+
+## Interaction evidence
+
+- Material/quality module selection highlights the corresponding node and filters the related message category; switching from completed history resets conflicting filters to the selected pending category.
+- Message completion updates pending/completed totals and history; restoration returns the message and totals. Read/unread and search were exercised against isolated API data.
+- Task drawer opens actual preview rows and business routes; Tab/Shift+Tab stay inside, Escape restores the trigger. Ctrl+K closes overlays and focuses global search without changing the home URL; Escape returns to the search launch control.
+- Global search resolves a fixture work order. Account/more menus have keyboard navigation and focus return logic.
+- Standard selected-line animation is `hm-industrial-focus-breathe`, 2.8 seconds; quiet mode computes `animation-name: none`. Emulated reduced-motion preference also disables scene animations. Nonselected lines remain static and carry no process-flow direction.
+- Coarse-pointer emulation was verified and module controls operated without hover. The browser backend does not support native touch-event dispatch; physical tablet hardware was not tested. Do not describe this as hardware acceptance.
+- Desktop and tablet screenshots were visually checked; mobile controls were rechecked after the responsive fix. Browser error log on the completed page was empty.
+- Captures made with a mismatched browser density produced partial/duplicated frames and were rejected. Only the named final evidence above is used for acceptance.
+
+## Implementation checklist and residual gaps
+
+- [x] Compare source and implementation in a combined full view and readable scene crop.
+- [x] Fix and recheck card depth, footer density, focus states and mobile filters.
+- [x] Exercise primary interaction and message state lifecycle in the browser.
+- [x] Check motion preferences, coarse-pointer behavior, keyboard and responsive layout.
+- [x] Record accepted differences in labels, data and navigation.
+- Physical tablet hardware, production-scale account data and production deployment are outside this local visual run. Exact-image acceptance is recorded separately by the release scripts; this file does not claim Sealos cutover.
+
+No actionable P0/P1/P2 findings remain in the inspected scope.

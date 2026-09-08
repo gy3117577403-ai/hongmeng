@@ -462,6 +462,7 @@ export function emptyHomeDashboardData(message: string, now = new Date()): HomeD
     workstreams: emptyWorkstreams(),
     todayNodes: [],
     issues: [],
+    issueCount: null,
     planChart: { total: 0, completed: 0, inProgress: 0, notStarted: 0, overdue: 0, executionRate: null },
     stageDistribution: [],
     technicalDistribution: [],
@@ -473,7 +474,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
   const week = await resolveProductionWeek();
   const workDateKey = ymd(now) || now.toISOString().slice(0, 10);
   const workDate = parseWorkDate(workDateKey).value;
-  const [orders, persistedIssues, warehouseTasks, materialTasks, laborPools] = await Promise.all([
+  const [orders, persistedIssues, issueCount, warehouseTasks, materialTasks, laborPools] = await Promise.all([
     loadProductionSummaryOrders(week),
     prisma.issue.findMany({
       where: { deletedAt: null, status: { not: 'closed' } },
@@ -481,6 +482,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
       orderBy: [{ priority: 'asc' }, { updatedAt: 'desc' }],
       take: 20,
     }),
+    prisma.issue.count({ where: { deletedAt: null, status: { not: 'closed' } } }),
     prisma.warehouseMaterialTask.findMany({
       where: {
         status: { in: ['pending', 'exception'] },
@@ -650,6 +652,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
     workstreams,
     todayNodes: todayNodes.slice(0, 6),
     issues: persistedIssueActions.slice(0, 5),
+    issueCount,
     planChart: { total, completed: completedOrders, inProgress: inProgressOrders, notStarted: notStartedOrders, overdue: overdueCount, executionRate },
     stageDistribution: [
       distribution('not-issued', '未发图', stageCounts.not_issued, 'yellow'),

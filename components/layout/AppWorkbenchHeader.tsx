@@ -236,13 +236,15 @@ export function AppWorkbenchHeader({
 
   useEffect(() => {
     function openGlobalSearch(event: KeyboardEvent): void {
+      // The home dashboard owns search focus and closes its active dialogs.
+      if (isHome) return;
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k') return;
       event.preventDefault();
       router.push('/home?focusSearch=1', { scroll: false });
     }
     window.addEventListener('keydown', openGlobalSearch);
     return () => window.removeEventListener('keydown', openGlobalSearch);
-  }, [router]);
+  }, [isHome, router]);
 
   function closeSidebar(restoreFocus = true): void {
     updateSidebarExpanded(false);

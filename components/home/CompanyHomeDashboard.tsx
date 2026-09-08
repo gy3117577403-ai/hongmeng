@@ -17,6 +17,10 @@ import {
   Factory,
   FileCheck2,
   MessageSquareText,
+  Pause,
+  Play,
+  PanelLeft,
+  PieChart,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -30,7 +34,7 @@ import {
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import HomeNotificationCommandCenter from '@/components/home/HomeNotificationCommandCenter';
 import { PortalMenu } from '@/components/PortalMenu';
-import type { CurrentUserDTO, SystemNotificationDTO } from '@/types';
+import type { CurrentUserDTO, NotificationBusinessCategoryDTO, SystemNotificationDTO } from '@/types';
 import type {
   HomeDashboardData,
   HomeDistributionItem,
@@ -77,6 +81,11 @@ type SearchPayload = {
 type SearchResponse = SearchPayload & { ok?: boolean; error?: string; data?: SearchPayload };
 
 type UtilityPanel = 'notifications' | 'messages' | 'help' | 'account' | null;
+type SceneModuleId = 'plan' | 'drawing' | 'production' | 'material' | 'quality' | 'labor';
+type NotificationFocus = { id: number; category: 'ACTIONABLE' | NotificationBusinessCategoryDTO; label: string };
+const sceneCategories: Record<SceneModuleId, NotificationFocus['category']> = {
+  plan: 'PRODUCTION', drawing: 'PROCESS', production: 'PRODUCTION', material: 'MATERIAL', quality: 'QUALITY', labor: 'ACTIONABLE',
+};
 
 const workstreamIcons: Record<HomeWorkstreamId, LucideIcon> = {
   production: Factory,
@@ -181,6 +190,7 @@ const pendingPointerFrames = new WeakMap<HTMLElement, PendingPointerFrame>();
 
 function supportsPointerMotion(event: ReactPointerEvent<HTMLElement>): boolean {
   return event.pointerType === 'mouse'
+    && !event.currentTarget.closest('[data-motion="quiet"]')
     && window.matchMedia('(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)').matches;
 }
 
@@ -272,12 +282,26 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const [results, setResults] = useState<HomeSearchItem[]>([]);
   const [activeStreamId, setActiveStreamId] = useState<HomeWorkstreamId | null>(null);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [selectedModule, setSelectedModule] = useState<SceneModuleId | null>(null);
+  const [focusRequest, setFocusRequest] = useState<NotificationFocus>();
+  const [quietMotion, setQuietMotion] = useState(false);
+  const [pageVisible, setPageVisible] = useState(true);
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [assetFailed, setAssetFailed] = useState(false);
+  const [assetRevision, setAssetRevision] = useState(0);
+  const focusSequence = useRef(0);
+  const sceneRef = useRef<HTMLElement>(null);
+  const rootRef = useRef<HTMLElement>(null);
+  const analyticsPanelRef = useRef<HTMLElement>(null);
+  const taskDrawerRef = useRef<HTMLElement>(null);
+  const analyticsTriggerRef = useRef<HTMLElement | null>(null);
   const [notificationPreview, setNotificationPreview] = useState<SystemNotificationDTO[]>([]);
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
   const [notificationLoading, setNotificationLoading] = useState(true);
   const [refreshing, startRefresh] = useTransition();
   const utilityButtonRef = useRef<HTMLButtonElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchLaunchRef = useRef<HTMLButtonElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
   const drawerCloseRef = useRef<HTMLButtonElement>(null);
   const drawerTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -286,6 +310,47 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const canGlobalSearch = user.access.modules.includes('SYSTEM_CONFIGURATION');
   const canOpenSettings = user.access.modules.includes('SYSTEM_CONFIGURATION');
   const canReadNotifications = user.access.modules.includes('NOTIFICATIONS');
+
+  useEffect(() => {
+    const scene = sceneRef.current;
+    try {
+      setQuietMotion(localStorage.getItem('hm-home-motion') === 'quiet');
+      const saved = sessionStorage.getItem(`hm-home-focus:${user.id}`);
+      if (saved && Object.prototype.hasOwnProperty.call(sceneCategories, saved)) {
+        const moduleId = saved as SceneModuleId;
+        const labels: Record<SceneModuleId, string> = { plan: '计划中心', drawing: '图纸资料库', production: '生产执行', material: '物料跟进', quality: '质量与问题', labor: '工时协同' };
+        setSelectedModule(moduleId);
+        setFocusRequest({ id: ++focusSequence.current, category: sceneCategories[moduleId], label: labels[moduleId] });
+      }
+    } catch { /* Preferences are optional in restricted storage contexts. */ }
+    const visibility = () => setPageVisible(!document.hidden);
+    visibility();
+    document.addEventListener('visibilitychange', visibility);
+    return () => {
+      document.removeEventListener('visibilitychange', visibility);
+      if (scene) cancelPointerFrame(scene);
+    };
+  }, [user.id]);
+
+  useEffect(() => {
+    const panel = activeStreamId ? taskDrawerRef.current : analyticsOpen ? analyticsPanelRef.current : null;
+    if (!panel) return;
+    const frame = requestAnimationFrame(() => panel.querySelector<HTMLElement>('button, a[href]')?.focus());
+    function keepFocus(event: KeyboardEvent): void {
+      if (event.key !== 'Tab' || !panel) return;
+      const nodes = [...panel.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), [tabindex="0"]')].filter(node => node.getClientRects().length > 0);
+      if (!nodes.length) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+      }
+    }
+    window.addEventListener('keydown', keepFocus);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('keydown', keepFocus); };
+  }, [activeStreamId, analyticsOpen]);
 
   const loadNotificationPreview = useCallback(async (signal?: AbortSignal): Promise<void> => {
     if (!canReadNotifications) {
@@ -320,6 +385,12 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
     void loadNotificationPreview(controller.signal);
     return () => controller.abort();
   }, [loadNotificationPreview]);
+
+  useEffect(() => {
+    if (!utilityPanel) return;
+    const frame = requestAnimationFrame(() => document.querySelector<HTMLElement>('.hm-home-utility-menu a[href], .hm-home-utility-menu button')?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [utilityPanel]);
 
   useEffect(() => {
     if (!canGlobalSearch) return;
@@ -370,15 +441,18 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
     function onKeyDown(event: KeyboardEvent): void {
       if (canGlobalSearch && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
+        setActiveStreamId(null);
+        setAnalyticsOpen(false);
+        setUtilityPanel(null);
         setSearchPanelOpen(true);
-        searchInputRef.current?.focus();
+        window.requestAnimationFrame(() => searchInputRef.current?.focus());
         return;
       }
       if (event.key !== 'Escape') return;
       if (searchOpen || searchPanelOpen) {
         setSearchOpen(false);
         setSearchPanelOpen(false);
-        window.requestAnimationFrame(() => searchInputRef.current?.focus());
+        window.requestAnimationFrame(() => searchLaunchRef.current?.focus());
       }
       if (activeStreamId) {
         setActiveStreamId(null);
@@ -386,7 +460,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       }
       if (analyticsOpen) {
         setAnalyticsOpen(false);
-        window.requestAnimationFrame(() => analyticsButtonRef.current?.focus());
+        window.requestAnimationFrame(() => (analyticsTriggerRef.current || analyticsButtonRef.current)?.focus());
       }
     }
     document.addEventListener('pointerdown', onPointerDown);
@@ -423,8 +497,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const materialStream = data.workstreams.find(stream => stream.id === 'material');
   const laborStream = data.workstreams.find(stream => stream.id === 'labor');
   const drawingKpi = data.kpis.find(kpi => kpi.id === 'drawing');
-  const drawingCount = drawingKpi?.value
-    ?? data.technicalDistribution.reduce((sum, item) => sum + item.value, 0);
+  const drawingCount = drawingKpi?.value ?? null;
   const planWorkbenchRoute = user.canAccessDailyPlans
     ? '/weekly-plan-center'
     : user.canAccessWeeklyProcesses
@@ -432,11 +505,11 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       : '/production';
   const planWorkbenchLabel = user.canAccessDailyPlans ? '计划中心' : '周工序总览';
   const collaborationCards: Array<{
-    id: string;
+    id: SceneModuleId;
     position: string;
     label: string;
     eyebrow: string;
-    value: number;
+    value: number | null;
     unit: string;
     badge: string;
     detail: string;
@@ -462,15 +535,15 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       id: 'drawing',
       position: 'drawing',
       label: '图纸资料库',
-      eyebrow: '技术资料',
+      eyebrow: '图纸待确认',
       value: drawingCount,
-      unit: '份',
-      badge: drawingKpi?.description || '资料协同',
+      unit: '项',
+      badge: drawingCount === null ? '待更新' : drawingCount > 0 ? '需要确认' : '暂无待确认',
       detail: data.technicalDistribution[0]
         ? `${data.technicalDistribution[0].label} ${data.technicalDistribution[0].value}`
-        : '资料状态正常',
+        : '查看图纸与技术资料',
       route: '/drawing-library',
-      tone: 'blue',
+      tone: drawingCount ? 'yellow' : 'blue',
       Icon: FileCheck2,
     },
     {
@@ -480,8 +553,8 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       eyebrow: '现场协同',
       value: productionStream?.count || 0,
       unit: '项',
-      badge: productionStream?.riskCount ? `${productionStream.riskCount} 项优先` : '状态正常',
-      detail: productionStream?.items[0]?.title || '当前生产运行平稳',
+      badge: productionStream?.riskCount ? `${productionStream.riskCount} 项优先` : '暂无优先项',
+      detail: productionStream?.items[0]?.title || '当前没有生产待办',
       route: productionStream?.route || '/production',
       tone: productionStream?.tone || 'green',
       Icon: Factory,
@@ -494,41 +567,42 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       eyebrow: '物料保障',
       value: materialStream?.count || 0,
       unit: '项',
-      badge: materialStream?.riskCount ? `${materialStream.riskCount} 项优先` : '状态正常',
+      badge: materialStream?.riskCount ? `${materialStream.riskCount} 项优先` : '暂无优先项',
       detail: materialStream?.items[0]?.title || '当前没有待跟进缺料',
       route: materialStream?.route || '/workspace/procurement',
-      tone: materialStream?.tone || 'yellow',
+      tone: materialStream?.riskCount ? 'yellow' : 'green',
       Icon: Boxes,
       stream: materialStream,
     },
     {
       id: 'quality',
       position: 'quality',
-      label: '质量管理',
-      eyebrow: '质量管控',
-      value: data.issues.length,
+      label: '质量与问题',
+      eyebrow: '未关闭问题',
+      value: data.issueCount,
       unit: '项',
-      badge: data.issues.length > 0 ? `待处理 ${data.issues.length}` : '运行正常',
-      detail: data.issues[0]?.title || '当前没有未关闭问题',
-      route: '/workspace/quality-tasks',
-      tone: data.issues.length > 0 ? 'red' : 'green',
+      badge: data.issueCount === null ? '待更新' : data.issueCount > 0 ? `待处理 ${data.issueCount}` : '暂无未关闭问题',
+      detail: data.issueCount === null ? '问题数据未开放或等待更新' : data.issues[0]?.title || '当前没有未关闭问题',
+      route: '/workspace/issues',
+      tone: data.issueCount ? 'red' : 'green',
       Icon: ShieldCheck,
     },
     {
       id: 'labor',
       position: 'labor',
-      label: '今日工时',
-      eyebrow: '员工报工',
+      label: '工时协同',
+      eyebrow: '工时待办',
       value: laborStream?.count || 0,
       unit: '项',
-      badge: laborStream?.riskCount ? `${laborStream.riskCount} 项待确认` : '状态正常',
-      detail: laborStream?.items[0]?.title || '今日工时领取正常',
+      badge: laborStream?.riskCount ? `${laborStream.riskCount} 项待确认` : '暂无待确认',
+      detail: laborStream?.items[0]?.title || '当前没有工时待办',
       route: laborStream?.route || '/workspace/reports',
       tone: laborStream?.tone || 'green',
       Icon: TimerReset,
       stream: laborStream,
     },
   ];
+  const selectedCard = collaborationCards.find(card => card.id === selectedModule) || null;
   const planCompletionRate = data.planChart.total > 0
     ? Math.round((data.planChart.completed / data.planChart.total) * 100)
     : null;
@@ -548,6 +622,37 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
 
   function refresh(): void {
     startRefresh(() => router.refresh());
+    void loadNotificationPreview();
+  }
+
+  function selectModule(id: SceneModuleId): void {
+    const card = collaborationCards.find(item => item.id === id);
+    if (!card) return;
+    setSelectedModule(id);
+    setFocusRequest({ id: ++focusSequence.current, category: sceneCategories[id], label: card.label });
+    try { sessionStorage.setItem(`hm-home-focus:${user.id}`, id); } catch { /* Optional preference. */ }
+  }
+
+  function clearModule(): void {
+    setSelectedModule(null);
+    setFocusRequest({ id: ++focusSequence.current, category: 'ACTIONABLE', label: '' });
+    try { sessionStorage.removeItem(`hm-home-focus:${user.id}`); } catch { /* Optional preference. */ }
+  }
+
+  function detachModule(): void {
+    setSelectedModule(null);
+    setFocusRequest(undefined);
+    try { sessionStorage.removeItem(`hm-home-focus:${user.id}`); } catch { /* Optional preference. */ }
+  }
+
+  function toggleMotion(): void {
+    const quiet = !quietMotion;
+    setQuietMotion(quiet);
+    try { localStorage.setItem('hm-home-motion', quiet ? 'quiet' : 'standard'); } catch { /* Optional preference. */ }
+    if (sceneRef.current) {
+      cancelPointerFrame(sceneRef.current);
+      for (const property of ['--scene-x', '--scene-y', '--scene-x-soft', '--scene-y-soft', '--scene-x-back', '--scene-y-back']) sceneRef.current.style.removeProperty(property);
+    }
   }
 
   function openUtility(event: React.MouseEvent<HTMLButtonElement>, panel: Exclude<UtilityPanel, null>): void {
@@ -562,6 +667,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   }
 
   function openStream(stream: HomeWorkstream, trigger: HTMLButtonElement): void {
+    if (data.error) return;
     drawerTriggerRef.current = trigger;
     setAnalyticsOpen(false);
     setActiveStreamId(stream.id);
@@ -574,22 +680,26 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
     }
     if (analyticsOpen) {
       setAnalyticsOpen(false);
-      window.requestAnimationFrame(() => analyticsButtonRef.current?.focus());
+      window.requestAnimationFrame(() => (analyticsTriggerRef.current || analyticsButtonRef.current)?.focus());
     }
   }
 
   function toggleAnalytics(): void {
+    if (data.error) return;
+    analyticsTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : analyticsButtonRef.current;
     setActiveStreamId(null);
     setAnalyticsOpen(value => !value);
   }
 
   return (
-    <main className={`hm-home-shell hm-workbench-root hm-hcc-root ${hasOperationalData ? 'has-live-data' : 'is-plan-empty'}`}>
+    <main ref={rootRef} className={`hm-home-shell hm-workbench-root hm-hcc-root hm-home-industrial ${hasOperationalData ? 'has-live-data' : 'is-plan-empty'}`} data-motion={quietMotion ? 'quiet' : 'standard'} data-page-visible={pageVisible}>
       <AppWorkbenchHeader
         user={user}
         activeHref="/home"
         subtitle="跨部门协同工作台"
         hideHeader
+        sidebarExpanded={sidebarExpanded}
+        onSidebarExpandedChange={setSidebarExpanded}
         menuItems={[
           { label: '系统设置', href: '/dashboard?openSettings=1' },
           { label: '退出登录', onSelect: () => { void logout(); } },
@@ -607,16 +717,12 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         {data.error && <div className="hm-home-error hm-hcc-error" role="alert"><span>首页数据加载失败</span><p>{data.error}</p><button type="button" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
 
         <header className="hm-hcc-welcome-bar">
+          <button className="hm-hcc-sidebar-toggle" type="button" aria-label={sidebarExpanded ? '收起平台导航' : '展开平台导航'} aria-expanded={sidebarExpanded} aria-controls="hm-platform-sidebar" onClick={() => setSidebarExpanded(value => !value)}><PanelLeft size={20} /></button>
           <div className="hm-hcc-greeting">
             <strong>{data.greeting}，{displayName}</strong>
             <span>高效协同每一单，让交付更可靠</span>
           </div>
-          <Link className={`hm-hcc-alert ${topAction ? 'has-alert' : 'is-clear'}`} href={topAction?.targetRoute || '/production?view=exceptions'} prefetch={false}>
-            {topAction ? <AlertTriangle aria-hidden="true" /> : <CheckCircle2 aria-hidden="true" />}
-            <span className="hm-hcc-alert-items">{topAction ? data.actionItems.slice(0, 3).map((item, index) => <b key={item.id}>{item.title}{index < Math.min(data.actionItems.length, 3) - 1 && <i aria-hidden="true" />}</b>) : '当前没有需要立即处理的生产风险'}</span>
-            {riskCount > 0 && <b>{riskCount} 项关注</b>}
-            <ChevronRight aria-hidden="true" />
-          </Link>
+          {canGlobalSearch && <button ref={searchLaunchRef} className="hm-hcc-search-launch" type="button" onClick={openSearch}><Search size={18} aria-hidden="true" /><span>搜索工单、图纸、物料、任务…</span><kbd>Ctrl K</kbd></button>}
           <div className="hm-hcc-top-meta">
             <div className="hm-hcc-date"><time dateTime={data.generatedAt}>{data.dateLabel}</time><small>{updatedTime(data.generatedAt)} 更新</small></div>
             <div className="hm-hcc-top-tools" aria-label="首页快捷操作">
@@ -652,81 +758,99 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
 
         <div className="hm-hcc-main-grid">
           <section
+            ref={sceneRef}
             className="hm-hcc-operations"
+            data-focused={selectedModule || 'none'}
             aria-labelledby="hm-hcc-operations-title"
             onPointerMove={handleScenePointerMove}
             onPointerLeave={resetScenePointer}
           >
             <header className="hm-hcc-section-heading">
-              <div><h1 id="hm-hcc-operations-title">生产协同总览</h1><small>实时运行中枢</small></div>
-              <div className="hm-hcc-legend" aria-label="运行状态图例"><span><i className="normal" />正常</span><span><i className="warning" />预警</span><span><i className="danger" />异常</span></div>
+              <div className="hm-hcc-title-group"><h1 id="hm-hcc-operations-title">生产协同总览</h1><small>{data.error ? '数据待更新' : '协同工作台'}</small><p>全流程协同 · 看清进度 · 按期交付</p></div>
+              <div className="hm-hcc-scene-controls">
+                <button type="button" onClick={toggleMotion} aria-pressed={quietMotion} aria-label={quietMotion ? '开启标准动效' : '开启安静模式'}>{quietMotion ? <Play size={14} /> : <Pause size={14} />}<span>{quietMotion ? '安静模式' : '标准动效'}</span></button>
+                {selectedModule && <button type="button" onClick={clearModule}><X size={14} /><span>总览</span></button>}
+              </div>
             </header>
 
             <div className="hm-hcc-map">
-              <div className="hm-hcc-scene-photo" aria-hidden="true" />
+              <div className="hm-industrial-backdrop" aria-hidden="true"><img src={`/assets/home/industrial-floor-v134136.webp?v=${assetRevision}`} alt="" draggable={false} onError={() => setAssetFailed(true)} /></div>
+              <img className="hm-industrial-machine machine-top" src={`/assets/home/industrial-workcell-v134136.webp?v=${assetRevision}`} alt="" aria-hidden="true" draggable={false} onError={event => { event.currentTarget.style.visibility = 'hidden'; setAssetFailed(true); }} onLoad={event => { event.currentTarget.style.visibility = ''; }} />
               <svg className="hm-hcc-flow-map" viewBox="0 0 1000 680" preserveAspectRatio="none" aria-hidden="true">
-                <path className="flow flow-plan" d="M500 338 C418 262 332 170 227 133" />
-                <path className="flow flow-drawing" d="M500 338 C580 258 676 166 784 132" />
-                <path className="flow flow-production" d="M500 338 C385 329 275 326 142 346" />
-                <path className="flow flow-material warning" d="M500 338 C620 332 737 327 866 349" />
-                <path className="flow flow-quality" d="M500 338 C418 420 335 506 230 548" />
-                <path className="flow flow-labor" d="M500 338 C582 423 676 510 786 549" />
+                {collaborationCards.map(card => {
+                  const paths: Record<SceneModuleId, string> = { plan: 'M500 338 C418 262 332 170 227 133', drawing: 'M500 338 C580 258 676 166 784 132', production: 'M500 338 C385 329 275 326 142 346', material: 'M500 338 C620 332 737 327 866 349', quality: 'M500 338 C418 420 335 506 230 548', labor: 'M500 338 C582 423 676 510 786 549' };
+                  const risk = !data.error && (card.tone === 'yellow' || card.tone === 'red');
+                  return <path key={card.id} className={`flow flow-${card.id} ${risk ? card.tone === 'red' ? 'danger' : 'warning' : ''} ${selectedModule === card.id ? 'is-selected' : ''}`} d={paths[card.id]} />;
+                })}
               </svg>
 
-              <div className="hm-hcc-core" aria-label={`本周协同执行率${progressRate === null ? '暂未生成' : `${progressRate}%`}`}>
+              <button type="button" className="hm-hcc-core" disabled={Boolean(data.error)} aria-label={`本周计划完成率${progressRate === null ? '暂无数据' : `${progressRate}%`}，查看执行明细`} onClick={toggleAnalytics} aria-expanded={analyticsOpen} aria-controls="hm-command-analytics">
                 <span aria-hidden="true"><UsersRound /></span>
-                <small>今日执行</small>
+                <small>本周计划完成率</small>
                 <div
                   className="hm-hcc-core-rate"
                   style={{ '--rate': `${progressRate || 0}%` } as CSSProperties}
                 >
                   <strong>{progressRate === null ? '--' : progressRate}<em>{progressRate === null ? '' : '%'}</em></strong>
                 </div>
-                <p>{data.planChart.completed} 项完成 · {data.planChart.inProgress} 项进行中</p>
-              </div>
+                <p>{data.error ? '等待业务数据更新' : `${data.planChart.completed} 项完成 · ${data.planChart.inProgress} 项进行中`}</p>
+                <span className="hm-hcc-core-hint">查看执行明细<ChevronRight size={12} /></span>
+              </button>
 
               <div className="hm-hcc-node-grid">
                 {collaborationCards.map((card, index) => (
                   <article
                     className={`hm-hcc-node node-${card.position} tone-${card.tone}`}
                     key={card.id}
+                    data-selected={selectedModule === card.id}
+                    data-state={data.error || card.value === null ? 'unknown' : card.value === 0 ? 'empty' : 'active'}
                     style={{ '--card-index': index } as CSSProperties}
                     onPointerMove={handleTiltMove}
                     onPointerLeave={resetTilt}
                   >
-                    <Link href={card.route} prefetch={false} aria-label={`进入${card.label}`}>
+                    <button className="hm-hcc-node-select" type="button" aria-label={`聚焦${card.label}`} aria-pressed={selectedModule === card.id} aria-controls="hm-home-module-focus" onClick={() => selectModule(card.id)}>
                       <span className="hm-hcc-node-icon" aria-hidden="true"><card.Icon /></span>
                       <div><small>{String(index + 1).padStart(2, '0')}</small><h2>{card.label}</h2></div>
-                      <dl><div><dt>{card.eyebrow}</dt><dd>{card.value} {card.unit}</dd></div><div><dt>协同状态</dt><dd>{card.badge}</dd></div></dl>
+                      <dl><div><dt>{card.eyebrow}</dt><dd>{data.error || card.value === null ? '--' : card.value} {card.unit}</dd></div><div><dt>协同状态</dt><dd>{data.error ? '等待更新' : card.badge}</dd></div></dl>
                       <i className={card.tone === 'red' || card.tone === 'yellow' ? 'has-risk' : ''} aria-hidden="true" />
-                    </Link>
-                    {card.stream && <button type="button" aria-label={`展开${card.label}待办任务`} onClick={event => openStream(card.stream!, event.currentTarget)}>待办<ChevronRight /></button>}
+                    </button>
+                    <div className="hm-hcc-node-actions">
+                      {card.stream ? <button type="button" disabled={Boolean(data.error)} aria-label={`展开${card.label}待办任务`} onClick={event => { selectModule(card.id); openStream(card.stream!, event.currentTarget); }}>待办<ChevronRight size={13} /></button> : <span>{card.id === 'plan' ? '周计划协同' : card.id === 'drawing' ? '技术资料协同' : '问题闭环'}</span>}
+                      <Link href={card.route} prefetch={false} aria-label={`进入${card.label}`} onClick={() => selectModule(card.id)}>进入<ArrowUpRight size={13} /></Link>
+                    </div>
                   </article>
                 ))}
               </div>
+              <div className="hm-hcc-map-caption"><span>杭连制造<small>让协同更清晰，让交付更可靠</small></span><div className="hm-hcc-legend" aria-label="业务状态图例"><span><i className="normal" />无优先项</span><span><i className="warning" />需关注</span><span><i className="danger" />待处理</span></div></div>
+              {assetFailed && <button className="hm-hcc-asset-retry" type="button" onClick={() => { setAssetFailed(false); setAssetRevision(value => value + 1); }}>场景素材加载失败，点击重试</button>}
+            </div>
+            <div className={`hm-hcc-focus-summary ${selectedCard ? 'is-focused' : ''}`} id="hm-home-module-focus" aria-live="polite">
+              {selectedCard ? <><span className="hm-hcc-focus-icon"><selectedCard.Icon size={20} /></span><div><strong>{selectedCard.label}<small>{data.error || selectedCard.value === null ? '数据待更新' : `${selectedCard.eyebrow} ${selectedCard.value} ${selectedCard.unit}`}</small></strong><p>{data.error ? '首页数据暂时不可用，请重新加载' : selectedCard.detail}</p></div>{selectedCard.stream && <button type="button" disabled={Boolean(data.error)} onClick={event => openStream(selectedCard.stream!, event.currentTarget)}>查看待办<ChevronRight size={14} /></button>}<Link href={selectedCard.route} prefetch={false}>进入模块<ArrowUpRight size={14} /></Link></> : <><span className="hm-hcc-focus-icon">{topAction ? <AlertTriangle size={20} /> : <CheckCircle2 size={20} />}</span><div><strong>{data.error ? '协同数据待更新' : topAction ? topAction.title : '从这里开始今天的协同'}<small>{riskCount > 0 ? `${riskCount} 项需优先` : data.periodLabel}</small></strong><p>{data.error ? '点击右上角刷新，重新获取业务状态' : topAction ? topAction.subtitle : '点击模块聚焦业务，查看相关待办与消息'}</p></div>{topAction && <Link href={topAction.targetRoute} prefetch={false}>查看事项<ArrowUpRight size={14} /></Link>}</>}
             </div>
           </section>
 
           <HomeNotificationCommandCenter
             enabled={canReadNotifications}
+            refreshKey={data.generatedAt}
+            focusRequest={focusRequest}
+            onFocusClear={detachModule}
             onUnreadCountChange={setNotificationUnreadCount}
             onNotificationsChange={loadNotificationPreview}
           />
         </div>
 
         <section className="hm-hcc-insight-bar" aria-label="今日洞察">
-          <div className="hm-hcc-insight-title"><small>今日洞察</small><strong>{data.periodLabel}</strong><span>截至 {updatedTime(data.generatedAt)}</span></div>
-          <div><span>计划达成率</span><strong>{planCompletionRate === null ? '--' : `${planCompletionRate}%`}</strong><small>{data.planChart.completed} / {data.planChart.total} 已完成</small></div>
-          <div><span>准时交付率</span><strong>{onTimeRate === null ? '--' : `${onTimeRate}%`}</strong><small>{data.planChart.overdue} 项逾期</small></div>
-          <div><span>图纸完整率</span><strong>{technicalCompleteRate === null ? '--' : `${technicalCompleteRate}%`}</strong><small>{technicalComplete} / {technicalTotal} 资料完整</small></div>
-          <div><span>当前协同待办</span><strong>{taskCount}</strong><small>{riskCount} 项需优先</small></div>
-          <button ref={analyticsButtonRef} type="button" aria-expanded={analyticsOpen} aria-controls="hm-command-analytics" onClick={toggleAnalytics}>查看洞察<BarChart3 /></button>
+          <Link className="hm-hcc-insight-title" href={planWorkbenchRoute} prefetch={false}><CalendarDays size={23} aria-hidden="true" /><small>本周计划</small><strong>{data.periodLabel}</strong><span>截至 {updatedTime(data.generatedAt)}<ChevronRight size={14} /></span></Link>
+          <button className="hm-hcc-metric metric-plan" type="button" disabled={Boolean(data.error)} onClick={toggleAnalytics} aria-label="查看本周计划完成率明细"><BarChart3 size={23} aria-hidden="true" /><span>本周计划完成率</span><strong>{planCompletionRate === null ? '--' : `${planCompletionRate}%`}</strong><small>{data.planChart.completed} / {data.planChart.total} 已完成</small><i className="hm-hcc-metric-track" aria-hidden="true"><i style={{ width: `${planCompletionRate || 0}%` }} /></i></button>
+          <button className="hm-hcc-metric metric-delivery" type="button" disabled={Boolean(data.error)} onClick={toggleAnalytics} aria-label="查看本周未逾期占比明细"><PieChart size={23} aria-hidden="true" /><span>本周未逾期占比</span><strong>{onTimeRate === null ? '--' : `${onTimeRate}%`}</strong><small>{data.planChart.overdue} / {data.planChart.total} 项逾期</small><i className="hm-hcc-metric-track" aria-hidden="true"><i style={{ width: `${onTimeRate || 0}%` }} /></i></button>
+          <button className="hm-hcc-metric metric-drawing" type="button" disabled={Boolean(data.error)} onClick={toggleAnalytics} aria-label="查看技术资料完整率明细"><FileCheck2 size={23} aria-hidden="true" /><span>技术资料完整率</span><strong>{technicalCompleteRate === null ? '--' : `${technicalCompleteRate}%`}</strong><small>{technicalComplete} / {technicalTotal} 资料完整</small><i className="hm-hcc-metric-track" aria-hidden="true"><i style={{ width: `${technicalCompleteRate || 0}%` }} /></i></button>
+          <button className="hm-hcc-metric metric-tasks" type="button" disabled={Boolean(data.error)} onClick={event => { const stream = [...data.workstreams].sort((a, b) => b.riskCount - a.riskCount || b.count - a.count)[0]; if (stream) openStream(stream, event.currentTarget); else selectModule('production'); }} aria-label="查看当前协同待办"><UsersRound size={23} aria-hidden="true" /><span>当前协同待办</span><strong>{data.error ? '--' : taskCount}</strong><small>{riskCount} 项需优先</small><i className="hm-hcc-metric-track" aria-hidden="true"><i style={{ width: `${taskCount ? Math.min(100, riskCount / taskCount * 100) : 0}%` }} /></i></button>
           <Link className="hm-hcc-primary-action" href={hasOperationalData ? '/production' : planWorkbenchRoute} prefetch={false}>进入工作台<ArrowUpRight /></Link>
         </section>
 
         <button className={`hm-command-overlay ${activeStream || analyticsOpen ? 'open' : ''}`} type="button" aria-label="关闭展开面板" aria-hidden={!activeStream && !analyticsOpen} tabIndex={activeStream || analyticsOpen ? 0 : -1} onClick={closeOverlays} />
 
-        <aside className={`hm-command-task-drawer ${activeStream ? 'open' : ''}`} aria-hidden={!activeStream} aria-labelledby="hm-command-task-title">
+        <aside ref={taskDrawerRef} className={`hm-command-task-drawer ${activeStream ? 'open' : ''}`} role="dialog" aria-modal={activeStream ? true : undefined} aria-hidden={!activeStream} aria-labelledby={activeStream ? 'hm-command-task-title' : undefined}>
           {activeStream && (
             <>
               <header>
@@ -734,7 +858,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
                   const Icon = workstreamIcons[activeStream.id];
                   return <Icon size={21} />;
                 })()}</span>
-                <div><small>实时任务抽屉</small><h2 id="hm-command-task-title">{activeStream.label}</h2><p>{activeStream.description}</p></div>
+                <div><small>协同待办 · 截至 {updatedTime(data.generatedAt)}</small><h2 id="hm-command-task-title">{activeStream.label}</h2><p>{activeStream.description}</p></div>
                 <button ref={drawerCloseRef} type="button" aria-label={`关闭${activeStream.label}任务`} onClick={closeOverlays}><X size={19} /></button>
               </header>
               <div className="hm-command-drawer-summary">
@@ -743,7 +867,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               </div>
               <div className="hm-command-drawer-list hm-scroll-region">
                 {!activeStream.items.length ? (
-                  <div className="hm-command-drawer-empty"><CheckCircle2 size={26} aria-hidden="true" /><strong>当前没有待处理任务</strong><p>该业务节点运行平稳。</p></div>
+                  <div className="hm-command-drawer-empty"><CheckCircle2 size={26} aria-hidden="true" /><strong>当前没有待处理任务</strong><p>可以进入业务模块查看完整记录。</p></div>
                 ) : activeStream.items.map(item => (
                   <Link className={`risk-${item.risk}`} href={item.targetRoute} prefetch={false} key={item.id}>
                     <span>{item.status}</span>
@@ -757,19 +881,21 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
           )}
         </aside>
 
-        <section className={`hm-command-analytics ${analyticsOpen ? 'open' : ''}`} id="hm-command-analytics" aria-hidden={!analyticsOpen} aria-labelledby="hm-command-analytics-title">
+        <section ref={analyticsPanelRef} className={`hm-command-analytics ${analyticsOpen ? 'open' : ''}`} id="hm-command-analytics" role="dialog" aria-modal={analyticsOpen ? true : undefined} aria-hidden={!analyticsOpen} aria-labelledby="hm-command-analytics-title">
           <header>
             <div><small>业务洞察</small><h2 id="hm-command-analytics-title">生产数据分析</h2></div>
             <button type="button" aria-label="关闭数据分析" tabIndex={analyticsOpen ? 0 : -1} onClick={closeOverlays}><X size={19} /></button>
           </header>
           <div className="hm-command-analytics-grid">
             <article>
-              <span>计划执行</span>
+              <span>本周计划完成率</span>
               <div className="hm-command-mini-donut" style={{ '--rate': `${progressRate || 0}%` } as CSSProperties}><strong>{progressRate === null ? '--' : `${progressRate}%`}</strong></div>
               <dl><div><dt>已完成</dt><dd>{data.planChart.completed}</dd></div><div><dt>执行中</dt><dd>{data.planChart.inProgress}</dd></div><div><dt>逾期</dt><dd>{data.planChart.overdue}</dd></div></dl>
+              <p className="hm-hcc-metric-definition">本周已完成工单 ÷ 本周计划工单。未逾期占比为本周未逾期工单 ÷ 本周计划工单。</p>
+              <Link href={planWorkbenchRoute} prefetch={false} tabIndex={analyticsOpen ? 0 : -1}>查看本周计划<ArrowUpRight size={14} /></Link>
             </article>
-            <article><span>工单状态分布</span><DistributionBars items={data.stageDistribution} /></article>
-            <article><span>技术资料状态</span><DistributionBars items={data.technicalDistribution} /></article>
+            <article><span>工单状态分布</span><DistributionBars items={data.stageDistribution} /><Link href="/production" prefetch={false} tabIndex={analyticsOpen ? 0 : -1}>查看生产工单<ArrowUpRight size={14} /></Link></article>
+            <article><span>技术资料状态</span><DistributionBars items={data.technicalDistribution} /><p className="hm-hcc-metric-definition">技术资料完整工单 ÷ 当前统计工单。这里统计工单资料状态，不是图纸文件数量。</p><Link href="/drawing-library" prefetch={false} tabIndex={analyticsOpen ? 0 : -1}>进入图纸资料库<ArrowUpRight size={14} /></Link></article>
           </div>
         </section>
       </div>

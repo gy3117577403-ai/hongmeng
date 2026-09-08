@@ -20,16 +20,26 @@ import {
   Undo2,
   UserRoundCheck,
   Workflow,
+  X,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  filterHomeNotifications,
+  HOME_NOTIFICATION_LABELS as BUSINESS_LABELS,
+  homeNotificationEmptyState,
+  homeNotificationFilterCount,
+  homeNotificationFocusState,
+  type HomeNotificationFilter,
+  type HomeNotificationFocusRequest,
+  type HomeNotificationSummary as NotificationSummary,
+  type NotificationView,
+} from '@/lib/home-notification-view';
 import type {
   NotificationBusinessCategoryDTO,
   SystemNotificationDTO,
 } from '@/types';
 
-type HomeNotificationFilter = 'ACTIONABLE' | NotificationBusinessCategoryDTO;
-type NotificationView = 'pending' | 'completed';
 type HomeNotification = SystemNotificationDTO & {
   completionKind?: 'MANUAL' | 'SOURCE_RESOLVED' | 'SYSTEM_RECONCILED' | null;
   completionReason?: string | null;
@@ -49,16 +59,6 @@ type NotificationInboxResponse = {
   nextCursor?: string | null;
   error?: string;
   message?: string;
-};
-
-type NotificationSummary = {
-  unreadCount: number;
-  pendingCount: number;
-  actionableCount: number;
-  urgentCount: number;
-  completedCount: number;
-  businessCategoryCounts: Record<NotificationBusinessCategoryDTO, number>;
-  completedBusinessCategoryCounts: Record<NotificationBusinessCategoryDTO, number>;
 };
 
 const EMPTY_SUMMARY: NotificationSummary = {
@@ -88,37 +88,13 @@ const FILTERS: Array<{
   label: string;
   Icon: typeof BellRing;
 }> = [
-  { value: 'ACTIONABLE', label: '待我处理', Icon: UserRoundCheck },
+  { value: 'ACTIONABLE', label: '需我处理', Icon: UserRoundCheck },
   { value: 'PRODUCTION', label: '生产异常', Icon: Factory },
   { value: 'QUALITY', label: '质量', Icon: ShieldCheck },
   { value: 'PROCESS', label: '工艺', Icon: Workflow },
   { value: 'MATERIAL', label: '物料', Icon: Box },
   { value: 'SYSTEM', label: '系统', Icon: Settings2 },
 ];
-
-const BUSINESS_LABELS: Record<NotificationBusinessCategoryDTO, string> = {
-  PRODUCTION: '生产异常',
-  QUALITY: '质量',
-  PROCESS: '工艺',
-  MATERIAL: '物料',
-  SYSTEM: '系统',
-};
-
-const PRIORITY_ORDER = { URGENT: 0, HIGH: 1, NORMAL: 2 } as const;
-
-function countForFilter(
-  summary: NotificationSummary,
-  filter: HomeNotificationFilter,
-  view: NotificationView,
-): number {
-  if (view === 'completed') {
-    if (filter === 'ACTIONABLE') return summary.completedCount;
-    return summary.completedBusinessCategoryCounts[filter];
-  }
-  return filter === 'ACTIONABLE'
-    ? summary.actionableCount
-    : summary.businessCategoryCounts[filter];
-}
 
 function safeInternalRoute(value: string | null): string | null {
   const route = value?.trim();
@@ -183,10 +159,16 @@ export default function HomeNotificationCommandCenter({
   enabled,
   onUnreadCountChange,
   onNotificationsChange,
+  focusRequest,
+  onFocusClear,
+  refreshKey,
 }: {
   enabled: boolean;
   onUnreadCountChange?: (count: number) => void;
   onNotificationsChange?: () => void | Promise<void>;
+  focusRequest?: HomeNotificationFocusRequest;
+  onFocusClear?: () => void;
+  refreshKey?: string;
 }) {
   const [notifications, setNotifications] = useState<HomeNotification[]>([]);
   const [summary, setSummary] = useState<NotificationSummary>(EMPTY_SUMMARY);
@@ -207,6 +189,7 @@ export default function HomeNotificationCommandCenter({
   const requestGeneration = useRef(0);
   const viewRef = useRef<NotificationView>(view);
   const enabledRef = useRef(enabled);
+  const appliedFocusId = useRef<number | null>(null);
   enabledRef.current = enabled;
 
   const loadNotifications = useCallback(async ({
@@ -310,6 +293,29 @@ export default function HomeNotificationCommandCenter({
   }, [onUnreadCountChange]);
 
   useEffect(() => {
+    if (!focusRequest || appliedFocusId.current === focusRequest.id) return;
+    appliedFocusId.current = focusRequest.id;
+    const focusedState = homeNotificationFocusState(focusRequest.category);
+    setActiveFilter(focusedState.filter);
+    setQuery(focusedState.query);
+    setUnreadOnly(focusedState.unreadOnly);
+    setMenuId(null);
+    if (viewRef.current !== focusedState.view) {
+      setError('');
+      viewRef.current = focusedState.view;
+      requestGeneration.current += 1;
+      requestController.current?.abort();
+      requestController.current = null;
+      setNotifications([]);
+      setNextCursor(null);
+      setLoadMoreError('');
+      setLoading(enabledRef.current);
+      setLoadingMore(false);
+      setView(focusedState.view);
+    }
+  }, [focusRequest]);
+
+  useEffect(() => {
     viewRef.current = view;
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
@@ -324,7 +330,7 @@ export default function HomeNotificationCommandCenter({
       requestController.current?.abort();
       requestController.current = null;
     };
-  }, [enabled, loadNotifications, view]);
+  }, [enabled, loadNotifications, refreshKey, view]);
 
   useEffect(() => {
     function closeMenu(event: PointerEvent): void {
@@ -334,25 +340,61 @@ export default function HomeNotificationCommandCenter({
     return () => document.removeEventListener('pointerdown', closeMenu);
   }, []);
 
-  const filteredNotifications = useMemo(() => {
-    const keyword = query.trim().toLowerCase();
-    const filtered = notifications
-      .filter(item => view === 'completed' ? Boolean(item.completedAt) : !item.completedAt)
-      .filter(item => activeFilter === 'ACTIONABLE'
-        ? view === 'completed' || item.requiresAction
-        : item.businessCategory === activeFilter)
-      .filter(item => !unreadOnly || !item.readAt)
-      .filter(item => !keyword || [item.title, item.body, item.sourceType, item.actorName]
-        .filter(Boolean)
-        .some(value => String(value).toLowerCase().includes(keyword)));
-    if (view === 'completed') return filtered;
-    return filtered.sort((first, second) => {
-        const priorityDelta = PRIORITY_ORDER[first.priority] - PRIORITY_ORDER[second.priority];
-        if (priorityDelta) return priorityDelta;
-        if (Boolean(first.readAt) !== Boolean(second.readAt)) return first.readAt ? 1 : -1;
-        return new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime();
-      });
-  }, [activeFilter, notifications, query, unreadOnly, view]);
+  useEffect(() => {
+    if (!menuId) return;
+    const menu = menuRef.current;
+    const trigger = menu?.querySelector<HTMLButtonElement>('button[aria-expanded]');
+    const actions = menu ? [...menu.querySelectorAll<HTMLButtonElement>('button[role="menuitem"]')] : [];
+    const frame = window.requestAnimationFrame(() => actions[0]?.focus());
+    function onMenuKeyDown(event: KeyboardEvent): void {
+      if (!menu?.contains(event.target as Node)) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setMenuId(null);
+        trigger?.focus();
+        return;
+      }
+      const current = actions.indexOf(document.activeElement as HTMLButtonElement);
+      let next = current;
+      if (event.key === 'ArrowDown') next = (current + 1) % actions.length;
+      else if (event.key === 'ArrowUp') next = (current - 1 + actions.length) % actions.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = actions.length - 1;
+      else return;
+      event.preventDefault();
+      actions[next]?.focus();
+    }
+    function onMenuFocusOut(event: FocusEvent): void {
+      if (menu && !menu.contains(event.target as Node)) setMenuId(null);
+    }
+    document.addEventListener('keydown', onMenuKeyDown, true);
+    document.addEventListener('focusin', onMenuFocusOut);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', onMenuKeyDown, true);
+      document.removeEventListener('focusin', onMenuFocusOut);
+    };
+  }, [menuId]);
+
+  const filteredNotifications = useMemo(() => filterHomeNotifications(notifications, {
+    view, filter: activeFilter, query, unreadOnly,
+  }), [activeFilter, notifications, query, unreadOnly, view]);
+  const emptyState = homeNotificationEmptyState(summary, {
+    view, filter: activeFilter, query, unreadOnly,
+  }, { hasMore: Boolean(nextCursor), enabled });
+
+  function changeFilter(filter: HomeNotificationFilter): void {
+    setActiveFilter(filter);
+    setQuery('');
+    setUnreadOnly(false);
+    setMenuId(null);
+    onFocusClear?.();
+  }
+
+  function clearModuleFocus(): void {
+    changeFilter('ACTIONABLE');
+  }
 
   function changeView(nextView: NotificationView): void {
     if (nextView === view) return;
@@ -368,8 +410,10 @@ export default function HomeNotificationCommandCenter({
     setLoading(true);
     setLoadingMore(false);
     setUnreadOnly(false);
+    setQuery('');
     setActiveFilter('ACTIONABLE');
     setView(nextView);
+    onFocusClear?.();
   }
 
   async function refreshAfterMutation(): Promise<void> {
@@ -482,7 +526,7 @@ export default function HomeNotificationCommandCenter({
       <div className="hm-hcc-message-summary" aria-live="polite">
         <div className="hm-hcc-status-tabs" role="tablist" aria-label="消息处理状态">
           <button type="button" role="tab" aria-selected={view === 'pending'} className={view === 'pending' ? 'active' : ''} onClick={() => changeView('pending')}>
-            <UserRoundCheck aria-hidden="true" /><span>待处理</span><strong>{summary.pendingCount}</strong>
+            <UserRoundCheck aria-hidden="true" /><span>未完成消息</span><strong>{summary.pendingCount}</strong>
           </button>
           <button type="button" role="tab" aria-selected={view === 'completed'} className={view === 'completed' ? 'active completed' : ''} onClick={() => changeView('completed')}>
             <CheckCircle2 aria-hidden="true" /><span>已完成</span><strong>{summary.completedCount}</strong>
@@ -495,14 +539,14 @@ export default function HomeNotificationCommandCenter({
         <nav className="hm-hcc-category-rail" aria-label="消息业务分类">
           {FILTERS.map(filter => {
             const Icon = filter.Icon;
-            const count = countForFilter(summary, filter.value, view);
+            const count = homeNotificationFilterCount(summary, filter.value, view);
             const label = filter.value === 'ACTIONABLE' && view === 'completed' ? '全部完成' : filter.label;
             return (
               <button
                 type="button"
                 className={activeFilter === filter.value ? 'active' : ''}
                 aria-pressed={activeFilter === filter.value}
-                onClick={() => setActiveFilter(filter.value)}
+                onClick={() => changeFilter(filter.value)}
                 key={filter.value}
               >
                 <Icon aria-hidden="true" /><span>{label}</span><b>{count}</b>
@@ -518,12 +562,34 @@ export default function HomeNotificationCommandCenter({
             {view === 'pending' && <button type="button" disabled={markingAll || !summary.unreadCount} onClick={() => void markAllRead()}>{markingAll ? <LoaderCircle className="hm-hcc-spin" /> : <CheckCheck />}<span>全部已读</span></button>}
           </div>
 
+          {focusRequest?.label && (
+            <div className="hm-inbox-focus" role="status">
+              <span>正在查看 <strong>{focusRequest.label}</strong> 相关消息</span>
+              <button type="button" onClick={clearModuleFocus} aria-label="清除模块筛选"><X aria-hidden="true" />清除</button>
+            </div>
+          )}
+
           {error && <div className="hm-hcc-message-error" role="alert"><AlertTriangle /><span>{error}</span><button type="button" onClick={() => void loadNotifications()}>重试</button></div>}
 
           <div className="hm-hcc-message-list hm-scroll-region" aria-busy={loading || loadingMore} aria-live="polite">
             {loading && !notifications.length && Array.from({ length: 5 }, (_, index) => <div className="hm-hcc-message-skeleton" aria-hidden="true" key={index}><i /><span /><b /></div>)}
             {!loading && !filteredNotifications.length && !error && (
-              <div className="hm-hcc-message-empty"><CheckCheck /><strong>{view === 'completed' ? '当前分类还没有已完成消息' : '当前分类没有待处理消息'}</strong><span>{nextCursor ? '当前已加载记录中没有匹配项，可继续加载更多历史。' : view === 'completed' ? '手动标记完成的消息可恢复；业务自动收口的消息不可恢复。' : '新的协同提醒会自动进入这里。'}</span></div>
+              <div className="hm-hcc-message-empty">
+                <div className="hm-inbox-empty-scene" aria-hidden="true">{emptyState.categories.length ? <BellRing /> : <CheckCheck />}</div>
+                <strong>{emptyState.title}</strong>
+                <span>{emptyState.description}</span>
+                {(emptyState.categories.length > 0 || emptyState.canClearFilters || emptyState.canViewCompleted) && (
+                  <div className="hm-inbox-empty-actions">
+                    {emptyState.categories.map(item => (
+                      <button type="button" onClick={() => changeFilter(item.category)} key={item.category}>
+                        {item.label}<b>{item.count}</b><ChevronRight aria-hidden="true" />
+                      </button>
+                    ))}
+                    {emptyState.canClearFilters && <button type="button" onClick={() => { setQuery(''); setUnreadOnly(false); }}>清除搜索与筛选<ChevronRight aria-hidden="true" /></button>}
+                    {emptyState.canViewCompleted && <button type="button" onClick={() => changeView('completed')}>回看已完成消息<ChevronRight aria-hidden="true" /></button>}
+                  </div>
+                )}
+              </div>
             )}
             {filteredNotifications.map(item => {
               const targetRoute = safeInternalRoute(item.targetRoute);
@@ -536,10 +602,11 @@ export default function HomeNotificationCommandCenter({
                     <div><span className={`hm-hcc-priority ${item.priority.toLowerCase()}`}>{item.completedAt ? completionLabel(item) : priorityLabel(item)}</span><small>{BUSINESS_LABELS[item.businessCategory]}</small><time dateTime={item.completedAt || item.createdAt}><Clock3 />{elapsedTime(item.completedAt || item.createdAt)}</time></div>
                     <h3>{item.title}</h3>
                     <p>{item.body || `来源：${item.sourceType || '系统协同'}`}</p>
+                    {!item.completedAt && <p className="hm-inbox-message-origin">{item.requiresAction ? '需要你处理' : '协同进展 · 供你查看'}{item.actorName ? ` · ${item.actorName}` : ''}</p>}
                     {item.completedAt && <p className="hm-hcc-completion-note"><CheckCircle2 aria-hidden="true" />{completedTime(item.completedAt)} 完成 · {item.completionReason || completionLabel(item)}</p>}
                   </div>
                   <div className="hm-hcc-message-actions">
-                    {targetRoute && <Link href={targetRoute} prefetch={false}>{item.completedAt ? '查看' : '去处理'}</Link>}
+                    {targetRoute && <Link href={targetRoute} prefetch={false}>{item.completedAt || !item.requiresAction ? '查看详情' : '去处理'}</Link>}
                     {(!item.completedAt || canRestoreNotification(item)) ? <button className="hm-hcc-complete-action" type="button" disabled={isSaving} onClick={() => void updateCompletedState(item)}>
                       {isSaving ? <LoaderCircle className="hm-hcc-spin" /> : item.completedAt ? <Undo2 /> : <CheckCircle2 />}
                       <span>{item.completedAt ? '恢复' : '完成'}</span>

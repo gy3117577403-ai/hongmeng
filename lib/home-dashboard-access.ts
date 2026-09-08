@@ -24,6 +24,8 @@ export function scopeHomeDashboardData(
     })),
     actionItems: data.actionItems.filter(item => canAccessAppRoute(access, item.targetRoute)),
     issues: data.issues.filter(item => canAccessAppRoute(access, item.targetRoute)),
+    // Issue totals share the issue module's visibility, including when its preview is empty.
+    issueCount: canAccessAppRoute(access, '/workspace/issues') ? data.issueCount : null,
     todayNodes: data.todayNodes.filter(item => canAccessAppRoute(access, item.targetRoute)),
     workstreams: data.workstreams.map(stream => ({
       ...stream,
