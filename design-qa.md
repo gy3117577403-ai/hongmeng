@@ -51,3 +51,11 @@ final result: passed
 - Physical tablet hardware, production-scale account data and production deployment are outside this local visual run. Exact-image acceptance is recorded separately by the release scripts; this file does not claim Sealos cutover.
 
 No actionable P0/P1/P2 findings remain in the inspected scope.
+
+## Published image confirmation
+
+The immutable v1.34.136 image was independently pulled anonymously from the domestic mirror and started at `http://127.0.0.1:3107/home`. Runtime revision is `ca87258b08607021d16e3ad772b9a473cf512f53`; manifest digest is `sha256:8b15d36f6ec23d3b54bf7be5c887b7b8bcc5a1a6004b493f3b86c516c6e437f4`.
+
+After login, the actual image displayed the expected industrial homepage and 25% fixture completion. Material selection filtered its message, the pending drawer opened, Ctrl+K closed it and focused search without navigation, and Escape returned to the launch control. The settled page's browser error log was empty. Evidence: `artifacts/home-industrial-v134136/release-homepage-final.jpg` (native browser output 1663 × 941, CSS viewport reported 1673 × 941); the browser output excludes part of the outer viewport edge, so earlier normalized captures remain the precise source-comparison evidence. The saved file itself was reopened and visually inspected. Temporary device overrides were reset.
+
+The first disposable image start rejected a generated seed password containing the test username. Its database and failed container were retained; a different empty database was used for successful acceptance. This was corrected in the QA tool as a separate source change, without changing the published tag or business image. Runtime evidence records 141 applied migrations and 23 successful HTTP checks. The CI mirror probe had returned 502; the later independent local manifest/blob verification, anonymous pull and runtime evidence establish domestic mirror acceptance separately.

@@ -1,7 +1,9 @@
 param(
   [ValidateSet('prepare', 'verify')][string]$Stage = 'prepare',
   [ValidatePattern('^sha256:[a-f0-9]{64}$')][string]$ImageDigest,
-  [ValidatePattern('^[a-f0-9]{40}$')][string]$ExpectedRevision
+  [ValidatePattern('^[a-f0-9]{40}$')][string]$ExpectedRevision,
+  [ValidatePattern('^hongmeng_home_v134136_release(?:_[a-z0-9]+)?$')][string]$DatabaseName = 'hongmeng_home_v134136_release',
+  [ValidatePattern('^hm-home-v134136-release-app(?:-[a-z0-9]+)?$')][string]$AppName = 'hm-home-v134136-release-app'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,8 +12,6 @@ $taskLabel = 'home-industrial-v134136-release'
 $networkName = 'hm-home-v134136-release-net'
 $postgresName = 'hm-home-v134136-release-postgres'
 $minioName = 'hm-home-v134136-release-minio'
-$appName = 'hm-home-v134136-release-app'
-$databaseName = 'hongmeng_home_v134136_release'
 $baseUrl = 'http://127.0.0.1:3107'
 $expectedVersion = 'v1.34.136'
 $hostEnvPath = Join-Path $taskRoot '.env.home-release.local'
@@ -31,18 +31,49 @@ function Save-TaskEnvironment {
   Set-Content -LiteralPath $Destination -Value $environmentLines -Encoding utf8
 }
 
+function Read-TaskEnvironment {
+  param([string]$Source)
+  $values = @{}
+  foreach ($environmentLine in (Get-Content -LiteralPath $Source)) {
+    if (!$environmentLine -or $environmentLine.StartsWith('#')) { continue }
+    $environmentParts = $environmentLine.Split('=', 2)
+    $environmentKey = $environmentParts[0]
+    if ($environmentParts.Count -ne 2 -or $environmentKey -notmatch '^[A-Z][A-Z0-9_]*$' -or $values.ContainsKey($environmentKey)) {
+      throw 'Malformed or duplicate entry in private task environment file.'
+    }
+    $values[$environmentKey] = $environmentParts[1]
+  }
+  return $values
+}
+
+function Assert-TaskDatabaseTargets {
+  param([System.Collections.IDictionary]$HostEnvironment, [System.Collections.IDictionary]$ContainerEnvironment)
+  try {
+    $hostDatabase = [Uri]$HostEnvironment.DATABASE_URL
+    $containerDatabase = [Uri]$ContainerEnvironment.DATABASE_URL
+  } catch {
+    throw 'Invalid DATABASE_URL in private task environment; connection values are withheld.'
+  }
+  if (!$hostDatabase.IsAbsoluteUri -or !$containerDatabase.IsAbsoluteUri -or
+    $hostDatabase.Scheme -ne 'postgresql' -or $containerDatabase.Scheme -ne 'postgresql' -or
+    $hostDatabase.Host -ne '127.0.0.1' -or $hostDatabase.Port -ne 55437 -or
+    $containerDatabase.Host -ne $postgresName -or $containerDatabase.Port -ne 5432 -or
+    $hostDatabase.AbsolutePath -ne "/$databaseName" -or $containerDatabase.AbsolutePath -ne "/$databaseName" -or
+    $hostDatabase.Query -ne '?schema=public' -or $containerDatabase.Query -ne '?schema=public' -or
+    $hostDatabase.UserInfo.Split(':', 2)[0] -ne 'homeqa' -or $hostDatabase.UserInfo -ne $containerDatabase.UserInfo) {
+    throw 'Dedicated release database configuration does not match DatabaseName and the assigned PostgreSQL endpoints.'
+  }
+}
+
 function Invoke-TaskNode {
   param([Parameter(Mandatory)][string[]]$NodeArguments)
   # Override ambient process values with this task's file; never inherit another database or storage endpoint.
   $previousValues = @{}
   try {
-    foreach ($environmentLine in (Get-Content -LiteralPath $hostEnvPath)) {
-      if (!$environmentLine -or $environmentLine.StartsWith('#')) { continue }
-      $environmentParts = $environmentLine.Split('=', 2)
-      $environmentKey = $environmentParts[0]
-      if ($environmentParts.Count -ne 2 -or $environmentKey -notmatch '^[A-Z][A-Z0-9_]*$') { throw 'Malformed private task environment file.' }
+    $taskEnvironment = Read-TaskEnvironment $hostEnvPath
+    foreach ($environmentKey in $taskEnvironment.Keys) {
       $previousValues[$environmentKey] = [Environment]::GetEnvironmentVariable($environmentKey, 'Process')
-      [Environment]::SetEnvironmentVariable($environmentKey, $environmentParts[1], 'Process')
+      [Environment]::SetEnvironmentVariable($environmentKey, $taskEnvironment[$environmentKey], 'Process')
     }
     & node @NodeArguments
     if ($LASTEXITCODE -ne 0) { throw 'Dedicated release Node verification command failed.' }
@@ -70,7 +101,7 @@ try {
     $databasePassword = 'HomeDb-' + [guid]::NewGuid().ToString('N')
     $storageSecret = 'HomeS3-' + [guid]::NewGuid().ToString('N')
     $sessionSecret = 'HomeSession-' + [guid]::NewGuid().ToString('N')
-    $bootstrapPassword = 'HomeBootstrap-' + [guid]::NewGuid().ToString('N')
+    $bootstrapPassword = 'QaSeed-' + [guid]::NewGuid().ToString('N')
     $fixturePassword = 'HomeFixture-' + [guid]::NewGuid().ToString('N')
     $hostEnvironment = [ordered]@{
       APP_BASE_URL = $baseUrl
@@ -129,9 +160,14 @@ const s3 = new S3Client({ endpoint: process.env.S3_ENDPOINT, region: 'auto', for
 
   if (!$ImageDigest -or !$ExpectedRevision) { throw 'verify requires the published ImageDigest and complete ExpectedRevision.' }
   if (!(Test-Path -LiteralPath $hostEnvPath) -or !(Test-Path -LiteralPath $containerEnvPath)) { throw 'Run prepare first.' }
+  Assert-TaskDatabaseTargets (Read-TaskEnvironment $hostEnvPath) (Read-TaskEnvironment $containerEnvPath)
   foreach ($containerName in @($postgresName, $minioName)) {
     $containerOwner = Invoke-TaskDocker @('inspect', '--format', '{{index .Config.Labels "codex.task"}}', $containerName)
     if ($containerOwner -ne $taskLabel) { throw 'Prepared service ownership does not match this task.' }
+  }
+  $databasePort = @(Invoke-TaskDocker @('port', $postgresName, '5432/tcp'))
+  if ($databasePort.Count -ne 1 -or $databasePort[0] -ne '127.0.0.1:55437') {
+    throw 'The host fixture port is not assigned to the dedicated PostgreSQL container.'
   }
   $publicTableCount = Invoke-TaskDocker @('exec', $postgresName, 'psql', '-U', 'homeqa', '-d', $databaseName, '-Atc',
     "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")
@@ -146,7 +182,8 @@ const s3 = new S3Client({ endpoint: process.env.S3_ENDPOINT, region: 'auto', for
     $imageData.Config.Labels.'org.opencontainers.image.revision' -ne $ExpectedRevision) {
     throw 'Pulled image identity does not match the accepted release.'
   }
-  Add-Content -LiteralPath $hostEnvPath -Value "EXPECTED_APP_REVISION=$ExpectedRevision" -Encoding utf8
+  $hostEnvLines = @(Get-Content -LiteralPath $hostEnvPath | Where-Object { !($_.StartsWith('EXPECTED_APP_REVISION=')) })
+  Set-Content -LiteralPath $hostEnvPath -Value ($hostEnvLines + "EXPECTED_APP_REVISION=$ExpectedRevision") -Encoding utf8
   Invoke-TaskDocker @('run', '-d', '--name', $appName, '--label', "codex.task=$taskLabel", '--network', $networkName,
     '-p', '127.0.0.1:3107:3000', '--env-file', $containerEnvPath, $pinnedImage) | Out-Null
   $ready = $false
@@ -166,7 +203,8 @@ const s3 = new S3Client({ endpoint: process.env.S3_ENDPOINT, region: 'auto', for
   $runtimeEvidence = [ordered]@{
     verifiedAt = [DateTime]::UtcNow.ToString('o'); version = $expectedVersion; revision = $ExpectedRevision
     digest = $ImageDigest; imageId = $imageData.Id; platform = 'linux/amd64'; anonymousPull = $true
-    baseUrl = $baseUrl; migrations = [int]$migrationCount; postgres = $postgresName; minio = $minioName; app = $appName
+    baseUrl = $baseUrl; migrations = [int]$migrationCount; database = $databaseName
+    postgres = $postgresName; minio = $minioName; app = $appName
     productionSwitched = $false
   }
   $runtimeEvidence | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceDirectory 'release-container-verification.json') -Encoding utf8
