@@ -34,9 +34,11 @@ try {
     await page.goto(base+'/workspace/reporting-recovery?id='+id);
     const recovery=()=>page.locator('.reporting-recovery-root');
     await page.getByRole('dialog',{name:'报工资料核对',exact:true}).waitFor();
-    check(page.url().startsWith(base+'/production?'),'legacy handler link opens original production page');
-    check(page.url().includes('submissionId='+id),'legacy link retains the original submission');
+    check(page.url()===base+'/production'||page.url().startsWith(base+'/production?'),'legacy handler link opens original production page');
     await recovery().getByRole('heading',{name:'核对实际完成的整套数量'}).waitFor();
+    // The production board normalizes its URL after reading the entry context.
+    // Verify the loaded record itself instead of a consumed query parameter.
+    check((await recovery().locator('.rr-detail-header small').innerText()).includes(id),'legacy link loads the original submission');
     check(await recovery().locator('textarea[required],input[type=text][required]').count()===0,'no mandatory free text');
     const submit=recovery().getByRole('button',{name:'确认并完成原报工',exact:true});
     check(await submit.isDisabled(),'ambiguous action mapping requires explicit selection');
