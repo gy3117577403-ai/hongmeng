@@ -32,7 +32,7 @@ $baseUrl = "http://127.0.0.1:$appPort"
 $expectedVersion = 'v1.34.146'
 $hostEnvPath = Join-Path $taskRoot ".env.drawing-release$instanceSuffix.local"
 $containerEnvPath = Join-Path $taskRoot ".docker/drawing-library-v134146-release$instanceSuffix.env"
-$fixtureFile = ".docker/employee-hours-fixture-release$instanceSuffix.json"
+$fixtureFile = ".docker/drawing-library-fixture-release$instanceSuffix.json"
 $smokeEvidenceFile = "artifacts/drawing-library-v134146/release-runtime-smoke$instanceSuffix.json"
 $containerEvidenceFile = "release-container-verification$instanceSuffix.json"
 $evidenceDirectory = Join-Path $taskRoot 'artifacts/drawing-library-v134146'
@@ -102,6 +102,10 @@ function Invoke-TaskNode {
     # non-secret task outputs so ambient dev or other-instance paths cannot leak in.
     $taskEnvironment.HOURS_QA_FIXTURE_FILE = $fixtureFile
     $taskEnvironment.HOURS_QA_EVIDENCE = $smokeEvidenceFile
+    $taskEnvironment.DRAWING_LIBRARY_QA_ALLOW = 'disposable-drawing-runtime'
+    $taskEnvironment.DRAWING_LIBRARY_QA_BASE = $baseUrl
+    $taskEnvironment.DRAWING_LIBRARY_QA_FIXTURE = $fixtureFile
+    $taskEnvironment.DRAWING_LIBRARY_QA_OUTPUT = $smokeEvidenceFile
     foreach ($environmentKey in $taskEnvironment.Keys) {
       $previousValues[$environmentKey] = [Environment]::GetEnvironmentVariable($environmentKey, 'Process')
       [Environment]::SetEnvironmentVariable($environmentKey, $taskEnvironment[$environmentKey], 'Process')
@@ -218,10 +222,12 @@ const s3 = new S3Client({ endpoint: process.env.S3_ENDPOINT, region: 'auto', for
   }
   # Fixture creation calls repository services, so the seed must correspond to
   # the same source revision as the immutable application image under test.
-  $checkoutRevision = & git rev-parse HEAD
-  if ($LASTEXITCODE -ne 0 -or $checkoutRevision -ne $ExpectedRevision) { throw 'Fixture checkout revision does not match the accepted image revision.' }
-  & git diff --quiet HEAD -- lib prisma types scripts/qa-employee-hours-seed.ts package.json package-lock.json
-  if ($LASTEXITCODE -ne 0) { throw 'Fixture service sources have local changes; commit the accepted source before image verification.' }
+  & git merge-base --is-ancestor $ExpectedRevision HEAD
+  if ($LASTEXITCODE -ne 0) { throw 'The accepted image revision is not part of this checkout history.' }
+  # Acceptance-only helper and evidence commits may follow the immutable tag.
+  # All application, migration and fixture sources must still equal that tag.
+  & git diff --quiet $ExpectedRevision -- app components lib hooks prisma public types Dockerfile docker-entrypoint.sh next.config.* tailwind.config.* tsconfig.json scripts/seed-drawing-library-smoke.cjs scripts/smoke-drawing-library.mjs package.json package-lock.json
+  if ($LASTEXITCODE -ne 0) { throw 'Application or fixture sources differ from the accepted image revision.' }
   Assert-TaskDatabaseTargets (Read-TaskEnvironment $hostEnvPath) (Read-TaskEnvironment $containerEnvPath)
   foreach ($containerName in @($postgresName, $minioName)) {
     $containerOwner = Invoke-TaskDocker @('inspect', '--format', '{{index .Config.Labels "codex.task"}}', $containerName)
@@ -243,8 +249,8 @@ const s3 = new S3Client({ endpoint: process.env.S3_ENDPOINT, region: 'auto', for
   $publicTableCount = Invoke-TaskDocker @('exec', $postgresName, 'psql', '-U', 'hoursqa', '-d', $databaseName, '-Atc',
     "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public'")
   if ([int]$publicTableCount -ne 0) { throw 'The release database is no longer empty. Do not claim a fresh migration run or reset its data.' }
-  $pinnedImage = "ghcr.dockerproxy.net/gy3117577403-ai/hongmeng@$ImageDigest"
-  $anonymousConfig = Join-Path $taskRoot (".docker/employee-hours-anonymous$instanceSuffix-" + [guid]::NewGuid().ToString('N'))
+  $pinnedImage = "crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng@$ImageDigest"
+  $anonymousConfig = Join-Path $taskRoot (".docker/drawing-library-anonymous$instanceSuffix-" + [guid]::NewGuid().ToString('N'))
   New-Item -ItemType Directory -Path $anonymousConfig | Out-Null
   Invoke-TaskDocker @('--config', $anonymousConfig, 'pull', $pinnedImage) | Write-Output
   $imageData = ((Invoke-TaskDocker @('image', 'inspect', $pinnedImage)) -join "`n" | ConvertFrom-Json)[0]
@@ -273,13 +279,15 @@ const s3 = new S3Client({ endpoint: process.env.S3_ENDPOINT, region: 'auto', for
   }
   if (!$ready) { throw 'Actual release image did not become ready. Containers have been retained for diagnosis.' }
   if ($readiness.app.version -ne $expectedVersion -or $readiness.app.revision -ne $ExpectedRevision) { throw 'Runtime app identity mismatch.' }
-  Invoke-TaskNode @('--import', 'tsx', 'scripts/qa-employee-hours-seed.ts')
-  Invoke-TaskNode @('scripts/smoke-employee-hours.mjs')
+  $drawingFixture = Invoke-TaskNode @('scripts/seed-drawing-library-smoke.cjs')
+  $drawingFixture | Set-Content -LiteralPath $fixtureFile -Encoding utf8
+  Invoke-TaskNode @('scripts/smoke-drawing-library.mjs')
+  Invoke-TaskNode @('scripts/qa-drawing-library-bootstrap.mjs')
   $migrationCount = Invoke-TaskDocker @('exec', $postgresName, 'psql', '-U', 'hoursqa', '-d', $databaseName, '-Atc',
     'SELECT count(*) FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL')
   $runtimeEvidence = [ordered]@{
     verifiedAt = [DateTime]::UtcNow.ToString('o'); version = $expectedVersion; revision = $ExpectedRevision
-    digest = $ImageDigest; imageId = $imageData.Id; platform = 'linux/amd64'; anonymousPull = $true
+    digest = $ImageDigest; imageReference = $pinnedImage; imageId = $imageData.Id; platform = 'linux/amd64'; anonymousPull = $true
     instance = $Instance; baseUrl = $baseUrl; migrations = [int]$migrationCount; database = $databaseName
     fixtureFile = $fixtureFile; smokeEvidenceFile = $smokeEvidenceFile; network = $networkName; subnet = $networkSubnet
     postgres = $postgresName; minio = $minioName; app = $appName
