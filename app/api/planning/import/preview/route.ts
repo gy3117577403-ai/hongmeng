@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       prisma.drawingLibraryItem.findMany({
         where: { OR: [{ id: { in: matching.filter(item => item.kind === 'product').map(item => item.id) } }, { id: { in: libraryRefs } }, { libraryKey: { in: libraryRefs } }, { productionPlanOrders: { some: { sourceOrderNo: { in: sourceOrderNumbers } } } }] },
         select: {
-          id: true, libraryKey: true, customerName: true, productName: true, specification: true, deletedAt: true,
+          id: true, libraryKey: true, customerName: true, customerCode: true, productName: true, specification: true, deletedAt: true,
           _count: {
             select: {
               files: { where: { deletedAt: null, isCurrent: true, category: { code: 'drawing' } } },
@@ -159,6 +159,7 @@ export async function POST(req: NextRequest) {
       id: item.id,
       libraryKey: item.libraryKey,
       customerName: item.customerName,
+      customerCode: item.customerCode,
       productName: item.productName,
       specification: item.specification,
       deletedAt: item.deletedAt?.toISOString() || null,

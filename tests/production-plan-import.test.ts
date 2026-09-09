@@ -56,11 +56,12 @@ test('reuses one existing active drawing library without creating a duplicate', 
   assert.equal(row.matchedDrawingLibraryItemId, 'drawing-1');
 });
 
-test('restores the unique archived drawing library and preserves its identity', () => {
+test('archived matches require an administrator restore instead of automatic revival', () => {
   const row = build([candidate({ id: 'drawing-archived', deletedAt: '2026-09-01T00:00:00.000Z' })]);
-  assert.equal(row.status, 'ready');
-  assert.equal(row.productAction, 'restore');
-  assert.equal(row.matchedDrawingLibraryItemId, 'drawing-archived');
+  assert.equal(row.status, 'invalid');
+  assert.equal(row.productAction, 'none');
+  assert.equal(row.matchedDrawingLibraryItemId, null);
+  assert.match(row.reason, /管理员先恢复/);
 });
 
 test('creates only when no existing active or archived product matches', () => {

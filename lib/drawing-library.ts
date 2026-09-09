@@ -13,6 +13,7 @@ import type {
 import { invalidSpecificationReason, isInvalidSpecification } from '@/lib/bulk-original-drawing-parser';
 import { safeDisplayFilename } from '@/lib/filenames';
 import { prisma } from '@/lib/prisma';
+import { findDrawingProductCandidates, requireActiveDrawing, resolveOrCreateDrawingProduct } from '@/lib/drawing-library-resolution';
 
 export const drawingLibraryRequiredCodes = new Set(['drawing', 'sop', 'product']);
 export { invalidSpecificationReason, isInvalidSpecification };
@@ -24,8 +25,8 @@ export function cleanDrawingText(value: unknown, max = 200) {
 }
 
 export function parseCustomerCode(customerName?: string | null) {
-  const text = customerName?.trim() || '';
-  const match = text.match(/\(([^()]*)\)\s*$/);
+  const text = customerName?.normalize('NFKC').trim() || '';
+  const match = text.match(/\((\d+)\)\s*$/);
   return match?.[1]?.trim() || null;
 }
 
@@ -110,8 +111,8 @@ export async function findDrawingLibraryItemForWorkOrder(workOrder: {
   const specification = workOrder.specification?.trim();
   if (!specification || isInvalidSpecification(specification)) return null;
   const customerName = workOrder.customerName?.trim() || '未设置';
-  const key = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification);
-  return prisma.drawingLibraryItem.findFirst({ where: { libraryKey: key, deletedAt: null } });
+  const candidates = (await findDrawingProductCandidates(prisma, { customerName, specification })).filter(item => !item.deletedAt);
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 export async function ensureDrawingLibraryItemForWorkOrder(workOrder: {
@@ -124,22 +125,13 @@ export async function ensureDrawingLibraryItemForWorkOrder(workOrder: {
   if (!specification || isInvalidSpecification(specification)) return null;
 
   const customerName = workOrder.customerName?.trim() || '未设置';
-  const key = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification);
-  const existing = await prisma.drawingLibraryItem.findUnique({ where: { libraryKey: key } });
-  const data = {
-    customerName,
-    customerCode: parseCustomerCode(customerName),
-    productName: workOrder.productName || existing?.productName || null,
-    specification,
-    libraryKey: key,
-    lastWorkOrderId: workOrder.id,
-    lastImportedAt: new Date(),
-    deletedAt: null,
-  };
-  const item = existing
-    ? await prisma.drawingLibraryItem.update({ where: { id: existing.id }, data })
-    : await prisma.drawingLibraryItem.create({ data });
-  return item;
+  return prisma.$transaction(async tx => {
+    const current = await tx.workOrder.findUnique({ where: { id: workOrder.id }, select: { drawingLibraryItem: true } });
+    const item = current?.drawingLibraryItem
+      ? requireActiveDrawing(current.drawingLibraryItem)
+      : await resolveOrCreateDrawingProduct(tx, { customerName, specification, productName: workOrder.productName });
+    return tx.drawingLibraryItem.update({ where: { id: item.id }, data: { lastWorkOrderId: workOrder.id, lastImportedAt: new Date() } });
+  });
 }
 
 export function drawingFileType(file: { mimeType: string; originalName: string; displayName?: string | null }) {

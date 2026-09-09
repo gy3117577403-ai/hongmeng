@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { DrawingLibraryResolutionError, resolveOrCreateDrawingProduct } from '@/lib/drawing-library-resolution';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { chinaDateKey } from '@/lib/china-date';
@@ -121,28 +122,7 @@ export async function POST(req: NextRequest) {
         : null;
       if (drawingLibraryItemId && !item) throw new Error('SAMPLE_PRODUCT_NOT_FOUND');
       if (!item) {
-        const key = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification!);
-        const existing = await tx.drawingLibraryItem.findUnique({ where: { libraryKey: key } });
-        item = existing
-          ? await tx.drawingLibraryItem.update({
-              where: { id: existing.id },
-              data: {
-                customerName: customerName!,
-                customerCode: parseCustomerCode(customerName),
-                productName: productName || existing.productName,
-                specification: specification!,
-                deletedAt: null,
-              },
-            })
-          : await tx.drawingLibraryItem.create({
-              data: {
-                customerName: customerName!,
-                customerCode: parseCustomerCode(customerName),
-                productName,
-                specification: specification!,
-                libraryKey: key,
-              },
-            });
+        item = await resolveOrCreateDrawingProduct(tx, { customerName: customerName!, specification: specification!, productName });
       }
 
       const employees = assignedEmployeeIds.length
@@ -206,6 +186,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof DrawingLibraryResolutionError) return NextResponse.json({ ok: false, error: error.message, code: error.code, itemIds: error.itemIds }, { status: 409 });
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_PRODUCT_NOT_FOUND') return NextResponse.json({ ok: false, error: '选择的产品资料不存在' }, { status: 404 });
       if (error.message === 'INVALID_SAMPLE_DATE') return NextResponse.json({ ok: false, error: '计划完成日期格式无效' }, { status: 400 });

@@ -12,6 +12,7 @@ import {
 import { logOp } from '@/lib/logs';
 import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { prisma } from '@/lib/prisma';
+import { DrawingLibraryResolutionError, findDrawingProductCandidates, lockDrawingProduct } from '@/lib/drawing-library-resolution';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,6 +54,9 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = req.nextUrl.searchParams.get('keyword')?.trim() || '';
     const filter = req.nextUrl.searchParams.get('filter') || 'all';
+    const paged = req.nextUrl.searchParams.get('paged') === 'true';
+    const offset = Number(req.nextUrl.searchParams.get('offset') || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) return NextResponse.json({ ok: false, error: '分页参数无效' }, { status: 400 });
     const requestedItemId = req.nextUrl.searchParams.get('itemId')?.trim() || '';
     const categories = await prisma.resourceCategory.findMany({ orderBy: { sortOrder: 'asc' } });
     const items = await prisma.drawingLibraryItem.findMany({
@@ -90,9 +94,12 @@ export async function GET(req: NextRequest) {
           : {}),
       },
       include: itemInclude(),
-      orderBy: filter === 'recent' ? [{ updatedAt: 'desc' }] : [{ customerName: 'asc' }, { specification: 'asc' }],
-      take: 600,
+      orderBy: filter === 'recent' ? [{ updatedAt: 'desc' }, { id: 'asc' }] : [{ customerName: 'asc' }, { specification: 'asc' }, { id: 'asc' }],
+      take: paged ? 201 : 600,
+      skip: paged ? offset : 0,
     });
+    const hasMore = paged && items.length > 200;
+    if (hasMore) items.pop();
 
     const requestedItem = requestedItemId
       ? await prisma.drawingLibraryItem.findFirst({
@@ -127,6 +134,7 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({
+      hasMore, nextOffset: hasMore ? offset + 200 : null,
       items: filtered,
       customers: [
         { customerName: '全部客户', customerCode: null, itemCount: filtered.length, missingCount: filtered.filter(item => !item.isComplete).length },
@@ -154,20 +162,15 @@ export async function POST(req: NextRequest) {
     const productName = cleanDrawingText(body.productName, 180);
     const remark = cleanDrawingText(body.remark, 500);
     const libraryKey = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification);
-    const existing = await prisma.drawingLibraryItem.findUnique({ where: { libraryKey }, include: itemInclude() });
-    if (existing && !existing.deletedAt) {
-      await prisma.$transaction(tx => reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: existing.id }));
-      return NextResponse.json({ ok: false, error: '该客户和规格已存在，请直接使用现有资料', itemId: existing.id }, { status: 409 });
-    }
-
     const item = await prisma.$transaction(async tx => {
-      const saved = existing
-        ? await tx.drawingLibraryItem.update({
-            where: { id: existing.id },
-            data: { customerName, customerCode: parseCustomerCode(customerName), productName, specification, libraryKey, remark, deletedAt: null },
-            include: itemInclude(),
-          })
-        : await tx.drawingLibraryItem.create({
+      await lockDrawingProduct(tx, { customerName, specification });
+      const candidates = await findDrawingProductCandidates(tx, { customerName, specification });
+      if (candidates.length) throw new DrawingLibraryResolutionError(
+        candidates.some(candidate => !candidate.deletedAt) ? '该客户和型号已有档案，请直接使用现有资料' : '该客户和型号的档案在回收站，请管理员恢复原档案',
+        candidates.some(candidate => !candidate.deletedAt) ? 'DRAWING_LIBRARY_CONFLICT' : 'DRAWING_LIBRARY_RESTORE_REQUIRED',
+        candidates.map(candidate => candidate.id),
+      );
+      const saved = await tx.drawingLibraryItem.create({
             data: { customerName, customerCode: parseCustomerCode(customerName), productName, specification, libraryKey, remark },
             include: itemInclude(),
           });
@@ -179,6 +182,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, item: serializeDrawingLibraryItem(item, categories) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof DrawingLibraryResolutionError) return NextResponse.json({ ok: false, error: e.message, code: e.code, itemIds: e.itemIds, itemId: e.itemIds[0] }, { status: 409 });
     if ((e as { code?: string }).code === 'P2002') return NextResponse.json({ ok: false, error: '该客户和规格已存在' }, { status: 409 });
     console.error(e);
     return NextResponse.json({ ok: false, error: '图纸资料记录创建失败' }, { status: 500 });

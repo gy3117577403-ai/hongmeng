@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client';
-import { drawingLibraryKey } from '@/lib/drawing-library';
+import { drawingProductIdentity, normalizeProductText, sameDrawingProduct } from '@/lib/drawing-product-identity';
 
 export type PlanningProductLinkOrder = {
   id: string;
@@ -24,15 +24,11 @@ export type PlanningProductLinkResult = {
 };
 
 export function normalizePlanningProductText(value: string): string {
-  return value
-    .normalize('NFKC')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLocaleLowerCase('zh-CN');
+  return normalizeProductText(value);
 }
 
 export function planningProductIdentity(customerName: string, specification: string): string {
-  return `${normalizePlanningProductText(customerName)}::${normalizePlanningProductText(specification)}`;
+  return drawingProductIdentity(customerName, specification);
 }
 
 type PlanningProductLinkExactFieldMatch = {
@@ -99,27 +95,14 @@ export class PlanningProductLinkItemIndex {
     const identity = planningProductIdentity(order.customerName, order.specification);
     const matches = this.matchesByIdentity.get(identity);
     if (!matches) return null;
-    if (matches.count === 1) return matches.first;
-
-    const expectedKey = drawingLibraryKey(order.customerName, order.specification);
-    const exactKey = matches.firstByLibraryKey.get(expectedKey) || null;
-    if (
-      matches.drawingMatchCount === 1
-      && matches.firstDrawingMatch
-      && (!exactKey || exactKey.drawingFileCount === 0)
-    ) {
-      return matches.firstDrawingMatch;
+    // A saved association is a business decision. Uploading/restoring a file
+    // must never silently replace it, especially after a route is released.
+    if (order.drawingLibraryItemId) {
+      const linked = matches.firstById.get(order.drawingLibraryItemId);
+      return linked && sameDrawingProduct(order, linked) ? linked : null;
     }
-    if (exactKey) return exactKey;
-
-    const exactFields = matches.exactFields
-      .get(order.customerName)
-      ?.get(order.specification);
-    if (exactFields?.count === 1) return exactFields.first;
-
-    return order.drawingLibraryItemId === null
-      ? null
-      : matches.firstById.get(order.drawingLibraryItemId) || null;
+    const compatible = [...matches.firstById.values()].filter(item => sameDrawingProduct(order, item));
+    return compatible.length === 1 ? compatible[0] : null;
   }
 
   findItemById(id: string): PlanningProductLinkItem | null {
@@ -161,7 +144,7 @@ export async function reconcileProductionPlanDrawingLinks(
             }
           : {}),
       },
-      select: { id: true, drawingLibraryItemId: true, customerName: true, specification: true },
+      select: { id: true, drawingLibraryItemId: true, customerName: true, specification: true, batches: { where: { workOrderId: { not: null } }, select: { id: true }, take: 1 } },
       take: 5000,
     }),
     tx.drawingLibraryItem.findMany({
@@ -206,6 +189,10 @@ export async function reconcileProductionPlanDrawingLinks(
   let unresolvedOrders = 0;
   const canonicalByPlanOrderId = new Map<string, PlanningProductLinkItem>();
   for (const order of orders) {
+    if (!order.drawingLibraryItemId && order.batches?.length) {
+      unresolvedOrders += 1;
+      continue;
+    }
     const canonical = itemIndex.selectCanonicalDrawingItem(order);
     if (!canonical) {
       unresolvedOrders += 1;
@@ -248,15 +235,12 @@ export async function reconcileProductionPlanDrawingLinks(
     for (const [drawingLibraryItemId, workOrderIdSet] of workOrderIdsByDrawingItemId) {
       const workOrderIds = [...workOrderIdSet];
       if (!workOrderIds.length) continue;
-      await tx.workOrder.updateMany({
-        where: { id: { in: workOrderIds }, deletedAt: null },
-        data: { drawingLibraryItemId },
-      });
       const canonical = itemIndex.findItemById(drawingLibraryItemId);
       if (!canonical?.drawingFileCount) continue;
       await tx.workOrder.updateMany({
         where: {
           id: { in: workOrderIds },
+          drawingLibraryItemId,
           deletedAt: null,
           OR: [
             { drawingStatus: null },

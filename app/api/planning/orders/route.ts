@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { DrawingLibraryResolutionError } from '@/lib/drawing-library-resolution';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
@@ -290,6 +291,7 @@ export async function GET(req: NextRequest) {
     return response;
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof DrawingLibraryResolutionError) return NextResponse.json({ ok: false, error: error.message, code: error.code, itemIds: error.itemIds }, { status: 409 });
     console.error('planning order list failed', {
       requestId,
       code: 'PLANNING_ORDER_READ_FAILED',
@@ -377,6 +379,7 @@ export async function POST(req: NextRequest) {
     }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof DrawingLibraryResolutionError) return NextResponse.json({ ok: false, error: error.message, code: error.code, itemIds: error.itemIds }, { status: 409 });
     if ((error as { code?: string }).code === 'P2002') {
       return NextResponse.json({ ok: false, error: '计划订单内部编号冲突，请重试' }, { status: 409 });
     }
@@ -386,8 +389,8 @@ export async function POST(req: NextRequest) {
     if (error instanceof Error && error.message === 'PLAN_PRODUCT_RESTORE_REQUIRED') {
       return NextResponse.json({
         ok: false,
-        error: '该客户和规格已在图纸资料库回收站中，确认后可恢复并继续创建订单',
-        requiresProductRestore: true,
+        error: '该客户和型号的档案在回收站，请系统管理员先在图纸库恢复，再创建订单',
+        code: 'DRAWING_LIBRARY_RESTORE_REQUIRED',
       }, { status: 409 });
     }
     if (error instanceof Error && error.message.startsWith('PLAN_PRODUCT_INVALID:')) {

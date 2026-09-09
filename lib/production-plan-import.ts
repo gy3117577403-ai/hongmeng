@@ -3,6 +3,7 @@ import { drawingLibraryKey, invalidSpecificationReason } from '@/lib/drawing-lib
 import { chinaDate, parsePlanDate } from '@/lib/production-planning';
 import { normalizePlanningProductText, planningProductIdentity } from '@/lib/planning-product-link';
 import { resolvePlanningImportTime, type PlanningImportTime } from '@/lib/planning-import-time';
+import { sameDrawingProduct } from '@/lib/drawing-product-identity';
 
 export const PRODUCTION_PLAN_IMPORT_MAX_ROWS = 1000;
 
@@ -30,6 +31,7 @@ export type ProductionPlanImportInput = {
 
 export type ProductionPlanImportCandidate = {
   id: string;
+  customerCode?: string | null;
   libraryKey: string;
   customerName: string;
   productName: string | null;
@@ -186,6 +188,10 @@ function productMatch(
 ): Pick<ProductionPlanImportRow, 'status' | 'reason' | 'productAction' | 'matchedDrawingLibraryItemId' | 'candidates'> {
   const linked = existing?.drawingLibraryItemId ? catalog.byId.get(existing.drawingLibraryItemId) : null;
   if (linked) {
+    if (!sameDrawingProduct(linked, input) || linked.deletedAt) return {
+      status: 'invalid', reason: linked.deletedAt ? '原订单档案已删除，请管理员先恢复后重新预检' : '原订单与本行客户或型号不一致，请核对来源订单号',
+      productAction: 'none', matchedDrawingLibraryItemId: null, candidates: [linked],
+    };
     return {
       status: 'ready', reason: '', productAction: linked.deletedAt ? 'restore' : 'reuse',
       matchedDrawingLibraryItemId: linked.id, candidates: [linked],
@@ -204,6 +210,18 @@ function productMatch(
   } else {
     candidates = catalog.byIdentity.get(planningProductIdentity(input.customerName, input.specification)) || [];
   }
+
+  candidates = candidates.filter(item => sameDrawingProduct(item, input));
+  if (input.drawingLibraryRef && !candidates.length) return {
+    status: 'invalid', reason: '指定图纸库的客户或型号与本行不一致', productAction: 'none',
+    matchedDrawingLibraryItemId: null, candidates: [],
+  };
+  const active = candidates.filter(item => !item.deletedAt);
+  if (!active.length && candidates.length) return {
+    status: 'invalid', reason: '匹配档案在回收站，请管理员先恢复后重新预检；不会另建重复档案',
+    productAction: 'none', matchedDrawingLibraryItemId: null, candidates,
+  };
+  candidates = active;
 
   if (candidates.length > 1) {
     return {
@@ -335,7 +353,7 @@ export function buildProductionPlanImportRows(options: {
     const match = productMatch(input, existing, catalog);
     const orderCandidates = !suppliedOrderNo && !existing
       ? options.existingOrders.filter(order => !order.deletedAt && !['completed', 'cancelled'].includes(order.status)
-        && planningProductIdentity(order.customerName || '', order.specification || '') === planningProductIdentity(customerName, specification))
+        && sameDrawingProduct({ customerName: order.customerName || '', specification: order.specification || '' }, { customerName, specification }))
       : [];
     const businessKey = JSON.stringify([orderDate, customerName, specification, orderQuantity, plannedQuantity, customerDueDate]);
     const warnings = [

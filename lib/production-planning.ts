@@ -1,5 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { DrawingLibraryResolutionError, findDrawingProductCandidates, lockDrawingProduct, requireActiveDrawing, resolveOrCreateDrawingProduct } from '@/lib/drawing-library-resolution';
+import { sameDrawingProduct } from '@/lib/drawing-product-identity';
 import {
   drawingLibraryKey,
   invalidSpecificationReason,
@@ -696,11 +698,20 @@ export function buildPlanningDrawingLibraryItemData(input: Pick<ParsedPlanOrder,
 }
 
 export async function resolveOrCreatePlanningProduct(
-  tx: Pick<Prisma.TransactionClient, 'drawingLibraryItem'>,
+  tx: Prisma.TransactionClient,
   input: ParsedPlanOrder,
   options: { createIfMissing: boolean; restoreIfDeleted: boolean },
 ): Promise<PlanningProductReferenceResult> {
-  const references = await resolvePlanningReferences(tx, input);
+  await lockDrawingProduct(tx, input);
+  const candidates = await findDrawingProductCandidates(tx, input);
+  const active = candidates.filter(candidate => !candidate.deletedAt);
+  if (!input.drawingLibraryItemId && active.length > 1) throw new DrawingLibraryResolutionError('同客户同型号存在多个图纸档案，请选择原档案', undefined, active.map(item => item.id));
+  if (input.drawingLibraryItemId) {
+    const linked = await tx.drawingLibraryItem.findUnique({ where: { id: input.drawingLibraryItemId } });
+    if (!linked || !sameDrawingProduct(linked, input)) throw new DrawingLibraryResolutionError('指定档案不存在或客户型号不一致');
+    requireActiveDrawing(linked);
+  }
+  const references = await resolvePlanningReferences(tx, { ...input, drawingLibraryItemId: input.drawingLibraryItemId || active[0]?.id || null });
   if (references.drawingLibraryItemId) {
     await tx.drawingLibraryItem.updateMany({
       where: {
@@ -723,11 +734,8 @@ export async function resolveOrCreatePlanningProduct(
 
   const createData = buildPlanningDrawingLibraryItemData(input);
   if (!createData.ok) throw new Error(`PLAN_PRODUCT_INVALID:${createData.error}`);
-  const existing = await tx.drawingLibraryItem.findUnique({
-    where: { libraryKey: createData.data.libraryKey },
-    select: { id: true, deletedAt: true },
-  });
-  if (existing?.deletedAt && !options.restoreIfDeleted) {
+  const existing = candidates[0];
+  if (existing?.deletedAt) {
     return {
       status: 'restore_required',
       action: null,
@@ -736,26 +744,8 @@ export async function resolveOrCreatePlanningProduct(
     };
   }
 
-  const action: PlanningProductReferenceAction = existing?.deletedAt
-    ? 'restored'
-    : existing
-      ? 'existing'
-      : 'created';
-  const drawing = await tx.drawingLibraryItem.upsert({
-    where: { libraryKey: createData.data.libraryKey },
-    create: createData.data,
-    update: existing?.deletedAt && options.restoreIfDeleted
-      ? {
-          deletedAt: null,
-          customerName: createData.data.customerName,
-          customerCode: createData.data.customerCode,
-          productName: createData.data.productName,
-          specification: createData.data.specification,
-          remark: createData.data.remark,
-        }
-      : {},
-    select: { id: true },
-  });
+  const action: PlanningProductReferenceAction = existing ? 'existing' : 'created';
+  const drawing = await resolveOrCreateDrawingProduct(tx, createData.data);
   const resolved = await resolvePlanningReferences(tx, {
     drawingLibraryItemId: drawing.id,
     customerName: createData.data.customerName,

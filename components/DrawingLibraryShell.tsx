@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { DrawingLibraryLifecycleDialog, type DrawingLifecycleTarget } from '@/components/DrawingLibraryLifecycleDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { requestPreviewLeave } from '@/components/DocumentOrientation';
@@ -209,6 +210,8 @@ export function DrawingLibraryShell({
     || user.access.capabilities.includes('DRAWING_LIBRARY:UPDATE');
   const canDeleteDrawing = user.access.capabilities.includes('ENGINEERING:DELETE')
     || user.access.capabilities.includes('DRAWING_LIBRARY:DELETE');
+  const canManageArchive = user.laborRole === 'ADMIN';
+  const [lifecycleTarget, setLifecycleTarget] = useState<DrawingLifecycleTarget | null>(null);
   const [items, setItems] = useState(initialItems);
   const [customers, setCustomers] = useState(initialCustomers);
   const [keyword, setKeyword] = useState('');
@@ -504,16 +507,29 @@ export function DrawingLibraryShell({
       params.set('filter', filter);
       const requestedItemId = new URLSearchParams(window.location.search).get('itemId') || '';
       if (requestedItemId) params.set('itemId', requestedItemId);
-      const res = await fetch(`/api/drawing-library?${params.toString()}`, { cache: 'no-store', signal: controller.signal });
-      const data = await res.json().catch(() => ({}));
-      if (controller.signal.aborted) return;
-      if (!res.ok) {
-        setMsg(data.error || '图纸资料库加载失败');
-        return;
+      params.set('paged', 'true');
+      const collected = new Map<string, DrawingLibraryItemDTO>();
+      let offset = 0;
+      while (true) {
+        params.set('offset', String(offset));
+        const res = await fetch(`/api/drawing-library?${params.toString()}`, { cache: 'no-store', signal: controller.signal });
+        const data = await res.json().catch(() => ({}));
+        if (controller.signal.aborted) return;
+        if (!res.ok) throw new Error(data.error || '图纸资料库加载失败');
+        for (const item of (Array.isArray(data.items) ? data.items : []) as DrawingLibraryItemDTO[]) collected.set(item.id, item);
+        if (!data.hasMore) break;
+        if (!Number.isSafeInteger(data.nextOffset) || data.nextOffset <= offset) throw new Error('资料分页加载异常，请刷新');
+        offset = data.nextOffset;
       }
-      const nextItems: DrawingLibraryItemDTO[] = Array.isArray(data.items) ? data.items : [];
+      const nextItems = [...collected.values()];
       setItems(nextItems);
-      setCustomers(Array.isArray(data.customers) ? data.customers : []);
+      const customerCounts = new Map<string, DrawingLibraryCustomerDTO>();
+      for (const item of nextItems) {
+        const current = customerCounts.get(item.customerName) || { customerName: item.customerName, customerCode: item.customerCode, itemCount: 0, missingCount: 0 };
+        current.itemCount += 1; if (!item.isComplete) current.missingCount += 1;
+        customerCounts.set(item.customerName, current);
+      }
+      setCustomers([{ customerName: '全部客户', customerCode: null, itemCount: nextItems.length, missingCount: nextItems.filter(item => !item.isComplete).length }, ...customerCounts.values()]);
       setCustomer(current => current !== '全部客户' && !nextItems.some(item => item.customerName === current) ? '全部客户' : current);
       setSelectedId(current => {
         if (nextItems.some(item => item.id === current)) return current;
@@ -714,29 +730,26 @@ export function DrawingLibraryShell({
   }
 
   async function restoreItem(item: DrawingTrashItem) {
+    setLifecycleTarget({ action: 'restore', item });
+  }
+
+  async function completeLifecycle(target: DrawingLifecycleTarget) {
+    const { item } = target;
     setRestoringId(item.id);
     try {
-      const response = await fetch(`/api/drawing-library/${encodeURIComponent(item.id)}/restore`, { method: 'POST' });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        setMsg(data.error || '图纸资料恢复失败');
-        return;
-      }
       const url = new URL(window.location.href);
-      url.searchParams.set('itemId', item.id);
+      if (target.action === 'restore') url.searchParams.set('itemId', item.id);
+      else url.searchParams.delete('itemId');
       url.searchParams.delete('fileId');
       window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
       urlMissingWarnedRef.current = false;
       requestedItemLoadingRef.current = '';
       setMissingReference(null);
       setReferenceResolving(false);
-      setSelectedId(item.id);
+      setSelectedId(target.action === 'restore' ? item.id : '');
       setSelectedFileId('');
-      const linkedOrders = Number(data.repair?.linkedOrders || 0);
-      const refreshedWorkOrders = Number(data.repair?.refreshedWorkOrders || 0);
-      setMsg(linkedOrders > 0 || refreshedWorkOrders > 0
-        ? `图纸资料已恢复；重连计划 ${linkedOrders} 条，刷新生产工单 ${refreshedWorkOrders} 张。`
-        : '图纸资料已恢复，关联状态已重新校验。');
+      setLifecycleTarget(null);
+      setMsg(target.action === 'restore' ? '图纸档案已恢复，原编号和关联已保留。' : '图纸档案已移入回收站，管理员可以恢复。');
       await loadData();
       setTrashItems(current => current.filter(candidate => candidate.id !== item.id));
       if (trashOpen) await loadTrash(trashKeyword);
@@ -1018,7 +1031,7 @@ export function DrawingLibraryShell({
               <button className="hm-workbench-button" type="button" onClick={() => openModal('create')} title="新增图纸资料"><Plus size={15} aria-hidden="true" /><span>新增</span></button>
               <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)} title="批量导入原图"><Upload size={15} aria-hidden="true" /><span>批量导入</span></button>
               <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} aria-hidden="true" /><span>说明</span></button>
-              <button className="hm-workbench-button" type="button" title="查看和恢复已删除资料文件" onClick={openTrash}><Trash2 size={15} aria-hidden="true" /><span>文件回收站</span></button>
+              <button className="hm-workbench-button" type="button" title="查看已删除文件和图纸档案" onClick={openTrash}><Trash2 size={15} aria-hidden="true" /><span>资料回收站</span></button>
             </>}
           </div>
         </section>
@@ -1075,9 +1088,9 @@ export function DrawingLibraryShell({
                 <p className="drawing-reference-recovery-note">恢复会保留原图纸和工序工时，并重新核对计划、生产工单及流程中的图纸引用；不会复制或覆盖文件。</p>
                 <div className="drawing-reference-recovery-actions">
                   {canManageDrawing && <><button className="hm-workbench-button" type="button" onClick={openTrash}>查看回收站</button>
-                  <button className="hm-workbench-button primary" type="button" disabled={restoringId === missingReference.item.id} onClick={() => void restoreItem(missingReference.item)}>
+                  <button className="hm-workbench-button primary" type="button" disabled={!canManageArchive || restoringId === missingReference.item.id} onClick={() => void restoreItem(missingReference.item)}>
                     <ArchiveRestore size={15} aria-hidden="true" />
-                    {restoringId === missingReference.item.id ? '恢复并修复中...' : '恢复资料并修复链路'}
+                    {restoringId === missingReference.item.id ? '恢复中...' : canManageArchive ? '恢复图纸档案' : '请管理员恢复档案'}
                   </button></>}
                 </div>
               </div>
@@ -1130,10 +1143,11 @@ export function DrawingLibraryShell({
                   <button className="hm-workbench-button" type="button" onClick={() => { void openProductTime(selectedItem.id); }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
                   <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}><Files size={15} aria-hidden="true" /><span>文件列表</span><b>{activeFiles.length}</b></button>
                   {canManageDrawing && <button className="hm-workbench-button drawing-upload-trigger" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}><Upload size={15} aria-hidden="true" />{uploading ? '上传中...' : '上传资料'}</button>}
-                  {(canManageDrawing || (canDeleteDrawing && selectedFile)) && <details className="hm-drawing-more-actions drawing-head-more-actions">
+                  {(canManageDrawing || canManageArchive || (canDeleteDrawing && selectedFile)) && <details className="hm-drawing-more-actions drawing-head-more-actions">
                     <summary className="hm-workbench-button" aria-label="更多资料操作" title="更多资料操作"><MoreHorizontal size={16} aria-hidden="true" /><span>更多</span></summary>
                     <div role="menu" aria-label="资料操作">
                       {canManageDrawing && <button className="edit" role="menuitem" type="button" onClick={() => openModal('edit', selectedItem)}><Pencil size={15} aria-hidden="true" />编辑资料</button>}
+                      {canManageArchive && <button role="menuitem" type="button" onClick={() => requestPreviewLeave(() => setLifecycleTarget({ action: 'delete', item: selectedItem }))}><Trash2 size={15} aria-hidden="true" />删除图纸档案</button>}
                       {canDeleteDrawing && selectedFile && <button role="menuitem" type="button" title={`删除当前文件：${safeDisplayFilename(selectedFile)}`} onClick={() => deleteFile(selectedFile)}><Trash2 size={15} aria-hidden="true" />删除当前文件</button>}
                     </div>
                   </details>}
@@ -1368,8 +1382,8 @@ export function DrawingLibraryShell({
           <div className="drawing-dialog drawing-trash-dialog" role="dialog" aria-modal="true" aria-labelledby="drawing-trash-title">
             <div className="dialog-title">
               <div>
-                <span>资料文件回收站</span>
-                <h3 id="drawing-trash-title">恢复误删文件并自动校准业务状态</h3>
+                <span>资料回收站</span>
+                <h3 id="drawing-trash-title">已删除文件与图纸档案</h3>
               </div>
               <button type="button" aria-label="关闭图纸资料回收站" title="关闭" onClick={() => setTrashOpen(false)}>×</button>
             </div>
@@ -1378,7 +1392,7 @@ export function DrawingLibraryShell({
               <input value={trashKeyword} onChange={event => setTrashKeyword(event.target.value)} placeholder="搜索文件名、客户、规格或品名" autoFocus />
               <button className="hm-workbench-button" type="submit" disabled={trashLoading}>{trashLoading ? '查询中...' : '查询'}</button>
             </form>
-            <p className="cleanup-note">产品资料主档永久保留；这里只恢复软删除的原图、SOP、成品图、辅料规格和注意事项。恢复原图时会同步校准计划、生产执行和流程中心的图纸状态。</p>
+            <p className="cleanup-note">文件与档案分别恢复。档案删除和恢复仅限系统管理员，恢复保留原编号，已删除文件不会自动恢复。</p>
             <div className="drawing-trash-content hm-scroll-region" tabIndex={0} aria-label={`回收站文件，共 ${trashFiles.length} 项`}>
               <header className="drawing-trash-section-title">
                 <div><strong>已删除文件</strong><small>可逐个恢复，不会覆盖现有文件</small></div>
@@ -1407,7 +1421,7 @@ export function DrawingLibraryShell({
               {!!trashItems.length && (
                 <>
                   <header className="drawing-trash-section-title legacy">
-                    <div><strong>历史遗留主档</strong><small>旧版本删除记录仅用于恢复，主档不再允许删除</small></div>
+                    <div><strong>已删除图纸档案</strong><small>管理员可恢复原档案；存在同产品活动档案时先核对重复关联</small></div>
                     <b>{trashItems.length}</b>
                   </header>
                   <div className="drawing-trash-list drawing-trash-legacy-list">
@@ -1424,9 +1438,9 @@ export function DrawingLibraryShell({
                           <span>工单 <b>{item._count.workOrders}</b></span>
                           <span>工序工时 <b>{item._count.productTimeProfiles}</b></span>
                         </section>
-                        <button className="hm-workbench-button primary" type="button" disabled={!!restoringId} onClick={() => void restoreItem(item)}>
+                        <button className="hm-workbench-button primary" type="button" disabled={!canManageArchive || !!restoringId} onClick={() => void restoreItem(item)}>
                           <ArchiveRestore size={15} aria-hidden="true" />
-                          {restoringId === item.id ? '恢复中...' : '恢复主档'}
+                          {restoringId === item.id ? '恢复中...' : canManageArchive ? '恢复图纸档案' : '仅管理员可恢复'}
                         </button>
                       </article>
                     ))}
@@ -1438,7 +1452,7 @@ export function DrawingLibraryShell({
                 <div className="drawing-trash-empty">
                   <ArchiveRestore aria-hidden="true" />
                   <strong>{trashKeyword.trim() ? '没有匹配的已删除文件' : '文件回收站为空'}</strong>
-                  <p>{trashKeyword.trim() ? '请换用文件名、客户名、规格或品名搜索。' : '误删文件会显示在这里，产品资料主档始终保留。'}</p>
+                  <p>{trashKeyword.trim() ? '请换用文件名、客户名、规格或品名搜索。' : '已删除文件和图纸档案会显示在这里。'}</p>
                 </div>
               )}
             </div>
@@ -1505,6 +1519,7 @@ export function DrawingLibraryShell({
         onCompleted={loadData}
       />
 
+      {canManageArchive && lifecycleTarget && <DrawingLibraryLifecycleDialog target={lifecycleTarget} onClose={() => setLifecycleTarget(null)} onComplete={completeLifecycle} />}
       <ConfirmDialog
         open={canDeleteDrawing && Boolean(deleteTarget)}
         title="删除资料文件？"

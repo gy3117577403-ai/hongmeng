@@ -36,14 +36,14 @@ test('links an unlinked plan order to its unique drawing product', () => {
   }, [canonical])?.id, canonical.id);
 });
 
-test('prefers the only matching record with a real drawing over an empty stale duplicate', () => {
+test('uploading a drawing does not replace an explicit existing association', () => {
   const stale = item({ id: 'drawing-empty', libraryKey: '福尔达::F319951035', drawingFileCount: 0 });
   const uploaded = item({ id: 'drawing-file', customerName: '福尔达 ', libraryKey: '福尔达 ::F319951035', drawingFileCount: 1 });
   assert.equal(selectCanonicalDrawingItem({
     drawingLibraryItemId: stale.id,
     customerName: '福尔达',
     specification: 'F319951035',
-  }, [stale, uploaded])?.id, uploaded.id);
+  }, [stale, uploaded])?.id, stale.id);
 });
 
 test('keeps an ambiguous identity unresolved instead of relinking arbitrarily', () => {
@@ -85,12 +85,12 @@ test('pre-indexed canonical lookup preserves exact-key, exact-field, and current
   assert.equal(
     new PlanningProductLinkItemIndex([currentLink, exactFields, exactKey])
       .selectCanonicalDrawingItem(order)?.id,
-    exactKey.id,
+    currentLink.id,
   );
   assert.equal(
     new PlanningProductLinkItemIndex([currentLink, exactFields])
       .selectCanonicalDrawingItem(order)?.id,
-    exactFields.id,
+    currentLink.id,
   );
   assert.equal(
     new PlanningProductLinkItemIndex([
@@ -172,8 +172,8 @@ test('reconciliation propagates an uploaded original drawing to an existing rele
 
   const result = await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: 'drawing-1' });
   assert.equal(result.unchangedOrders, 1);
-  assert.equal(workOrderUpdates.length, 2);
-  assert.deepEqual(workOrderUpdates[0]?.data, { drawingLibraryItemId: 'drawing-1' });
-  assert.equal((workOrderUpdates[1]?.data as { drawingStatus?: string }).drawingStatus, '已发');
-  assert.ok((workOrderUpdates[1]?.data as { drawingIssuedAt?: Date }).drawingIssuedAt instanceof Date);
+  assert.equal(workOrderUpdates.length, 1);
+  assert.equal((workOrderUpdates[0]?.data as { drawingStatus?: string }).drawingStatus, '已发');
+  assert.ok((workOrderUpdates[0]?.data as { drawingIssuedAt?: Date }).drawingIssuedAt instanceof Date);
+  assert.equal((workOrderUpdates[0]?.where as { drawingLibraryItemId?: string }).drawingLibraryItemId, 'drawing-1');
 });

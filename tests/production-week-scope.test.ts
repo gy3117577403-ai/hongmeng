@@ -336,7 +336,7 @@ test('a new plan product can be parsed without an existing drawing library id', 
   assert.match(drawing.data.remark, /计划中心自动建档/);
 });
 
-test('planning product creation is idempotent and requires confirmation before restoring a deleted item', async () => {
+test('planning product creation is idempotent and cannot bypass administrator restoration', async () => {
   const parsed = parseProductionPlanOrderInput({
     customerName: '杭州测试(10999)',
     productName: '测试线束',
@@ -352,12 +352,15 @@ test('planning product creation is idempotent and requires confirmation before r
   let state: 'missing' | 'active' | 'deleted' = 'missing';
   let upsertCount = 0;
   const tx = {
+    $executeRaw: async () => 1,
+    $queryRaw: async () => state === 'missing' ? [] : [{ id: 'drawing-1' }],
     drawingLibraryItem: {
-      findMany: async () => state === 'active' ? [{
+      findMany: async () => state !== 'missing' ? [{
         id: 'drawing-1',
         libraryKey: '杭州测试(10999)::PLAN-NEW-002',
         customerName: parsed.data.customerName,
         specification: parsed.data.specification,
+        deletedAt: state === 'deleted' ? new Date() : null,
         _count: { files: 0 },
       }] : [],
       findFirst: async () => state === 'active' ? {
@@ -372,7 +375,7 @@ test('planning product creation is idempotent and requires confirmation before r
         deletedAt: state === 'deleted' ? new Date('2026-07-20T00:00:00.000Z') : null,
       },
       updateMany: async () => ({ count: state === 'active' ? 1 : 0 }),
-      upsert: async () => {
+      create: async () => {
         upsertCount += 1;
         state = 'active';
         return { id: 'drawing-1' };
@@ -396,9 +399,9 @@ test('planning product creation is idempotent and requires confirmation before r
   assert.equal(upsertCount, 1);
 
   const restored = await resolveOrCreatePlanningProduct(tx, parsed.data, { createIfMissing: true, restoreIfDeleted: true });
-  assert.equal(restored.status, 'resolved');
-  assert.equal(restored.action, 'restored');
-  assert.equal(upsertCount, 2);
+  assert.equal(restored.status, 'restore_required');
+  assert.equal(restored.action, null);
+  assert.equal(upsertCount, 1);
 });
 
 test('planning batches accept and snapshot an explicit unit labor time', () => {

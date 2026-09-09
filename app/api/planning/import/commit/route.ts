@@ -19,6 +19,8 @@ import {
   type ProductionPlanImportRow,
 } from '@/lib/production-plan-import';
 import { planningProductIdentity } from '@/lib/planning-product-link';
+import { sameDrawingProduct } from '@/lib/drawing-product-identity';
+import { findDrawingProductCandidates, lockDrawingProduct, requireActiveDrawing } from '@/lib/drawing-library-resolution';
 import { productionPlanImportNeedsProductDecision, resolvePlanningImportTime, planningImportTimeSourceText } from '@/lib/planning-import-time';
 
 export const runtime = 'nodejs';
@@ -76,7 +78,7 @@ async function loadCandidate(
   const item = await tx.drawingLibraryItem.findUnique({
     where: { id },
     select: {
-      id: true, libraryKey: true, customerName: true, productName: true, specification: true, deletedAt: true,
+      id: true, libraryKey: true, customerName: true, customerCode: true, productName: true, specification: true, deletedAt: true,
       _count: { select: { files: { where: { deletedAt: null, isCurrent: true, category: { code: 'drawing' } } } } },
       files: { where: { deletedAt: null, isCurrent: true, category: { code: 'sop' } }, select: { id: true }, take: 1 },
       productTimeProfiles: {
@@ -88,6 +90,7 @@ async function loadCandidate(
     id: item.id,
     libraryKey: item.libraryKey,
     customerName: item.customerName,
+    customerCode: item.customerCode,
     productName: item.productName,
     specification: item.specification,
     deletedAt: item.deletedAt?.toISOString() || null,
@@ -102,16 +105,7 @@ async function normalizedCandidates(
   row: ProductionPlanImportRow,
 ): Promise<ProductionPlanImportCandidate[]> {
   if (!row.input) return [];
-  const raw = await tx.drawingLibraryItem.findMany({
-    where: {
-      OR: [
-        { libraryKey: productionPlanImportLibraryKey(row.input) },
-        { specification: { equals: row.input.specification, mode: 'insensitive' } },
-      ],
-    },
-    select: { id: true },
-    take: 100,
-  });
+  const raw = await findDrawingProductCandidates(tx, row.input);
   const loaded = await Promise.all(raw.map(item => loadCandidate(tx, item.id)));
   const identity = productionPlanImportIdentity(row.input);
   return loaded.filter((item): item is ProductionPlanImportCandidate => (
@@ -125,7 +119,7 @@ async function resolveProduct(
   decisionId: string | undefined,
 ): Promise<{ item: ProductionPlanImportCandidate; action: 'reuse' | 'restore' | 'create' }> {
   if (!row.input) throw new Error(`第 ${row.rowNo} 行缺少预检数据`);
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-plan-product:${productionPlanImportIdentity(row.input)}`}))`;
+  await lockDrawingProduct(tx, row.input);
 
   const selectedId = clean(decisionId, 80) || row.matchedDrawingLibraryItemId || '';
   if (row.status === 'conflict') {
@@ -133,26 +127,22 @@ async function resolveProduct(
     if (!selectedId || !allowedIds.has(selectedId)) throw new Error(`第 ${row.rowNo} 行需要选择已有图纸库`);
   }
   if (selectedId) {
-    let selected = await loadCandidate(tx, selectedId);
+    if (!row.candidates.some(item => item.id === selectedId)) throw new Error(`第 ${row.rowNo} 行选择不属于本次预检候选，请重新预检`);
+    const selected = await loadCandidate(tx, selectedId);
     if (!selected) throw new Error(`第 ${row.rowNo} 行选择的图纸库已不存在，请重新预检`);
-    const action = selected.deletedAt ? 'restore' : 'reuse';
-    if (selected.deletedAt) {
-      await tx.drawingLibraryItem.update({ where: { id: selected.id }, data: { deletedAt: null } });
-      selected = { ...selected, deletedAt: null };
-    }
-    return { item: selected, action };
+    if (!sameDrawingProduct(selected, row.input)) throw new Error(`第 ${row.rowNo} 行图纸库客户或型号不一致，请重新预检`);
+    requireActiveDrawing(selected);
+    const current = (await normalizedCandidates(tx, row)).filter(item => !item.deletedAt);
+    if (!decisionId && !row.input.drawingLibraryRef && current.length > 1) throw new Error(`第 ${row.rowNo} 行候选已变化，请重新预检并选择`);
+    return { item: selected, action: 'reuse' };
   }
 
-  const currentCandidates = await normalizedCandidates(tx, row);
+  const allCandidates = await normalizedCandidates(tx, row);
+  const currentCandidates = allCandidates.filter(item => !item.deletedAt);
+  if (!currentCandidates.length && allCandidates.length) requireActiveDrawing(allCandidates[0]);
   if (currentCandidates.length > 1) throw new Error(`第 ${row.rowNo} 行当前存在多个图纸库，请重新预检并选择`);
   if (currentCandidates.length === 1) {
-    let selected = currentCandidates[0];
-    const action = selected.deletedAt ? 'restore' : 'reuse';
-    if (selected.deletedAt) {
-      await tx.drawingLibraryItem.update({ where: { id: selected.id }, data: { deletedAt: null } });
-      selected = { ...selected, deletedAt: null };
-    }
-    return { item: selected, action };
+    return { item: currentCandidates[0], action: 'reuse' };
   }
 
   const created = await tx.drawingLibraryItem.create({
@@ -240,7 +230,8 @@ async function commitBatch(
         },
         include: { batches: { orderBy: { batchNo: 'asc' } } },
       });
-      if (explicitOrderId && (!existing || existing.deletedAt || planningProductIdentity(existing.customerName, existing.specification) !== productionPlanImportIdentity(row.input))) {
+      if (existing && !sameDrawingProduct(existing, row.input)) throw new Error(`第 ${row.rowNo} 行原订单客户或型号不一致`);
+      if (explicitOrderId && (!existing || existing.deletedAt || !sameDrawingProduct(existing, row.input))) {
         throw new Error(`第 ${row.rowNo} 行关联订单已变化，请重新预检`);
       }
       const activeBatches = existing?.batches.filter(batch => !batch.deletedAt) || [];
@@ -264,11 +255,12 @@ async function commitBatch(
 
       let product: Awaited<ReturnType<typeof resolveProduct>>;
       if (existing?.drawingLibraryItemId) {
+        await lockDrawingProduct(tx, row.input);
         const linked = await loadCandidate(tx, existing.drawingLibraryItemId);
         if (!linked) throw new Error(`第 ${row.rowNo} 行原订单关联的图纸库已不存在`);
-        const action = linked.deletedAt ? 'restore' : 'reuse';
-        if (linked.deletedAt) await tx.drawingLibraryItem.update({ where: { id: linked.id }, data: { deletedAt: null } });
-        product = { item: { ...linked, deletedAt: null }, action };
+        if (!sameDrawingProduct(linked, row.input)) throw new Error(`第 ${row.rowNo} 行原订单关联的图纸库与客户或型号不一致`);
+        if (decisions[String(row.rowNo)] && decisions[String(row.rowNo)] !== linked.id) throw new Error(`第 ${row.rowNo} 行已有订单不能更换产品档案`);
+        product = { item: requireActiveDrawing(linked), action: 'reuse' };
       } else {
         product = await resolveProduct(tx, row, decisions[String(row.rowNo)]);
       }

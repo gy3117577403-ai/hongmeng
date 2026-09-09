@@ -1,8 +1,5 @@
 import type { Prisma } from '@prisma/client';
 
-export const DRAWING_LIBRARY_MASTER_IMMUTABLE_CODE = 'DRAWING_LIBRARY_MASTER_IMMUTABLE';
-export const DRAWING_LIBRARY_MASTER_IMMUTABLE_MESSAGE = '产品资料主档为长期业务标识，不允许删除；请删除或替换主档下的具体文件。';
-
 export type DrawingLibraryReferenceImpact = {
   linkedPlanOrders: number;
   activePlanOrders: number;
@@ -12,22 +9,27 @@ export type DrawingLibraryReferenceImpact = {
   activeFiles: number;
   activeOriginalFiles: number;
   productTimeProfiles: number;
+  structuredReferences: number;
   blocked: boolean;
   blockers: string[];
 };
 
 type DrawingLibraryLifecycleClient = Pick<
   Prisma.TransactionClient,
-  'productionPlanOrder' | 'productionPlanBatch' | 'workOrder' | 'drawingLibraryFile' | 'productTimeProfile'
+  'productionPlanOrder' | 'productionPlanBatch' | 'workOrder' | 'drawingLibraryFile' | 'productTimeProfile' | 'drawingLibraryItem'
 >;
 
 export function drawingLibraryDeletionBlockers(
-  impact: Pick<DrawingLibraryReferenceImpact, 'activePlanOrders' | 'activePlanBatches' | 'activeWorkOrders'>,
+  impact: Pick<DrawingLibraryReferenceImpact, 'activePlanOrders' | 'activePlanBatches' | 'activeWorkOrders'>
+    & Partial<Pick<DrawingLibraryReferenceImpact, 'activeFiles' | 'productTimeProfiles' | 'structuredReferences'>>,
 ): string[] {
   const blockers: string[] = [];
   if (impact.activePlanOrders > 0) blockers.push(`${impact.activePlanOrders} 条活动计划仍在使用`);
   if (impact.activePlanBatches > 0) blockers.push(`${impact.activePlanBatches} 个活动批次仍在使用`);
   if (impact.activeWorkOrders > 0) blockers.push(`${impact.activeWorkOrders} 张未完成生产工单仍在使用`);
+  if (impact.activeFiles) blockers.push(`${impact.activeFiles} 份未删除文件（含历史版本），请先删除资料`);
+  if (impact.productTimeProfiles) blockers.push(`${impact.productTimeProfiles} 份产品工时配置仍在引用`);
+  if (impact.structuredReferences) blockers.push(`${impact.structuredReferences} 项 SOP、产品参数、样品或质量资料仍在引用`);
   return blockers;
 }
 
@@ -51,6 +53,7 @@ export async function getDrawingLibraryReferenceImpact(
     activeFiles,
     activeOriginalFiles,
     productTimeProfiles,
+    master,
   ] = await Promise.all([
     tx.productionPlanOrder.count({
       where: { drawingLibraryItemId, deletedAt: null },
@@ -77,12 +80,11 @@ export async function getDrawingLibraryReferenceImpact(
         drawingLibraryItemId,
         deletedAt: null,
         completedAt: null,
-        planActive: true,
         status: { notIn: ['completed', 'cancelled', 'archived'] },
       },
     }),
     tx.drawingLibraryFile.count({
-      where: { libraryItemId: drawingLibraryItemId, deletedAt: null, isCurrent: true },
+      where: { libraryItemId: drawingLibraryItemId, deletedAt: null },
     }),
     tx.drawingLibraryFile.count({
       where: {
@@ -95,9 +97,24 @@ export async function getDrawingLibraryReferenceImpact(
     tx.productTimeProfile.count({
       where: { drawingLibraryItemId },
     }),
+    tx.drawingLibraryItem.findUnique({
+      where: { id: drawingLibraryItemId },
+      select: {
+        sopDocument: { select: { deletedAt: true } },
+        _count: { select: {
+          quotationTimes: true, productTimeDeployments: true,
+          pdfOverlayDocuments: { where: { deletedAt: null } },
+          sampleTasks: { where: { deletedAt: null } }, productDataRecords: true,
+          connectorBindings: true, eightDReportLinks: true,
+          internalQualityRiskLinks: true, qualityRiskRevisionLinks: true,
+        } },
+      },
+    }),
   ]);
 
-  const blockers = drawingLibraryDeletionBlockers({ activePlanOrders, activePlanBatches, activeWorkOrders });
+  const structuredReferences = Object.values(master?._count || {}).reduce((total, count) => total + count, 0)
+    + (master?.sopDocument && !master.sopDocument.deletedAt ? 1 : 0);
+  const blockers = drawingLibraryDeletionBlockers({ activePlanOrders, activePlanBatches, activeWorkOrders, activeFiles, productTimeProfiles, structuredReferences });
   return {
     linkedPlanOrders,
     activePlanOrders,
@@ -107,6 +124,7 @@ export async function getDrawingLibraryReferenceImpact(
     activeFiles,
     activeOriginalFiles,
     productTimeProfiles,
+    structuredReferences,
     blocked: blockers.length > 0,
     blockers,
   };

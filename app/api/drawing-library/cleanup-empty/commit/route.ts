@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { DRAWING_LIBRARY_MASTER_IMMUTABLE_CODE } from '@/lib/drawing-library-lifecycle';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,8 +9,8 @@ export async function POST() {
     await requireUser();
     return NextResponse.json({
       ok: false,
-      code: DRAWING_LIBRARY_MASTER_IMMUTABLE_CODE,
-      error: '产品资料主档（包括空主档）必须长期保留，空资料清理已停用。',
+      code: 'DRAWING_LIBRARY_BULK_DELETE_DISABLED',
+      error: '批量清理已停用，请管理员在图纸库中逐项检查引用后删除档案。',
     }, { status: 405 });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();

@@ -188,6 +188,10 @@ jobs:
         run: npx tsx --test --test-concurrency=1 tests/quality-data-integration.test.ts tests/quality-reference-integration.test.ts
       - name: Lint
         run: npm run lint
+      - name: Drawing archive identity and administrator lifecycle PostgreSQL integration
+        env:
+          DRAWING_LIBRARY_QA_ALLOW: disposable-drawing-runtime
+        run: npx tsx --test --test-concurrency=1 tests/drawing-library-admin-integration.test.ts
       - name: Performance regression contracts
         run: npx tsx --test tests/performance-regression-contract.test.ts tests/performance-request.test.ts tests/http-byte-range.test.ts tests/database-performance-config.test.ts
       - name: Unit tests
@@ -411,6 +415,14 @@ jobs:
             ROUTE_REPLACEMENT_QA_FIXTURE=artifacts/reporting-recovery/route-fixture.json \
             ROUTE_REPLACEMENT_QA_OUTPUT=artifacts/reporting-recovery/route-replacement \
             node scripts/smoke-route-replacement-browser.mjs
+          mkdir -p artifacts/drawing-library-v134146
+          docker exec -i -e DRAWING_LIBRARY_QA_ALLOW=disposable-drawing-runtime hongmeng-release-smoke node \
+            < scripts/seed-drawing-library-smoke.cjs > artifacts/drawing-library-v134146/release-fixture.json
+          DRAWING_LIBRARY_QA_ALLOW=disposable-drawing-runtime \
+            DRAWING_LIBRARY_QA_BASE=http://127.0.0.1:3000 \
+            DRAWING_LIBRARY_QA_FIXTURE=artifacts/drawing-library-v134146/release-fixture.json \
+            DRAWING_LIBRARY_QA_OUTPUT=artifacts/drawing-library-v134146/release-http.json \
+            node scripts/smoke-drawing-library.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -708,6 +720,14 @@ jobs:
             PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
             npx tsx --test --test-concurrency=1 --test-name-pattern='006:|without audited' tests/process-flexible-route-closure-integration.test.ts \
             | tee artifacts/planning-progress-preview/mirror-partial-closure-runtime.log
+          mkdir -p artifacts/drawing-library-v134146
+          docker exec -i -e DRAWING_LIBRARY_QA_ALLOW=disposable-drawing-runtime "$app_name" node \
+            < scripts/seed-drawing-library-smoke.cjs > artifacts/drawing-library-v134146/mirror-fixture.json
+          DRAWING_LIBRARY_QA_ALLOW=disposable-drawing-runtime \
+            DRAWING_LIBRARY_QA_BASE=http://127.0.0.1:3300 \
+            DRAWING_LIBRARY_QA_FIXTURE=artifacts/drawing-library-v134146/mirror-fixture.json \
+            DRAWING_LIBRARY_QA_OUTPUT=artifacts/drawing-library-v134146/mirror-http.json \
+            node scripts/smoke-drawing-library.mjs
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
@@ -715,6 +735,13 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload reporting recovery acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drawing-library-${{ github.ref_name }}
+          path: artifacts/drawing-library-v134146/*http.json
+          if-no-files-found: warn
       - name: Upload reporting recovery acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

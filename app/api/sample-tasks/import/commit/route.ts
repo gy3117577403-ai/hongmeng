@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { DrawingLibraryResolutionError, lockDrawingProduct, resolveOrCreateDrawingProduct } from '@/lib/drawing-library-resolution';
+import { sameDrawingProduct } from '@/lib/drawing-product-identity';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { drawingLibraryKey, invalidSpecificationReason, parseCustomerCode } from '@/lib/drawing-library';
@@ -124,6 +126,7 @@ export async function POST(req: NextRequest) {
         }
         seen.add(fingerprint);
         const decision = normalizeDecision(rawDecisions[String(row.rowNumber)]);
+        await lockDrawingProduct(tx, row);
         let item = null;
         if (row.libraryKey) {
           item = await tx.drawingLibraryItem.findFirst({ where: { OR: [{ id: row.libraryKey }, { libraryKey: row.libraryKey }] } });
@@ -138,26 +141,20 @@ export async function POST(req: NextRequest) {
             continue;
           }
         } else {
-          const key = drawingLibraryKey(row.customerName, row.specification);
-          item = await tx.drawingLibraryItem.findUnique({ where: { libraryKey: key } });
-          if (!item && row.matchStatus === 'CONFIRM' && decision?.mode !== 'create') {
+          if (row.matchStatus === 'CONFIRM' && decision?.mode !== 'create') {
             results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: '相似图纸库尚未确认' });
             continue;
           }
-          if (!item) {
-            item = await tx.drawingLibraryItem.create({
-              data: {
-                customerName: row.customerName,
-                customerCode: parseCustomerCode(row.customerName),
-                productName: row.productName,
-                specification: row.specification,
-                libraryKey: key,
-              },
-            });
+          try { item = await resolveOrCreateDrawingProduct(tx, row); }
+          catch (error) {
+            if (!(error instanceof DrawingLibraryResolutionError)) throw error;
+            results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: error.message });
+            continue;
           }
         }
-        if (item.deletedAt) {
-          item = await tx.drawingLibraryItem.update({ where: { id: item.id }, data: { deletedAt: null } });
+        if (item.deletedAt || !sameDrawingProduct(item, row)) {
+          results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: item.deletedAt ? '档案已删除，请管理员先恢复' : '档案客户或型号不一致' });
+          continue;
         } else if (!item.productName && row.productName && drawingLibraryKey(item.customerName, item.specification) === drawingLibraryKey(row.customerName, row.specification)) {
           item = await tx.drawingLibraryItem.update({ where: { id: item.id }, data: { productName: row.productName } });
         }

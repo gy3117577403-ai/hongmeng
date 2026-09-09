@@ -1,55 +1,22 @@
 import { NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import {
-  getDrawingLibraryReferenceImpact,
-  refreshRestoredDrawingWorkOrders,
-} from '@/lib/drawing-library-lifecycle';
-import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
-import { prisma } from '@/lib/prisma';
+import { requireSystemAdministrator, ForbiddenError, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { changeDrawingLibraryLifecycle } from '@/lib/drawing-library-admin';
+import { DrawingLibraryResolutionError } from '@/lib/drawing-library-resolution';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(_req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser();
-    const existing = await prisma.drawingLibraryItem.findUnique({
-      where: { id: params.id },
-      select: { id: true, libraryKey: true },
-    });
-    if (!existing) return NextResponse.json({ ok: false, error: '图纸资料记录不存在' }, { status: 404 });
-
-    const result = await prisma.$transaction(async tx => {
-      await tx.drawingLibraryItem.update({
-        where: { id: existing.id },
-        data: { deletedAt: null },
-      });
-      const repair = await reconcileProductionPlanDrawingLinks(tx, {
-        drawingLibraryItemId: existing.id,
-      });
-      const refreshedWorkOrders = await refreshRestoredDrawingWorkOrders(tx, existing.id);
-      const impact = await getDrawingLibraryReferenceImpact(tx, existing.id);
-      await tx.operationLog.create({
-        data: {
-          userId: user.id,
-          action: 'restore_drawing_library_item',
-          targetType: 'drawing_library_item',
-          targetId: existing.id,
-          detail: {
-            libraryKey: existing.libraryKey,
-            linkedPlanOrders: repair.linkedOrders,
-            unchangedPlanOrders: repair.unchangedOrders,
-            unresolvedPlanOrders: repair.unresolvedOrders,
-            refreshedWorkOrders,
-          },
-        },
-      });
-      return { repair: { ...repair, refreshedWorkOrders }, impact };
-    });
-    return NextResponse.json({ ok: true, itemId: existing.id, ...result });
+    const user = await requireSystemAdministrator();
+    const body = await req.json().catch(() => ({}));
+    const result = await changeDrawingLibraryLifecycle(params.id, user.id, 'restore', typeof body.reason === 'string' ? body.reason : '');
+    return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof ForbiddenError) return NextResponse.json({ ok: false, error: '仅系统管理员可以恢复图纸档案' }, { status: 403 });
+    if (e instanceof DrawingLibraryResolutionError) return NextResponse.json({ ok: false, error: e.message, code: e.code, itemIds: e.itemIds }, { status: e.code === 'DRAWING_LIBRARY_NOT_FOUND' ? 404 : 409 });
     console.error(e);
-    return NextResponse.json({ ok: false, error: '图纸资料恢复和链路修复失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '图纸档案恢复失败' }, { status: 500 });
   }
 }
