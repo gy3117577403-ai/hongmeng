@@ -12,7 +12,9 @@ assert.ok(['127.0.0.1', 'localhost'].includes(database.hostname));
 assert.ok(/^\/employee_access_(it\d*|release_[ab])$/.test(database.pathname)
   || (process.env.CI === 'true' && database.pathname === '/hongmeng_ci')
   || (process.env.HOURS_QA_ALLOW === 'disposable-hours-runtime' && database.port === '55442'
-    && database.pathname === '/hongmeng_employee_hours_v134142_dev' && base === 'http://127.0.0.1:3112'));
+    && database.pathname === '/hongmeng_employee_hours_v134142_dev' && base === 'http://127.0.0.1:3112')
+  || (process.env.OTHER_HOURS_QA_ALLOW === 'disposable-other-hours-runtime' && database.port === '55448'
+    && database.pathname === '/hongmeng_other_hours_v134147' && base === 'http://127.0.0.1:3118'));
 assert.equal(new URL(base).hostname, '127.0.0.1');
 const db = new PrismaClient();
 const password = 'AccessVerify!2026x';
@@ -147,9 +149,10 @@ try {
   const dailyWorker = dailyReport.data.report.rows.find(row => row.employee.id === workerA.id);
   assert.equal(dailyWorker.attendanceMilliseconds, 8 * hour);
   assert.equal(dailyWorker.standardLaborMilliseconds, 6 * hour);
-  assert.equal(dailyWorker.attainmentBasisPoints, 7500, 'six completed hours over eight attendance hours uses the new attainment formula');
+  assert.equal(dailyWorker.attainmentCapacityMilliseconds, 7.6 * hour, 'eight attendance hours reserve five percent rest');
+  assert.equal(dailyWorker.attainmentBasisPoints, 7895, 'six completed hours divided by 7.6 target hours');
   results.push('Supervisor with legacy EMPLOYEE role, team leader and HR receive the same per-employee data as administrator, including another team; field and anonymous accounts denied');
-  results.push('Eight claims plus one direct report preserve exact product/model/process/quantity and six completed hours without truncation; six over eight attendance hours gives 75%');
+  results.push('Eight claims plus one direct report preserve exact product/model/process/quantity and six completed hours without truncation; six over 7.6 target hours gives 78.95%');
 
   // Exercise every real report page and data source with and without the old
   // personnel-reader grant. Merely showing a navigation tab is insufficient.
