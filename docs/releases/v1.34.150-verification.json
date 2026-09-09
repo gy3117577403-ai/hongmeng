@@ -1,0 +1,44 @@
+{
+  "version": "v1.34.150",
+  "revision": "6b085030ebebe5efe08a307987f1b8005ac29096",
+  "image": "crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:v1.34.150",
+  "digest": "sha256:9debd9e3753af33d65cee219b03d08187fd564ccaefba0e1c19272bc5707cd9a",
+  "platform": "linux/amd64",
+  "ci": {
+    "url": "https://github.com/gy3117577403-ai/hongmeng/actions/runs/34402224887",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "anonymous": {
+    "verified": true,
+    "allBlobBytes": 182807728,
+    "retries": 0
+  },
+  "cleanRuntime": {
+    "postgresMigrationsApplied": 146,
+    "unfinishedMigrations": 0,
+    "databaseReady": true,
+    "storageReady": true,
+    "appRestartPassed": true
+  },
+  "business": {
+    "employeeTransferUiSaved": true,
+    "effectiveDate": "2026-08-01",
+    "preTransferPreserved": true,
+    "manualDayOverridePreserved": true,
+    "stalePreviewRejected": true,
+    "requestIdempotent": true,
+    "newTeamApproval": true,
+    "approvedOtherMinutes": 45,
+    "approvedAttainmentBasisPoints": 8581,
+    "afterVoidBasisPoints": 7830,
+    "dayWeekMonthMatrixReconciled": true,
+    "excelSheets": 3,
+    "excelAttainmentBasisPoints": 7830
+  },
+  "production": {
+    "imageSwitched": false,
+    "dataChanged": false
+  },
+  "verifiedAt": "2026-09-09T20:58:01.063Z"
+}

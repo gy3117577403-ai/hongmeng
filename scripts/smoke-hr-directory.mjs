@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const base = (process.env.HR_QA_BASE || '').replace(/\/+$/, '');
 const target = new URL(base);
@@ -44,12 +45,18 @@ async function main() {
   await request('empty employee name rejected', route, { method: 'PATCH', body: { name: '' }, status: 400 });
   await request('ordinary edit cannot renumber', route, { method: 'PATCH', body: { employeeNo: '999999' }, status: 409 });
   const name = '李明档案验收';
-  const update = await (await request('save profile fields', route, { method: 'PATCH', body: { name, team: '装配二组', hireDate: '2025-03-18' } })).json();
+  const effectiveDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  async function saveDatedProfile(label, fields) {
+    const input = { ...fields, attainmentChange: { effectiveDate, reason: '隔离人事档案验收：' + label } };
+    const preview = await (await request(label + ' effective-date preview', route + '/attainment-policy', { method: 'POST', body: input })).json();
+    return request(label, route, { method: 'PATCH', body: { ...input, attainmentChange: { ...input.attainmentChange, token: preview.preview.token, requestId: randomUUID() } } });
+  }
+  const update = await (await saveDatedProfile('save profile fields', { name, team: '装配二组', hireDate: '2025-03-18' })).json();
   assert.equal(update.employee.name, name);
   assert.equal(update.employee.team, '装配二组');
   const refreshed = await (await request('reload persisted profile', '/api/employees')).json();
   assert.equal(refreshed.employees.find(item => item.id === employee.id).name, name);
-  await request('restore synthetic profile', route, { method: 'PATCH', body: { name: employee.name, team: employee.team, hireDate: employee.hireDate } });
+  await saveDatedProfile('restore synthetic profile', { name: employee.name, team: employee.team, hireDate: employee.hireDate });
   const created = await (await request('create synthetic employee with automatic number', '/api/employees', {
     method: 'POST', status: 201, body: { name: '新增档案验收', department: '生产部', position: '装配操作员',
       team: '装配一组', hireDate: '2026-09-01', attendanceEnabled: true, attendanceGroup: 'UNASSIGNED' } })).json();
