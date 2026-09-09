@@ -1,0 +1,91 @@
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import ExcelJS from 'exceljs';
+import sharp from 'sharp';
+const fixture=JSON.parse(readFileSync('.docker/other-hours-fixture.json','utf8'));
+const base=process.env.APP_BASE_URL || 'http://127.0.0.1:3118';
+if(new URL(base).hostname!=='127.0.0.1' || new URL(base).port!=='3118') throw Error('Only isolated other-hours HTTP runtime');
+const cookies=new Map(), steps=[];
+async function request(index,path,options={},expected=200) {
+  const headers={cookie:cookies.get(index)||'',origin:base,...options.headers};
+  const result=await fetch(base+path,{...options,headers,redirect:'manual'});
+  const setCookie=result.headers.getSetCookie().find(value=>value.startsWith('hm_session=')); if(setCookie)cookies.set(index,setCookie.split(';')[0]);
+  const text=await result.text(); let json;try{json=JSON.parse(text)}catch{}
+  assert.equal(result.status,expected,path+': '+text.slice(0,350));
+  return json;
+}
+const json=(data,method='POST')=>({method,headers:{'content-type':'application/json'},body:JSON.stringify(data)});
+async function detail(i,id){return (await request(i,'/api/other-work-times/'+id)).row}
+async function command(i,id,action,extra={}){
+  const row=await detail(i,id);
+  return request(i,'/api/other-work-times/'+id,json({action,version:row.version,...extra},'PATCH'));
+}
+for(let i=0;i<fixture.users.length;i++)await request(i,'/api/auth/login',json({username:fixture.users[i].username,password:fixture.password}));
+steps.push('All five real account logins');
+await request(99,'/api/other-work-times',{},401);
+await request(0,'/api/other-work-times?scope=manage',{},403);
+steps.push('Login required and employee management denied');
+const input={workDate:fixture.prior,categoryId:'other-sample',requestedMinutes:120,description:'HTTP验收：协助样品打端子 '+randomUUID().slice(0,6),backfillReason:'昨天工作今天补报',idempotencyKey:randomUUID()};
+const draft=(await request(0,'/api/other-work-times',json(input))).row;
+assert.equal((await request(0,'/api/other-work-times',json(input))).row.id,draft.id);
+await request(0,'/api/other-work-times',json({...input,requestedMinutes:121}),409);
+await request(0,'/api/other-work-times',json({...input,idempotencyKey:randomUUID(),employeeId:fixture.users[1].employeeId}),403);
+const cross=json({...input,idempotencyKey:randomUUID()});cross.headers.origin='https://foreign.example';
+await request(0,'/api/other-work-times',cross,403);
+steps.push('Draft idempotency, employee binding and cross-origin guard');
+const photo=await sharp({create:{width:500,height:300,channels:3,background:'#f97316'}}).jpeg().toBuffer();
+mkdirSync('output/playwright',{recursive:true});writeFileSync('output/playwright/other-hours-photo.jpg',photo);
+const form=new FormData();form.set('version',String(draft.version));form.set('file',new Blob([photo],{type:'image/jpeg'}),'work-evidence.jpg');
+const attached=(await request(0,'/api/other-work-times/'+draft.id+'/attachments',{method:'POST',body:form})).row;
+const photoPath=attached.attachments[0].url;
+const file=await fetch(base+photoPath,{headers:{cookie:cookies.get(0)}});assert.equal(file.status,200);assert.deepEqual(Buffer.from(await file.arrayBuffer()),photo);
+await request(4,photoPath,{},404);
+const pending=(await command(0,draft.id,'SUBMIT')).row;
+await request(0,'/api/other-work-times/'+draft.id,json({action:'EDIT',version:pending.version,...input},'PATCH'),409);
+await request(0,'/api/other-work-times/'+draft.id+'/attachments/'+attached.attachments[0].id,json({version:pending.version},'DELETE'),403);
+await request(0,'/api/other-work-times/'+draft.id,json({action:'APPROVE',version:pending.version},'PATCH'),403);
+await request(4,'/api/other-work-times/'+draft.id,{},404);
+steps.push('Actual S3 photo bytes, attachment ownership and submitted evidence lock');
+const reportQuery=period=>new URLSearchParams({period,date:fixture.prior,employeeId:fixture.users[0].employeeId});
+const report=async(period='today')=>(await request(3,'/api/reports/employee-attainment?'+reportQuery(period))).report;
+const before=await report();const beforeOther=before.summary.otherWorkMilliseconds;
+const decisions=await Promise.all([fetch(base+'/api/other-work-times/'+draft.id,{...json({action:'APPROVE',version:pending.version},'PATCH'),headers:{cookie:cookies.get(1),origin:base,'content-type':'application/json'}}),fetch(base+'/api/other-work-times/'+draft.id,{...json({action:'APPROVE',version:pending.version},'PATCH'),headers:{cookie:cookies.get(2),origin:base,'content-type':'application/json'}})]);
+assert.deepEqual(decisions.map(r=>r.status).sort(),[200,409]);
+let after=await report();assert.equal(after.summary.otherWorkMilliseconds,beforeOther+2*3600000);
+assert.equal(after.summary.attainmentCapacityMilliseconds,8*3600000*.95);
+assert.equal(after.summary.attainmentBasisPoints,Math.round((6*3600000+beforeOther+2*3600000)/(8*3600000*.95)*10000));
+steps.push('Concurrent approval once, full approved hours, original-day 95% target');
+for(const period of ['today','week','month']) {
+  const individual=await report(period);
+  const operations=(await request(3,'/api/reports/operations?'+new URLSearchParams({period,date:fixture.prior}))).report;
+  const matrix=operations.employeeMatrix.find(r=>r.employee.id===fixture.users[0].employeeId);
+  assert.equal(matrix.otherWorkMilliseconds,individual.summary.otherWorkMilliseconds);
+  assert.equal(matrix.attainmentBasisPoints,individual.summary.attainmentBasisPoints);
+  const team=operations.teamMonthly.find(r=>r.team===fixture.teamName);
+  assert.equal(team.otherWorkMilliseconds,individual.summary.otherWorkMilliseconds);
+}
+steps.push('Day/week/month, matrix and team facts reconcile');
+const xlsx=await fetch(base+'/api/other-work-times/export?scope=manage&from='+fixture.prior+'&to='+fixture.prior,{headers:{cookie:cookies.get(3)}});
+assert.equal(xlsx.status,200);const bytes=Buffer.from(await xlsx.arrayBuffer());const book=new ExcelJS.Workbook();await book.xlsx.load(bytes);
+assert.ok(book.worksheets[0].getSheetValues().some(row=>Array.isArray(row)&&row.includes(draft.id)));
+assert.ok(book.worksheets[1].rowCount>1);writeFileSync('output/playwright/other-hours-ledger.xlsx',bytes);
+steps.push('Actual Excel download and approval audit sheet');
+await command(0,draft.id,'CORRECTION_REQUEST',{reason:'需要重新核对临时安排时长'});
+await command(3,draft.id,'VOID',{reason:'验收作废，核对原工作日回算'});
+after=await report();assert.equal(after.summary.otherWorkMilliseconds,beforeOther);
+await request(3,'/api/other-work-times/'+draft.id,json({action:'APPROVE',version:(await detail(3,draft.id)).version},'PATCH'),409);
+steps.push('Correction request, administrator void, original-day rollback and no direct reapproval');
+const replacement=(await request(0,'/api/other-work-times',json({...input,description:'HTTP验收更正记录 '+randomUUID().slice(0,5),idempotencyKey:randomUUID(),correctionOfId:draft.id}))).row;
+await command(0,replacement.id,'SUBMIT');
+await command(1,replacement.id,'REJECT',{reason:'请补充工作安排说明'});
+await command(0,replacement.id,'EDIT',{...input,description:'已补充的工作说明 '+randomUUID().slice(0,5)});
+await command(0,replacement.id,'SUBMIT');
+await command(2,replacement.id,'APPROVE',{approvedMinutes:90,reason:'核对实际安排，核减三十分钟'});
+assert.equal((await report()).summary.otherWorkMilliseconds,beforeOther+90*60000);
+steps.push('Rejected edit, resubmission and reduced approval stay traceable');
+await command(3,replacement.id,'VOID',{reason:'HTTP验收结束，保留记录但不影响浏览器验收基数'});
+assert.equal((await report()).summary.otherWorkMilliseconds,beforeOther);
+mkdirSync('artifacts/other-hours-v134147',{recursive:true});
+writeFileSync('artifacts/other-hours-v134147/http-smoke.json',JSON.stringify({base,at:new Date().toISOString(),steps,requestId:draft.id,replacementId:replacement.id},null,2));
+console.log(JSON.stringify({ok:true,groups:steps.length,steps},null,2));

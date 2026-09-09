@@ -1,4 +1,4 @@
-import { basisPoints } from '@/lib/attendance';
+import { basisPoints, ATTAINMENT_CAPACITY_FACTOR } from '@/lib/attendance';
 import type { AttendanceType } from '@/types';
 
 export type AttendanceOvertimeSource = 'confirmed_plan' | 'confirmed_attendance' | 'attendance_fallback' | 'none';
@@ -101,6 +101,7 @@ export function attendanceDayMetrics(input: AttendanceDayMetricInput): Attendanc
 }
 
 export type LaborPerformanceMetricInput = {
+  otherWorkMilliseconds?: number;
   attendanceMilliseconds: number;
   actualLaborMilliseconds: number;
   exemptAbnormalMilliseconds: number;
@@ -124,20 +125,21 @@ export function laborPerformanceMetrics(input: LaborPerformanceMetricInput): Lab
   const actualLaborMilliseconds = nonNegative(input.actualLaborMilliseconds);
   const exemptAbnormalMilliseconds = nonNegative(input.exemptAbnormalMilliseconds);
   const standardLaborMilliseconds = nonNegative(input.standardLaborMilliseconds);
-  const accountedMilliseconds = actualLaborMilliseconds + exemptAbnormalMilliseconds;
+  const otherWorkMilliseconds = nonNegative(input.otherWorkMilliseconds);
+  const accountedMilliseconds = actualLaborMilliseconds + exemptAbnormalMilliseconds + otherWorkMilliseconds;
   const overlapMilliseconds = Math.max(0, accountedMilliseconds - attendanceMilliseconds);
   const coveredMilliseconds = Math.min(attendanceMilliseconds, accountedMilliseconds);
   const effectiveAttendanceMilliseconds = attendanceMilliseconds;
-  const targetCapacity = attendanceMilliseconds;
+  const targetCapacity = attendanceMilliseconds * ATTAINMENT_CAPACITY_FACTOR;
 
   return {
     accountedMilliseconds,
     overlapMilliseconds,
-    unexplainedMilliseconds: Math.max(0, attendanceMilliseconds - accountedMilliseconds),
+    unexplainedMilliseconds: Math.max(0, targetCapacity - accountedMilliseconds),
     utilizationBasisPoints: basisPoints(coveredMilliseconds, attendanceMilliseconds),
     efficiencyBasisPoints: basisPoints(standardLaborMilliseconds, actualLaborMilliseconds),
     effectiveAttendanceMilliseconds,
     attainmentCapacityMilliseconds: targetCapacity,
-    targetAttainmentBasisPoints: basisPoints(standardLaborMilliseconds + exemptAbnormalMilliseconds * 0.95, targetCapacity),
+    targetAttainmentBasisPoints: basisPoints(standardLaborMilliseconds + exemptAbnormalMilliseconds + otherWorkMilliseconds, targetCapacity),
   };
 }

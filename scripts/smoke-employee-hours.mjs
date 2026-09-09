@@ -77,20 +77,20 @@ async function main() {
   }
   await login(fixture.actor.username, process.env.HOURS_QA_PASSWORD);
   const first = await employee(fixture.yesterday);
-  assertHours(rowBy(first, 0), { attendance: 10, completed: 8, abnormal: 1, rate: 8950 });
+  assertHours(rowBy(first, 0), { attendance: 10, completed: 8, abnormal: 1, rate: 9474 });
   assert.equal(rowBy(first, 0).regularAttendanceMilliseconds, 8 * hour);
   assert.equal(rowBy(first, 0).recognizedOvertimeMilliseconds, 2 * hour);
-  assertHours(rowBy(first, 1), { attendance: 8, completed: 2, rate: 2500 });
+  assertHours(rowBy(first, 1), { attendance: 8, completed: 2, rate: 2632 });
   const second = await employee(fixture.today);
-  assertHours(rowBy(second, 0), { attendance: 5, completed: 6, rate: 12000 });
-  assertHours(rowBy(second, 1), { attendance: 8, completed: 5, rate: 6250 });
+  assertHours(rowBy(second, 0), { attendance: 5, completed: 6, rate: 12632 });
+  assertHours(rowBy(second, 1), { attendance: 8, completed: 5, rate: 6579 });
   assertHours(rowBy(second, 2), { attendance: 0, completed: 2, rate: null });
   assert.equal(second.summary.attainmentBasisPoints, null, 'missing attendance must not produce a misleading overall rate');
   assert.equal(second.summary.standardLaborMilliseconds, 13 * hour);
   const params = new URLSearchParams({ period: 'custom', date: fixture.today, startDate: fixture.yesterday, endDate: fixture.today });
   const combined = (await request('custom two-day employee report', '/api/reports/employee-attainment?' + params)).data.report;
-  assertHours(rowBy(combined, 0), { attendance: 15, completed: 14, abnormal: 1, rate: 9967 });
-  assertHours(rowBy(combined, 1), { attendance: 16, completed: 7, rate: 4375 });
+  assertHours(rowBy(combined, 0), { attendance: 15, completed: 14, abnormal: 1, rate: 10526 });
+  assertHours(rowBy(combined, 1), { attendance: 16, completed: 7, rate: 4605 });
   const operations = (await request('same-range matrix and team report', '/api/reports/operations?' + params)).data.report;
   for (const row of combined.rows) {
     const matrix = operations.employeeMatrix.find(item => item.employee.id === row.employee.id);
@@ -121,13 +121,13 @@ async function main() {
   const repeated = (await request('identical QR retry is idempotent', ticketRoute + '/completions', { method: 'POST', body: command })).data;
   assert.equal(repeated.data.completionId, result.data.completionId);
   await login(fixture.actor.username, process.env.HOURS_QA_PASSWORD);
-  assertHours(rowBy(await employee(fixture.today), 1), { attendance: 8, completed: 7, rate: 8750 });
+  assertHours(rowBy(await employee(fixture.today), 1), { attendance: 8, completed: 7, rate: 9211 });
   const withdrawal = `/api/process-management/routes/${fixture.orders.browser.routeId}/completions/${result.data.completionId}/withdraw`;
   const preview = (await request('preview audited completion withdrawal', withdrawal)).data.data;
   assert.equal(preview.canWithdraw, true);
   await request('withdraw reverses original personal labor', withdrawal, { method: 'POST', body: { expectedRouteVersion: preview.routeVersion,
     category: 'REPORTING_ERROR', idempotencyKey: randomUUID() } });
-  assertHours(rowBy(await employee(fixture.today), 1), { attendance: 8, completed: 5, rate: 6250 });
+  assertHours(rowBy(await employee(fixture.today), 1), { attendance: 8, completed: 5, rate: 6579 });
   await request('report page available', '/workspace/reports/people/employee-attainment?period=today&date=' + fixture.today);
   const old = await request('old unmatched link redirects to hours report', '/workspace/reports/people/unmatched-labor', { status: 307 });
   assert.ok(old.response.headers.get('location')?.includes('employee-attainment'));

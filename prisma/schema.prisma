@@ -507,8 +507,11 @@ enum RecruitmentInterviewStatus {
 }
 
 model User {
-  reportingSubmissions            ProcessReportSubmission[] @relation("ReportSubmissionCreator")
-  resolvedReportingSubmissions    ProcessReportSubmission[] @relation("ReportSubmissionResolver")
+  otherWorkRequests               OtherWorkTimeRequest[]                 @relation("OtherWorkCreator")
+  otherWorkReviews                OtherWorkTimeReview[]
+  otherWorkAttachments            OtherWorkTimeAttachment[]
+  reportingSubmissions            ProcessReportSubmission[]              @relation("ReportSubmissionCreator")
+  resolvedReportingSubmissions    ProcessReportSubmission[]              @relation("ReportSubmissionResolver")
   id                              String                                 @id @default(uuid())
   username                        String                                 @unique
   passwordHash                    String                                 @map("password_hash")
@@ -1221,7 +1224,115 @@ model WorkOrderQrPrintItem {
   @@map("work_order_qr_print_items")
 }
 
+enum OtherWorkTimeStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+  VOIDED
+}
+
+model OtherWorkTimeCategory {
+  id        String                 @id @default(uuid())
+  code      String                 @unique
+  name      String                 @unique
+  isActive  Boolean                @default(true)
+  sortOrder Int                    @default(0)
+  version   Int                    @default(0)
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+  requests  OtherWorkTimeRequest[]
+
+  @@map("other_work_time_categories")
+}
+
+model OtherWorkTimeRequest {
+  id                         String                    @id @default(uuid())
+  employeeId                 String
+  createdById                String
+  employeeNameSnapshot       String
+  employeeNoSnapshot         String
+  teamSnapshot               String?
+  teamIdSnapshot             String?
+  attainmentEligibleSnapshot Boolean
+  attainmentStreamSnapshot   String
+  workDate                   DateTime                  @db.Date
+  categoryId                 String
+  categoryNameSnapshot       String
+  requestedMinutes           Int
+  approvedMinutes            Int?
+  description                String
+  arranger                   String?
+  sampleReference            String?
+  backfillReason             String?
+  startedAt                  DateTime?
+  endedAt                    DateTime?
+  status                     OtherWorkTimeStatus       @default(DRAFT)
+  version                    Int                       @default(0)
+  idempotencyKey             String
+  requestHash                String
+  correctionOfId             String?
+  submittedAt                DateTime?
+  reviewedAt                 DateTime?
+  reviewedByName             String?
+  correctionRequestedAt      DateTime?
+  correctionReason           String?
+  voidedAt                   DateTime?
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @updatedAt
+  employee                   Employee                  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdBy                  User                      @relation("OtherWorkCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  category                   OtherWorkTimeCategory     @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  correctionOf               OtherWorkTimeRequest?     @relation("OtherWorkCorrection", fields: [correctionOfId], references: [id], onDelete: Restrict)
+  corrections                OtherWorkTimeRequest[]    @relation("OtherWorkCorrection")
+  attachments                OtherWorkTimeAttachment[]
+  reviews                    OtherWorkTimeReview[]
+
+  @@unique([createdById, idempotencyKey])
+  @@index([employeeId, workDate, status])
+  @@index([status, workDate])
+  @@index([teamIdSnapshot, status])
+  @@index([correctionOfId])
+  @@map("other_work_time_requests")
+}
+
+model OtherWorkTimeAttachment {
+  id             String               @id @default(uuid())
+  requestId      String
+  requestVersion Int
+  objectKey      String               @unique
+  originalName   String
+  mimeType       String
+  size           Int
+  uploadedById   String
+  createdAt      DateTime             @default(now())
+  deletedAt      DateTime?
+  request        OtherWorkTimeRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  uploadedBy     User                 @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([requestId, deletedAt])
+  @@map("other_work_time_attachments")
+}
+
+model OtherWorkTimeReview {
+  id             String               @id @default(uuid())
+  requestId      String
+  actorId        String
+  action         String
+  requestVersion Int
+  reason         String?
+  detail         Json
+  createdAt      DateTime             @default(now())
+  request        OtherWorkTimeRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  actor          User                 @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([requestId, createdAt])
+  @@map("other_work_time_reviews")
+}
+
 model Employee {
+  otherWorkRequests                OtherWorkTimeRequest[]
   id                               String                               @id @default(uuid())
   employeeNo                       String                               @unique @map("employee_no")
   name                             String
@@ -2184,39 +2295,39 @@ model ProcessExecution {
 }
 
 model ProcessReportSubmission {
-  id                  String    @id @default(uuid())
-  idempotencyKey      String    @unique @map("idempotency_key")
-  payloadFingerprint String    @map("payload_fingerprint")
-  status             String    @default("PENDING")
-  reasonCode         String    @map("reason_code")
-  workOrderId        String    @map("work_order_id")
-  routeId            String    @map("route_id")
-  stepId             String    @map("step_id")
-  workDate           DateTime  @map("work_date") @db.Date
-  createdById        String    @map("created_by_id")
-  assigneeUserIds     String[]  @map("assignee_user_ids")
-  resolvedById       String?   @map("resolved_by_id")
-  completionId       String?   @unique @map("completion_id")
-  sourceKind         String    @map("source_kind")
-  sourceLotId        String?   @map("source_lot_id")
-  sourceAllocationId String?   @map("source_allocation_id")
-  reservedProductQty Int       @default(0) @map("reserved_product_qty")
-  reservedGoodUnits  Int       @default(0) @map("reserved_good_units")
+  id                 String                @id @default(uuid())
+  idempotencyKey     String                @unique @map("idempotency_key")
+  payloadFingerprint String                @map("payload_fingerprint")
+  status             String                @default("PENDING")
+  reasonCode         String                @map("reason_code")
+  workOrderId        String                @map("work_order_id")
+  routeId            String                @map("route_id")
+  stepId             String                @map("step_id")
+  workDate           DateTime              @map("work_date") @db.Date
+  createdById        String                @map("created_by_id")
+  assigneeUserIds    String[]              @map("assignee_user_ids")
+  resolvedById       String?               @map("resolved_by_id")
+  completionId       String?               @unique @map("completion_id")
+  sourceKind         String                @map("source_kind")
+  sourceLotId        String?               @map("source_lot_id")
+  sourceAllocationId String?               @map("source_allocation_id")
+  reservedProductQty Int                   @default(0) @map("reserved_product_qty")
+  reservedGoodUnits  Int                   @default(0) @map("reserved_good_units")
   payload            Json
   snapshot           Json
   resolution         Json?
   result             Json?
-  lastError          String?   @map("last_error")
-  version            Int       @default(0)
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-  completedAt        DateTime? @map("completed_at")
-  workOrder          WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  lastError          String?               @map("last_error")
+  version            Int                   @default(0)
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  completedAt        DateTime?             @map("completed_at")
+  workOrder          WorkOrder             @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
   route              WorkOrderProcessRoute @relation(fields: [routeId], references: [id], onDelete: Restrict)
-  step               WorkOrderProcessStep @relation(fields: [stepId], references: [id], onDelete: Restrict)
-  createdBy          User @relation("ReportSubmissionCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  resolvedBy         User? @relation("ReportSubmissionResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
-  completion         ProcessCompletion? @relation(fields: [completionId], references: [id], onDelete: Restrict)
+  step               WorkOrderProcessStep  @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  createdBy          User                  @relation("ReportSubmissionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  resolvedBy         User?                 @relation("ReportSubmissionResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  completion         ProcessCompletion?    @relation(fields: [completionId], references: [id], onDelete: Restrict)
 
   @@index([stepId, status])
   @@index([createdById, status, createdAt])
@@ -2227,7 +2338,7 @@ model ProcessReportSubmission {
 
 model ProcessCompletion {
   recoverySubmission           ProcessReportSubmission?
-  reportingWipAllocationId      String?                              @map("reporting_wip_allocation_id")
+  reportingWipAllocationId     String?                              @map("reporting_wip_allocation_id")
   id                           String                               @id @default(uuid())
   workOrderId                  String                               @map("work_order_id")
   routeId                      String                               @map("route_id")
@@ -2445,35 +2556,35 @@ model ProcessQuantityMovement {
 }
 
 model ProcessLaborPool {
-  id                                 String                 @id @default(uuid())
-  completionId                       String                 @unique @map("completion_id")
-  workOrderId                        String                 @map("work_order_id")
-  stepId                             String                 @map("step_id")
-  workDate                           DateTime               @map("work_date") @db.Date
-  eligibleQty                        Int                    @map("eligible_qty")
-  claimedQty                         Int                    @default(0) @map("claimed_qty")
-  remainingQty                       Int                    @map("remaining_qty")
-  status                             ProcessLaborPoolStatus @default(OPEN)
-  version                            Int                    @default(0)
-  standardMillisecondsPerUnit        Int                    @map("standard_milliseconds_per_unit")
-  setupMilliseconds                  Int                    @default(0) @map("setup_milliseconds")
-  unitsPerProduct                    Int                    @default(1) @map("units_per_product")
-  totalStandardLaborMilliseconds     BigInt                 @map("total_standard_labor_milliseconds")
-  claimedStandardLaborMilliseconds   BigInt                 @default(0) @map("claimed_standard_labor_milliseconds")
-  remainingStandardLaborMilliseconds BigInt                 @map("remaining_standard_labor_milliseconds")
-  countsForEfficiency                Boolean                @default(true) @map("counts_for_efficiency")
-  standardSource                     String                 @map("standard_source")
-  productTimeProfileVersion          Int?                   @map("product_time_profile_version")
-  allocationPolicy                   String                 @default("legacy") @map("allocation_policy")
-  batchTargetQty                     Int?                   @map("batch_target_qty")
+  id                                  String                 @id @default(uuid())
+  completionId                        String                 @unique @map("completion_id")
+  workOrderId                         String                 @map("work_order_id")
+  stepId                              String                 @map("step_id")
+  workDate                            DateTime               @map("work_date") @db.Date
+  eligibleQty                         Int                    @map("eligible_qty")
+  claimedQty                          Int                    @default(0) @map("claimed_qty")
+  remainingQty                        Int                    @map("remaining_qty")
+  status                              ProcessLaborPoolStatus @default(OPEN)
+  version                             Int                    @default(0)
+  standardMillisecondsPerUnit         Int                    @map("standard_milliseconds_per_unit")
+  setupMilliseconds                   Int                    @default(0) @map("setup_milliseconds")
+  unitsPerProduct                     Int                    @default(1) @map("units_per_product")
+  totalStandardLaborMilliseconds      BigInt                 @map("total_standard_labor_milliseconds")
+  claimedStandardLaborMilliseconds    BigInt                 @default(0) @map("claimed_standard_labor_milliseconds")
+  remainingStandardLaborMilliseconds  BigInt                 @map("remaining_standard_labor_milliseconds")
+  countsForEfficiency                 Boolean                @default(true) @map("counts_for_efficiency")
+  standardSource                      String                 @map("standard_source")
+  productTimeProfileVersion           Int?                   @map("product_time_profile_version")
+  allocationPolicy                    String                 @default("legacy") @map("allocation_policy")
+  batchTargetQty                      Int?                   @map("batch_target_qty")
   batchTotalStandardLaborMilliseconds BigInt?                @map("batch_total_standard_labor_milliseconds")
-  createdAt                          DateTime               @default(now()) @map("created_at")
-  updatedAt                          DateTime               @updatedAt @map("updated_at")
-  lockedAt                           DateTime?              @map("locked_at")
-  completion                         ProcessCompletion      @relation(fields: [completionId], references: [id], onDelete: Restrict)
-  workOrder                          WorkOrder              @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
-  step                               WorkOrderProcessStep   @relation(fields: [stepId], references: [id], onDelete: Restrict)
-  claims                             ProcessLaborClaim[]
+  createdAt                           DateTime               @default(now()) @map("created_at")
+  updatedAt                           DateTime               @updatedAt @map("updated_at")
+  lockedAt                            DateTime?              @map("locked_at")
+  completion                          ProcessCompletion      @relation(fields: [completionId], references: [id], onDelete: Restrict)
+  workOrder                           WorkOrder              @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  step                                WorkOrderProcessStep   @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  claims                              ProcessLaborClaim[]
 
   @@index([workOrderId, workDate])
   @@index([stepId, workDate])
@@ -3274,12 +3385,12 @@ model ProductionCarryover {
 
 // Short-lived, scope-bound read snapshots. No business records are modified.
 model ProductionExecutionSnapshot {
-  id        String   @id @default(uuid())
-  queryKey  String   @map("query_key")
+  id        String                           @id @default(uuid())
+  queryKey  String                           @map("query_key")
   metadata  Json
-  rowCount  Int      @map("row_count")
-  createdAt DateTime @default(now()) @map("created_at")
-  expiresAt DateTime @map("expires_at")
+  rowCount  Int                              @map("row_count")
+  createdAt DateTime                         @default(now()) @map("created_at")
+  expiresAt DateTime                         @map("expires_at")
   rows      ProductionExecutionSnapshotRow[]
 
   @@index([expiresAt])
@@ -3287,7 +3398,7 @@ model ProductionExecutionSnapshot {
 }
 
 model ProductionExecutionSnapshotRow {
-  snapshotId String @map("snapshot_id")
+  snapshotId String                      @map("snapshot_id")
   ordinal    Int
   payload    Json
   snapshot   ProductionExecutionSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
@@ -4411,7 +4522,7 @@ model EightDReportActivity {
 }
 
 model InternalQualityRiskReport {
-  qualitySource Json? @map("quality_source")
+  qualitySource         Json?                             @map("quality_source")
   id                    String                            @id @default(uuid())
   sequence              Int                               @unique @default(autoincrement())
   reportNo              String                            @unique @map("report_no")
@@ -5570,23 +5681,23 @@ model QualityDataRevision {
 }
 
 model TerminalToolingTerminal {
-  id            String                          @id @default(cuid())
-  specification String
-  manufacturer  String?
-  normalizedKey String                          @unique @map("normalized_key")
-  aliases       String[]                        @default([])
-  wireRange     String?                         @map("wire_range")
-  material      String?
-  plating       String?
-  remark        String?
-  isActive      Boolean                         @default(true) @map("is_active")
-  lockVersion   Int                             @default(1) @map("lock_version")
-  createdBy     String?                         @map("created_by")
-  updatedBy     String?                         @map("updated_by")
-  createdAt     DateTime                        @default(now()) @map("created_at")
-  updatedAt     DateTime                        @updatedAt @map("updated_at")
-  supplierLinks TerminalToolingTerminalSupply[]
-  setups        TerminalToolingSetup[]
+  id                String                          @id @default(cuid())
+  specification     String
+  manufacturer      String?
+  normalizedKey     String                          @unique @map("normalized_key")
+  aliases           String[]                        @default([])
+  wireRange         String?                         @map("wire_range")
+  material          String?
+  plating           String?
+  remark            String?
+  isActive          Boolean                         @default(true) @map("is_active")
+  lockVersion       Int                             @default(1) @map("lock_version")
+  createdBy         String?                         @map("created_by")
+  updatedBy         String?                         @map("updated_by")
+  createdAt         DateTime                        @default(now()) @map("created_at")
+  updatedAt         DateTime                        @updatedAt @map("updated_at")
+  supplierLinks     TerminalToolingTerminalSupply[]
+  setups            TerminalToolingSetup[]
   qualityReferences QualityReference[]
 
   @@index([specification])
@@ -5597,30 +5708,31 @@ model TerminalToolingTerminal {
 }
 
 model QualityReference {
-  id String @id @default(uuid())
-  code String @unique
-  kind String @default("CRIMP")
-  terminalId String? @map("terminal_id")
-  terminalName String @map("terminal_name")
-  manufacturer String @default("")
-  title String
-  status String @default("DRAFT")
-  data Json
-  searchText String @map("search_text")
-  version Int @default(1)
-  createdById String @map("created_by_id")
-  createdByName String @map("created_by_name")
-  updatedById String @map("updated_by_id")
-  idempotencyKey String @map("idempotency_key")
-  requestHash String @map("request_hash")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-  deleteReason String? @map("delete_reason")
-  terminal TerminalToolingTerminal? @relation(fields: [terminalId], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  attachments QualityReferenceAttachment[]
-  revisions QualityReferenceRevision[]
-  favorites QualityReferenceFavorite[]
+  id             String                       @id @default(uuid())
+  code           String                       @unique
+  kind           String                       @default("CRIMP")
+  terminalId     String?                      @map("terminal_id")
+  terminalName   String                       @map("terminal_name")
+  manufacturer   String                       @default("")
+  title          String
+  status         String                       @default("DRAFT")
+  data           Json
+  searchText     String                       @map("search_text")
+  version        Int                          @default(1)
+  createdById    String                       @map("created_by_id")
+  createdByName  String                       @map("created_by_name")
+  updatedById    String                       @map("updated_by_id")
+  idempotencyKey String                       @map("idempotency_key")
+  requestHash    String                       @map("request_hash")
+  createdAt      DateTime                     @default(now()) @map("created_at")
+  updatedAt      DateTime                     @updatedAt @map("updated_at")
+  deletedAt      DateTime?                    @map("deleted_at")
+  deleteReason   String?                      @map("delete_reason")
+  terminal       TerminalToolingTerminal?     @relation(fields: [terminalId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  attachments    QualityReferenceAttachment[]
+  revisions      QualityReferenceRevision[]
+  favorites      QualityReferenceFavorite[]
+
   @@unique([createdById, idempotencyKey])
   @@index([deletedAt, updatedAt])
   @@index([terminalId, deletedAt])
@@ -5629,42 +5741,45 @@ model QualityReference {
 }
 
 model QualityReferenceAttachment {
-  id String @id @default(uuid())
-  referenceId String @map("reference_id")
-  originalName String @map("original_name")
-  mimeType String @map("mime_type")
-  size Int
-  objectKey String @unique @map("object_key")
-  sha256 String
-  createdById String @map("created_by_id")
-  createdAt DateTime @default(now()) @map("created_at")
-  deletedAt DateTime? @map("deleted_at")
-  reference QualityReference @relation(fields: [referenceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  id           String           @id @default(uuid())
+  referenceId  String           @map("reference_id")
+  originalName String           @map("original_name")
+  mimeType     String           @map("mime_type")
+  size         Int
+  objectKey    String           @unique @map("object_key")
+  sha256       String
+  createdById  String           @map("created_by_id")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  deletedAt    DateTime?        @map("deleted_at")
+  reference    QualityReference @relation(fields: [referenceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
   @@unique([referenceId, sha256, originalName])
   @@index([referenceId, deletedAt])
   @@map("quality_reference_attachments")
 }
 
 model QualityReferenceRevision {
-  id String @id @default(uuid())
-  referenceId String @map("reference_id")
-  version Int
-  action String
-  reason String
-  actorId String @map("actor_id")
-  actorName String @map("actor_name")
-  snapshot Json
-  createdAt DateTime @default(now()) @map("created_at")
-  reference QualityReference @relation(fields: [referenceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  id          String           @id @default(uuid())
+  referenceId String           @map("reference_id")
+  version     Int
+  action      String
+  reason      String
+  actorId     String           @map("actor_id")
+  actorName   String           @map("actor_name")
+  snapshot    Json
+  createdAt   DateTime         @default(now()) @map("created_at")
+  reference   QualityReference @relation(fields: [referenceId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
   @@unique([referenceId, version])
   @@map("quality_reference_revisions")
 }
 
 model QualityReferenceFavorite {
-  referenceId String @map("reference_id")
-  userId String @map("user_id")
-  createdAt DateTime @default(now()) @map("created_at")
-  reference QualityReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  referenceId String           @map("reference_id")
+  userId      String           @map("user_id")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  reference   QualityReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+
   @@id([referenceId, userId])
   @@index([userId])
   @@map("quality_reference_favorites")

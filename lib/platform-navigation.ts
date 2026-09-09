@@ -1,4 +1,5 @@
 import { canAccessAppRoute } from '@/lib/app-route-access';
+import { otherWorkScope } from '@/lib/other-work-time-access';
 import type { CurrentUserDTO } from '@/types';
 
 export type PlatformNavigationItem = {
@@ -47,10 +48,12 @@ export const PLATFORM_NAVIGATION_GROUPS: PlatformNavigationGroup[] = [
     { href: '/workspace/employees', label: '人事管理' },
     { href: '/workspace/attendance', label: '考勤与异常' },
     { href: '/workspace/abnormal-times', label: '异常工时' },
+    { href: '/workspace/other-hours', label: '其他工时' },
   ] },
   { id: 'collaboration', label: '协同与审批', items: [
     { href: '/workspace/issues', label: '问题管理' },
     { href: '/workspace/approvals', label: '重大审批' },
+    { href: '/workspace/other-hours/approvals', label: '其他工时审批' },
     { href: '/workspace/changes', label: '变更管理' },
     { href: '/workspace/workflows', label: '流程中心' },
     { href: '/workspace/messages', label: '消息中心' },
@@ -66,13 +69,14 @@ export const PLATFORM_DIRECT_ITEMS: PlatformNavigationItem[] = [
   { href: '/workspace/reports', label: '报表中心' },
 ];
 
-type NavigationUser = Pick<CurrentUserDTO, 'access' | 'canAccessDailyPlans' | 'canAccessWeeklyProcesses'>;
+type NavigationUser = Pick<CurrentUserDTO, 'access' | 'canAccessDailyPlans' | 'canAccessWeeklyProcesses'> & { laborRole?: CurrentUserDTO['laborRole'] };
 
 export function platformNavigationForUser(user: NavigationUser): PlatformNavigationGroup[] {
   return [...PLATFORM_NAVIGATION_GROUPS, PLATFORM_SYSTEM_GROUP]
     .map(group => ({ ...group, items: group.items.filter(item => {
       if (item.href === '/workspace/daily-plans' && !user.canAccessDailyPlans) return false;
       if (item.href === '/workspace/weekly-processes' && !user.canAccessWeeklyProcesses) return false;
+      if (item.href === '/workspace/other-hours/approvals' && !otherWorkScope({ access: user.access, laborRole: user.laborRole || 'EMPLOYEE' }).manage) return false;
       return canAccessAppRoute(user.access, item.href);
     }) }))
     .filter(group => group.items.length > 0);

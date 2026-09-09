@@ -26,6 +26,8 @@ type ApiRule = {
 
 /** Specific routes must appear before their broader namespace. */
 export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
+  // Handlers enforce ownership and independent approval scope for every mutation.
+  { prefix: '/api/other-work-times', anyOf: ['ACCOUNT_SELF', 'FIELD_REPORT'], action: 'READ' },
   { prefix: '/api/me', anyOf: ['ACCOUNT_SELF'] },
   // Entity ownership, assignment and current reporting rights are checked by each handler.
   { prefix: '/api/process-report-submissions', anyOf: ['ACCOUNT_SELF', 'FIELD_REPORT'], action: 'READ' },

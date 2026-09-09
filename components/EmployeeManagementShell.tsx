@@ -3024,7 +3024,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
         <section className="hr-metric-grid compact">
           <MetricCard icon={UsersRound} label="在岗人数" value={summary.active} note={`离职档案 ${summary.inactive} 人`} />
           <MetricCard icon={CalendarCheck2} label="考勤覆盖率" value={`${attendanceCoverage}%`} note={`${summary.attendance} 人启用`} tone="green" />
-          <MetricCard icon={Activity} label="人员达成率" value={formatPercent(attainmentReport?.summary.attainmentBasisPoints)} note="标准工时 ÷ 有效出勤" tone="violet" />
+          <MetricCard icon={Activity} label="人员达成率" value={formatPercent(attainmentReport?.summary.attainmentBasisPoints)} note="（完成＋确认损耗＋其他工时）÷（出勤×95%）" tone="violet" />
           <MetricCard icon={AlertTriangle} label="异常闭环率" value={abnormalSummary.eventCount ? `${Math.round(((abnormalSummary.eventCount - abnormalSummary.openCount) / abnormalSummary.eventCount) * 100)}%` : '100%'} note={`${abnormalSummary.openCount} 项未闭环`} tone={abnormalSummary.openCount ? 'orange' : 'green'} />
         </section>
         <div className="hr-analytics-grid">

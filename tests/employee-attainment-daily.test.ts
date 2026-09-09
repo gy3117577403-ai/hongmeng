@@ -70,11 +70,11 @@ test('completed credit survives missing attendance and blocks an incomplete peri
   assert.equal(result.attainmentDataComplete, false);
 });
 
-test('confirmed loss earns 95 percent credit without shrinking the attendance denominator', () => {
-  const result = aggregateDailyAttainment([day({ standardLaborMilliseconds: 6.65 * hour, exemptAbnormalMilliseconds: hour })]);
-  assert.equal(result.attainmentCapacityMilliseconds, 8 * hour);
-  assert.equal(result.creditedAbnormalMilliseconds, .95 * hour);
-  assert.equal(result.attainmentBasisPoints, 9500);
+test('confirmed loss counts in full and the target reserves five percent of attendance', () => {
+  const result = aggregateDailyAttainment([day({ standardLaborMilliseconds: 6.6 * hour, exemptAbnormalMilliseconds: hour })]);
+  assert.equal(result.attainmentCapacityMilliseconds, 7.6 * hour);
+  assert.equal(result.creditedAbnormalMilliseconds, hour);
+  assert.equal(result.attainmentBasisPoints, 10000);
 });
 
 test('confirmed zero attendance keeps output and returns no rate, while real zero output is zero percent', () => {
@@ -89,8 +89,8 @@ test('historical personal factors including zero never reduce credit or actual a
   for (const factor of [0, 5000, 10000]) {
     const result = aggregateDailyAttainment([day({ attainmentFactorBasisPoints: factor, attainmentStream: 'batch', attainmentEligible: true })]);
     assert.equal(result.standardLaborMilliseconds, 8 * hour);
-    assert.equal(result.attainmentCapacityMilliseconds, 8 * hour);
-    assert.equal(result.attainmentBasisPoints, 10000);
+    assert.equal(result.attainmentCapacityMilliseconds, 7.6 * hour);
+    assert.equal(result.attainmentBasisPoints, 10526);
   }
 });
 
@@ -112,16 +112,16 @@ test('week and month divide summed credited output by summed attendance instead 
   assert.equal(result.attendanceMilliseconds, 15 * hour);
   assert.equal(result.regularAttendanceMilliseconds, 13 * hour);
   assert.equal(result.recognizedOvertimeMilliseconds, 2 * hour);
-  assert.equal(result.attainmentBasisPoints, 9967);
-  assert.equal(aggregateDailyAttainment([days[0]]).attainmentBasisPoints, 8950);
-  assert.equal(aggregateDailyAttainment([days[1]]).attainmentBasisPoints, 12000);
+  assert.equal(result.attainmentBasisPoints, 10526);
+  assert.equal(aggregateDailyAttainment([days[0]]).attainmentBasisPoints, 9474);
+  assert.equal(aggregateDailyAttainment([days[1]]).attainmentBasisPoints, 12632);
 });
 
 test('future facts cannot enter actual hours and empty days without a roster do not manufacture missing attendance', () => {
   const result = aggregateDailyAttainment([day(), day({ isFuture: true, attendanceRequired: true, attendanceConfirmed: false }),
     day({ attendanceConfirmed: false, attendanceMilliseconds: 0, standardLaborMilliseconds: 0, claimedStandardLaborMilliseconds: 0 })]);
   assert.equal(result.standardLaborMilliseconds, 8 * hour);
-  assert.equal(result.attainmentBasisPoints, 10000);
+  assert.equal(result.attainmentBasisPoints, 10526);
   assert.equal(result.attainmentIncompleteDays, 0);
 });
 

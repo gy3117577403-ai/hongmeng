@@ -2,8 +2,11 @@ import { aggregateEmployeeHours } from '@/lib/employee-hours-metrics';
 import type { AttainmentStream } from '@/types';
 
 export type DailyAttainmentInput = {
+  teamSnapshot?: string | null;
   attendanceMilliseconds: number;
   exemptAbnormalMilliseconds: number;
+  otherWorkMilliseconds?: number;
+  otherWorkCount?: number;
   standardLaborMilliseconds: number;
   claimedStandardLaborMilliseconds: number;
   actualLaborMilliseconds: number;

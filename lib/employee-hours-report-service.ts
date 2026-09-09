@@ -18,7 +18,7 @@ import { safeLaborMilliseconds } from '@/lib/process-labor-service';
 import { serializeEmployee } from '@/lib/process-time';
 import { reportRangeDateKeys } from '@/lib/report-date-range';
 import { resolveAttendanceCalendarDay, type AttendanceCalendarDayType } from '@/lib/attendance-calendar';
-import { employeeHoursDayMetrics, aggregateEmployeeHours } from '@/lib/employee-hours-metrics';
+import { employeeHoursDayMetrics, aggregateEmployeeHours, EMPLOYEE_HOURS_METRIC_VERSION } from '@/lib/employee-hours-metrics';
 import type { Prisma } from '@prisma/client';
 import type { ReportCenterPeriodDTO } from '@/types';
 import {
@@ -135,6 +135,7 @@ function employeeDayDto(date: string, day: DailyAttainment): EmployeeAttainmentD
   const performance = laborPerformanceMetrics({ ...hours, attainmentFactorBasisPoints: 10_000 });
   return {
     ...hours,
+    teamSnapshot: day.teamSnapshot,
     date,
     attendanceRequired: day.attendanceRequired,
     attainmentEligible: day.attainmentEligible,
@@ -189,6 +190,11 @@ export async function loadEmployeeHoursReport(input: {
       workDate: { gte: startDate, lt: factDateEnd },
       ...attendanceRecordScopeWhere('PRODUCTION'),
     };
+    const otherWorkFacts = await prisma.otherWorkTimeRequest.findMany({
+      where: { status: 'APPROVED', voidedAt: null, workDate: { gte: startDate, lt: factDateEnd },
+        ...(employeeIdConstraint ? { employeeId: employeeIdConstraint } : {}) },
+      select: { employeeId: true, workDate: true, approvedMinutes: true, attainmentEligibleSnapshot: true, attainmentStreamSnapshot: true, teamSnapshot: true },
+    });
     const [executions, laborClaims, employees, attendanceRecords, capacityOverrides, abnormalAllocations, calendarOverrides, rosterRecords] = await Promise.all([
       prisma.processExecution.findMany({
         where: {
@@ -272,6 +278,7 @@ export async function loadEmployeeHoursReport(input: {
             { laborClaims: { some: { status: 'ACTIVE', workDate: { gte: startDate, lt: factDateEnd } } } },
             { executions: { some: { voidedAt: null, endedAt: { gte: start, lt: factEnd } } } },
             { attendanceRecords: { some: productionAttendanceRangeWhere } },
+            { id: { in: otherWorkFacts.map(item => item.employeeId) } },
           ],
         },
         orderBy: [{ employeeNo: 'asc' }],
@@ -284,6 +291,7 @@ export async function loadEmployeeHoursReport(input: {
         select: {
           employeeId: true,
           departmentSnapshot: true,
+          teamSnapshot: true,
           attainmentEligibleSnapshot: true,
           attainmentFactorBasisPointsSnapshot: true,
           attainmentStreamSnapshot: true,
@@ -366,6 +374,16 @@ export async function loadEmployeeHoursReport(input: {
       }
       return daily;
     };
+    for (const other of otherWorkFacts) {
+      if (!productionEmployeeIds.has(other.employeeId)) continue;
+      const daily = dailyFor(other.employeeId, dateKeyFromDatabase(other.workDate));
+      activityEmployeeIds.add(other.employeeId);
+      daily.otherWorkMilliseconds = (daily.otherWorkMilliseconds || 0) + (other.approvedMinutes || 0) * 60_000;
+      daily.otherWorkCount = (daily.otherWorkCount || 0) + 1;
+      daily.attainmentEligible = other.attainmentEligibleSnapshot;
+      daily.attainmentStream = parseAttainmentStream(other.attainmentStreamSnapshot);
+      daily.teamSnapshot = other.teamSnapshot;
+    }
     for (const attendance of attendanceRecords) {
       if (!productionEmployeeIds.has(attendance.employeeId)) continue;
       const attendanceDateKey = dateKeyFromDatabase(attendance.workDate);
@@ -374,6 +392,7 @@ export async function loadEmployeeHoursReport(input: {
       if (!row) continue;
       activityEmployeeIds.add(attendance.employeeId);
       const daily = dailyFor(attendance.employeeId, attendanceDateKey);
+      daily.teamSnapshot = attendance.teamSnapshot || daily.teamSnapshot;
       daily.attendanceStatus = attendance.status === 'confirmed' ? 'confirmed' : 'draft';
       daily.attendanceType = ['partial_leave', 'leave', 'absent', 'rest'].includes(attendance.attendanceType)
         ? attendance.attendanceType as AttendanceType
@@ -384,14 +403,14 @@ export async function loadEmployeeHoursReport(input: {
       daily.actualOvertimeMilliseconds = Math.max(0, attendance.overtimeMilliseconds);
       daily.leaveMilliseconds = Math.max(0, attendance.leaveMilliseconds);
       daily.attainmentEligible = attendance.attainmentEligibleSnapshot
-        ?? employeeConfiguration.get(attendance.employeeId)?.eligible
+        ?? daily.attainmentEligible
         ?? true;
       daily.attainmentFactorBasisPoints = attendance.attainmentFactorBasisPointsSnapshot
         ?? employeeConfiguration.get(attendance.employeeId)?.factor
         ?? (daily.attainmentEligible ? 10_000 : 0);
       daily.attainmentStream = parseAttainmentStream(
         attendance.attainmentStreamSnapshot,
-        employeeConfiguration.get(attendance.employeeId)?.stream
+        daily.attainmentStream
           ?? (daily.attainmentEligible ? 'batch' : 'excluded'),
       );
       daily.attendanceConfirmed = attendance.status === 'confirmed';
@@ -545,6 +564,7 @@ export async function loadEmployeeHoursReport(input: {
       const dailyInputs = employedDateKeys.map(dateKey => {
         const existing = days.get(dateKey);
         const day = existing || emptyDailyAttainment(row.employee.attainmentEligible, row.employee.attainmentFactorBasisPoints, row.employee.attainmentStream);
+        day.teamSnapshot ||= row.employee.team || row.employee.position || '未分组';
         const override = calendarByDate.get(dateKey);
         const calendar = resolveAttendanceCalendarDay(dateKey, override ? { ...override, dayType: override.dayType as AttendanceCalendarDayType } : null);
         day.isFuture = dateKey > currentDateKey;
@@ -584,7 +604,7 @@ export async function loadEmployeeHoursReport(input: {
       );
       row.rawAttendanceOutputBasisPoints = basisPoints(row.standardLaborMilliseconds, row.attendanceMilliseconds);
       row.coverageBasisPoints = basisPoints(
-        Math.max(0, row.attendanceMilliseconds - row.unexplainedMilliseconds),
+        Math.min(row.attendanceMilliseconds, row.actualLaborMilliseconds + row.exemptAbnormalMilliseconds + (row.otherWorkMilliseconds || 0)),
         row.attendanceMilliseconds,
       );
     }
@@ -662,11 +682,12 @@ export async function loadEmployeeHoursReport(input: {
     );
     summary.rawAttendanceOutputBasisPoints = basisPoints(summary.standardLaborMilliseconds, summary.attendanceMilliseconds);
     summary.coverageBasisPoints = basisPoints(
-      Math.min(summary.attendanceMilliseconds, summary.actualLaborMilliseconds + summary.exemptAbnormalMilliseconds),
+      Math.min(summary.attendanceMilliseconds, summary.actualLaborMilliseconds + summary.exemptAbnormalMilliseconds + summary.otherWorkMilliseconds),
       summary.attendanceMilliseconds,
     );
 
   return { employees, attendanceRecords, capacityOverrides, calendarOverrides, report: {
+    metricVersion: EMPLOYEE_HOURS_METRIC_VERSION,
     period, date, workforceScope: 'PRODUCTION' as const, workforceLabel: '生产部',
     rangeStart: start.toISOString(), rangeEnd: end.toISOString(), generatedAt: now.toISOString(),
     summary, rows,

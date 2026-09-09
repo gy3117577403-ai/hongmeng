@@ -93,9 +93,9 @@ test('employee facts reconcile pending labor, rest days, historical eligibility,
     assert.equal(main.claimDetails.filter(detail => detail.countsForEfficiency === false).length, 1);
     assert.equal(main.exemptAbnormalMilliseconds, hour);
     assert.equal(main.regularAttendanceMilliseconds, 13 * hour);
-    assert.equal(main.attainmentBasisPoints, 9967);
-    assert.equal(main.days.find(day => day.date === '2026-09-06')!.targetAttainmentBasisPoints, 8950);
-    assert.equal(main.days.find(day => day.date === '2026-09-07')!.targetAttainmentBasisPoints, 12000);
+    assert.equal(main.attainmentBasisPoints, 10526);
+    assert.equal(main.days.find(day => day.date === '2026-09-06')!.targetAttainmentBasisPoints, 9474);
+    assert.equal(main.days.find(day => day.date === '2026-09-07')!.targetAttainmentBasisPoints, 12632);
     assert.equal(main.days.find(day => day.date === '2026-09-09')!.standardLaborMilliseconds, 0);
     assert.equal(main.actualLaborMilliseconds, 0);
     assert.equal(main.processEfficiencyBasisPoints, null);
@@ -121,7 +121,7 @@ test('employee facts reconcile pending labor, rest days, historical eligibility,
     await attendance(1, '2026-09-07', 8);
     const after = (await load()).report.rows.find(row => row.employee.id === ids[1])!;
     assert.equal(after.standardLaborMilliseconds, 2 * hour);
-    assert.equal(after.days.find(day => day.date === '2026-09-07')!.targetAttainmentBasisPoints, 2500);
+    assert.equal(after.days.find(day => day.date === '2026-09-07')!.targetAttainmentBasisPoints, 2632);
     await prisma.processLaborClaim.update({ where: { id: missingClaim.laborPool!.claims[0].id }, data: { status: 'VOIDED', voidedAt: new Date(), voidedById: actor.id } });
     assert.equal((await load()).report.rows.find(row => row.employee.id === ids[1])!.standardLaborMilliseconds, 0);
   } finally {

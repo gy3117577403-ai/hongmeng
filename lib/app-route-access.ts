@@ -23,6 +23,8 @@ type RouteAccessRule = {
  * authorization grant by itself.
  */
 export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
+  { prefix: '/field-report/other-hours', anyOf: ['ACCOUNT_SELF', 'FIELD_REPORT'] },
+  { prefix: '/workspace/other-hours', anyOf: ['ACCOUNT_SELF'] },
   { prefix: '/field-report', anyOf: ['FIELD_REPORT', 'QUALITY_DATA'] },
   { prefix: '/quality-capture', anyOf: ['QUALITY_DATA'] },
   { prefix: '/workspace/quality/data', anyOf: ['QUALITY_DATA'] },

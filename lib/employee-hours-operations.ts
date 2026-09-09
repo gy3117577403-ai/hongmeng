@@ -9,6 +9,7 @@ export function employeeHoursOperationsRows(rows: EmployeeAttainmentRowDTO[], da
       const day = byDate.get(date);
       return {
         date, status: day ? day.attendanceStatus : 'not_employed',
+        teamSnapshot: day?.teamSnapshot,
         attendanceRequired: day?.attendanceRequired ?? false,
         attendanceType: day?.attendanceType ?? null,
         plannedMilliseconds: day?.scheduledMilliseconds ?? 0,
@@ -28,6 +29,9 @@ export function employeeHoursOperationsRows(rows: EmployeeAttainmentRowDTO[], da
         unmatchedStandardLaborMilliseconds: 0,
         exemptAbnormalMilliseconds: day?.exemptAbnormalMilliseconds ?? 0,
         creditedAbnormalMilliseconds: day?.creditedAbnormalMilliseconds ?? 0,
+        otherWorkMilliseconds: day?.otherWorkMilliseconds ?? 0,
+        otherWorkCount: day?.otherWorkCount ?? 0,
+        restAllowanceMilliseconds: day?.restAllowanceMilliseconds ?? 0,
         overlapMilliseconds: day?.overlapMilliseconds ?? 0,
         unexplainedMilliseconds: day?.unexplainedMilliseconds ?? 0,
         attainmentCapacityMilliseconds: day?.attainmentCapacityMilliseconds ?? 0,

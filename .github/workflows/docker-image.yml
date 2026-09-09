@@ -174,6 +174,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/employee-hours-report-integration.test.ts tests/batch-labor-proportional-integration.test.ts
+      - name: Other work hours approval and report PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/other-work-hours-integration.test.ts
       - name: Pending report coverage PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

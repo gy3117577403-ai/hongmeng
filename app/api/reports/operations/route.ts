@@ -60,7 +60,7 @@ function dayLabel(dateKey: string): { weekday: string; isWeekend: boolean } {
 function emptyLaborRow(team: string): ReportOperationsLaborRowDTO {
   return {
     team,
-    regularAttendanceMilliseconds: 0, creditedAbnormalMilliseconds: 0,
+    regularAttendanceMilliseconds: 0, creditedAbnormalMilliseconds: 0, otherWorkMilliseconds: 0, otherWorkCount: 0, restAllowanceMilliseconds: 0,
     attainmentNumeratorMilliseconds: 0, attainmentIncompleteDays: 0, attainmentDataComplete: true,
     employeeCount: 0,
     attendancePeople: 0,
@@ -97,7 +97,7 @@ function finalizeLaborRow(row: ReportOperationsLaborRowDTO): ReportOperationsLab
     attendanceRawBasisPoints,
     attendanceBasisPoints: attendanceRawBasisPoints === null ? null : Math.min(10_000, attendanceRawBasisPoints),
     utilizationBasisPoints: cappedBasisPoints(
-      Math.min(row.attendanceMilliseconds, row.actualLaborMilliseconds + row.exemptAbnormalMilliseconds),
+      Math.min(row.attendanceMilliseconds, row.actualLaborMilliseconds + row.exemptAbnormalMilliseconds + (row.otherWorkMilliseconds || 0)),
       row.attendanceMilliseconds,
     ),
     efficiencyBasisPoints: basisPoints(row.standardLaborMilliseconds, row.actualLaborMilliseconds),
@@ -254,72 +254,44 @@ export async function GET(req: NextRequest) {
 
     const employeeMatrix = employeeHoursOperationsRows(employeeHours.rows, dateKeys);
 
-    const teamMonthlyMap = new Map<string, ReportOperationsLaborRowDTO>();
-    for (const row of employeeMatrix) {
-      const team = teamMonthlyMap.get(row.team) || emptyLaborRow(row.team);
-      team.regularAttendanceMilliseconds = (team.regularAttendanceMilliseconds || 0) + (row.regularAttendanceMilliseconds || 0);
-      team.creditedAbnormalMilliseconds = (team.creditedAbnormalMilliseconds || 0) + (row.creditedAbnormalMilliseconds || 0);
-      team.attainmentNumeratorMilliseconds = (team.attainmentNumeratorMilliseconds || 0) + (row.attainmentNumeratorMilliseconds || 0);
-      team.attainmentIncompleteDays = (team.attainmentIncompleteDays || 0) + (row.attainmentIncompleteDays || 0);
-      team.employeeCount += 1;
-      team.attendancePeople += row.attendanceMilliseconds > 0 ? 1 : 0;
-      team.confirmedRecords += row.confirmedDays;
-      team.plannedMilliseconds += row.plannedMilliseconds;
-      team.scheduledMilliseconds += row.scheduledMilliseconds;
-      team.plannedOvertimeMilliseconds += row.plannedOvertimeMilliseconds;
-      team.recognizedOvertimeMilliseconds += row.recognizedOvertimeMilliseconds;
-      team.actualOvertimeMilliseconds += row.actualOvertimeMilliseconds;
-      team.leaveDeductionMilliseconds += row.leaveDeductionMilliseconds;
-      team.netExpectedMilliseconds += row.netExpectedMilliseconds;
-      team.attendanceMilliseconds += row.attendanceMilliseconds;
-      team.extraAttendanceMilliseconds += row.extraAttendanceMilliseconds;
-      team.leaveMilliseconds += row.leaveMilliseconds;
-      team.exemptAbnormalMilliseconds += row.exemptAbnormalMilliseconds;
-      team.actualLaborMilliseconds += row.actualLaborMilliseconds;
-      team.standardLaborMilliseconds += row.standardLaborMilliseconds;
-      team.unmatchedStandardLaborMilliseconds += row.unmatchedStandardLaborMilliseconds;
-      team.overlapMilliseconds += row.overlapMilliseconds;
-      team.unexplainedMilliseconds += row.unexplainedMilliseconds;
-      team.attainmentCapacityMilliseconds += row.attainmentCapacityMilliseconds;
-      teamMonthlyMap.set(row.team, team);
-    }
-    const teamMonthly = [...teamMonthlyMap.values()].map(finalizeLaborRow).sort((left, right) =>
-      (right.attainmentBasisPoints ?? -1) - (left.attainmentBasisPoints ?? -1)
-      || left.team.localeCompare(right.team, 'zh-CN'));
 
+    const teamMonthlyMap = new Map<string, ReportOperationsLaborRowDTO>();
     const teamDailyMap = new Map<string, ReportOperationsLaborRowDTO & { date: string }>();
+    const teamEmployees = new Map<string, Set<string>>();
+    const teamAttendancePeople = new Map<string, Set<string>>();
+    const hourKeys = [
+      'regularAttendanceMilliseconds', 'creditedAbnormalMilliseconds', 'otherWorkMilliseconds', 'otherWorkCount',
+      'restAllowanceMilliseconds', 'attainmentNumeratorMilliseconds', 'attainmentIncompleteDays',
+      'plannedMilliseconds', 'scheduledMilliseconds', 'plannedOvertimeMilliseconds', 'recognizedOvertimeMilliseconds',
+      'actualOvertimeMilliseconds', 'leaveDeductionMilliseconds', 'netExpectedMilliseconds', 'attendanceMilliseconds',
+      'extraAttendanceMilliseconds', 'leaveMilliseconds', 'exemptAbnormalMilliseconds', 'actualLaborMilliseconds',
+      'standardLaborMilliseconds', 'unmatchedStandardLaborMilliseconds', 'overlapMilliseconds',
+      'unexplainedMilliseconds', 'attainmentCapacityMilliseconds',
+    ] as const;
     for (const employee of employeeMatrix) {
       for (const day of employee.days) {
         if (day.status === 'not_employed') continue;
-        const key = `${day.date}\u0000${employee.team}`;
-        const row = teamDailyMap.get(key) || { ...emptyLaborRow(employee.team), date: day.date };
-        row.regularAttendanceMilliseconds = (row.regularAttendanceMilliseconds || 0) + (day.regularAttendanceMilliseconds || 0);
-        row.creditedAbnormalMilliseconds = (row.creditedAbnormalMilliseconds || 0) + (day.creditedAbnormalMilliseconds || 0);
-        row.attainmentNumeratorMilliseconds = (row.attainmentNumeratorMilliseconds || 0) + (day.attainmentNumeratorMilliseconds || 0);
-        row.attainmentIncompleteDays = (row.attainmentIncompleteDays || 0) + (day.attainmentIncompleteDays || 0);
-        row.employeeCount += 1;
-        row.attendancePeople += day.attendanceMilliseconds > 0 ? 1 : 0;
-        row.confirmedRecords += day.attendanceRequired && (day.status === 'confirmed' || day.status === 'rest') ? 1 : 0;
-        row.plannedMilliseconds += day.plannedMilliseconds;
-        row.scheduledMilliseconds += day.scheduledMilliseconds;
-        row.plannedOvertimeMilliseconds += day.plannedOvertimeMilliseconds;
-        row.recognizedOvertimeMilliseconds += day.recognizedOvertimeMilliseconds;
-        row.actualOvertimeMilliseconds += day.actualOvertimeMilliseconds;
-        row.leaveDeductionMilliseconds += day.leaveDeductionMilliseconds;
-        row.netExpectedMilliseconds += day.netExpectedMilliseconds;
-        row.attendanceMilliseconds += day.attendanceMilliseconds;
-        row.extraAttendanceMilliseconds += day.extraAttendanceMilliseconds;
-        row.leaveMilliseconds += day.leaveMilliseconds;
-        row.exemptAbnormalMilliseconds += day.exemptAbnormalMilliseconds;
-        row.actualLaborMilliseconds += day.actualLaborMilliseconds;
-        row.standardLaborMilliseconds += day.standardLaborMilliseconds;
-        row.unmatchedStandardLaborMilliseconds += day.unmatchedStandardLaborMilliseconds;
-        row.overlapMilliseconds += day.overlapMilliseconds;
-        row.unexplainedMilliseconds += day.unexplainedMilliseconds;
-        row.attainmentCapacityMilliseconds += day.attainmentCapacityMilliseconds;
-        teamDailyMap.set(key, row);
+        const teamName = day.teamSnapshot || employee.team;
+        const key = day.date + ':' + teamName;
+        const month = teamMonthlyMap.get(teamName) || emptyLaborRow(teamName);
+        const daily = teamDailyMap.get(key) || { ...emptyLaborRow(teamName), date: day.date };
+        for (const target of [month, daily]) {
+          for (const field of hourKeys) target[field] = (target[field] || 0) + (day[field] || 0);
+          target.confirmedRecords += day.attendanceRequired && day.status === 'confirmed' ? 1 : 0;
+        }
+        daily.employeeCount += 1;
+        daily.attendancePeople += day.attendanceMilliseconds > 0 ? 1 : 0;
+        const members = teamEmployees.get(teamName) || new Set<string>();
+        members.add(employee.employee.id); teamEmployees.set(teamName, members);
+        const present = teamAttendancePeople.get(teamName) || new Set<string>();
+        if (day.attendanceMilliseconds > 0) present.add(employee.employee.id);
+        teamAttendancePeople.set(teamName, present);
+        month.employeeCount = members.size; month.attendancePeople = present.size;
+        teamMonthlyMap.set(teamName, month); teamDailyMap.set(key, daily);
       }
     }
+    const teamMonthly = [...teamMonthlyMap.values()].map(finalizeLaborRow).sort((left, right) =>
+      (right.attainmentBasisPoints ?? -1) - (left.attainmentBasisPoints ?? -1) || left.team.localeCompare(right.team, 'zh-CN'));
     const teamDaily = [...teamDailyMap.values()].map(row => ({ ...finalizeLaborRow(row), date: row.date }));
 
     const attendanceByDate = new Map(dateKeys.map(date => {
@@ -633,6 +605,9 @@ export async function GET(req: NextRequest) {
         ...laborSummary,
         regularAttendanceMilliseconds: employeeHours.summary.regularAttendanceMilliseconds,
         creditedAbnormalMilliseconds: employeeHours.summary.creditedAbnormalMilliseconds,
+        otherWorkMilliseconds: employeeHours.summary.otherWorkMilliseconds,
+        otherWorkCount: employeeHours.summary.otherWorkCount,
+        restAllowanceMilliseconds: employeeHours.summary.restAllowanceMilliseconds,
         attainmentNumeratorMilliseconds: employeeHours.summary.attainmentNumeratorMilliseconds,
         attainmentIncompleteDays: employeeHours.summary.attainmentIncompleteDays,
         attainmentDataComplete: employeeHours.summary.attainmentDataComplete,
@@ -676,7 +651,7 @@ export async function GET(req: NextRequest) {
         '月度周计划按周一所在月份归属，每个生产周固定显示周一至周日；进行中的生产周显示实时进度，但不进入已结算月度达成率。',
         '出勤得分按实际出勤 ÷ 净应出勤计算并封顶 100%，超出部分单列；整日请假和休息日剔除基数，部分请假缩减基数，正式缺勤仍保留在出勤基数。草稿与缺失考勤不按 0 计算，但会阻止该日发布正式得分。',
         '只有已确认考勤才形成实际出勤、加班、请假和正式出勤得分；草稿只显示待处理状态。工作日当日始终显示统计中，历史工作日只有生产部应处理考勤全部确认后才纳入周期得分。',
-        '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；达成率 =（完成工时 + 已确认免责异常工时 × 95%）÷ 实际出勤。完成工时不受考勤确认或工序来源匹配影响；有工时却缺少有效出勤时保留完成工时，达成率待考勤完善。',
+        '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时 + 已通过其他工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；达成率 =（完成工时 + 已确认免责异常工时 + 已通过其他工时）÷（实际出勤 × 95%）。完成工时不受考勤确认或工序来源匹配影响；有工时却缺少有效出勤时保留完成工时，达成率待考勤完善。',
         '周计划按生产周和当前有效执行范围分组：已开始周的普通批次与半成品续作进入达成率基数，提前完成立即计入；尚未开始的整周显示为未来周，不按 0 计算。转入半成品仓时，来源周保留已完成工序形成的达成、移出未完成工序计划，剩余工序只在有效目标周重新计入；已取消或零进度被改排的安排不计入。最终工序良品与半成品归属按同一工单一次分配，不重复计入。',
         '金额与产值尚无权威单价来源，本模块不生成推测值；待单价主数据接入后再启用。',
       ],

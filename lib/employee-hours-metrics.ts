@@ -1,10 +1,14 @@
-import { basisPoints } from '@/lib/attendance';
+import { basisPoints, ATTAINMENT_CAPACITY_FACTOR } from '@/lib/attendance';
+
+export const EMPLOYEE_HOURS_METRIC_VERSION = 'attendance-target-95-v2';
 
 /** Production credit is earned on the business date, independently of attendance reconciliation. */
 export type EmployeeHoursDayInput = {
   attendanceMilliseconds: number;
   standardLaborMilliseconds: number;
   exemptAbnormalMilliseconds: number;
+  otherWorkMilliseconds?: number;
+  otherWorkCount?: number;
   actualLaborMilliseconds?: number;
   claimedStandardLaborMilliseconds?: number;
   actualOvertimeMilliseconds?: number;
@@ -25,18 +29,19 @@ export function employeeHoursDayMetrics(input: EmployeeHoursDayInput) {
   const attendanceDataIssue = actualOvertimeMilliseconds > attendanceMilliseconds ? 'overtime_exceeds_attendance' as const : null;
   const standardLaborMilliseconds = future ? 0 : nonnegative(input.standardLaborMilliseconds);
   const exemptAbnormalMilliseconds = future ? 0 : nonnegative(input.exemptAbnormalMilliseconds);
-  const creditedAbnormalMilliseconds = exemptAbnormalMilliseconds * 95 / 100;
+  const creditedAbnormalMilliseconds = exemptAbnormalMilliseconds;
+  const otherWorkMilliseconds = future ? 0 : nonnegative(input.otherWorkMilliseconds);
   const actualLaborMilliseconds = future ? 0 : nonnegative(input.actualLaborMilliseconds);
   // The daily historical stream controls inclusion. A personal capacity multiplier no longer changes this formula.
   const eligible = !future && input.attainmentEligible !== false && (input.attainmentStream ?? 'batch') === 'batch';
-  const hasOutput = standardLaborMilliseconds > 0 || exemptAbnormalMilliseconds > 0;
+  const hasOutput = standardLaborMilliseconds > 0 || exemptAbnormalMilliseconds > 0 || otherWorkMilliseconds > 0;
   const incomplete = eligible && (
     attendanceDataIssue !== null
     || (hasOutput && (!input.attendanceConfirmed || attendanceMilliseconds <= 0))
     || (input.attendanceRequired === true && !input.attendanceConfirmed)
   );
-  const attainmentCapacityMilliseconds = eligible ? attendanceMilliseconds : 0;
-  const attainmentNumeratorMilliseconds = eligible ? standardLaborMilliseconds + creditedAbnormalMilliseconds : 0;
+  const attainmentCapacityMilliseconds = eligible ? attendanceMilliseconds * ATTAINMENT_CAPACITY_FACTOR : 0;
+  const attainmentNumeratorMilliseconds = eligible ? standardLaborMilliseconds + exemptAbnormalMilliseconds + otherWorkMilliseconds : 0;
   return {
     attendanceMilliseconds,
     regularAttendanceMilliseconds: attendanceMilliseconds - recognizedOvertimeMilliseconds,
@@ -47,6 +52,9 @@ export function employeeHoursDayMetrics(input: EmployeeHoursDayInput) {
     claimedStandardLaborMilliseconds: future ? 0 : nonnegative(input.claimedStandardLaborMilliseconds),
     exemptAbnormalMilliseconds,
     creditedAbnormalMilliseconds,
+    otherWorkMilliseconds,
+    otherWorkCount: future ? 0 : nonnegative(input.otherWorkCount),
+    restAllowanceMilliseconds: eligible ? attendanceMilliseconds - attainmentCapacityMilliseconds : 0,
     actualLaborMilliseconds,
     unmatchedStandardLaborMilliseconds: 0,
     attainmentCapacityMilliseconds,
@@ -55,7 +63,7 @@ export function employeeHoursDayMetrics(input: EmployeeHoursDayInput) {
     attainmentDataComplete: !incomplete,
     attainmentBasisPoints: incomplete ? null : basisPoints(attainmentNumeratorMilliseconds, attainmentCapacityMilliseconds),
     effectiveProductionMilliseconds: attendanceMilliseconds,
-    unexplainedMilliseconds: Math.max(0, attendanceMilliseconds - actualLaborMilliseconds - exemptAbnormalMilliseconds),
+    unexplainedMilliseconds: Math.max(0, attendanceMilliseconds * ATTAINMENT_CAPACITY_FACTOR - actualLaborMilliseconds - exemptAbnormalMilliseconds - otherWorkMilliseconds),
   };
 }
 
@@ -64,6 +72,7 @@ export function aggregateEmployeeHours(days: Iterable<EmployeeHoursDayInput>) {
     attendanceMilliseconds: 0, regularAttendanceMilliseconds: 0, recognizedOvertimeMilliseconds: 0,
     actualOvertimeMilliseconds: 0, standardLaborMilliseconds: 0, claimedStandardLaborMilliseconds: 0,
     exemptAbnormalMilliseconds: 0, creditedAbnormalMilliseconds: 0, actualLaborMilliseconds: 0,
+    otherWorkMilliseconds: 0, otherWorkCount: 0, restAllowanceMilliseconds: 0,
     unmatchedStandardLaborMilliseconds: 0, attainmentCapacityMilliseconds: 0, attainmentNumeratorMilliseconds: 0,
     attainmentIncompleteDays: 0, effectiveProductionMilliseconds: 0, unexplainedMilliseconds: 0,
   };

@@ -2910,6 +2910,10 @@ export type ReportAttendanceCalendarDayTypeDTO = 'workday' | 'weekly_rest' | 'ho
 export type ReportAttendanceCalendarOverrideTypeDTO = 'default' | 'holiday' | 'temporary_workday' | null;
 
 export type EmployeeHoursMetricFieldsDTO = {
+  teamSnapshot?: string | null;
+  otherWorkMilliseconds?: number;
+  otherWorkCount?: number;
+  restAllowanceMilliseconds?: number;
   attendanceDataIssue?: 'overtime_exceeds_attendance' | null;
   regularAttendanceMilliseconds?: number;
   recognizedOvertimeMilliseconds?: number;
