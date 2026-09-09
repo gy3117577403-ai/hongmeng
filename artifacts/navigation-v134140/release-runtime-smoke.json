@@ -1,0 +1,198 @@
+{
+  "verifiedAt": "2026-09-09T03:26:03.491Z",
+  "base": "http://127.0.0.1:3111",
+  "version": "v1.34.141",
+  "revision": "da8383409905fd560cb045ffd9f519bc5281f218",
+  "menuRoutes": 32,
+  "checks": [
+    {
+      "label": "PostgreSQL and S3 ready",
+      "status": 200
+    },
+    {
+      "label": "employee API requires authentication",
+      "status": 401
+    },
+    {
+      "label": "login: navbootstrap",
+      "status": 200
+    },
+    {
+      "label": "fresh seed password change",
+      "status": 200
+    },
+    {
+      "label": "login: navbootstrap",
+      "status": 200
+    },
+    {
+      "label": "login: navqa",
+      "status": 200
+    },
+    {
+      "label": "navigation route /production",
+      "status": 200
+    },
+    {
+      "label": "navigation route /weekly-plan-center",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/daily-plans",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/weekly-processes",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/reporting-recovery",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/quality",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/quality/data",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/quality-tasks",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/quality-confirmation",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/procurement",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/warehouse",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/wip",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/material-library",
+      "status": 200
+    },
+    {
+      "label": "navigation route /drawing-library",
+      "status": 200
+    },
+    {
+      "label": "navigation route /connector-assembly-manuals",
+      "status": 200
+    },
+    {
+      "label": "navigation route /connector-parameters",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/terminal-tooling",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/product-times",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/knowledge",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/capability-showcase",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/employees",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/attendance",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/abnormal-times",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/issues",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/approvals",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/changes",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/workflows",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/messages",
+      "status": 200
+    },
+    {
+      "label": "navigation route /dashboard?openSettings=1",
+      "status": 200
+    },
+    {
+      "label": "navigation route /workspace/permissions",
+      "status": 200
+    },
+    {
+      "label": "navigation route /home",
+      "status": 200
+    },
+    {
+      "label": "report entry resolves its default branch",
+      "status": 307
+    },
+    {
+      "label": "navigation route /workspace/reports/production/weekly-plan-attainment",
+      "status": 200
+    },
+    {
+      "label": "preserved deep link /production?branch=samples",
+      "status": 200
+    },
+    {
+      "label": "preserved deep link /weekly-plan-center?branch=samples",
+      "status": 200
+    },
+    {
+      "label": "preserved deep link /workspace/warehouse?branch=samples&chooseMode=1",
+      "status": 200
+    },
+    {
+      "label": "preserved deep link /workspace/employees?view=directory",
+      "status": 200
+    },
+    {
+      "label": "preserved deep link /workspace/quality/internal-risks",
+      "status": 200
+    },
+    {
+      "label": "login: navreader",
+      "status": 200
+    },
+    {
+      "label": "restricted drawing page",
+      "status": 200
+    },
+    {
+      "label": "restricted HR route",
+      "status": 307
+    }
+  ],
+  "productionDataTouched": false
+}

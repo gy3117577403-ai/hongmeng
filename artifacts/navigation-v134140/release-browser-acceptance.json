@@ -1,0 +1,21 @@
+{
+  "verifiedAt": "2026-09-09T03:31:04.604Z",
+  "version": "v1.34.141",
+  "revision": "da8383409905fd560cb045ffd9f519bc5281f218",
+  "digest": "sha256:ba57d9a0da18667b5d2e5ca23c72b688b2ba4d1508dd877ba192579f9cb56ca6",
+  "base": "http://127.0.0.1:3111",
+  "checks": [
+    "Login to exact published image",
+    "1366x1024 shared typography, 264px expanded navigation, no horizontal overflow",
+    "Quality entry navigates and highlights correctly",
+    "Reload preserves manually opened production group while marking current quality group",
+    "HR employee update survives reload; test name restored",
+    "1366x768 expanded navigation preserves Save/Cancel footer at y=751.33",
+    "Unsaved HR changes retained after Continue Editing; Discard navigates to quality data",
+    "Compact flyout Escape closes and restores parent focus",
+    "390x844 CSS viewport: overlay and footer stay within screen"
+  ],
+  "browserErrors": [],
+  "physicalDeviceTested": false,
+  "productionSwitched": false
+}

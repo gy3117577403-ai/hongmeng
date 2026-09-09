@@ -1,0 +1,16 @@
+{
+  "verifiedAt": "2026-09-09T03:26:03.7752336Z",
+  "version": "v1.34.141",
+  "revision": "da8383409905fd560cb045ffd9f519bc5281f218",
+  "digest": "sha256:ba57d9a0da18667b5d2e5ca23c72b688b2ba4d1508dd877ba192579f9cb56ca6",
+  "imageId": "sha256:ba57d9a0da18667b5d2e5ca23c72b688b2ba4d1508dd877ba192579f9cb56ca6",
+  "platform": "linux/amd64",
+  "anonymousPull": true,
+  "baseUrl": "http://127.0.0.1:3111",
+  "migrations": 141,
+  "database": "hongmeng_navigation_v134140_release",
+  "postgres": "hm-navigation-v134140-release-postgres",
+  "minio": "hm-navigation-v134140-release-minio",
+  "app": "hm-navigation-v134140-release-app",
+  "productionSwitched": false
+}

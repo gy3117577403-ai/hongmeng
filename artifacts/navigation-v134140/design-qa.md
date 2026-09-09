@@ -24,3 +24,9 @@ Viewport emulation does not establish physical device/soft-keyboard acceptance. 
 ## Final v1.34.141 navigation protection
 
 The shared HR navigation and Ctrl+K now wait for its existing unsaved-draft confirmation. Browser acceptance exercised Continue Editing without losing input and Discard followed by the intended quality-data route, using both compact and expanded menus. Evidence: additional-browser-checks.json and unsaved-navigation-v141.png. Reduced-motion animation disabling and narrow-screen Tab/Shift+Tab containment also passed. The initial v1.34.140 workflow was cancelled before image publication; final image identity is v1.34.141.
+
+## Exact published image
+
+The pulled v1.34.141 image reproduced the approved global menu, correct quality selection, same-route group preference, compact Escape/focus return, and HR persistent footer. A fixture profile update survived reload and was restored; unsaved navigation retained input on Continue and reached quality data after Discard. Browser error log was empty. Release evidence is in release-browser-acceptance.json and the release-*.jpg captures.
+
+Desktop captures are 1366×1024 and 1366×768. The narrow DOM viewport was 390×844; its native browser screenshot is 375×812 and is named release-mobile-native.jpg to avoid presenting capture dimensions as device dimensions. No physical device claim is made.
