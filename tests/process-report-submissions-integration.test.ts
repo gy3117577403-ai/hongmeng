@@ -5,7 +5,7 @@ import { prisma } from '../lib/prisma';
 import { chinaTodayDateKey } from '../lib/attendance';
 import { chinaWeekRange } from '../lib/production-planning';
 import { submitProcessCompletion, previewProcessReportSubmission, resolveProcessReportSubmission,
-  cancelProcessReportSubmission, reconcilePendingReportAssignees } from '../lib/process-report-submissions';
+  cancelProcessReportSubmission, reconcilePendingReportAssignees, autoContinuePublishedReportStandard } from '../lib/process-report-submissions';
 import { setNotificationCompletedState } from '../lib/system-notifications';
 import { completeProcessStep } from '../lib/process-completion-service';
 import { enterWipWarehouse, scheduleWipLot } from '../lib/wip-warehouse';
@@ -134,6 +134,54 @@ test('known product quantity is committed once when standard is missing, handler
   assert.equal(done.pending, false, done.submission.lastError || '');
   assert.equal(await prisma.processCompletion.count({ where: { stepId: f.step.id } }), 1);
   assert.equal((await prisma.processLaborPool.findUniqueOrThrow({ where: { completionId: done.submission.completionId! } })).claimedStandardLaborMilliseconds, 600000n);
+});
+
+test('published numeric standard resumes original labor automatically with system audit and no duplicate report', { skip: !enabled, timeout: 120000 }, async () => {
+  const f = await fixture('missing');
+  const command = { ...f.command, workDate: '2026-09-07' };
+  const pending = await submitProcessCompletion(command);
+  assert.equal(pending.pending, true); if (!pending.pending) return;
+  assert.equal(await autoContinuePublishedReportStandard(pending.submission.id), true);
+  const submission = await prisma.processReportSubmission.findUniqueOrThrow({ where: { id: pending.submission.id } });
+  assert.equal(submission.status, 'COMPLETED'); assert.equal(submission.resolvedById, null);
+  const claim = await prisma.processLaborClaim.findFirstOrThrow({ where: { pool: { completionId: submission.completionId! }, status: 'ACTIVE' } });
+  assert.equal(claim.employeeId, f.employee.id); assert.equal(claim.workDate.toISOString().slice(0, 10), '2026-09-07');
+  assert.equal(claim.standardLaborMilliseconds, 600000n); assert.equal(claim.claimedById, null);
+  assert.equal(await autoContinuePublishedReportStandard(pending.submission.id), false);
+  assert.equal((await submitProcessCompletion(command)).pending, false);
+  assert.equal(await prisma.processCompletion.count({ where: { stepId: f.step.id } }), 1);
+  const audit = await prisma.operationLog.findFirstOrThrow({ where: { action: 'resolve_process_report_submission', targetId: submission.id } });
+  assert.equal(audit.userId, null);
+  const mismatch = await fixture('mismatch');
+  const mapping = await submitProcessCompletion(mismatch.command); assert.equal(mapping.pending, true);
+  if (mapping.pending) assert.equal(await autoContinuePublishedReportStandard(mapping.submission.id), false);
+  assert.equal(await prisma.processCompletion.count({ where: { stepId: mismatch.step.id } }), 0);
+});
+
+test('partial batch reports without a standard retain receipts and later allocate the published budget to original days', { skip: !enabled, timeout: 120000 }, async () => {
+  const f = await fixture('missing');
+  await prisma.workOrderProcessStep.update({ where: { id: f.step.id }, data: { timeBasis: 'per_batch' } });
+  await prisma.productProcessTimeEntry.update({ where: { id: f.profile.entries[0].id }, data: { timeBasis: 'per_batch', unitMilliseconds: 3_600_000, setupMilliseconds: 600_000 } });
+  const first = await submitProcessCompletion({ ...f.command, processedQty: 10, reportedUnitQty: 10, workDate: '2026-09-07' });
+  assert.equal(first.pending, true); if (!first.pending) return;
+  assert.equal(first.submission.reasonCode, 'STANDARD_MISSING');
+  const firstPool = await prisma.processLaborPool.findUniqueOrThrow({ where: { completionId: first.submission.completionId! } });
+  assert.equal(firstPool.status, 'LOCKED'); assert.equal(firstPool.batchTargetQty, 40); assert.equal(firstPool.batchTotalStandardLaborMilliseconds, null);
+  // A published standard can reach the current step before the recovery worker
+  // runs. The next report must still retain a receipt beside the older missing
+  // standard report, instead of silently succeeding with no labor pool.
+  await prisma.workOrderProcessStep.update({ where: { id: f.step.id }, data: { standardMillisecondsPerUnit: 3_600_000, setupMilliseconds: 600_000 } });
+  const version = (await prisma.workOrderProcessRoute.findUniqueOrThrow({ where: { id: f.route.id } })).version;
+  const second = await submitProcessCompletion({ ...f.command, processedQty: 30, reportedUnitQty: 30, workDate: '2026-09-08',
+    idempotencyKey: `${f.prefix}-second-missing-batch`, expectedRouteVersion: version });
+  assert.equal(second.pending, true); if (!second.pending) return;
+  assert.equal(await prisma.processLaborClaim.count({ where: { pool: { stepId: f.step.id }, status: 'ACTIVE' } }), 0);
+  assert.equal(await autoContinuePublishedReportStandard(first.submission.id), true);
+  assert.equal(await autoContinuePublishedReportStandard(second.submission.id), true);
+  const claims = await prisma.processLaborClaim.findMany({ where: { pool: { stepId: f.step.id }, status: 'ACTIVE' }, orderBy: { workDate: 'asc' } });
+  assert.deepEqual(claims.map(claim => claim.standardLaborMilliseconds), [1050000n, 3150000n]);
+  assert.deepEqual(claims.map(claim => claim.workDate.toISOString().slice(0, 10)), ['2026-09-07', '2026-09-08']);
+  assert.equal(await autoContinuePublishedReportStandard(first.submission.id), false);
 });
 
 test('old-week WIP confirmation reschedules remaining amounts and completes reserved report atomically', { skip: !enabled, timeout: 120000 }, async () => {

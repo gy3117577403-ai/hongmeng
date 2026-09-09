@@ -38,6 +38,7 @@ import { completionLaborUnitsPerProduct, processReportContractTransitionIssue } 
 import { normalizeWorkDate } from '@/lib/daily-plan-domain';
 import { calculateAttainmentBasisPoints } from '@/lib/process-time';
 import { prisma } from '@/lib/prisma';
+import { repriceBatchLaborPools } from '@/lib/batch-labor-allocation';
 import { EXISTING_ROUTE_REPORT_POLICY } from '@/lib/process-route-material-reconciliation';
 import {
   ProcessDefinitionResolutionError,
@@ -2843,6 +2844,8 @@ async function correctStepHistoricalLabor(
   const setupPoolId = nextTimeBasis === 'per_batch'
     ? eligiblePools.at(-1)?.laborPool?.id || null
     : eligiblePools[0]?.laborPool?.id || null;
+  const batchTotal = BigInt(standardMillisecondsPerUnit) + BigInt(nextSetup);
+  const batchAmounts = repriceBatchLaborPools(eligiblePools.flatMap(item => item.laborPool ? [item.laborPool] : []), nextTimeBasis, batchTotal);
   let affectedPoolCount = 0;
   let replacedActiveClaimCount = 0;
   for (const completion of completions) {
@@ -2870,6 +2873,7 @@ async function correctStepHistoricalLabor(
       setupMilliseconds: effectiveSetup,
       unitsPerProduct: laborUnitsPerProduct,
     });
+    if (batchAmounts.has(pool.id)) snapshot.totalStandardLaborMilliseconds = batchAmounts.get(pool.id)!;
     let claimedQty = 0;
     let claimedLabor = 0n;
     const replacements: Array<{ claim: (typeof pool.claims)[number]; labor: bigint }> = [];
@@ -2943,6 +2947,7 @@ async function correctStepHistoricalLabor(
         claimedStandardLaborMilliseconds: claimedLabor,
         remainingStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds - claimedLabor,
         standardSource: 'route_change_recalculation',
+        ...(batchAmounts.has(pool.id) ? { batchTotalStandardLaborMilliseconds: batchTotal } : {}),
         version: { increment: 1 },
       },
     });

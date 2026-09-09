@@ -15,8 +15,8 @@ test('report center exposes independent domain and branch routes', () => {
   assert.deepEqual(reportDomain('production')?.branches.map(item => item.key), ['weekly-plan-attainment', 'process-bottlenecks']);
   assert.equal(reportDomain('delivery'), null);
   assert.equal(REPORT_DOMAINS.some(item => item.key === 'delivery'), false);
-  assert.equal(reportBranch('people', 'team-hours'), null);
-  assert.equal(reportBranch('people', 'employee-attainment')?.label, '员工每日达成');
+  assert.equal(reportBranch('people', 'team-hours')?.label, '班组工时达成');
+  assert.equal(reportBranch('people', 'employee-attainment')?.label, '员工工时达成');
   assert.equal(reportDomain('people')?.branches.filter(item => item.key === 'employee-attainment').length, 1);
   assert.equal(reportRoute('governance', 'missing-drawing'), '/workspace/reports/governance/missing-drawing');
   assert.equal(reportBranch('quality', 'quantity-attainment'), null);
@@ -25,7 +25,7 @@ test('report center exposes independent domain and branch routes', () => {
 test('full report users and report-only users land on an allowed independent branch', () => {
   assert.equal(defaultReportRoute(['PRODUCTION']), '/workspace/reports/production/weekly-plan-attainment');
   assert.equal(defaultReportRoute(['HR']), '/workspace/reports/production/weekly-plan-attainment');
-  assert.equal(defaultReportRoute(['REPORT_CENTER']), '/workspace/reports/people/unmatched-labor');
+  assert.equal(defaultReportRoute(['REPORT_CENTER']), '/workspace/reports/people/employee-attainment');
 });
 
 test('HR reads every report without upgrading personnel-only readers or training collaborators', () => {
@@ -46,10 +46,15 @@ test('legacy report links redirect to their closest independent branch', () => {
   );
   assert.equal(
     legacyReportRoute({ view: 'labor' }, ['REPORT_CENTER']),
-    '/workspace/reports/people/unmatched-labor',
+    '/workspace/reports/people/employee-attainment',
   );
   assert.equal(
     legacyReportRoute({ view: 'quality', section: 'events' }, ['PLANNING']),
     '/workspace/reports/quality/event-ledger',
   );
+});
+
+test('retired unmatched-hours navigation resolves to the unified employee hours report', () => {
+  assert.equal(reportBranch('people', 'unmatched-labor'), null);
+  assert.equal(legacyReportRoute({ branch: 'unmatched-labor' }, ['PRODUCTION']), '/workspace/reports/people/employee-attainment');
 });

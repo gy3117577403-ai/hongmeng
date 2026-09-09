@@ -13,6 +13,8 @@ export type EmployeeAttainmentDetail = {
   quantity: number;
   unitLabel: string;
   standardLaborMilliseconds: number;
+  recordedLaborMilliseconds: number;
+  countsForEfficiency: boolean;
 };
 
 export function employeeAttainmentDetails(
@@ -30,7 +32,9 @@ export function employeeAttainmentDetails(
       processName: item.processName,
       quantity: item.quantity,
       unitLabel: item.unitLabel,
-      standardLaborMilliseconds: item.standardLaborMilliseconds,
+      standardLaborMilliseconds: item.countsForEfficiency === false ? 0 : item.standardLaborMilliseconds,
+      recordedLaborMilliseconds: item.standardLaborMilliseconds,
+      countsForEfficiency: item.countsForEfficiency !== false,
     })),
     ...row.details.map(item => ({
       id: `execution:${item.id}`,
@@ -43,21 +47,24 @@ export function employeeAttainmentDetails(
       processName: item.processName,
       quantity: item.goodQty,
       unitLabel: item.unitLabel,
-      standardLaborMilliseconds: item.standardLaborMilliseconds,
+      standardLaborMilliseconds: item.countsForEfficiency === false ? 0 : item.standardLaborMilliseconds,
+      recordedLaborMilliseconds: item.standardLaborMilliseconds,
+      countsForEfficiency: item.countsForEfficiency !== false,
     })),
   ];
 }
 
 export const EMPLOYEE_ATTAINMENT_DETAIL_HEADERS = [
   '日期', '员工编号', '员工姓名', '班组', '产品型号', '产品名称', '工序编号', '工序名称',
-  '工单编号', '记录来源', '数量', '单位', '标准工时（小时）',
+  '工单编号', '记录来源', '数量', '单位', '可计入完成工时（小时）', '记录工时（小时）', '工序计入规则',
 ];
 
 export function employeeAttainmentDetailExportRows(rows: readonly EmployeeAttainmentRowDTO[]) {
   return rows.flatMap(row => employeeAttainmentDetails(row).map(item => [
     item.date, row.employee.employeeNo, row.employee.name, row.employee.team || '',
     item.specification || '型号未维护', item.productName || '', item.processCode, item.processName,
-    item.workOrderCode, item.source === 'claim' ? '标准工时入账' : '直接报工',
+    item.workOrderCode, item.source === 'claim' ? '个人工时入账' : '直接报工',
     item.quantity, item.unitLabel, item.standardLaborMilliseconds / 3_600_000,
+    item.recordedLaborMilliseconds / 3_600_000, item.countsForEfficiency ? '计入完成工时' : '仅记录，不计达成',
   ]));
 }

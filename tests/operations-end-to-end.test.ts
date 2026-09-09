@@ -214,9 +214,9 @@ test('the daily operations chain preserves readiness, shortage closure, labor, a
     actualLaborMilliseconds: attendance.actualMilliseconds,
     attendanceConfirmed: true,
   }]);
-  assert.equal(attainment.attainmentCapacityMilliseconds, 7.6 * HOUR);
+  assert.equal(attainment.attainmentCapacityMilliseconds, 8 * HOUR);
   assert.equal(
     basisPoints(attainment.standardLaborMilliseconds, attainment.attainmentCapacityMilliseconds),
-    10_000,
+    9_500,
   );
 });

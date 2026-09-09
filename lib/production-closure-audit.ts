@@ -123,6 +123,9 @@ export type AuditLaborPool = {
   remainingStandardLaborMilliseconds: bigint;
   standardSource: string;
   claims: AuditLaborClaim[];
+  allocationPolicy?: string;
+  batchTargetQty?: number | null;
+  batchTotalStandardLaborMilliseconds?: bigint | null;
 };
 
 export type ProductionClosureAuditSnapshot = {
@@ -200,6 +203,7 @@ function expectedPoolStatus(eligibleQty: number, claimedQty: number): 'OPEN' | '
 }
 
 function expectedPoolLabor(pool: AuditLaborPool, completion: AuditCompletion): bigint | null {
+  if (pool.allocationPolicy === 'batch_proportional_v1') return null; // Validated as a conserved batch below.
   if (
     completion.timeBasis !== 'per_unit'
     && completion.timeBasis !== 'per_batch'
@@ -1126,6 +1130,24 @@ export function auditProductionClosure(
         });
       }
       if (completion) {
+        if (pool.allocationPolicy === 'batch_proportional_v1') {
+          const peers = snapshot.laborPools.filter(item => item.stepId === pool.stepId && item.status !== 'VOIDED');
+          const target = pool.batchTargetQty || 0;
+          const budget = pool.batchTotalStandardLaborMilliseconds || 0n;
+          const quantity = sumNumbers(peers.map(item => item.eligibleQty));
+          const labor = sumBigInts(peers.map(item => item.totalStandardLaborMilliseconds));
+          const baseShare = target > 0 ? budget * BigInt(pool.eligibleQty) / BigInt(target) : 0n;
+          const roundingBound = BigInt(Math.max(0, target - 1));
+          const delta = pool.totalStandardLaborMilliseconds - baseShare;
+          if (completion.timeBasis !== 'per_batch' || target <= 0 || budget <= 0n || quantity > target || labor > budget
+            || (quantity === target && labor !== budget) || delta > roundingBound || delta < -roundingBound
+            || peers.some(item => item.allocationPolicy !== 'batch_proportional_v1' || item.batchTargetQty !== target
+              || item.batchTotalStandardLaborMilliseconds !== budget)) {
+            add({ severity: 'error', domain: 'labor', code: 'LABOR_BATCH_ALLOCATION_INVALID', entityType: 'labor_pool',
+              entityId: pool.id, workOrderId: pool.workOrderId, message: '按批工时贡献份额、冻结目标或整批总额不守恒',
+              detail: { targetQty: target, actualQty: quantity, batchBudget: detailNumber(budget), actualLabor: detailNumber(labor) } });
+          }
+        }
         const expectedLabor = expectedPoolLabor(pool, completion);
         if (
           expectedLabor !== null
@@ -1151,7 +1173,7 @@ export function auditProductionClosure(
     if (completion && pool.status !== 'VOIDED') {
       const expectedEligibleQty = completion.reportQuantityBasis === 'action'
         ? Math.max(0, completion.reportedGoodUnitQty || 0)
-        : completion.timeBasis === 'per_batch'
+        : completion.timeBasis === 'per_batch' && pool.allocationPolicy !== 'batch_proportional_v1'
         ? sumNumbers(activeCompletions
             .filter(record => record.stepId === pool.stepId)
             .map(record => record.goodQty))

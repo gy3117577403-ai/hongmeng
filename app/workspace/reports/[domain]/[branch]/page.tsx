@@ -15,11 +15,17 @@ import '../../report-center-branches.css';
 
 type BranchPageProps = {
   params: { domain: string; branch: string };
+  searchParams?: Record<string, string | string[] | undefined>;
 };
 
-export default async function ReportBranchPage({ params }: BranchPageProps) {
+export default async function ReportBranchPage({ params, searchParams = {} }: BranchPageProps) {
   const pathname = `/workspace/reports/${params.domain}/${params.branch}`;
   const user = await requirePageAccess('/workspace/reports', pathname);
+  if (params.domain === 'people' && params.branch === 'unmatched-labor') {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(searchParams)) if (typeof value === 'string') query.set(key, value);
+    redirect(`/workspace/reports/people/employee-attainment${query.size ? `?${query}` : ''}`);
+  }
   const fullAccess = hasFullReportAccess(user.access.modules);
   const domain = reportDomain(params.domain);
   if (!domain || (!fullAccess && domain.key !== 'people')) {
@@ -27,7 +33,7 @@ export default async function ReportBranchPage({ params }: BranchPageProps) {
   }
   const branch = reportBranch(domain.key, params.branch) || defaultReportBranch(domain.key);
   const restrictedBranch = !fullAccess
-    && branch.key !== 'unmatched-labor';
+    && branch.key !== 'employee-attainment';
   if (branch.key !== params.branch || restrictedBranch) {
     if (restrictedBranch) redirect(defaultReportRoute(user.access.modules));
     redirect(reportRoute(domain.key, branch.key));

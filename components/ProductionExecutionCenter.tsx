@@ -3,6 +3,7 @@ import { useProcessReportDraft, ProcessReportRequestError } from '@/components/u
 import { ProcessReportDraftNotice } from '@/components/ProcessReportDraftNotice';
 import { processReportReceiptText, RECOVERABLE_PROCESS_REPORT_CODES, type ProcessReportDraft } from '@/lib/process-report-draft';
 import './process-report-recovery.css';
+import ReportingRecoveryDialog from '@/components/ReportingRecoveryDialog';
 import { productionProcessProgress } from '@/lib/production-process-progress';
 import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
 import { canManageProductionControl, canAdjustProductionDates, type ProductionControlView } from '@/lib/production-control';
@@ -1260,6 +1261,14 @@ export default function ProductionExecutionCenter({
   modeDrawerInitiallyOpen?: boolean;
 }) {
   const router = useRouter();
+  const [recoveryContext, setRecoveryContext] = useState<{ id?: string; keyword?: string } | null>(null);
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('recovery') === '1') setRecoveryContext({ id: query.get('submissionId') || undefined, keyword: query.get('keyword') || undefined });
+    const openRecovery = (event: Event) => setRecoveryContext((event as CustomEvent<{ id?: string; keyword?: string }>).detail || {});
+    window.addEventListener('production-open-report-recovery', openRecovery);
+    return () => window.removeEventListener('production-open-report-recovery', openRecovery);
+  }, []);
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const canConfigureSystem = user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
@@ -3246,6 +3255,7 @@ export default function ProductionExecutionCenter({
               <AlertTriangle size={15} aria-hidden="true" />更早遗留 <b>{summary?.navigation?.olderCarryoverCount ?? '—'}</b>
             </button>}
             <span className="production-command-secondary" aria-label="生产调度辅助操作">
+              <button className="hm-workbench-button" type="button" onClick={() => setRecoveryContext({})}>报工资料核对</button>
               {(canAdministerProduction || canScheduleProduction) && <Link className="hm-workbench-button" href={weeklyPlanHref} prefetch={false}><CalendarDays size={15} aria-hidden="true" />周计划</Link>}
               {canScheduleProduction && <button className="hm-workbench-button production-reassignment-trigger" type="button" disabled={board?.readOnly} title="员工请假、临时缺勤时批量重排未完成数量" onClick={openEmployeeExceptionReassignment}><UserRoundCog size={15} aria-hidden="true" />人员异常</button>}
               {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
@@ -3562,7 +3572,8 @@ export default function ProductionExecutionCenter({
         close={() => closeProductionReassignment()}
         save={() => void saveProductionReassignment()}
       />}
-      {completionPendingReceipt && <section className="process-report-upload-banner" role="status"><strong>报工受理结果</strong><span>{completionPendingReceipt.message}</span><Link href={`/workspace/reporting-recovery?id=${encodeURIComponent(completionPendingReceipt.id)}`}>查看申报进度</Link><button type="button" onClick={() => setCompletionPendingReceipt(null)}>知道了</button></section>}
+      {recoveryContext && <ReportingRecoveryDialog user={user} submissionId={recoveryContext.id} keyword={recoveryContext.keyword} onClose={() => { setRecoveryContext(null); const url = new URL(window.location.href); url.searchParams.delete('recovery'); url.searchParams.delete('submissionId'); url.searchParams.delete('keyword'); window.history.replaceState(null, '', url.pathname + url.search); }} />}
+      {completionPendingReceipt && <section className="process-report-upload-banner" role="status"><strong>报工受理结果</strong><span>{completionPendingReceipt.message}</span><button type="button" onClick={() => setRecoveryContext({ id: completionPendingReceipt.id })}>核对原申报资料</button><button type="button" onClick={() => setCompletionPendingReceipt(null)}>知道了</button></section>}
       {(completionDraftStore.queued.length > 0 || completionDraftStore.notice) && <section className="process-report-upload-banner" role="status"><strong>{completionDraftStore.queued.length ? `本机待上传 ${completionDraftStore.queued.length} 笔 · 尚未确认入账` : '报工记录提示'}</strong><span>{completionDraftStore.notice || '联网后用原编号续传；未点击提交的草稿不会自动发送。'}</span>{completionDraftStore.queued.length > 0 && <button type="button" disabled={completionDraftStore.recovering} onClick={() => void completionDraftStore.retryQueued()}>核对并续传</button>}</section>}
       {completionOrder && <ProcessCompletionDialog
         order={completionOrder}
@@ -4647,7 +4658,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       </section>}
 
       {loading && <div className="process-completion-loading"><RefreshCw size={18} aria-hidden="true" /><span>正在核对工序数量与历史流转...</span></div>}
-      {context?.routeSteps.some(step => (step.pendingSubmissionQty || 0) > 0) && <section className="process-completion-source-note"><strong>已有申报正在处理，占用数量无需重复报工</strong><p>{context.routeSteps.filter(step => (step.pendingSubmissionQty || 0) > 0).map(step => `${step.processName} ${step.pendingSubmissionQty} 件`).join('；')}</p><a href={`/workspace/reporting-recovery?keyword=${encodeURIComponent(order.specification || order.productName)}`} target="_blank" rel="noreferrer">查看原申报与处理进度</a></section>}
+      {context?.routeSteps.some(step => (step.pendingSubmissionQty || 0) > 0) && <section className="process-completion-source-note"><strong>已有申报正在处理，占用数量无需重复报工</strong><p>{context.routeSteps.filter(step => (step.pendingSubmissionQty || 0) > 0).map(step => `${step.processName} ${step.pendingSubmissionQty} 件`).join('；')}</p><button type="button" onClick={() => window.dispatchEvent(new CustomEvent('production-open-report-recovery', { detail: { keyword: order.specification || order.productName } }))}>核对原申报资料</button></section>}
       {!loading && error && !context && <section className="process-completion-blocked" role="alert">
         <AlertTriangle size={22} aria-hidden="true" />
         <div><strong>当前工序暂不能流转</strong><p>{error}</p><small>系统不会修改生产目标，也不会跳过已发布工艺路线。请核对工艺路线或计划来源后重试。</small></div>

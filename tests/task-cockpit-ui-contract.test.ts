@@ -10,10 +10,9 @@ const cockpitShells = [
   'components/IssueManagementShell.tsx',
   'components/AttendanceManagementShell.tsx',
   'components/KnowledgeBaseShell.tsx',
-  'components/EmployeeAttainmentReportShell.tsx',
 ];
 
-test('five operating workbenches use the shared task cockpit without the duplicate page header', () => {
+test('operating workbenches use the shared task cockpit without the duplicate page header', () => {
   for (const file of cockpitShells) {
     const source = readFileSync(resolve(repositoryRoot, file), 'utf8');
     assert.match(source, /WorkbenchCockpitCommand/);
@@ -39,4 +38,17 @@ test('shared cockpit stylesheet preserves the compact command bar and stage rail
   assert.match(source, /min-height:\s*58px/);
   assert.match(source, /\.hm-cockpit-stage-rail\s*\{/);
   assert.doesNotMatch(source, /\.hm-cockpit-command[\s\S]*?linear-gradient\(/);
+});
+
+test('legacy employee hours entry delegates to the unified report without introducing another page header', () => {
+  const legacy = readFileSync(resolve(repositoryRoot, 'components/EmployeeAttainmentReportShell.tsx'), 'utf8');
+  assert.match(legacy, /return <ReportCenterBranchDashboard user=\{user\} initialDomain="people"/);
+  assert.match(legacy, /initialBranch=\{ledger \? 'labor-ledger' : 'employee-attainment'\}/);
+  assert.doesNotMatch(legacy, /<AppWorkbenchHeader|<WorkbenchCockpitCommand|<WorkbenchPageHeader/);
+  assert.doesNotMatch(legacy, /fetch\(/);
+  const report = readFileSync(resolve(repositoryRoot, 'components/ReportCenterBranchDashboard.tsx'), 'utf8');
+  assert.equal((report.match(/<AppWorkbenchHeader/g) || []).length, 1);
+  assert.match(report, /hideHeader/);
+  assert.match(report, /sidebarTriggerTargetId="report-branch-navigation-trigger"/);
+  assert.doesNotMatch(report, /<WorkbenchPageHeader/);
 });

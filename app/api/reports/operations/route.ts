@@ -3,27 +3,16 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   basisPoints,
   dateKeyFromDatabase,
-  parseWorkDate,
 } from '@/lib/attendance';
 import {
   resolveAttendanceCalendarDay,
   type AttendanceCalendarDayType,
 } from '@/lib/attendance-calendar';
 import { prisma } from '@/lib/prisma';
-import {
-  attendanceDayMetrics,
-  laborPerformanceMetrics,
-} from '@/lib/report-labor-metrics';
-import { safeLaborMilliseconds } from '@/lib/process-labor-service';
-import { employeeReportRange, serializeEmployee } from '@/lib/process-time';
+import { loadEmployeeHoursReport } from '@/lib/employee-hours-report-service';
+import { employeeHoursOperationsRows } from '@/lib/employee-hours-operations';
+import { employeeReportRange } from '@/lib/process-time';
 import { ReportDateRangeError, reportDateRange, reportRangeDateKeys } from '@/lib/report-date-range';
-import {
-  attendanceRecordScopeWhere,
-  employeeHiredBeforeWhere,
-  isEmployeeEmployedOnDate,
-  isProductionDepartment,
-  productionEmployeeWhere,
-} from '@/lib/production-workforce';
 import {
   finalizeAttendanceDay,
   summarizeFinalizedAttendance,
@@ -40,33 +29,12 @@ import {
   summarizeWeeklyPlanProgress,
 } from '@/lib/report-operations';
 import type {
-  AttainmentStream,
-  AttendanceType,
   ReportOperationsDTO,
-  ReportOperationsEmployeeDayDTO,
-  ReportOperationsEmployeeRowDTO,
   ReportOperationsLaborRowDTO,
 } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-type MutableDay = {
-  status: 'missing' | 'draft' | 'confirmed' | 'rest';
-  attendanceType: AttendanceType | null;
-  plannedMilliseconds: number;
-  scheduledOverrideMilliseconds: number | null;
-  plannedOvertimeMilliseconds: number;
-  actualOvertimeMilliseconds: number;
-  attendanceMilliseconds: number;
-  leaveMilliseconds: number;
-  actualLaborMilliseconds: number;
-  standardLaborMilliseconds: number;
-  exemptAbnormalMilliseconds: number;
-  attainmentEligible: boolean;
-  attainmentFactorBasisPoints: number;
-  attainmentStream: AttainmentStream;
-};
 
 function todayKey(now = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -89,119 +57,11 @@ function dayLabel(dateKey: string): { weekday: string; isWeekend: boolean } {
   };
 }
 
-function emptyDay(
-  attainmentEligible = true,
-  attainmentFactorBasisPoints = attainmentEligible ? 10_000 : 0,
-  attainmentStream: AttainmentStream = attainmentEligible ? 'batch' : 'excluded',
-): MutableDay {
-  return {
-    status: 'missing',
-    attendanceType: null,
-    plannedMilliseconds: 0,
-    scheduledOverrideMilliseconds: null,
-    plannedOvertimeMilliseconds: 0,
-    actualOvertimeMilliseconds: 0,
-    attendanceMilliseconds: 0,
-    leaveMilliseconds: 0,
-    actualLaborMilliseconds: 0,
-    standardLaborMilliseconds: 0,
-    exemptAbnormalMilliseconds: 0,
-    attainmentEligible,
-    attainmentFactorBasisPoints,
-    attainmentStream,
-  };
-}
-
-function teamLabel(employee: { team?: string | null; position?: string | null }): string {
-  return String(employee.team || employee.position || '未分组').trim() || '未分组';
-}
-
-function normalizedAttainmentStream(value: unknown, eligible = true): AttainmentStream {
-  if (value === 'sample' || value === 'excluded') return value;
-  return eligible ? 'batch' : 'excluded';
-}
-
-function officialDay(
-  day: MutableDay,
-  date: string,
-  attendanceRequired = false,
-  calendarWorkday = true,
-): ReportOperationsEmployeeDayDTO {
-  const attendanceOfficial = calendarWorkday && (day.status === 'confirmed' || day.status === 'rest');
-  const attendance = attendanceDayMetrics({
-    attendanceType: attendanceOfficial ? day.attendanceType : null,
-    scheduledMilliseconds: attendanceOfficial
-      ? day.scheduledOverrideMilliseconds ?? day.plannedMilliseconds
-      : 0,
-    plannedOvertimeMilliseconds: attendanceOfficial ? day.plannedOvertimeMilliseconds : 0,
-    plannedOvertimeConfirmed: attendanceOfficial && day.scheduledOverrideMilliseconds !== null,
-    actualOvertimeMilliseconds: attendanceOfficial ? day.actualOvertimeMilliseconds : 0,
-    leaveMilliseconds: attendanceOfficial ? day.leaveMilliseconds : 0,
-    actualAttendanceMilliseconds: attendanceOfficial ? day.attendanceMilliseconds : 0,
-    overtimeBasis: 'actual_confirmed',
-  });
-  const effectiveStandardLabor = calendarWorkday ? day.standardLaborMilliseconds : 0;
-  const hasCapacity = calendarWorkday
-    && day.attainmentEligible
-    && day.attainmentStream === 'batch'
-    && day.attainmentFactorBasisPoints > 0
-    && attendanceOfficial
-    && day.attendanceMilliseconds > 0;
-  const standardLabor = hasCapacity ? effectiveStandardLabor : 0;
-  const unmatchedStandardLabor = hasCapacity ? 0 : effectiveStandardLabor;
-  const performance = laborPerformanceMetrics({
-    attendanceMilliseconds: attendance.actualAttendanceMilliseconds,
-    actualLaborMilliseconds: attendanceOfficial ? day.actualLaborMilliseconds : 0,
-    exemptAbnormalMilliseconds: attendanceOfficial ? day.exemptAbnormalMilliseconds : 0,
-    standardLaborMilliseconds: standardLabor,
-    attainmentFactorBasisPoints: hasCapacity ? day.attainmentFactorBasisPoints : 0,
-  });
-  return {
-    date,
-    status: day.status,
-    attendanceRequired,
-    attendanceType: calendarWorkday ? day.attendanceType : null,
-    plannedMilliseconds: attendance.scheduledMilliseconds,
-    scheduledMilliseconds: attendance.scheduledMilliseconds,
-    plannedOvertimeMilliseconds: attendance.plannedOvertimeMilliseconds,
-    recognizedOvertimeMilliseconds: attendance.recognizedOvertimeMilliseconds,
-    actualOvertimeMilliseconds: attendance.actualOvertimeMilliseconds,
-    leaveDeductionMilliseconds: attendance.leaveDeductionMilliseconds,
-    netExpectedMilliseconds: attendance.netExpectedMilliseconds,
-    attendanceMilliseconds: attendance.actualAttendanceMilliseconds,
-    extraAttendanceMilliseconds: attendance.extraAttendanceMilliseconds,
-    leaveMilliseconds: attendanceOfficial ? day.leaveMilliseconds : 0,
-    actualLaborMilliseconds: attendanceOfficial ? day.actualLaborMilliseconds : 0,
-    standardLaborMilliseconds: standardLabor,
-    unmatchedStandardLaborMilliseconds: unmatchedStandardLabor,
-    exemptAbnormalMilliseconds: attendanceOfficial ? day.exemptAbnormalMilliseconds : 0,
-    overlapMilliseconds: performance.overlapMilliseconds,
-    unexplainedMilliseconds: performance.unexplainedMilliseconds,
-    attainmentCapacityMilliseconds: performance.attainmentCapacityMilliseconds,
-    attendanceRawBasisPoints: attendance.attendanceRawBasisPoints,
-    attendanceBasisPoints: attendance.attendanceBasisPoints,
-    utilizationBasisPoints: performance.utilizationBasisPoints,
-    efficiencyBasisPoints: performance.efficiencyBasisPoints,
-    attainmentBasisPoints: performance.targetAttainmentBasisPoints,
-    overtimeSource: attendance.overtimeSource,
-    attainmentEligible: calendarWorkday && day.attainmentEligible,
-    attainmentFactorBasisPoints: calendarWorkday ? day.attainmentFactorBasisPoints : 0,
-    attainmentStream: calendarWorkday ? day.attainmentStream : 'excluded',
-  };
-}
-
-function notEmployedDay(date: string): ReportOperationsEmployeeDayDTO {
-  return {
-    ...officialDay(emptyDay(false, 0, 'excluded'), date),
-    status: 'not_employed',
-    attendanceRequired: false,
-    attendanceType: null,
-  };
-}
-
 function emptyLaborRow(team: string): ReportOperationsLaborRowDTO {
   return {
     team,
+    regularAttendanceMilliseconds: 0, creditedAbnormalMilliseconds: 0,
+    attainmentNumeratorMilliseconds: 0, attainmentIncompleteDays: 0, attainmentDataComplete: true,
     employeeCount: 0,
     attendancePeople: 0,
     confirmedRecords: 0,
@@ -241,7 +101,9 @@ function finalizeLaborRow(row: ReportOperationsLaborRowDTO): ReportOperationsLab
       row.attendanceMilliseconds,
     ),
     efficiencyBasisPoints: basisPoints(row.standardLaborMilliseconds, row.actualLaborMilliseconds),
-    attainmentBasisPoints: basisPoints(row.standardLaborMilliseconds, row.attainmentCapacityMilliseconds),
+    attainmentDataComplete: (row.attainmentIncompleteDays || 0) === 0,
+    attainmentBasisPoints: (row.attainmentIncompleteDays || 0) > 0 ? null
+      : basisPoints(row.attainmentNumeratorMilliseconds || 0, row.attainmentCapacityMilliseconds),
   };
 }
 
@@ -261,8 +123,6 @@ export async function GET(req: NextRequest) {
         })
       : { period: 'month' as const, ...employeeReportRange('month', `${month}-15`) };
     const { period, date, start, end } = range;
-    const startDate = parseWorkDate(start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
-    const endDate = parseWorkDate(end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const cutoffAt = new Date(Math.min(now.getTime(), end.getTime() - 1));
     const dateKeys = reportRangeDateKeys(start, end);
     const weeklyPlanBuckets = period === 'month'
@@ -274,115 +134,8 @@ export async function GET(req: NextRequest) {
       : cutoffAt;
     const weeklyPlanAllocationEnd = weeklyPlanWeekRange?.lt || end;
 
-    const employees = await prisma.employee.findMany({
-      where: {
-        AND: [employeeHiredBeforeWhere(endDate)],
-        OR: [
-          productionEmployeeWhere({ requireActive: false, requireAttendance: false }),
-          {
-            attendanceRecords: {
-              some: {
-                workDate: { gte: startDate, lt: endDate },
-                ...attendanceRecordScopeWhere('PRODUCTION'),
-              },
-            },
-          },
-        ],
-      },
-      orderBy: [{ team: 'asc' }, { employeeNo: 'asc' }],
-    });
-    const employeeIds = employees.map(employee => employee.id);
-
-    const [attendanceRecords, capacityOverrides, laborClaims, executions, abnormalAllocations, batches, calendarOverrides] = await Promise.all([
-      employeeIds.length ? prisma.attendanceRecord.findMany({
-        where: {
-          employeeId: { in: employeeIds },
-          workDate: { gte: startDate, lt: endDate },
-          ...attendanceRecordScopeWhere('PRODUCTION'),
-        },
-        select: {
-          employeeId: true,
-          workDate: true,
-          status: true,
-          attendanceType: true,
-          attainmentEligibleSnapshot: true,
-          attainmentFactorBasisPointsSnapshot: true,
-          attainmentStreamSnapshot: true,
-          plannedMilliseconds: true,
-          leaveMilliseconds: true,
-          actualMilliseconds: true,
-          overtimeMilliseconds: true,
-        },
-      }) : Promise.resolve([]),
-      employeeIds.length ? prisma.dailyCapacityOverride.findMany({
-        where: {
-          employeeId: { in: employeeIds },
-          plan: {
-            workDate: { gte: startDate, lt: endDate },
-            status: { in: ['CONFIRMED', 'IN_PROGRESS', 'ARCHIVED'] },
-          },
-        },
-        orderBy: { updatedAt: 'asc' },
-        select: {
-          employeeId: true,
-          regularMilliseconds: true,
-          overtimeMilliseconds: true,
-          plan: { select: { workDate: true } },
-        },
-      }) : Promise.resolve([]),
-      employeeIds.length ? prisma.processLaborClaim.findMany({
-        where: {
-          employeeId: { in: employeeIds },
-          status: 'ACTIVE',
-          standardLaborMilliseconds: { gt: 0 },
-          workDate: { gte: startDate, lt: endDate },
-        },
-        select: {
-          poolId: true,
-          employeeId: true,
-          workDate: true,
-          standardLaborMilliseconds: true,
-          pool: {
-            select: {
-              countsForEfficiency: true,
-              completion: {
-                select: {
-                  workStartedAt: true,
-                  workEndedAt: true,
-                  participants: { select: { employeeId: true } },
-                },
-              },
-            },
-          },
-        },
-      }) : Promise.resolve([]),
-      employeeIds.length ? prisma.processExecution.findMany({
-        where: {
-          employeeId: { in: employeeIds },
-          voidedAt: null,
-          endedAt: { gte: start, lt: end },
-          countsForEfficiency: true,
-        },
-        select: {
-          employeeId: true,
-          endedAt: true,
-          standardLaborMilliseconds: true,
-          actualLaborMilliseconds: true,
-        },
-      }) : Promise.resolve([]),
-      employeeIds.length ? prisma.abnormalTimeAllocation.findMany({
-        where: {
-          employeeId: { in: employeeIds },
-          workDate: { gte: startDate, lt: endDate },
-          event: { deletedAt: null, employeeExempt: true, qualityStatus: 'confirmed' },
-        },
-        select: {
-          employeeId: true,
-          workDate: true,
-          durationMilliseconds: true,
-          event: { select: { approvedDurationMilliseconds: true } },
-        },
-      }) : Promise.resolve([]),
+    const [{ report: employeeHours, calendarOverrides }, batches] = await Promise.all([
+      loadEmployeeHoursReport({ period, date, start, end, now }),
       prisma.productionPlanBatch.findMany({
         where: {
           deletedAt: null,
@@ -411,10 +164,6 @@ export async function GET(req: NextRequest) {
           },
         },
         take: 5000,
-      }),
-      prisma.attendanceCalendarDay.findMany({
-        where: { workDate: { gte: startDate, lt: endDate } },
-        select: { workDate: true, dayType: true, label: true, remark: true },
       }),
     ]);
 
@@ -503,199 +252,15 @@ export async function GET(req: NextRequest) {
       }) : Promise.resolve([]),
     ]);
 
-    const employeeDayMap = new Map<string, Map<string, MutableDay>>();
-    const employeeConfiguration = new Map(employees.map(employee => [employee.id, {
-      eligible: employee.attainmentEligible,
-      factor: employee.attainmentFactorBasisPoints,
-      stream: normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible),
-    }]));
-    const mutableDay = (employeeId: string, date: string) => {
-      let days = employeeDayMap.get(employeeId);
-      if (!days) {
-        days = new Map();
-        employeeDayMap.set(employeeId, days);
-      }
-      let day = days.get(date);
-      if (!day) {
-        const configuration = employeeConfiguration.get(employeeId);
-        day = emptyDay(
-          configuration?.eligible ?? true,
-          configuration?.factor ?? (configuration?.eligible === false ? 0 : 10_000),
-          configuration?.stream ?? (configuration?.eligible === false ? 'excluded' : 'batch'),
-        );
-        days.set(date, day);
-      }
-      return day;
-    };
-
-    for (const record of attendanceRecords) {
-      const date = dateKeyFromDatabase(record.workDate);
-      const day = mutableDay(record.employeeId, date);
-      day.status = record.status === 'confirmed'
-        ? record.attendanceType === 'rest' ? 'rest' : 'confirmed'
-        : 'draft';
-      day.attendanceType = ['partial_leave', 'leave', 'absent', 'rest'].includes(record.attendanceType)
-        ? record.attendanceType as AttendanceType
-        : 'normal';
-      day.plannedMilliseconds = Math.max(0, record.plannedMilliseconds);
-      day.leaveMilliseconds = Math.max(0, record.leaveMilliseconds);
-      day.attendanceMilliseconds = Math.max(0, record.actualMilliseconds);
-      day.actualOvertimeMilliseconds = Math.max(0, record.overtimeMilliseconds);
-      day.attainmentEligible = record.attainmentEligibleSnapshot
-        ?? employeeConfiguration.get(record.employeeId)?.eligible
-        ?? true;
-      day.attainmentFactorBasisPoints = record.attainmentFactorBasisPointsSnapshot
-        ?? employeeConfiguration.get(record.employeeId)?.factor
-        ?? (day.attainmentEligible ? 10_000 : 0);
-      const stream = record.attainmentStreamSnapshot
-        ?? employeeConfiguration.get(record.employeeId)?.stream
-        ?? (day.attainmentEligible ? 'batch' : 'excluded');
-      day.attainmentStream = normalizedAttainmentStream(stream, day.attainmentEligible);
-    }
-    // Capacity overrides belong to confirmed production plans. Ordered updates
-    // intentionally overwrite an earlier cross-team entry for the same person/day
-    // so one employee's daily capacity is never counted twice.
-    for (const override of capacityOverrides) {
-      const day = mutableDay(override.employeeId, dateKeyFromDatabase(override.plan.workDate));
-      day.scheduledOverrideMilliseconds = Math.max(0, override.regularMilliseconds);
-      day.plannedOvertimeMilliseconds = Math.max(0, override.overtimeMilliseconds);
-    }
-    const claimActualEvidence = new Set<string>();
-    for (const claim of laborClaims) {
-      if (!claim.pool.countsForEfficiency) continue;
-      const day = mutableDay(claim.employeeId, dateKeyFromDatabase(claim.workDate));
-      day.standardLaborMilliseconds += safeLaborMilliseconds(claim.standardLaborMilliseconds);
-      const completion = claim.pool.completion;
-      const evidenceKey = `${claim.poolId}:${claim.employeeId}`;
-      if (
-        completion.workStartedAt
-        && completion.workEndedAt
-        && completion.participants.some(participant => participant.employeeId === claim.employeeId)
-        && !claimActualEvidence.has(evidenceKey)
-      ) {
-        day.actualLaborMilliseconds += Math.max(
-          0,
-          completion.workEndedAt.getTime() - completion.workStartedAt.getTime(),
-        );
-        claimActualEvidence.add(evidenceKey);
-      }
-    }
-    for (const execution of executions) {
-      const day = mutableDay(execution.employeeId, shanghaiDateKey(execution.endedAt));
-      day.standardLaborMilliseconds += Math.max(0, execution.standardLaborMilliseconds);
-      day.actualLaborMilliseconds += Math.max(0, execution.actualLaborMilliseconds);
-    }
-    for (const allocation of abnormalAllocations) {
-      mutableDay(allocation.employeeId, dateKeyFromDatabase(allocation.workDate)).exemptAbnormalMilliseconds
-        += Math.max(0, allocation.event.approvedDurationMilliseconds ?? allocation.durationMilliseconds);
-    }
-
-    // Only explicit attendance rows open a production roster. Process reports,
-    // capacity overrides and abnormal-time facts must never synthesize a full
-    // attendance roster for a date. On a temporary weekend workday, each
-    // explicit attendance row is the roster; one worker cannot make every
-    // production employee look missing.
-    const attendanceRecordDates = new Set(attendanceRecords.map(record => dateKeyFromDatabase(record.workDate)));
-    const attendanceRecordEmployeeDates = new Set(attendanceRecords.map(record => `${record.employeeId}:${dateKeyFromDatabase(record.workDate)}`));
-
-    const employeeMatrix: ReportOperationsEmployeeRowDTO[] = employees.map(employee => {
-      const sourceDays = employeeDayMap.get(employee.id) || new Map<string, MutableDay>();
-      const currentStream = normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible);
-      const days = dateKeys.map(date => {
-        if (!isEmployeeEmployedOnDate(employee, date)) return notEmployedDay(date);
-        const sourceExists = attendanceRecordEmployeeDates.has(`${employee.id}:${date}`);
-        const source = sourceDays.get(date) || emptyDay(
-          employee.attainmentEligible,
-          employee.attainmentFactorBasisPoints,
-          currentStream,
-        );
-        if (!employee.attainmentEligible || employee.attainmentFactorBasisPoints <= 0 || currentStream !== 'batch') {
-          source.attainmentEligible = false;
-          source.attainmentFactorBasisPoints = 0;
-          source.attainmentStream = currentStream;
-        }
-        const calendar = attendanceCalendarByDate.get(date)!;
-        const belongsToHistoricalProductionRoster = calendar.effectiveDayType === 'workday'
-          && isProductionDepartment(employee.department)
-          && attendanceRecordDates.has(date)
-          && (employee.isActive && employee.attendanceEnabled || Boolean(employee.resignedAt));
-        const attendanceRequired = date <= currentDateKey
-          && calendar.isWorkday
-          && (calendar.effectiveDayType === 'temporary_workday' ? sourceExists : sourceExists || belongsToHistoricalProductionRoster);
-        return officialDay(source, date, attendanceRequired, calendar.isWorkday);
-      });
-      const totals = days.reduce((sum, day) => ({
-        plannedMilliseconds: sum.plannedMilliseconds + day.plannedMilliseconds,
-        scheduledMilliseconds: sum.scheduledMilliseconds + day.scheduledMilliseconds,
-        plannedOvertimeMilliseconds: sum.plannedOvertimeMilliseconds + day.plannedOvertimeMilliseconds,
-        recognizedOvertimeMilliseconds: sum.recognizedOvertimeMilliseconds + day.recognizedOvertimeMilliseconds,
-        actualOvertimeMilliseconds: sum.actualOvertimeMilliseconds + day.actualOvertimeMilliseconds,
-        leaveDeductionMilliseconds: sum.leaveDeductionMilliseconds + day.leaveDeductionMilliseconds,
-        netExpectedMilliseconds: sum.netExpectedMilliseconds + day.netExpectedMilliseconds,
-        attendanceMilliseconds: sum.attendanceMilliseconds + day.attendanceMilliseconds,
-        extraAttendanceMilliseconds: sum.extraAttendanceMilliseconds + day.extraAttendanceMilliseconds,
-        leaveMilliseconds: sum.leaveMilliseconds + day.leaveMilliseconds,
-        actualLaborMilliseconds: sum.actualLaborMilliseconds + day.actualLaborMilliseconds,
-        standardLaborMilliseconds: sum.standardLaborMilliseconds + day.standardLaborMilliseconds,
-        unmatchedStandardLaborMilliseconds: sum.unmatchedStandardLaborMilliseconds + day.unmatchedStandardLaborMilliseconds,
-        exemptAbnormalMilliseconds: sum.exemptAbnormalMilliseconds + day.exemptAbnormalMilliseconds,
-        overlapMilliseconds: sum.overlapMilliseconds + day.overlapMilliseconds,
-        unexplainedMilliseconds: sum.unexplainedMilliseconds + day.unexplainedMilliseconds,
-        attainmentCapacityMilliseconds: sum.attainmentCapacityMilliseconds + day.attainmentCapacityMilliseconds,
-        confirmedDays: sum.confirmedDays + (day.attendanceRequired && (day.status === 'confirmed' || day.status === 'rest') ? 1 : 0),
-        draftDays: sum.draftDays + (day.attendanceRequired && day.status === 'draft' ? 1 : 0),
-        missingDays: sum.missingDays + (day.attendanceRequired && day.status === 'missing' ? 1 : 0),
-      }), {
-        plannedMilliseconds: 0,
-        scheduledMilliseconds: 0,
-        plannedOvertimeMilliseconds: 0,
-        recognizedOvertimeMilliseconds: 0,
-        actualOvertimeMilliseconds: 0,
-        leaveDeductionMilliseconds: 0,
-        netExpectedMilliseconds: 0,
-        attendanceMilliseconds: 0,
-        extraAttendanceMilliseconds: 0,
-        leaveMilliseconds: 0,
-        actualLaborMilliseconds: 0,
-        standardLaborMilliseconds: 0,
-        unmatchedStandardLaborMilliseconds: 0,
-        exemptAbnormalMilliseconds: 0,
-        overlapMilliseconds: 0,
-        unexplainedMilliseconds: 0,
-        attainmentCapacityMilliseconds: 0,
-        confirmedDays: 0,
-        draftDays: 0,
-        missingDays: 0,
-      });
-      const attendanceRawBasisPoints = basisPoints(totals.attendanceMilliseconds, totals.netExpectedMilliseconds);
-      return {
-        employee: serializeEmployee(employee),
-        team: teamLabel(employee),
-        position: String(employee.position || '岗位未设置'),
-        ...totals,
-        attendanceRawBasisPoints,
-        attendanceBasisPoints: attendanceRawBasisPoints === null ? null : Math.min(10_000, attendanceRawBasisPoints),
-        utilizationBasisPoints: cappedBasisPoints(
-          Math.min(totals.attendanceMilliseconds, totals.actualLaborMilliseconds + totals.exemptAbnormalMilliseconds),
-          totals.attendanceMilliseconds,
-        ),
-        efficiencyBasisPoints: basisPoints(totals.standardLaborMilliseconds, totals.actualLaborMilliseconds),
-        attainmentBasisPoints: basisPoints(totals.standardLaborMilliseconds, totals.attainmentCapacityMilliseconds),
-        attainmentEligible: days.some(day => day.attainmentEligible && day.attainmentStream === 'batch' && day.attainmentFactorBasisPoints > 0),
-        attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
-        attainmentStream: normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible),
-        days,
-      };
-    }).filter(row => row.employee.isActive
-      || row.confirmedDays > 0
-      || row.draftDays > 0
-      || row.missingDays > 0
-      || row.standardLaborMilliseconds > 0
-      || row.unmatchedStandardLaborMilliseconds > 0);
+    const employeeMatrix = employeeHoursOperationsRows(employeeHours.rows, dateKeys);
 
     const teamMonthlyMap = new Map<string, ReportOperationsLaborRowDTO>();
     for (const row of employeeMatrix) {
       const team = teamMonthlyMap.get(row.team) || emptyLaborRow(row.team);
+      team.regularAttendanceMilliseconds = (team.regularAttendanceMilliseconds || 0) + (row.regularAttendanceMilliseconds || 0);
+      team.creditedAbnormalMilliseconds = (team.creditedAbnormalMilliseconds || 0) + (row.creditedAbnormalMilliseconds || 0);
+      team.attainmentNumeratorMilliseconds = (team.attainmentNumeratorMilliseconds || 0) + (row.attainmentNumeratorMilliseconds || 0);
+      team.attainmentIncompleteDays = (team.attainmentIncompleteDays || 0) + (row.attainmentIncompleteDays || 0);
       team.employeeCount += 1;
       team.attendancePeople += row.attendanceMilliseconds > 0 ? 1 : 0;
       team.confirmedRecords += row.confirmedDays;
@@ -728,6 +293,10 @@ export async function GET(req: NextRequest) {
         if (day.status === 'not_employed') continue;
         const key = `${day.date}\u0000${employee.team}`;
         const row = teamDailyMap.get(key) || { ...emptyLaborRow(employee.team), date: day.date };
+        row.regularAttendanceMilliseconds = (row.regularAttendanceMilliseconds || 0) + (day.regularAttendanceMilliseconds || 0);
+        row.creditedAbnormalMilliseconds = (row.creditedAbnormalMilliseconds || 0) + (day.creditedAbnormalMilliseconds || 0);
+        row.attainmentNumeratorMilliseconds = (row.attainmentNumeratorMilliseconds || 0) + (day.attainmentNumeratorMilliseconds || 0);
+        row.attainmentIncompleteDays = (row.attainmentIncompleteDays || 0) + (day.attainmentIncompleteDays || 0);
         row.employeeCount += 1;
         row.attendancePeople += day.attendanceMilliseconds > 0 ? 1 : 0;
         row.confirmedRecords += day.attendanceRequired && (day.status === 'confirmed' || day.status === 'rest') ? 1 : 0;
@@ -950,12 +519,13 @@ export async function GET(req: NextRequest) {
 
     const dailyAttainmentAverage = dateKeys.map(date => {
       const rows = employeeMatrix.map(row => row.days.find(day => day.date === date)).filter(Boolean);
-      const standard = rows.reduce((sum, day) => sum + (day?.standardLaborMilliseconds || 0), 0);
+      const numerator = rows.reduce((sum, day) => sum + (day?.attainmentNumeratorMilliseconds || 0), 0);
+      const incomplete = rows.some(day => (day?.attainmentIncompleteDays || 0) > 0);
       const capacity = rows.reduce((sum, day) => sum + (day?.attainmentCapacityMilliseconds || 0), 0);
       return {
         date,
         employeeCount: rows.filter(day => (day?.attainmentCapacityMilliseconds || 0) > 0).length,
-        attainmentBasisPoints: basisPoints(standard, capacity),
+        attainmentBasisPoints: incomplete ? null : basisPoints(numerator, capacity),
       };
     });
 
@@ -1041,7 +611,7 @@ export async function GET(req: NextRequest) {
       rangeEnd: end.toISOString(),
       cutoffAt: cutoffAt.toISOString(),
       generatedAt: now.toISOString(),
-      targetBasisPoints: 9_500,
+      targetBasisPoints: 10_000,
       dates: dateKeys.map(date => {
         const label = dayLabel(date);
         const calendar = attendanceCalendarByDate.get(date)!;
@@ -1061,6 +631,11 @@ export async function GET(req: NextRequest) {
         employeeCount: employeeMatrix.length,
         teamCount: teamMonthly.length,
         ...laborSummary,
+        regularAttendanceMilliseconds: employeeHours.summary.regularAttendanceMilliseconds,
+        creditedAbnormalMilliseconds: employeeHours.summary.creditedAbnormalMilliseconds,
+        attainmentNumeratorMilliseconds: employeeHours.summary.attainmentNumeratorMilliseconds,
+        attainmentIncompleteDays: employeeHours.summary.attainmentIncompleteDays,
+        attainmentDataComplete: employeeHours.summary.attainmentDataComplete,
         attendanceRawBasisPoints: basisPoints(laborSummary.attendanceMilliseconds, laborSummary.netExpectedMilliseconds),
         attendanceBasisPoints: cappedBasisPoints(laborSummary.attendanceMilliseconds, laborSummary.netExpectedMilliseconds),
         utilizationBasisPoints: cappedBasisPoints(
@@ -1068,7 +643,7 @@ export async function GET(req: NextRequest) {
           laborSummary.attendanceMilliseconds,
         ),
         efficiencyBasisPoints: basisPoints(laborSummary.standardLaborMilliseconds, laborSummary.actualLaborMilliseconds),
-        attainmentBasisPoints: basisPoints(laborSummary.standardLaborMilliseconds, laborSummary.attainmentCapacityMilliseconds),
+        attainmentBasisPoints: employeeHours.summary.attainmentBasisPoints,
         dataCoverageBasisPoints: basisPoints(
           laborSummary.confirmedAttendanceRecords,
           laborSummary.confirmedAttendanceRecords
@@ -1100,8 +675,8 @@ export async function GET(req: NextRequest) {
         '净应出勤 = 排班常规工时 + 已确认实际加班 - 已确认请假；实际出勤已经包含加班，不重复相加。',
         '月度周计划按周一所在月份归属，每个生产周固定显示周一至周日；进行中的生产周显示实时进度，但不进入已结算月度达成率。',
         '出勤得分按实际出勤 ÷ 净应出勤计算并封顶 100%，超出部分单列；整日请假和休息日剔除基数，部分请假缩减基数，正式缺勤仍保留在出勤基数。草稿与缺失考勤不按 0 计算，但会阻止该日发布正式得分。',
-        '只有已确认考勤才形成有效工时、加班、请假和正式得分；草稿只显示待处理状态。工作日当日始终显示统计中，历史工作日只有生产部应处理考勤全部确认后才纳入周期得分。',
-        '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；目标达成率 = 标准工时 ÷（有效出勤 × 95% × 个人计入比例）。',
+        '只有已确认考勤才形成实际出勤、加班、请假和正式出勤得分；草稿只显示待处理状态。工作日当日始终显示统计中，历史工作日只有生产部应处理考勤全部确认后才纳入周期得分。',
+        '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；达成率 =（完成工时 + 已确认免责异常工时 × 95%）÷ 实际出勤。完成工时不受考勤确认或工序来源匹配影响；有工时却缺少有效出勤时保留完成工时，达成率待考勤完善。',
         '周计划按生产周和当前有效执行范围分组：已开始周的普通批次与半成品续作进入达成率基数，提前完成立即计入；尚未开始的整周显示为未来周，不按 0 计算。转入半成品仓时，来源周保留已完成工序形成的达成、移出未完成工序计划，剩余工序只在有效目标周重新计入；已取消或零进度被改排的安排不计入。最终工序良品与半成品归属按同一工单一次分配，不重复计入。',
         '金额与产值尚无权威单价来源，本模块不生成推测值；待单价主数据接入后再启用。',
       ],

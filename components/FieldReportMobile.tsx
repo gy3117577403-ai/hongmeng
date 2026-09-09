@@ -1,5 +1,6 @@
 'use client';
 import './process-report-recovery.css';
+import ReportingRecoveryDialog from '@/components/ReportingRecoveryDialog';
 
 import {
   AlertTriangle,
@@ -52,6 +53,12 @@ export type FieldReportIdentityDTO = {
   displayName: string;
   employeeId: string | null;
 };
+
+function personalHoursReceipt(data?: Record<string, unknown>): string {
+  if (typeof data?.personalLaborMilliseconds !== 'number' || typeof data?.workDate !== 'string') return '';
+  const hours = Number((data.personalLaborMilliseconds / 3_600_000).toFixed(3));
+  return `本人 ${data.workDate} 完成工时已记入 ${hours} 小时。`;
+}
 
 type EmployeeOption = ProcessCompletionContext['employees'][number];
 type FieldReportPayload = {
@@ -327,8 +334,9 @@ export default function FieldReportMobile({
   const [sourceTouched, setSourceTouched] = useState(false);
   const [sourceNotice, setSourceNotice] = useState('');
   const [pendingAllowed, setPendingAllowed] = useState(false);
+  const [recoveryContext, setRecoveryContext] = useState<{ id?: string; keyword?: string } | null>(null);
   const draftStore = useProcessReportDraft<MobileReportDraft>(user.id, `mobile:${code}:`, (body, recovered) => {
-    setSuccess({ title: body.pending ? body.submission?.reasonCode === 'STANDARD_MISSING' ? '数量已登记，工时待核定' : '已申报待处理' : '报工结果已确认', detail: processReportReceiptText(body), submissionId: body.submission?.id });
+    setSuccess({ title: body.pending ? body.submission?.reasonCode === 'STANDARD_MISSING' ? '数量已登记，工时待核定' : '已申报待处理' : '报工结果已确认', detail: personalHoursReceipt(body.data) + processReportReceiptText(body), submissionId: body.submission?.id });
     if (recovered.scope === draftScope) { setSheetOpen(false); setForm(null); setRestoreDraft(null); setDraftScope(''); }
     void load(undefined, true);
   });
@@ -858,10 +866,13 @@ export default function FieldReportMobile({
       setDraftScope('');
       if (body.pending) {
         setSheetOpen(false); setForm(null); setBatchItems([]); setSelectedStepIds([]); setBatchSelecting(false);
-        setSuccess({ title: body.submission?.reasonCode === 'STANDARD_MISSING' ? '数量已登记，工时待核定' : '已申报待处理', detail: processReportReceiptText(body), submissionId: body.submission?.id });
+        setSuccess({ title: body.submission?.reasonCode === 'STANDARD_MISSING' ? '数量已登记，工时待核定' : '已申报待处理', detail: personalHoursReceipt(body.data) + processReportReceiptText(body), submissionId: body.submission?.id });
         await load(undefined, true);
         return;
       }
+      const receiptDate = typeof body.data?.workDate === 'string' ? body.data.workDate : form.workDate;
+      const personalMilliseconds = typeof body.data?.personalLaborMilliseconds === 'number' ? body.data.personalLaborMilliseconds : null;
+      const personalReceipt = personalMilliseconds === null ? '' : `本人 ${receiptDate} 完成工时已记入 ${(personalMilliseconds / 3_600_000).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')} 小时。`;
       const pending = Number(body.data?.pendingCoverageQty || 0);
       const employeeCount = Number(body.data?.autoAssignedEmployeeCount || form.employeeIds.length);
       const completionCount = Number(body.data?.completionCount || 1);
@@ -872,15 +883,15 @@ export default function FieldReportMobile({
       setBatchSelecting(false);
       setSuccess({
         title: reportMode === 'batch' ? `${completionCount} 道工序批量报工成功` : `${payload.context.step.processName} 报工成功`,
-        detail: pending > 0
-          ? `所选工序已全部登记，另有 ${quantity(pending)} ${payload.ticket.workOrder.unitLabel}待前序自动覆盖；已为 ${employeeCount} 人自动记工。`
+        detail: personalReceipt + (pending > 0
+          ? `所选工序已全部登记，另有 ${quantity(pending)} ${payload.ticket.workOrder.unitLabel}待前序自动覆盖，个人完成工时已计入；已为 ${employeeCount} 人自动记工。`
           : reportMode === 'batch'
             ? `${completionCount} 道工序已分别落账并正常流转；已为 ${employeeCount} 人自动记工。`
             : supplement
               ? `补充工序已报 ${quantity(processedQty)} ${payload.ticket.workOrder.unitLabel}，已为 ${employeeCount} 人自动记工；已报后序不回退。`
               : actionReporting
                 ? `${quantity(reportedGoodUnitQty)} ${payload.context.step.reportUnitLabel}合格动作已记工，${quantity(goodQty)} ${payload.ticket.workOrder.unitLabel}进入流转。`
-                : `${quantity(goodQty)} ${payload.ticket.workOrder.unitLabel}已正常流转；已为 ${employeeCount} 人自动记工。`,
+                : `${quantity(goodQty)} ${payload.ticket.workOrder.unitLabel}已正常流转；已为 ${employeeCount} 人自动记工。`),
       });
       await load(undefined, true);
     } catch (reason) {
@@ -992,7 +1003,7 @@ export default function FieldReportMobile({
             <div className="field-report-step-card">
               <header><span><small>第 {step.position} 道 · 顺序组 {step.sequenceGroup}</small><strong>{step.processName}{changeLabel && <i className="field-report-change-badge">{changeLabel}</i>}</strong></span><em>{state.label}</em></header>
               <div className="field-report-step-facts"><span><Clock3 size={14} />{standardTime(snapshot?.standardMillisecondsPerUnit || null, snapshot?.timeBasis || null, snapshot?.unitsPerProduct || 1)}</span><span>{step.reportQuantityBasis === 'action' ? <>{quantity(step.reportedGoodUnitQty)} / {quantity(step.reportTargetQty)} {step.reportUnitLabel}</> : <>{quantity(stepReportedQty)} / {quantity(stepTargetQty)} {step.unitLabel || ticket.workOrder.unitLabel}</>}</span></div>
-              {(step.pendingSubmissionQty || 0) > 0 && <p className="field-report-supplement-note">待处理申报占用 {quantity(step.pendingSubmissionQty || 0)} 件，无需重复报工。<a href={`/workspace/reporting-recovery?keyword=${encodeURIComponent(ticket.workOrder.specification || ticket.workOrder.productName)}`}>查看原申报</a></p>}
+              {(step.pendingSubmissionQty || 0) > 0 && <p className="field-report-supplement-note">待处理申报占用 {quantity(step.pendingSubmissionQty || 0)} 件，无需重复报工。<button type="button" onClick={() => setRecoveryContext({ keyword: ticket.workOrder.specification || ticket.workOrder.productName })}>查看原申报资料</button></p>}
               {step.reportQuantityBasis === 'action' && <small className="field-report-action-progress">整套流转：{quantity(stepReportedQty)} / {quantity(stepTargetQty)} {ticket.workOrder.unitLabel}；每套需 {quantity(step.unitsPerProduct)} {step.reportUnitLabel}</small>}
               {Boolean(changeNotice?.previousStandardMillisecondsPerUnit) && (changeNotice?.tag === 'TIME_CHANGED' || changeNotice?.tag === 'ADDED_AND_TIME_CHANGED') && <small className="field-report-change-time-note">原标准 {secondsFromMilliseconds(changeNotice.previousStandardMillisecondsPerUnit)} 秒 → 现标准 {secondsFromMilliseconds(snapshot?.standardMillisecondsPerUnit)} 秒</small>}
                {supplement && <p className="field-report-supplement-note"><GitPullRequestArrow size={14} />{supplement.fulfillmentMode === 'FUTURE_ONLY'
@@ -1035,7 +1046,8 @@ export default function FieldReportMobile({
 
     <footer className="field-report-footer"><PackageCheck size={17} /><span>一工单一码 · 所有报工记录实时同步生产执行、流程中心和员工达成率</span></footer>
 
-    {success && <div className="field-report-success" role="dialog" aria-modal="true"><section><CheckCircle2 size={48} /><strong>{success.title}</strong><p>{success.detail}</p>{success.submissionId && <a href={`/workspace/reporting-recovery?id=${encodeURIComponent(success.submissionId)}`}>查看申报进度与处理人</a>}<button type="button" onClick={() => setSuccess(null)}>知道了，继续报工</button></section></div>}
+    {recoveryContext && <ReportingRecoveryDialog submissionId={recoveryContext.id} keyword={recoveryContext.keyword} onClose={() => { setRecoveryContext(null); void load(undefined, true); }} />}
+    {success && <div className="field-report-success" role="dialog" aria-modal="true"><section><CheckCircle2 size={48} /><strong>{success.title}</strong><p>{success.detail}</p>{success.submissionId && <button type="button" onClick={() => { setRecoveryContext({ id: success.submissionId }); setSuccess(null); }}>就地核对原申报资料</button>}<button type="button" onClick={() => setSuccess(null)}>知道了，继续报工</button></section></div>}
 
     {fullQuantityConfirmOpen && <div className="field-report-confirm-backdrop" role="presentation">
       <section className="field-report-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="field-report-full-qty-title">

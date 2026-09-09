@@ -693,8 +693,9 @@ for (const scenario of ['last-supplement', 'partial-supplement', 'multiple-suppl
         }
         if (scenario === 'deferred-batch') {
           const pools = await prisma.processLaborPool.findMany({ where: { stepId: secondStep.id } });
-          assert.equal(pools.length, 1);
-          assert.equal(pools[0].totalStandardLaborMilliseconds, 2_000n);
+          assert.equal(pools.length, 2, 'each partial batch report keeps its own labor pool');
+          assert.equal(pools.reduce((sum, pool) => sum + pool.totalStandardLaborMilliseconds, 0n), 2_000n);
+          assert.ok(pools.every(pool => pool.allocationPolicy === 'batch_proportional_v1'));
         }
         if (['legacy-recovery', 'recovery-action-gap', 'concurrent-recovery'].includes(scenario)) {
           // Reproduce only the obsolete persisted status projection; all reports,

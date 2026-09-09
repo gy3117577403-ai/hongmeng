@@ -338,7 +338,7 @@ test(
         processedQty: 90,
         label: 'parallel-scrap-c-90',
       });
-      assert.equal(parallelScrapCCompletion.laborPoolId, null);
+      assert.ok(parallelScrapCCompletion.laborPoolId, 'reported batch contribution earns labor before upstream closes');
       const parallelScrapAFinal = await complete({
         routeId: parallelScrap.processRoute.id,
         stepId: parallelScrapA.id,
@@ -353,7 +353,7 @@ test(
       });
       assert.equal(deferredScrapPools.length, 1);
       assert.equal(deferredScrapPools[0].eligibleQty, 90);
-      assert.equal(deferredScrapPools[0].totalStandardLaborMilliseconds, 720_000n);
+      assert.equal(deferredScrapPools[0].totalStandardLaborMilliseconds, 648_000n, '90 of the frozen 100 pieces earn 90% of the batch budget');
       await finishBranch(parallelScrapAFinal.branchWorkOrderId, 'parallel-deferred-scrap');
       assert.equal(
         (await prisma.workOrder.findUniqueOrThrow({ where: { id: parallelScrap.id } })).completedQty,
@@ -397,10 +397,10 @@ test(
         processedQty: 90,
         label: 'parallel-mixed-c-90',
       });
-      assert.equal(mixedCCompletion.laborPoolId, null);
+      assert.ok(mixedCCompletion.laborPoolId);
       assert.equal(
         await prisma.processLaborPool.count({ where: { stepId: parallelMixedC.id } }),
-        0,
+        1,
       );
       await finishBranch(mixedACompletion.branchWorkOrderId, 'parallel-mixed-rework');
       const deferredMixedPools = await prisma.processLaborPool.findMany({
@@ -408,7 +408,7 @@ test(
       });
       assert.equal(deferredMixedPools.length, 1);
       assert.equal(deferredMixedPools[0].eligibleQty, 90);
-      assert.equal(deferredMixedPools[0].totalStandardLaborMilliseconds, 360_000n);
+      assert.equal(deferredMixedPools[0].totalStandardLaborMilliseconds, 324_000n, 'upstream rework does not award a second full batch budget');
       await finishBranch(mixedBCompletion.branchWorkOrderId, 'parallel-mixed-scrap');
       const mixedFinished = await prisma.workOrder.findUniqueOrThrow({
         where: { id: parallelMixed.id },

@@ -54,140 +54,108 @@ test('product/process detail preserves every claim and Shanghai work date in dis
   assert.equal(exported[8][12], 2);
 });
 
-test('weekly attainment only recognizes labor on dates with confirmed attendance', () => {
-  const result = aggregateDailyAttainment([
-    {
-      attendanceMilliseconds: 8 * hour,
-      exemptAbnormalMilliseconds: 0,
-      standardLaborMilliseconds: 3.8 * hour,
-      claimedStandardLaborMilliseconds: 3.8 * hour,
-      actualLaborMilliseconds: 0,
-      attendanceConfirmed: true,
-    },
-    {
-      attendanceMilliseconds: 0,
-      exemptAbnormalMilliseconds: 0,
-      standardLaborMilliseconds: 3.8 * hour,
-      claimedStandardLaborMilliseconds: 3.8 * hour,
-      actualLaborMilliseconds: 0,
-      attendanceConfirmed: false,
-    },
-  ]);
-
-  assert.equal(result.standardLaborMilliseconds, 3.8 * hour);
-  assert.equal(result.claimedStandardLaborMilliseconds, 3.8 * hour);
-  assert.equal(result.unmatchedStandardLaborMilliseconds, 3.8 * hour);
-  assert.equal(result.attainmentCapacityMilliseconds, 7.6 * hour);
-  assert.equal(result.attendanceMissingDays, 1);
-  assert.equal(
-    basisPoints(result.standardLaborMilliseconds, result.attainmentCapacityMilliseconds),
-    5_000,
-  );
+const day = (overrides: Partial<Parameters<typeof aggregateDailyAttainment>[0] extends Iterable<infer T> ? T : never> = {}) => ({
+  attendanceMilliseconds: 8 * hour, exemptAbnormalMilliseconds: 0, standardLaborMilliseconds: 8 * hour,
+  claimedStandardLaborMilliseconds: 8 * hour, actualLaborMilliseconds: 0, attendanceConfirmed: true, ...overrides,
 });
 
-test('quality-confirmed exemptions are applied inside each attendance date', () => {
-  const result = aggregateDailyAttainment([
-    {
-      attendanceMilliseconds: 8 * hour,
-      exemptAbnormalMilliseconds: hour,
-      standardLaborMilliseconds: 6.65 * hour,
-      claimedStandardLaborMilliseconds: 6.65 * hour,
-      actualLaborMilliseconds: 0,
-      attendanceConfirmed: true,
-    },
-  ]);
-  assert.equal(result.effectiveProductionMilliseconds, 7 * hour);
-  assert.equal(result.attainmentCapacityMilliseconds, 6.65 * hour);
+test('completed credit survives missing attendance and blocks an incomplete period rate', () => {
+  const result = aggregateDailyAttainment([day({ standardLaborMilliseconds: 3.8 * hour, claimedStandardLaborMilliseconds: 3.8 * hour }),
+    day({ attendanceMilliseconds: 0, attendanceConfirmed: false, standardLaborMilliseconds: 3.8 * hour, claimedStandardLaborMilliseconds: 3.8 * hour })]);
+  assert.equal(result.standardLaborMilliseconds, 7.6 * hour);
+  assert.equal(result.claimedStandardLaborMilliseconds, 7.6 * hour);
   assert.equal(result.unmatchedStandardLaborMilliseconds, 0);
-});
-
-test('zero-duration confirmed attendance does not match claimed labor', () => {
-  const result = aggregateDailyAttainment([
-    {
-      attendanceMilliseconds: 0,
-      exemptAbnormalMilliseconds: 0,
-      standardLaborMilliseconds: hour,
-      claimedStandardLaborMilliseconds: hour,
-      actualLaborMilliseconds: 0,
-      attendanceConfirmed: true,
-    },
-  ]);
-
-  assert.equal(result.standardLaborMilliseconds, 0);
-  assert.equal(result.claimedStandardLaborMilliseconds, 0);
-  assert.equal(result.unmatchedStandardLaborMilliseconds, hour);
   assert.equal(result.attendanceMissingDays, 1);
-  assert.equal(result.attainmentCapacityMilliseconds, 0);
+  assert.equal(result.attainmentBasisPoints, null);
+  assert.equal(result.attainmentDataComplete, false);
 });
 
-test('employees marked ineligible remain visible elsewhere but contribute nothing to attainment totals', () => {
-  const result = aggregateDailyAttainment([{
-    attendanceMilliseconds: 8 * hour,
-    exemptAbnormalMilliseconds: 0,
-    standardLaborMilliseconds: 9 * hour,
-    claimedStandardLaborMilliseconds: 9 * hour,
-    actualLaborMilliseconds: 8 * hour,
-    attendanceConfirmed: true,
-    attainmentEligible: false,
-  }]);
+test('confirmed loss earns 95 percent credit without shrinking the attendance denominator', () => {
+  const result = aggregateDailyAttainment([day({ standardLaborMilliseconds: 6.65 * hour, exemptAbnormalMilliseconds: hour })]);
+  assert.equal(result.attainmentCapacityMilliseconds, 8 * hour);
+  assert.equal(result.creditedAbnormalMilliseconds, .95 * hour);
+  assert.equal(result.attainmentBasisPoints, 9500);
+});
 
-  assert.deepEqual(result, {
-    standardLaborMilliseconds: 0,
-    claimedStandardLaborMilliseconds: 0,
-    unmatchedStandardLaborMilliseconds: 0,
-    effectiveProductionMilliseconds: 0,
-    attainmentCapacityMilliseconds: 0,
-    unexplainedMilliseconds: 0,
-    attendanceMissingDays: 0,
-  });
+test('confirmed zero attendance keeps output and returns no rate, while real zero output is zero percent', () => {
+  const result = aggregateDailyAttainment([day({ attendanceMilliseconds: 0, standardLaborMilliseconds: hour })]);
+  assert.equal(result.standardLaborMilliseconds, hour);
+  assert.equal(result.attainmentBasisPoints, null);
+  assert.equal(result.attainmentIncompleteDays, 1);
+  assert.equal(aggregateDailyAttainment([day({ standardLaborMilliseconds: 0, claimedStandardLaborMilliseconds: 0 })]).attainmentBasisPoints, 0);
+});
+
+test('historical personal factors including zero never reduce credit or actual attendance', () => {
+  for (const factor of [0, 5000, 10000]) {
+    const result = aggregateDailyAttainment([day({ attainmentFactorBasisPoints: factor, attainmentStream: 'batch', attainmentEligible: true })]);
+    assert.equal(result.standardLaborMilliseconds, 8 * hour);
+    assert.equal(result.attainmentCapacityMilliseconds, 8 * hour);
+    assert.equal(result.attainmentBasisPoints, 10000);
+  }
+});
+
+test('sample and excluded days retain visible facts without entering batch performance', () => {
+  for (const stream of ['sample', 'excluded'] as const) {
+    const result = aggregateDailyAttainment([day({ attainmentStream: stream })]);
+    assert.equal(result.standardLaborMilliseconds, 8 * hour);
+    assert.equal(result.attendanceMilliseconds, 8 * hour);
+    assert.equal(result.attainmentCapacityMilliseconds, 0);
+    assert.equal(result.attainmentNumeratorMilliseconds, 0);
+    assert.equal(result.attainmentBasisPoints, null);
+  }
+});
+
+test('week and month divide summed credited output by summed attendance instead of averaging daily rates', () => {
+  const days = [day({ attendanceMilliseconds: 10 * hour, actualOvertimeMilliseconds: 2 * hour, standardLaborMilliseconds: 8 * hour, exemptAbnormalMilliseconds: hour }),
+    day({ attendanceMilliseconds: 5 * hour, standardLaborMilliseconds: 6 * hour })];
+  const result = aggregateDailyAttainment(days);
+  assert.equal(result.attendanceMilliseconds, 15 * hour);
+  assert.equal(result.regularAttendanceMilliseconds, 13 * hour);
+  assert.equal(result.recognizedOvertimeMilliseconds, 2 * hour);
+  assert.equal(result.attainmentBasisPoints, 9967);
+  assert.equal(aggregateDailyAttainment([days[0]]).attainmentBasisPoints, 8950);
+  assert.equal(aggregateDailyAttainment([days[1]]).attainmentBasisPoints, 12000);
+});
+
+test('future facts cannot enter actual hours and empty days without a roster do not manufacture missing attendance', () => {
+  const result = aggregateDailyAttainment([day(), day({ isFuture: true, attendanceRequired: true, attendanceConfirmed: false }),
+    day({ attendanceConfirmed: false, attendanceMilliseconds: 0, standardLaborMilliseconds: 0, claimedStandardLaborMilliseconds: 0 })]);
+  assert.equal(result.standardLaborMilliseconds, 8 * hour);
+  assert.equal(result.attainmentBasisPoints, 10000);
+  assert.equal(result.attainmentIncompleteDays, 0);
+});
+
+test('a real unresolved attendance roster blocks a period even before a worker reports output', () => {
+  const result = aggregateDailyAttainment([day(), day({ attendanceRequired: true, attendanceConfirmed: false,
+    attendanceMilliseconds: 0, standardLaborMilliseconds: 0, claimedStandardLaborMilliseconds: 0 })]);
+  assert.equal(result.attainmentBasisPoints, null);
+  assert.equal(result.attainmentIncompleteDays, 1);
 });
 
 test('inactive employees remain in historical reports when the period has activity', () => {
-  assert.equal(shouldIncludeEmployeeInAttainmentReport({
-    isActive: false,
-    hasPeriodActivity: true,
-  }), true);
-  assert.equal(shouldIncludeEmployeeInAttainmentReport({
-    isActive: false,
-    hasPeriodActivity: false,
-  }), false);
-  assert.equal(shouldIncludeEmployeeInAttainmentReport({
-    isActive: true,
-    hasPeriodActivity: false,
-  }), true);
+  assert.equal(shouldIncludeEmployeeInAttainmentReport({ isActive: false, hasPeriodActivity: true }), true);
+  assert.equal(shouldIncludeEmployeeInAttainmentReport({ isActive: false, hasPeriodActivity: false }), false);
 });
 
-test('partial-day attendance and arbitrary capacity factors use actual eligible hours', () => {
-  const result = aggregateDailyAttainment([{
-    attendanceMilliseconds: 3 * hour,
-    exemptAbnormalMilliseconds: 0,
-    standardLaborMilliseconds: 1.425 * hour,
-    claimedStandardLaborMilliseconds: 1.425 * hour,
-    actualLaborMilliseconds: 3 * hour,
-    attendanceConfirmed: true,
-    attainmentEligible: true,
-    attainmentFactorBasisPoints: 5_000,
-    attainmentStream: 'batch',
-  }]);
-
-  assert.equal(result.effectiveProductionMilliseconds, 3 * hour);
-  assert.equal(result.attainmentCapacityMilliseconds, 1.425 * hour);
-  assert.equal(basisPoints(result.standardLaborMilliseconds, result.attainmentCapacityMilliseconds), 10_000);
+test('overtime inconsistent with total attendance remains visible and blocks performance instead of adding hours twice', () => {
+  const result = aggregateDailyAttainment([day({ attendanceMilliseconds: 2 * hour, actualOvertimeMilliseconds: 3 * hour })]);
+  assert.equal(result.attendanceMilliseconds, 2 * hour);
+  assert.equal(result.regularAttendanceMilliseconds, 0);
+  assert.equal(result.recognizedOvertimeMilliseconds, 2 * hour);
+  assert.equal(result.actualOvertimeMilliseconds, 3 * hour);
+  assert.equal(result.attainmentDataComplete, false);
+  assert.equal(result.attainmentBasisPoints, null);
 });
 
-test('sample stream is kept out of batch attainment totals', () => {
-  const result = aggregateDailyAttainment([{
-    attendanceMilliseconds: 8 * hour,
-    exemptAbnormalMilliseconds: 0,
-    standardLaborMilliseconds: 7.6 * hour,
-    claimedStandardLaborMilliseconds: 7.6 * hour,
-    actualLaborMilliseconds: 8 * hour,
-    attendanceConfirmed: true,
-    attainmentEligible: true,
-    attainmentFactorBasisPoints: 10_000,
-    attainmentStream: 'sample',
-  }]);
-
-  assert.equal(result.standardLaborMilliseconds, 0);
-  assert.equal(result.attainmentCapacityMilliseconds, 0);
+test('non-performance records retain their source hours while contributing zero to reconcilable completed hours', () => {
+  const row = { employee: { employeeNo: 'record', name: '记录员工', team: '班组' }, claimDetails: [
+    { id: 'excluded-claim', workDate: '2026-09-06', quantity: 1, standardLaborMilliseconds: 2 * hour, countsForEfficiency: false },
+    { id: 'included-claim', workDate: '2026-09-06', quantity: 1, standardLaborMilliseconds: 3 * hour, countsForEfficiency: true },
+  ], details: [{ id: 'excluded-execution', endedAt: '2026-09-06T12:00:00+08:00', goodQty: 1, standardLaborMilliseconds: hour, countsForEfficiency: false }] } as EmployeeAttainmentRowDTO;
+  const details = employeeAttainmentDetails(row);
+  assert.equal(details.reduce((sum, item) => sum + item.standardLaborMilliseconds, 0), 3 * hour);
+  assert.equal(details.reduce((sum, item) => sum + item.recordedLaborMilliseconds, 0), 6 * hour);
+  const exported = employeeAttainmentDetailExportRows([row]);
+  assert.deepEqual(exported[0].slice(12), [0, 2, '仅记录，不计达成']);
+  assert.deepEqual(exported[1].slice(12), [3, 3, '计入完成工时']);
 });

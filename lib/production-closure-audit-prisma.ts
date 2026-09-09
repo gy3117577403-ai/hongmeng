@@ -143,6 +143,9 @@ export async function loadProductionClosureAuditSnapshot(
         claimedStandardLaborMilliseconds: true,
         remainingStandardLaborMilliseconds: true,
         standardSource: true,
+        allocationPolicy: true,
+        batchTargetQty: true,
+        batchTotalStandardLaborMilliseconds: true,
         claims: {
           select: {
             id: true,

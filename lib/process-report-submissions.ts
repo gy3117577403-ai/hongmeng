@@ -505,19 +505,53 @@ async function reassignForCurrentRequirements(tx: Tx, item: ProcessReportSubmiss
   return updated;
 }
 
-/** Bounded reconciliation for the existing worker and inbox reads; never marks a report completed. */
+/** Continue only an already committed report with an unambiguous published
+ * numeric standard. Source/week changes and unit remapping still require their
+ * original business correction; no worker chooses them on an employee's behalf. */
+export async function autoContinuePublishedReportStandard(id: string): Promise<boolean> {
+  const item = await prisma.processReportSubmission.findUnique({ where: { id } });
+  if (!item || item.status !== 'PENDING' || item.reasonCode !== 'STANDARD_MISSING' || !item.completionId) return false;
+  for (const assigneeId of item.assigneeUserIds) {
+    let preview: ReportSubmissionPreview;
+    try { preview = await previewProcessReportSubmission(id, assigneeId); } catch { continue; }
+    const published = preview.standardPreview.published;
+    const snapshot = item.snapshot as { reportQuantityBasis?: string; unitsPerProduct?: number };
+    if (!preview.canResolve || preview.blockers.length || preview.quantityMappingRequired
+      || preview.actions.some(action => action.code !== 'RESOLVE_STANDARD')
+      || !published || !['per_unit', 'per_batch'].includes(published.timeBasis || '') || Number(published.standardMillisecondsPerUnit) <= 0
+      || published.reportQuantityBasis !== snapshot.reportQuantityBasis || published.unitsPerProduct !== snapshot.unitsPerProduct) return false;
+    if (published.timeBasis === 'per_batch') {
+      const knownReports = await prisma.processCompletion.findMany({ where: { stepId: item.stepId, voidedAt: null,
+        standardMillisecondsPerUnit: { gt: 0 } }, select: { standardMillisecondsPerUnit: true, setupMilliseconds: true, timeBasis: true } });
+      if (knownReports.some(report => report.timeBasis !== 'per_batch'
+        || report.standardMillisecondsPerUnit !== published.standardMillisecondsPerUnit
+        || report.setupMilliseconds !== published.setupMilliseconds)) return false;
+    }
+    const result = await resolveProcessReportSubmission(id, assigneeId, {
+      expectedVersion: preview.submission.version, expectedRouteVersion: preview.routeVersion ?? undefined,
+      expectedProfileVersion: published.productTimeProfileVersion, expectedEntryId: published.productTimeEntryId,
+    }, { systemContinuation: true });
+    return !result.pending && result.submission.status === 'COMPLETED';
+  }
+  return false;
+}
+
+/** Bounded reconciliation for the existing worker. */
 export async function reconcilePendingReportAssignees(limit = 50) {
   const take = Math.min(100, Math.max(1, limit));
   let ids = await prisma.processReportSubmission.findMany({ where: { status: 'PENDING', ...(reconciliationCursor ? { id: { gt: reconciliationCursor } } : {}) }, orderBy: { id: 'asc' }, take, select: { id: true } });
   if (!ids.length && reconciliationCursor) { reconciliationCursor = undefined; ids = await prisma.processReportSubmission.findMany({ where: { status: 'PENDING' }, orderBy: { id: 'asc' }, take, select: { id: true } }); }
   reconciliationCursor = ids.at(-1)?.id;
   let changed = 0;
-  for (const { id } of ids) await serializable(async tx => {
+  for (const { id } of ids) {
+    await serializable(async tx => {
     const item = await tx.processReportSubmission.findUnique({ where: { id } });
     if (!item) return;
     const refreshed = await reassignForCurrentRequirements(tx, item);
     if (refreshed.version !== item.version) changed++;
-  });
+    });
+    if (await autoContinuePublishedReportStandard(id)) changed++;
+  }
   return { checked: ids.length, changed };
 }
 let reconciliationCursor: string | undefined;
@@ -536,7 +570,8 @@ async function closeNotifications(tx: Tx, item: ProcessReportSubmission, reason:
     data: { completedAt: new Date(), completionKind: 'SOURCE_RESOLVED', completionReason: reason, snoozedUntil: null } });
 }
 
-export async function resolveProcessReportSubmission(id: string, userId: string, input: ReportSubmissionResolutionInput) {
+export async function resolveProcessReportSubmission(id: string, userId: string, input: ReportSubmissionResolutionInput,
+  options: { systemContinuation?: boolean } = {}) {
   try {
     const result = await serializable(async tx => {
       await tx.$queryRaw`SELECT "id" FROM "process_report_submissions" WHERE "id" = ${id} FOR UPDATE`;
@@ -636,7 +671,7 @@ export async function resolveProcessReportSubmission(id: string, userId: string,
           const standard = input.standard || preview.standardPreview.published;
           if (!standard?.timeBasis || !Number.isSafeInteger(standard.standardMillisecondsPerUnit) || Number(standard.standardMillisecondsPerUnit) <= 0) fail('请核定有效的标准工时数值', 'PROCESS_SUBMISSION_STANDARD_REQUIRED');
           await resolveProcessLaborPoolStandardInTransaction(tx, { poolId: completion.laborPool.id, expectedVersion: completion.laborPool.version,
-            ...standard, reason: `报工申报 ${item.id}：工艺确认标准并继续原报工计工`, userId });
+            ...standard, reason: `报工申报 ${item.id}：${options.systemContinuation ? '系统根据已发布标准自动续接' : '工艺确认标准并继续原报工计工'}`, userId }, options);
         }
         result = item.result as unknown as ProcessCompletionResult;
       } else {
@@ -674,15 +709,16 @@ export async function resolveProcessReportSubmission(id: string, userId: string,
       result = { ...result, laborPoolPendingStandard: false, autoAssignedEmployeeCount: claims._count.id,
         autoAssignedLaborMilliseconds: Number(claims._sum.standardLaborMilliseconds || 0n) };
       const completed = await tx.processReportSubmission.update({ where: { id: item.id }, data: { status: 'COMPLETED', completedAt: new Date(),
-        completionId: completion.id, result: json(result), resolution: json(input), resolvedById: userId, lastError: null,
+        completionId: completion.id, result: json(result), resolution: json({ ...input, systemContinuation: options.systemContinuation === true }), resolvedById: options.systemContinuation ? null : userId, lastError: null,
         reservedProductQty: 0, reservedGoodUnits: 0, version: { increment: 1 } } });
       await closeNotifications(tx, completed, `已生成有效报工 ${completion.id} 并完成工时入账`);
       await createSystemNotification(tx, { eventType: 'PROCESS_REPORT_SUBMISSION_COMPLETED', dedupeKey: `report-submission:${item.id}:completed`,
         category: 'SYSTEM', title: '原报工已处理完成', body: '原现场申报已完成数量核销与工时入账，无需重新报工。',
-        sourceType, sourceId: item.id, targetRoute: `/workspace/reporting-recovery?id=${item.id}`, actorId: userId,
+        sourceType, sourceId: item.id, targetRoute: `/workspace/reporting-recovery?id=${item.id}`, actorId: options.systemContinuation ? null : userId,
         recipientUserIds: [...new Set([item.createdById, ...item.assigneeUserIds])] });
-      await tx.operationLog.create({ data: { userId, action: 'resolve_process_report_submission', targetType: sourceType, targetId: item.id,
-        detail: json({ originalActorId: item.createdById, completionId: completion.id, resolution: input }) } });
+      await tx.operationLog.create({ data: { userId: options.systemContinuation ? null : userId, action: 'resolve_process_report_submission', targetType: sourceType, targetId: item.id,
+        detail: json({ originalActorId: item.createdById, completionId: completion.id, resolution: input,
+          systemContinuation: options.systemContinuation === true, authorizationAssigneeId: options.systemContinuation ? userId : null }) } });
       return dto(tx, completed, userId);
     });
     return { pending: result.status === 'PENDING', submission: result };

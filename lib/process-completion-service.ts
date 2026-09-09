@@ -18,6 +18,7 @@ import {
   resolveCompletionQuantities,
 } from '@/lib/process-completion-domain';
 import { prisma } from '@/lib/prisma';
+import { allocateBatchLabor, BATCH_LABOR_ALLOCATION_POLICY } from '@/lib/batch-labor-allocation';
 import { reconcileQuantityStepStatuses } from '@/lib/process-step-lifecycle';
 import { reconcileBypassedRouteOperations } from '@/lib/process-route-material-reconciliation';
 import { materialSequenceGroup, projectMaterialSequence } from '@/lib/process-material-sequence';
@@ -2280,6 +2281,7 @@ async function createCompletionLaborPool(
     countsForEfficiency: boolean;
     standardSource: string;
     productTimeProfileVersion: number | null;
+    batchAllocation?: { targetQty: number; totalMilliseconds: bigint; allocatedMilliseconds: bigint };
   },
 ): Promise<{ id: string; pendingStandard: boolean }> {
   const knownTimeBasis = input.timeBasis === 'per_unit' || input.timeBasis === 'per_batch';
@@ -2306,6 +2308,8 @@ async function createCompletionLaborPool(
         countsForEfficiency: input.countsForEfficiency,
         standardSource: 'pending_standard',
         productTimeProfileVersion: input.productTimeProfileVersion,
+        ...(input.batchAllocation ? { allocationPolicy: BATCH_LABOR_ALLOCATION_POLICY,
+          batchTargetQty: input.batchAllocation.targetQty, batchTotalStandardLaborMilliseconds: null } : {}),
       },
     });
     return { id: pool.id, pendingStandard: true };
@@ -2332,12 +2336,17 @@ async function createCompletionLaborPool(
       standardMillisecondsPerUnit: labor.standardMillisecondsPerUnit,
       setupMilliseconds: labor.setupMilliseconds,
       unitsPerProduct: labor.unitsPerProduct,
-      totalStandardLaborMilliseconds: labor.totalStandardLaborMilliseconds,
+      totalStandardLaborMilliseconds: input.batchAllocation?.allocatedMilliseconds ?? labor.totalStandardLaborMilliseconds,
       claimedStandardLaborMilliseconds: 0n,
-      remainingStandardLaborMilliseconds: labor.totalStandardLaborMilliseconds,
+      remainingStandardLaborMilliseconds: input.batchAllocation?.allocatedMilliseconds ?? labor.totalStandardLaborMilliseconds,
       countsForEfficiency: input.countsForEfficiency,
       standardSource: input.standardSource,
       productTimeProfileVersion: input.productTimeProfileVersion,
+      ...(input.batchAllocation ? {
+        allocationPolicy: BATCH_LABOR_ALLOCATION_POLICY,
+        batchTargetQty: input.batchAllocation.targetQty,
+        batchTotalStandardLaborMilliseconds: input.batchAllocation.totalMilliseconds,
+      } : {}),
     },
   });
   return { id: pool.id, pendingStandard: false };
@@ -2448,6 +2457,96 @@ export async function autoAssignCompletionLaborPool(
   return { employeeCount: assignedEmployeeCount, standardLaborMilliseconds };
 }
 
+export async function reconcileProportionalBatchLaborInTransaction(
+  tx: Prisma.TransactionClient,
+  routeId: string,
+  options: { execute: boolean; userId: string | null; now?: Date },
+) {
+  const route = await tx.workOrderProcessRoute.findUniqueOrThrow({ where: { id: routeId }, include: completionRouteInclude });
+  const targetQty = processCompletionTargetQuantity(route.workOrder);
+  const rows: Array<{ stepId: string; completionId: string; workDate: string; employeeIds: string[]; quantity: number; milliseconds: string; poolId?: string }> = [];
+  const blocked: Array<{ stepId: string; reason: string }> = [];
+  for (const step of route.steps.filter(step => !step.retiredAt && step.executionMode === 'NORMAL' && step.timeBasis === 'per_batch')) {
+    const allPools = await tx.processLaborPool.findMany({ where: { stepId: step.id }, orderBy: { createdAt: 'asc' } });
+    // Existing settled batch ledgers keep their original facts. Never add new
+    // proportional pools beside a legacy whole-batch pool.
+    if (allPools.some(pool => pool.status !== 'VOIDED' && pool.allocationPolicy !== BATCH_LABOR_ALLOCATION_POLICY)) {
+      blocked.push({ stepId: step.id, reason: '已有旧版整批工时池，保留原账，需单独核对历史归属' });
+      continue;
+    }
+    const completions = await tx.processCompletion.findMany({
+      where: { stepId: step.id, voidedAt: null, goodQty: { gt: 0 } },
+      orderBy: [{ workDate: 'asc' }, { completedAt: 'asc' }, { id: 'asc' }],
+      include: { laborPool: true, participants: { orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] } },
+    });
+    const missing = completions.filter(completion => !completion.laborPool);
+    if (!missing.length) continue;
+    const proportionalPools = allPools.filter(pool => pool.allocationPolicy === BATCH_LABOR_ALLOCATION_POLICY);
+    const frozen = proportionalPools.find(pool => pool.status !== 'VOIDED');
+    const original = completions[0];
+    const batchTargetQty = frozen?.batchTargetQty || targetQty;
+    const batchTotal = frozen?.batchTotalStandardLaborMilliseconds
+      ?? BigInt(original.standardMillisecondsPerUnit || 0) + BigInt(original.setupMilliseconds);
+    const validSnapshots = completions.every(completion => completion.timeBasis === 'per_batch'
+      && Number(completion.standardMillisecondsPerUnit) > 0
+      && (frozen || (completion.standardMillisecondsPerUnit === original.standardMillisecondsPerUnit
+        && completion.setupMilliseconds === original.setupMilliseconds)));
+    if (!validSnapshots || batchTargetQty <= 0 || batchTotal <= 0n) {
+      blocked.push({ stepId: step.id, reason: '历史报工缺有效整批标准或标准版本不一致，不能自动推算工时' });
+      // A valid quantity report with no numeric standard still needs a durable
+      // receipt. A locked per-report pool carries its date and participants
+      // until the published batch budget becomes available.
+      if (options.execute && batchTargetQty > 0 && completions.every(completion => completion.timeBasis === 'per_batch')) {
+        for (const completion of missing) {
+          const pool = await createCompletionLaborPool(tx, { completionId: completion.id, workOrderId: route.workOrderId,
+            stepId: step.id, workDate: completion.workDate, eligibleQty: completion.goodQty, timeBasis: 'per_batch',
+            standardMillisecondsPerUnit: null, setupMilliseconds: completion.setupMilliseconds,
+            unitsPerProduct: completion.unitsPerProduct, countsForEfficiency: completion.countsForEfficiency,
+            standardSource: completion.standardSource, productTimeProfileVersion: completion.productTimeProfileVersion,
+            batchAllocation: { targetQty: batchTargetQty, totalMilliseconds: 0n, allocatedMilliseconds: 0n } });
+          rows.push({ stepId: step.id, completionId: completion.id, workDate: dateKeyFromDatabase(completion.workDate),
+            employeeIds: completion.participants.map(item => item.employeeId), quantity: completion.goodQty, milliseconds: '0', poolId: pool.id });
+        }
+      }
+      continue;
+    }
+    const activePools = completions.flatMap(completion => completion.laborPool && completion.laborPool.status !== 'VOIDED' ? [completion.laborPool] : []);
+    let allocatedQty = activePools.reduce((sum, pool) => sum + pool.eligibleQty, 0);
+    let allocatedLabor = activePools.reduce((sum, pool) => sum + pool.totalStandardLaborMilliseconds, 0n);
+    if (allocatedQty + missing.reduce((sum, completion) => sum + completion.goodQty, 0) > batchTargetQty
+      || allocatedLabor > batchTotal) {
+      blocked.push({ stepId: step.id, reason: '批次有效贡献超过冻结目标或已计工时超过预算，需核对原记录' });
+      continue;
+    }
+    for (const completion of missing) {
+      const amount = allocateBatchLabor({ targetQty: batchTargetQty, totalMilliseconds: batchTotal,
+        existingQty: allocatedQty, existingMilliseconds: allocatedLabor, reportQty: completion.goodQty });
+      const row: (typeof rows)[number] = { stepId: step.id, completionId: completion.id,
+        workDate: dateKeyFromDatabase(completion.workDate), employeeIds: completion.participants.map(item => item.employeeId),
+        quantity: completion.goodQty, milliseconds: amount.toString() };
+      if (options.execute) {
+        const pool = await createCompletionLaborPool(tx, { completionId: completion.id, workOrderId: route.workOrderId,
+          stepId: step.id, workDate: completion.workDate, eligibleQty: completion.goodQty, timeBasis: 'per_batch',
+          standardMillisecondsPerUnit: completion.standardMillisecondsPerUnit, setupMilliseconds: completion.setupMilliseconds,
+          unitsPerProduct: completion.unitsPerProduct, countsForEfficiency: completion.countsForEfficiency,
+          standardSource: completion.standardSource, productTimeProfileVersion: completion.productTimeProfileVersion,
+          batchAllocation: { targetQty: batchTargetQty, totalMilliseconds: batchTotal, allocatedMilliseconds: amount } });
+        row.poolId = pool.id;
+        if (completion.autoAssignLabor) await autoAssignCompletionLaborPool(tx, { poolId: pool.id,
+          completionId: completion.id, employeeIds: row.employeeIds, userId: options.userId, now: options.now || new Date() });
+        await tx.processRouteActivity.create({ data: { routeId, stepId: step.id, action: 'allocate_batch_labor_proportionally',
+          content: `${step.processName} ${completion.goodQty} 件按批工时已归入原生产日期 ${row.workDate}`,
+          actorId: options.userId, detail: { ...row, policy: BATCH_LABOR_ALLOCATION_POLICY,
+            batchTargetQty, batchTotalMilliseconds: batchTotal.toString(), includesProportionalSetup: true } } });
+      }
+      rows.push(row);
+      allocatedQty += completion.goodQty;
+      allocatedLabor += amount;
+    }
+  }
+  return { routeId, rows, blocked };
+}
+
 async function createDeferredPerBatchLaborPools(
   tx: Prisma.TransactionClient,
   route: CompletionRouteRecord,
@@ -2456,7 +2555,8 @@ async function createDeferredPerBatchLaborPools(
     now: Date;
   },
 ): Promise<string[]> {
-  const createdPoolIds: string[] = [];
+  const proportional = await reconcileProportionalBatchLaborInTransaction(tx, route.id, { execute: true, userId: input.userId, now: input.now });
+  const createdPoolIds: string[] = proportional.rows.flatMap(row => row.poolId ? [row.poolId] : []);
   const candidates = route.steps.filter(step => (
     step.timeBasis === 'per_batch'
     && (step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
@@ -4102,24 +4202,10 @@ async function performProcessCompletion(
   let laborPoolPendingStandard = false;
   let autoAssignedEmployeeCount = 0;
   let autoAssignedLaborMilliseconds = 0;
-  const upstreamPermanentlyClosed = route.steps
-    .filter(step => (
-      step.executionMode === 'NORMAL'
-      && step.sequenceGroup < current.sequenceGroup
-    ))
-    .every(step => step.inputQty <= step.processedQty);
-  const perBatchInputStable = current.timeBasis !== 'per_batch'
-    || !await hasActiveUpstreamReworkBranch(tx, route, current.sequenceGroup);
   const laborPoolEligibleQty = reportQuantityBasis === 'action'
     ? reportQuantities.reportedUnitQty
     : current.timeBasis === 'per_batch'
-    ? (
-        current.processedQty >= current.inputQty
-        && upstreamPermanentlyClosed
-        && perBatchInputStable
-          ? current.goodOutputQty
-          : 0
-      )
+    ? 0 // Batch reports are allocated together below, retaining each report's day and participants.
     : goodQty;
   const laborUnitsPerProduct = reportQuantityBasis === 'action' ? 1 : current.unitsPerProduct;
   const hadEligibleOutputBefore = reportQuantityBasis === 'action'
@@ -4169,6 +4255,16 @@ async function performProcessCompletion(
     userId: input.userId,
     now,
   });
+  if (current.timeBasis === 'per_batch') {
+    const batchPool = await tx.processLaborPool.findUnique({ where: { completionId: completion.id },
+      include: { claims: { where: { status: 'ACTIVE' } } } });
+    if (batchPool) {
+      laborPoolId = batchPool.id;
+      laborPoolPendingStandard = batchPool.standardSource === 'pending_standard';
+      autoAssignedEmployeeCount = batchPool.claims.length;
+      autoAssignedLaborMilliseconds = Number(batchPool.claimedStandardLaborMilliseconds);
+    }
+  }
   const routeUpdate = await tx.workOrderProcessRoute.updateMany({
     where: {
       id: route.id,

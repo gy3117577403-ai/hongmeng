@@ -1,4 +1,4 @@
-import { attainmentCapacityMilliseconds, basisPoints } from '@/lib/attendance';
+import { basisPoints } from '@/lib/attendance';
 import type { AttendanceType } from '@/types';
 
 export type AttendanceOvertimeSource = 'confirmed_plan' | 'confirmed_attendance' | 'attendance_fallback' | 'none';
@@ -124,14 +124,11 @@ export function laborPerformanceMetrics(input: LaborPerformanceMetricInput): Lab
   const actualLaborMilliseconds = nonNegative(input.actualLaborMilliseconds);
   const exemptAbnormalMilliseconds = nonNegative(input.exemptAbnormalMilliseconds);
   const standardLaborMilliseconds = nonNegative(input.standardLaborMilliseconds);
-  const factorBasisPoints = Math.max(0, Math.min(10_000, nonNegative(input.attainmentFactorBasisPoints)));
   const accountedMilliseconds = actualLaborMilliseconds + exemptAbnormalMilliseconds;
   const overlapMilliseconds = Math.max(0, accountedMilliseconds - attendanceMilliseconds);
   const coveredMilliseconds = Math.min(attendanceMilliseconds, accountedMilliseconds);
-  const effectiveAttendanceMilliseconds = Math.max(0, attendanceMilliseconds - exemptAbnormalMilliseconds);
-  const targetCapacity = Math.round(
-    attainmentCapacityMilliseconds(effectiveAttendanceMilliseconds) * factorBasisPoints / 10_000,
-  );
+  const effectiveAttendanceMilliseconds = attendanceMilliseconds;
+  const targetCapacity = attendanceMilliseconds;
 
   return {
     accountedMilliseconds,
@@ -141,6 +138,6 @@ export function laborPerformanceMetrics(input: LaborPerformanceMetricInput): Lab
     efficiencyBasisPoints: basisPoints(standardLaborMilliseconds, actualLaborMilliseconds),
     effectiveAttendanceMilliseconds,
     attainmentCapacityMilliseconds: targetCapacity,
-    targetAttainmentBasisPoints: basisPoints(standardLaborMilliseconds, targetCapacity),
+    targetAttainmentBasisPoints: basisPoints(standardLaborMilliseconds + exemptAbnormalMilliseconds * 0.95, targetCapacity),
   };
 }

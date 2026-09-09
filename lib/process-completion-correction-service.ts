@@ -213,6 +213,13 @@ export async function correctProcessCompletionStandard(
             'PROCESS_COMPLETION_LABOR_POOL_VOIDED',
           );
         }
+        if (state.laborPool?.allocationPolicy === 'batch_proportional_v1') {
+          throw new ProcessCompletionWithdrawalError(
+            '该报工使用整批工时按贡献分摊，请通过工艺整批标准变更统一校正，不能只改一笔份额',
+            409,
+            'PROCESS_BATCH_LABOR_REQUIRES_BATCH_CORRECTION',
+          );
+        }
 
         const now = new Date();
         const before = {

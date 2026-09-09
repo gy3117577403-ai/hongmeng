@@ -1581,12 +1581,12 @@ test(
       assert.equal(perBatchDownstreamFirst.goodTransferredQty, 50);
       assert.equal(perBatchDownstreamFirst.remainingInputQty, 0);
       assert.equal(perBatchDownstreamFirst.routeCompleted, false);
-      assert.equal(perBatchDownstreamFirst.laborPoolId, null);
+      assert.ok(perBatchDownstreamFirst.laborPoolId);
       assert.equal(
         await prisma.processLaborPool.count({
           where: { stepId: perBatchDownstreamStep.id },
         }),
-        0,
+        1,
       );
 
       const perBatchUpstreamFinal = await completeProcessStep({
@@ -1618,7 +1618,7 @@ test(
         await prisma.processLaborPool.count({
           where: { stepId: perBatchDownstreamStep.id },
         }),
-        0,
+        1,
       );
 
       const perBatchDownstreamBeforeRework = await completeProcessStep({
@@ -1635,12 +1635,12 @@ test(
       assert.equal(perBatchDownstreamBeforeRework.goodTransferredQty, 30);
       assert.equal(perBatchDownstreamBeforeRework.remainingInputQty, 0);
       assert.equal(perBatchDownstreamBeforeRework.routeCompleted, true);
-      assert.equal(perBatchDownstreamBeforeRework.laborPoolId, null);
+      assert.ok(perBatchDownstreamBeforeRework.laborPoolId);
       assert.equal(
         await prisma.processLaborPool.count({
           where: { stepId: perBatchDownstreamStep.id },
         }),
-        0,
+        2,
       );
 
       const perBatchReworkRoute = await prisma.workOrderProcessRoute.findUniqueOrThrow({
@@ -1665,7 +1665,7 @@ test(
         await prisma.processLaborPool.count({
           where: { stepId: perBatchDownstreamStep.id },
         }),
-        0,
+        2,
       );
 
       const perBatchBeforeFinal = await prisma.workOrderProcessRoute.findUniqueOrThrow({
@@ -1698,17 +1698,12 @@ test(
         where: { stepId: perBatchDownstreamStep.id },
         orderBy: { createdAt: 'asc' },
       });
-      assert.equal(perBatchPools.length, 1);
-      assert.equal(perBatchPools[0].id, perBatchDownstreamFinal.laborPoolId);
-      assert.equal(perBatchPools[0].completionId, perBatchDownstreamFinal.completionId);
-      assert.equal(perBatchPools[0].eligibleQty, 100);
-      assert.equal(perBatchPools[0].claimedQty, 0);
-      assert.equal(perBatchPools[0].remainingQty, 100);
-      assert.equal(perBatchPools[0].standardMillisecondsPerUnit, 600_000);
-      assert.equal(perBatchPools[0].setupMilliseconds, 120_000);
-      assert.equal(perBatchPools[0].totalStandardLaborMilliseconds, 720_000n);
-      assert.equal(perBatchPools[0].remainingStandardLaborMilliseconds, 720_000n);
-      assert.equal(perBatchPools[0].status, 'OPEN');
+      assert.equal(perBatchPools.length, 3);
+      assert.deepEqual(perBatchPools.map(pool => pool.eligibleQty), [50, 30, 20]);
+      assert.deepEqual(perBatchPools.map(pool => pool.totalStandardLaborMilliseconds), [360_000n, 216_000n, 144_000n]);
+      assert.equal(perBatchPools.at(-1)?.id, perBatchDownstreamFinal.laborPoolId);
+      assert.equal(perBatchPools.reduce((sum, pool) => sum + pool.remainingStandardLaborMilliseconds, 0n), 720_000n);
+      assert.ok(perBatchPools.every(pool => pool.status === 'OPEN' && pool.claimedQty === 0 && pool.batchTargetQty === 100));
       const completedPerBatchOrder = await prisma.workOrder.findUniqueOrThrow({
         where: { id: perBatchOrder.id },
         include: { processRoute: true },

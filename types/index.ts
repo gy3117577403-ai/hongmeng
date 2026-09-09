@@ -2773,6 +2773,8 @@ export type ProcessLaborAccessDTO = {
 };
 
 export type EmployeeLaborClaimDetailDTO = {
+  /** Explicit in current reports; omitted historical payloads retain their original inclusion. */
+  countsForEfficiency?: boolean;
   id: string;
   poolId: string;
   employee: EmployeeDTO;
@@ -2907,7 +2909,17 @@ export type ReportAttendancePublicationStateDTO = 'future' | 'in_progress' | 'in
 export type ReportAttendanceCalendarDayTypeDTO = 'workday' | 'weekly_rest' | 'holiday' | 'temporary_workday';
 export type ReportAttendanceCalendarOverrideTypeDTO = 'default' | 'holiday' | 'temporary_workday' | null;
 
-export type ReportOperationsLaborRowDTO = {
+export type EmployeeHoursMetricFieldsDTO = {
+  attendanceDataIssue?: 'overtime_exceeds_attendance' | null;
+  regularAttendanceMilliseconds?: number;
+  recognizedOvertimeMilliseconds?: number;
+  creditedAbnormalMilliseconds?: number;
+  attainmentNumeratorMilliseconds?: number;
+  attainmentIncompleteDays?: number;
+  attainmentDataComplete?: boolean;
+};
+
+export type ReportOperationsLaborRowDTO = EmployeeHoursMetricFieldsDTO & {
   team: string;
   employeeCount: number;
   attendancePeople: number;
@@ -2936,7 +2948,7 @@ export type ReportOperationsLaborRowDTO = {
   attainmentBasisPoints: number | null;
 };
 
-export type ReportOperationsEmployeeDayDTO = {
+export type ReportOperationsEmployeeDayDTO = EmployeeHoursMetricFieldsDTO & {
   date: string;
   status: ReportOperationsDayStatusDTO;
   attendanceRequired: boolean;
@@ -2969,7 +2981,7 @@ export type ReportOperationsEmployeeDayDTO = {
   attainmentStream: AttainmentStream;
 };
 
-export type ReportOperationsEmployeeRowDTO = {
+export type ReportOperationsEmployeeRowDTO = EmployeeHoursMetricFieldsDTO & {
   employee: EmployeeDTO;
   team: string;
   position: string;
@@ -3027,7 +3039,7 @@ export type ReportOperationsDTO = {
     calendarRemark: string | null;
     isWorkday: boolean;
   }>;
-  summary: {
+  summary: EmployeeHoursMetricFieldsDTO & {
     employeeCount: number;
     teamCount: number;
     plannedMilliseconds: number;
@@ -3161,7 +3173,7 @@ export type ReportOperationsDTO = {
   dataNotes: string[];
 };
 
-export type EmployeeAttainmentRowDTO = {
+export type EmployeeAttainmentRowDTO = EmployeeHoursMetricFieldsDTO & {
   employee: EmployeeDTO;
   attainmentEligible: boolean;
   attainmentFactorBasisPoints: number;
@@ -3180,7 +3192,7 @@ export type EmployeeAttainmentRowDTO = {
   attendanceMissingDays: number;
   attendanceMissing: boolean;
   attainmentBasisPoints: number | null;
-  processEfficiencyBasisPoints: number;
+  processEfficiencyBasisPoints: number | null;
   rawAttendanceOutputBasisPoints: number | null;
   coverageBasisPoints: number | null;
   goodQty: number;
@@ -3194,7 +3206,13 @@ export type EmployeeAttainmentRowDTO = {
   claimDetails: EmployeeLaborClaimDetailDTO[];
 };
 
-export type EmployeeAttainmentDayDTO = {
+export type EmployeeAttainmentDayDTO = EmployeeHoursMetricFieldsDTO & {
+  plannedOvertimeMilliseconds?: number;
+  attendanceRequired?: boolean;
+  attainmentEligible?: boolean;
+  attainmentStream?: AttainmentStream;
+  attainmentFactorBasisPoints?: number;
+  isFuture?: boolean;
   date: string;
   attendanceStatus: 'missing' | 'draft' | 'confirmed';
   attendanceType: AttendanceType | null;
@@ -3218,7 +3236,7 @@ export type EmployeeAttainmentDayDTO = {
   attainmentCapacityMilliseconds: number;
   overtimeSource: 'confirmed_plan' | 'confirmed_attendance' | 'attendance_fallback' | 'none';
   includedInAttainment: boolean;
-  exclusionReason: 'leave' | 'rest' | 'absent' | 'missing_attendance' | 'zero_attendance' | 'excluded_stream' | null;
+  exclusionReason: 'future' | 'leave' | 'rest' | 'absent' | 'missing_attendance' | 'zero_attendance' | 'excluded_stream' | null;
 };
 
 export type ReportCompletedBatchStatusDTO =
@@ -3293,7 +3311,7 @@ export type EmployeeAttainmentReportDTO = {
   workforceLabel?: string;
   rangeStart: string;
   rangeEnd: string;
-  summary: {
+  summary: EmployeeHoursMetricFieldsDTO & {
     employeeCount: number;
     executionCount: number;
     claimCount: number;
@@ -3312,7 +3330,7 @@ export type EmployeeAttainmentReportDTO = {
     attendanceMissingDays: number;
     attendanceMissingCount: number;
     attainmentBasisPoints: number | null;
-    processEfficiencyBasisPoints: number;
+    processEfficiencyBasisPoints: number | null;
     rawAttendanceOutputBasisPoints: number | null;
     coverageBasisPoints: number | null;
     goodQty: number;

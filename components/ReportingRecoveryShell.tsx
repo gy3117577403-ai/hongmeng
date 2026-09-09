@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import '@/app/workspace/reporting-recovery/reporting-recovery.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, ArrowLeft, ArrowRight, BellRing, CheckCircle2, ClipboardCheck, Clock3, Loader2, RefreshCw, Search } from 'lucide-react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -18,11 +19,11 @@ async function readResponse<T>(response: Response): Promise<T> {
   return body as T;
 }
 
-export default function ReportingRecoveryShell({ user }: { user: CurrentUserDTO }) {
+export default function ReportingRecoveryShell({ user, embedded = false, initialSubmissionId = '', initialKeyword = '', onClose }: { user?: CurrentUserDTO; embedded?: boolean; initialSubmissionId?: string; initialKeyword?: string; onClose?: () => void }) {
   const [items, setItems] = useState<ReportSubmissionDto[]>([]), [total, setTotal] = useState(0);
   const [selectedId, setSelectedId] = useState(''), [preview, setPreview] = useState<ReportSubmissionPreview | null>(null);
-  const [query, setQuery] = useState(''), [status, setStatus] = useState('PENDING');
-  const [search, setSearch] = useState(''), [page, setPage] = useState(0), [cancelConfirm, setCancelConfirm] = useState(false);
+  const [query, setQuery] = useState(initialKeyword), [status, setStatus] = useState('PENDING');
+  const [search, setSearch] = useState(initialKeyword), [page, setPage] = useState(0), [cancelConfirm, setCancelConfirm] = useState(false);
   const [loading, setLoading] = useState(true), [previewLoading, setPreviewLoading] = useState(false), [saving, setSaving] = useState(false);
   const [error, setError] = useState(''), [feedback, setFeedback] = useState(''), [mobileDetail, setMobileDetail] = useState(false);
   const [sourceKey, setSourceKey] = useState(''), [mappingConfirmed, setMappingConfirmed] = useState(false), [advanceConfirmed, setAdvanceConfirmed] = useState(false);
@@ -41,15 +42,15 @@ export default function ReportingRecoveryShell({ user }: { user: CurrentUserDTO 
       setItems(body.data.items); setTotal(body.data.total);
       if (!initialLink.current) {
         initialLink.current = true;
-        const linkId = new URLSearchParams(window.location.search).get('id');
-        const keyword = new URLSearchParams(window.location.search).get('keyword');
+        const linkId = initialSubmissionId || new URLSearchParams(window.location.search).get('submissionId') || new URLSearchParams(window.location.search).get('id');
+        const keyword = initialKeyword || new URLSearchParams(window.location.search).get('keyword');
         if (keyword) setQuery(keyword);
         setSelectedId(linkId || body.data.items[0]?.id || '');
         if (linkId) { setStatus('ALL'); setMobileDetail(true); }
       }
     } catch (e) { if (sequence === requestSequence.current) setError(e instanceof Error ? e.message : '加载失败'); }
     finally { if (sequence === requestSequence.current) setLoading(false); }
-  }, [status, search, page]);
+  }, [status, search, page, initialSubmissionId, initialKeyword]);
 
   const loadPreview = useCallback(async (id: string) => {
     const sequence = ++previewSequence.current;
@@ -102,6 +103,7 @@ export default function ReportingRecoveryShell({ user }: { user: CurrentUserDTO 
       if (current?.status === 'CANCELLED') setFeedback('这笔申报已被取消，未继续核销。');
       else if (result.pending || current?.status !== 'COMPLETED') setFeedback(result.lastError || current?.lastError || '原申报已保留，尚未完成核销。请核对最新待处理项。');
       else setFeedback('原报工已完成核销并计入工时，处理消息已自动完成。员工无需重复报工。');
+      window.dispatchEvent(new Event('production-control-updated'));
       await Promise.all([loadList(true), loadPreview(submission.id)]);
     } catch (e) { setError(e instanceof Error ? e.message : '处理结果暂未确认，请刷新查看原申报；不要重新报工'); }
     finally { submissionLock.current = false; setSaving(false); }
@@ -113,26 +115,27 @@ export default function ReportingRecoveryShell({ user }: { user: CurrentUserDTO 
     try {
       await readResponse(await fetch(`/api/process-report-submissions/${encodeURIComponent(submission.id)}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'CANCEL', expectedVersion: submission.version }) }));
       setCancelConfirm(false); setFeedback('申报已取消，待处理占用已释放。');
+      window.dispatchEvent(new Event('production-control-updated'));
       await Promise.all([loadList(true), loadPreview(submission.id)]);
     } catch (e) { setError(e instanceof Error ? e.message : '取消结果未确认，请刷新查看原申报'); }
     finally { submissionLock.current = false; setSaving(false); }
   }
 
   const displayed = items.filter(item => (status === 'ALL' || item.status === status) && `${item.workOrderCode} ${item.specification || ''} ${item.processName} ${item.createdByName}`.toLowerCase().includes(query.trim().toLowerCase()));
-  return <main className={`hm-workbench-root hm-cockpit-root reporting-recovery-root ${mobileDetail ? 'show-detail' : ''}`}>
-    <AppWorkbenchHeader user={user} activeHref="/workspace/reporting-recovery" subtitle="报工待处理" menuItems={[]} hideHeader sidebarTriggerTargetId="report-recovery-nav" />
-    <header className="rr-header"><div id="report-recovery-nav" className="hm-cockpit-navigation-trigger" /><span className="rr-header-icon"><ClipboardCheck /></span><div><h1>报工待处理</h1><p>保留原申报 · 核对后自动续报</p></div>{user.access.capabilities.includes('NOTIFICATIONS:READ') && <Link href="/workspace/messages"><BellRing size={17} />我的消息</Link>}<button disabled={loading || saving} onClick={() => { setError(''); void loadList(); if (selectedId) void loadPreview(selectedId); }}><RefreshCw size={17} className={loading ? 'spin' : ''} />刷新</button></header>
+  return <main className={`${embedded ? 'reporting-recovery-embedded' : 'hm-workbench-root hm-cockpit-root'} reporting-recovery-root ${mobileDetail ? 'show-detail' : ''}`}>
+    {!embedded && user && <AppWorkbenchHeader user={user} activeHref="/production" subtitle="报工资料核对" menuItems={[]} hideHeader sidebarTriggerTargetId="report-recovery-nav" />}
+    <header className="rr-header"><div id="report-recovery-nav" className="hm-cockpit-navigation-trigger" /><span className="rr-header-icon"><ClipboardCheck /></span><div><h1>报工资料核对</h1><p>原申报留在生产现场 · 普通报工自动记工</p></div>{user?.access.capabilities.includes('NOTIFICATIONS:READ') && <Link href="/workspace/messages"><BellRing size={17} />我的消息</Link>}<button disabled={loading || saving} onClick={() => { setError(''); void loadList(); if (selectedId) void loadPreview(selectedId); }}><RefreshCw size={17} className={loading ? 'spin' : ''} />刷新</button>{onClose && <button type="button" disabled={saving} onClick={onClose} aria-label="关闭资料核对">返回报工</button>}</header>
     {error && <div className="rr-alert error" role="alert"><AlertCircle size={19} />{error}</div>}
     {feedback && <div className={`rr-alert ${submission?.status === 'COMPLETED' ? 'success' : ''}`} role="status">{submission?.status === 'COMPLETED' ? <CheckCircle2 size={19} /> : <Clock3 size={19} />}{feedback}</div>}
     <div className="rr-layout"><aside className="rr-list"><div className="rr-list-top"><strong>我发起或待我处理</strong><span>{total}</span></div><label className="rr-search"><Search size={17} /><input aria-label="搜索报工申报" value={query} onChange={e => setQuery(e.target.value)} placeholder="工单、产品、工序、申报人" /></label><div className="rr-tabs" role="tablist">{[['PENDING', '待处理'], ['COMPLETED', '已核销'], ['ALL', '全部']].map(([value, label]) => <button key={value} role="tab" aria-selected={status === value} onClick={() => { setStatus(value); setPage(0); }}>{label}</button>)}</div>
-      <div className="rr-list-scroll">{displayed.map(item => <button key={item.id} className={`rr-item ${selectedId === item.id ? 'active' : ''}`} aria-pressed={selectedId === item.id} onClick={() => { setSelectedId(item.id); setMobileDetail(true); window.history.replaceState(null, '', '/workspace/reporting-recovery?id=' + encodeURIComponent(item.id)); }}><span className={`rr-badge ${item.status.toLowerCase()}`}>{statusLabels[item.status]}</span><strong>{item.specification || item.productName} · {item.processName}</strong><small>{item.workOrderCode}</small><p>{item.reasonLabel}</p><footer><span>{item.createdByName} · {displayTime(item.createdAt)}</span>{item.canResolve && item.status === 'PENDING' && <b>待我处理</b>}</footer></button>)}{!displayed.length && <div className="rr-empty"><ClipboardCheck size={36} /><p>{loading ? '正在加载申报…' : '当前条件下暂无记录'}</p></div>}</div><nav className="rr-pagination" aria-label="申报翻页"><button disabled={page === 0 || loading} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page + 1} / {Math.max(1, Math.ceil(total / 30))}</span><button disabled={(page + 1) * 30 >= total || loading} onClick={() => setPage(value => value + 1)}>下一页</button></nav>
+      <div className="rr-list-scroll">{displayed.map(item => <button key={item.id} className={`rr-item ${selectedId === item.id ? 'active' : ''}`} aria-pressed={selectedId === item.id} onClick={() => { setSelectedId(item.id); setMobileDetail(true); if (!embedded) { const next = new URL(window.location.href); next.searchParams.set('submissionId', item.id); window.history.replaceState(null, '', next.pathname + next.search); } }}><span className={`rr-badge ${item.status.toLowerCase()}`}>{statusLabels[item.status]}</span><strong>{item.specification || item.productName} · {item.processName}</strong><small>{item.workOrderCode}</small><p>{item.reasonLabel}</p><footer><span>{item.createdByName} · {displayTime(item.createdAt)}</span>{item.canResolve && item.status === 'PENDING' && <b>待我处理</b>}</footer></button>)}{!displayed.length && <div className="rr-empty"><ClipboardCheck size={36} /><p>{loading ? '正在加载申报…' : '当前条件下暂无记录'}</p></div>}</div><nav className="rr-pagination" aria-label="申报翻页"><button disabled={page === 0 || loading} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page + 1} / {Math.max(1, Math.ceil(total / 30))}</span><button disabled={(page + 1) * 30 >= total || loading} onClick={() => setPage(value => value + 1)}>下一页</button></nav>
     </aside><section className="rr-workspace"><button className="rr-mobile-back" onClick={() => setMobileDetail(false)}><ArrowLeft size={16} />返回列表</button>{previewLoading ? <div className="rr-empty"><Loader2 className="spin" /><p>正在核对最新工序与来源…</p></div> : preview && submission ? <>
       <header className="rr-detail-header"><div><span className={`rr-badge ${submission.status.toLowerCase()}`}>{statusLabels[submission.status]}</span><h2>{submission.processName}</h2><p>{submission.specification || submission.productName} · {submission.workOrderCode}</p></div><small>申报编号<br />{submission.id}</small></header>
       <div className="rr-steps"><span className="done"><CheckCircle2 size={17} />{submission.reasonCode === 'STANDARD_MISSING' ? '数量已登记' : '已保存申报'}</span><ArrowRight size={16} /><span className={submission.status === 'COMPLETED' ? 'done' : 'active'}>{submission.status === 'COMPLETED' ? <CheckCircle2 size={17} /> : <Clock3 size={17} />}核对并续报</span><ArrowRight size={16} /><span className={submission.status === 'COMPLETED' ? 'done' : ''}>数量核销 · 工时入账</span></div>
       <article className="rr-card"><h3>原始申报</h3><dl className="rr-facts"><div><dt>申报人 / 生产日期</dt><dd>{submission.createdByName} / {submission.workDate}</dd></div><div><dt>作业人员</dt><dd>{submission.employeeNames.join('、') || '—'}</dd></div><div><dt>报工动作 / 动作不良</dt><dd>{submission.reportedUnitQty} / {submission.reportedDefectUnitQty} {submission.reportUnitLabel}</dd></div><div><dt>整套数量 / 整套不良</dt><dd>{submission.processedQty} / {submission.defectQty} 套</dd></div></dl>{submission.status === 'PENDING' && <p className="rr-note">{submission.reasonCode === 'STANDARD_MISSING' ? '原数量已登记，工时仍待核定。处理时只补计原记录工时，请勿重复申报。' : '申报已保存；最终核销和工时结果以处理成功回执为准，请勿重复申报。'}</p>}</article>
       <article className="rr-card rr-handler"><BellRing size={22} /><div><h3>{submission.status === 'PENDING' ? submission.reasonLabel : statusLabels[submission.status]}</h3><p>处理账号：{submission.assigneeNames.join('、') || '系统正在匹配可处理账号'}</p>{submission.lastError && <p role="status" className="rr-last-error">{submission.lastError}</p>}</div></article>
       {submission.status === 'PENDING' && <>
-        {!!preview.blockers.length && <div className="rr-alert"><AlertCircle size={20} /><div>{preview.blockers.map((text, index) => <p key={index}>{text}</p>)}{user.access.capabilities.includes('PROCESS:READ') && <Link href={productTimeConfigurationRoute(undefined, { workOrderId: submission.workOrderId, stepId: submission.stepId, from: 'workflow' })}>打开本工单工序与工时配置</Link>}</div></div>}
+        {!!preview.blockers.length && <div className="rr-alert"><AlertCircle size={20} /><div>{preview.blockers.map((text, index) => <p key={index}>{text}</p>)}{user?.access.capabilities.includes('PROCESS:READ') && <Link href={productTimeConfigurationRoute(undefined, { workOrderId: submission.workOrderId, stepId: submission.stepId, from: 'workflow' })}>打开本工单工序与工时配置</Link>}</div></div>}
         {preview.actions.some(action => action.code === 'REPAIR_STANDARD') && <article className="rr-card"><h3>同步当前有效工时标准</h3><p>确认时重新检查该工序的有效报工与标准版本，并成组同步计量口径和工时。</p><div className="rr-standard-diff"><span>当前：{preview.standardPreview.current.reportQuantityBasis === 'action' ? '按动作' : '按整套'} · {preview.standardPreview.current.unitsPerProduct} {preview.standardPreview.current.reportUnitLabel}/套</span><ArrowRight size={18} /><strong>生效标准：{preview.standardPreview.published ? `${preview.standardPreview.published.reportQuantityBasis === 'action' ? '按动作' : '按整套'} · ${preview.standardPreview.published.unitsPerProduct} ${preview.standardPreview.published.reportUnitLabel}/套` : '待补齐'}</strong></div></article>}
         {needsSource && <article className="rr-card"><h3>确认半成品来源</h3><p>按所选批次核销并保留原生产日期；根据实际情况确认续作或历史补录。</p><div className="rr-source-options">{preview.sourceOptions.map(option => <label key={option.key} className={sourceKey === option.key ? 'selected' : ''}><input type="radio" name="recovery-source" value={option.key} checked={sourceKey === option.key} disabled={!preview.canResolve || saving || (!preview.quantityMappingRequired && option.remainingQty < Math.max(1, submission.processedQty - submission.defectQty))} onChange={() => { setSourceKey(option.key); setAdvanceConfirmed(false); }} /><div><strong>{option.lotNo}</strong><span>{option.label}</span>{option.parts?.map(part => <small key={part.key}>{part.action === 'SCHEDULE_REMAINING' ? '补排至原作业周' : '承接现有安排'} {part.quantity} 件 · {part.targetWeekStartDate || '尚未排周'}</small>)}<small>本工序剩余 {option.remainingQty} 套 · {option.targetWeekStartDate || '尚未安排'}{option.targetWeekEndDate ? ' 至 ' + option.targetWeekEndDate : ''}</small></div></label>)}</div>{source && !sourceSufficient && <p role="alert" className="rr-note">所选来源不足以承接原申报，请选择足额或合并方案。</p>}{!preview.sourceOptions.length && <p className="rr-note">暂无可用半成品来源，原申报继续保留；请由处理人核对批次安排后刷新。</p>}{source?.action === 'HISTORICAL_CONFIRMATION' && <label className="rr-check"><input type="checkbox" checked={advanceConfirmed} onChange={e => setAdvanceConfirmed(e.target.checked)} />确认这是原申报日期实际完成的历史作业；仅核销本次数量和工时，原剩余排程保持不变</label>}{source?.action === 'FUTURE_CONFIRMATION' && <label className="rr-check"><input type="checkbox" checked={advanceConfirmed} onChange={e => setAdvanceConfirmed(e.target.checked)} />确认将未来安排的剩余部分调整到本次生产日期所在周</label>}</article>}
         {preview.quantityMappingRequired && <article className="rr-card"><h3>{mappingToAction ? '核对变更后的动作与整套数量' : '核对实际完成的整套数量'}</h3><p>工序计量口径已变化，请核对本次实际完成数量；系统不会猜测动作数与整套数之间的换算结果。</p><div className="rr-fields">{mappingToAction && <><label>实际动作数量<input type="number" min="1" step="1" value={reportedUnitQty} onChange={e => { setReportedUnitQty(e.target.value); setMappingConfirmed(false); }} /></label><label>动作不良数量<input type="number" min="0" step="1" value={reportedDefectUnitQty} onChange={e => { setReportedDefectUnitQty(e.target.value); setMappingConfirmed(false); }} /></label></>}<label>形成完整产品（套）<input type="number" min="0" step="1" value={processedQty} onChange={e => { setProcessedQty(e.target.value); setMappingConfirmed(false); }} /></label><label>整套不良（套）<input type="number" min="0" step="1" value={defectQty} onChange={e => { setDefectQty(e.target.value); setMappingConfirmed(false); }} /></label></div><label className="rr-check"><input type="checkbox" checked={mappingConfirmed} onChange={e => setMappingConfirmed(e.target.checked)} />已核对动作数量与实际整套数量</label></article>}

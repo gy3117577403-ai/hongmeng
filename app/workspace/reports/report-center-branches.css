@@ -931,3 +931,13 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
   .report-center-branch-workbench *::before,
   .report-center-branch-workbench *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Personal hours use one consistent seven-column ledger. */
+.report-employee-table > div,.report-employee-table > button { grid-template-columns:minmax(170px,1.45fr) repeat(5,minmax(84px,.8fr)) minmax(140px,1fr); }
+.report-team-table > div,.report-team-table > article { grid-template-columns:minmax(130px,1.2fr) .6fr repeat(5,minmax(82px,.8fr)) minmax(130px,1fr); }
+.report-employee-table button small { white-space:normal; line-height:1.5; }
+.report-employee-table .attainment strong,.report-team-table article b { color:var(--report-orange,#e75b00); }
+.report-employee-table .attainment i b { background:var(--report-orange,#e75b00); }
+@media(max-width:1250px){.report-employee-table > div,.report-employee-table > button{min-width:850px}.report-team-table > div,.report-team-table > article{min-width:950px}}
+
+.report-branch-export-error{display:flex;align-items:center;gap:10px;padding:12px 16px;border:1px solid #f4bab0;border-radius:12px;background:#fff2ee;color:#a63823}.report-branch-export-error button{margin-left:auto;border:1px solid #edb8ad;border-radius:8px;background:white;padding:7px 12px;cursor:pointer}

@@ -134,6 +134,6 @@ test('performance separates utilization, standard efficiency, target attainment,
   assert.equal(result.overlapMilliseconds, 1 * hour);
   assert.equal(result.unexplainedMilliseconds, 0);
   assert.equal(result.efficiencyBasisPoints, 8_571);
-  assert.equal(result.attainmentCapacityMilliseconds, 5.7 * hour);
-  assert.equal(result.targetAttainmentBasisPoints, 10_526);
+  assert.equal(result.attainmentCapacityMilliseconds, 8 * hour);
+  assert.equal(result.targetAttainmentBasisPoints, 9_875);
 });

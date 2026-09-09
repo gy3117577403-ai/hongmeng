@@ -5,6 +5,7 @@ import {
 } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
+import { allocateBatchLabor, BATCH_LABOR_ALLOCATION_POLICY } from '@/lib/batch-labor-allocation';
 import { dateKeyFromDatabase, parseWorkDate } from '@/lib/attendance';
 import {
   authorizeLaborClaim,
@@ -468,6 +469,7 @@ export async function resolveProcessLaborPoolStandard(command: ResolveProcessLab
 export async function resolveProcessLaborPoolStandardInTransaction(
   tx: Prisma.TransactionClient,
   command: ResolveProcessLaborPoolStandardCommand,
+  options: { systemContinuation?: boolean } = {},
 ): Promise<{ pool: ProcessLaborPoolDTO }> {
   const poolId = cleanProcessText(command.poolId, 80);
   const expectedVersion = parseExpectedPoolVersion(command.expectedVersion);
@@ -572,6 +574,44 @@ export async function resolveProcessLaborPoolStandardInTransaction(
           409,
           'PROCESS_LABOR_POOL_NOT_PENDING_STANDARD',
         );
+      }
+      if (pool.allocationPolicy === BATCH_LABOR_ALLOCATION_POLICY) {
+        if (timeBasis !== 'per_batch') throw new ProcessLaborServiceError('原申报为按批贡献口径，不能补为按件标准', 409, 'PROCESS_BATCH_STANDARD_BASIS_CONFLICT');
+        const siblings = await tx.processLaborPool.findMany({ where: { stepId: pool.stepId, status: { not: 'VOIDED' }, completion: { voidedAt: null } },
+          orderBy: [{ workDate: 'asc' }, { createdAt: 'asc' }], include: { completion: { include: { participants: { orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] } } } } });
+        const target = pool.batchTargetQty || 0;
+        const total = BigInt(standardMillisecondsPerUnit) + BigInt(setupMilliseconds);
+        if (target <= 0 || siblings.some(item => item.allocationPolicy !== BATCH_LABOR_ALLOCATION_POLICY || item.batchTargetQty !== target
+          || (item.batchTotalStandardLaborMilliseconds !== null && item.batchTotalStandardLaborMilliseconds !== total))) {
+          throw new ProcessLaborServiceError('整批已有不同标准或旧计工口径，请走整批标准变更，不能局部覆盖', 409, 'PROCESS_BATCH_STANDARD_BUDGET_CONFLICT');
+        }
+        const settled = siblings.filter(item => item.standardSource !== 'pending_standard');
+        let existingQty = settled.reduce((sum, item) => sum + item.eligibleQty, 0);
+        let existingLabor = settled.reduce((sum, item) => sum + item.totalStandardLaborMilliseconds, 0n);
+        const auditActor = options.systemContinuation ? null : command.userId;
+        for (const pending of siblings.filter(item => item.standardSource === 'pending_standard')) {
+          const amount = allocateBatchLabor({ targetQty: target, totalMilliseconds: total, existingQty,
+            existingMilliseconds: existingLabor, reportQty: pending.eligibleQty });
+          const updated = await tx.processLaborPool.updateMany({ where: { id: pending.id, version: pending.version, status: 'LOCKED', claimedQty: 0 },
+            data: { status: 'OPEN', version: { increment: 1 }, standardMillisecondsPerUnit, setupMilliseconds,
+              unitsPerProduct, totalStandardLaborMilliseconds: amount, remainingStandardLaborMilliseconds: amount,
+              batchTotalStandardLaborMilliseconds: total, standardSource: 'manual_backfill', countsForEfficiency: command.countsForEfficiency !== false } });
+          if (updated.count !== 1) throw new ProcessLaborServiceError('同批申报已变化，请刷新重试', 409, 'PROCESS_LABOR_VERSION_CONFLICT');
+          await tx.processCompletion.update({ where: { id: pending.completionId }, data: { timeBasis, standardMillisecondsPerUnit,
+            setupMilliseconds, unitsPerProduct, standardSource: 'manual_backfill', countsForEfficiency: command.countsForEfficiency !== false } });
+          if (pending.completion.autoAssignLabor) await autoAssignCompletionLaborPool(tx, { poolId: pending.id,
+            completionId: pending.completionId, employeeIds: pending.completion.participants.map(item => item.employeeId), userId: auditActor, now: new Date() });
+          await tx.operationLog.create({ data: { userId: auditActor, action: 'resolve_process_labor_standard', targetType: 'process_labor_pool', targetId: pending.id,
+            detail: { reason, systemContinuation: options.systemContinuation === true, authorizationAssigneeId: options.systemContinuation ? command.userId : null,
+              allocationPolicy: BATCH_LABOR_ALLOCATION_POLICY, batchTargetQty: target, batchTotalMilliseconds: total.toString(),
+              allocatedMilliseconds: amount.toString(), workDate: dateKeyFromDatabase(pending.workDate), completionId: pending.completionId } } });
+          existingQty += pending.eligibleQty; existingLabor += amount;
+        }
+        if (updateStepStandard) await tx.workOrderProcessStep.update({ where: { id: pool.stepId }, data: {
+          timeBasis, standardMillisecondsPerUnit, setupMilliseconds, unitsPerProduct, standardSource: 'manual_backfill',
+          countsForEfficiency: command.countsForEfficiency !== false } });
+        await tx.workOrderProcessRoute.update({ where: { id: pool.step.routeId }, data: { version: { increment: 1 } } });
+        return { pool: serializeProcessLaborPool(await tx.processLaborPool.findUniqueOrThrow({ where: { id: pool.id }, include: processLaborPoolInclude })) };
       }
       if (timeBasis === 'per_batch') {
         const [completionCount, laborPoolCount] = await Promise.all([
@@ -686,18 +726,20 @@ export async function resolveProcessLaborPoolStandardInTransaction(
           poolId: pool.id,
           completionId: pool.completionId,
           employeeIds: pool.completion.participants.map(participant => participant.employeeId),
-          userId: command.userId,
+          userId: options.systemContinuation ? null : command.userId,
           now: new Date(),
         })
         : { employeeCount: 0, standardLaborMilliseconds: 0 };
       await tx.operationLog.create({
         data: {
-          userId: command.userId,
+          userId: options.systemContinuation ? null : command.userId,
           action: 'resolve_process_labor_standard',
           targetType: 'process_labor_pool',
           targetId: pool.id,
           detail: {
             completionId: pool.completionId,
+            systemContinuation: options.systemContinuation === true,
+            authorizationAssigneeId: options.systemContinuation ? command.userId : null,
             workOrderId: pool.workOrderId,
             stepId: pool.stepId,
             timeBasis,

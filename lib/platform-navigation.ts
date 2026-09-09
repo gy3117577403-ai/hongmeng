@@ -21,7 +21,6 @@ export const PLATFORM_NAVIGATION_GROUPS: PlatformNavigationGroup[] = [
     { href: '/weekly-plan-center', label: '计划中心', modeSwitchable: true, openModeOnEnter: false },
     { href: '/workspace/daily-plans', label: '日出货计划' },
     { href: '/workspace/weekly-processes', label: '周工序总览' },
-    { href: '/workspace/reporting-recovery', label: '报工待处理' },
   ] },
   { id: 'quality', label: '质量中心', items: [
     { href: '/workspace/quality', label: '质量管理' },

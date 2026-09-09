@@ -170,6 +170,10 @@ jobs:
         run: npm run test:sample-integration
       - name: Type check
         run: npx tsc --noEmit
+      - name: Employee hours and proportional batch labor PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/employee-hours-report-integration.test.ts tests/batch-labor-proportional-integration.test.ts
       - name: Pending report coverage PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

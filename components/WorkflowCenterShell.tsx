@@ -901,7 +901,6 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             ))}
           </div>
           <div className="workflow-command-actions">
-            <a href="/workspace/reporting-recovery"><Clock3 size={14} />报工待处理</a>
             {canReviewProcessChanges && <ProcessRouteChangeInbox initialChangeId={initialProcessRouteChangeId} />}
             {deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回生产执行</a>}
             {deepLink.fromPlanning && !deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回计划中心</a>}

@@ -363,8 +363,8 @@ for (const { missingInspection, batch } of [{ missingInspection: false, batch: f
       assert.equal(await prisma.processQuantityMovement.count({ where: { workOrderId: f.order.id } }), movementCount);
       const poolsAfter = await prisma.processLaborPool.findMany({ where: { workOrderId: f.order.id }, orderBy: { id: 'asc' }, include: { claims: true } });
       assert.deepEqual(poolsAfter.filter(pool => poolsBefore.some(before => before.id === pool.id)), poolsBefore);
-      assert.equal(poolsAfter.length - poolsBefore.length, batch ? 1 : 0, 'only previously deferred batch labor is newly created');
-      if (batch) assert.equal(poolsAfter.find(pool => !poolsBefore.some(before => before.id === pool.id))?.totalStandardLaborMilliseconds, 1000n);
+      assert.equal(poolsAfter.length - poolsBefore.length, 0, 'upstream coverage must not add labor already earned at reporting');
+      if (batch) assert.equal(poolsAfter.find(pool => pool.allocationPolicy === 'batch_proportional_v1')?.totalStandardLaborMilliseconds, 1000n);
       assert.deepEqual(await prisma.processCompletion.findMany({ where: { routeId: f.routeId }, select: { id: true, processedQty: true, completedAt: true, workDate: true }, orderBy: { id: 'asc' } }), reportsBefore);
       assert.equal((await recover(f.routeId)).repairedRouteIds.includes(f.routeId), false);
       if (missingInspection) {

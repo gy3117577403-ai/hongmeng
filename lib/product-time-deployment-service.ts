@@ -37,6 +37,7 @@ import {
 } from '@/lib/process-route-change-daily-task-sync';
 import { productTimeRouteActivation } from '@/lib/process-routing';
 import { prisma } from '@/lib/prisma';
+import { repriceBatchLaborPools } from '@/lib/batch-labor-allocation';
 import { completionLaborUnitsPerProduct, processReportContractTransitionIssue } from '@/lib/process-report-contract';
 
 type Tx = Prisma.TransactionClient;
@@ -1080,6 +1081,8 @@ async function correctHistoricalStandard(
   const setupPoolId = standard.timeBasis === 'per_batch'
     ? eligiblePools.at(-1)?.laborPool?.id || null
     : eligiblePools[0]?.laborPool?.id || null;
+  const batchTotal = BigInt(standard.standardMillisecondsPerUnit) + BigInt(standard.setupMilliseconds);
+  const batchAmounts = repriceBatchLaborPools(eligiblePools.flatMap(item => item.laborPool ? [item.laborPool] : []), standard.timeBasis, batchTotal);
   // Pools/ACTIVE claims are the authoritative modern attainment ledger. Only
   // when no pool exists may a legacy ProcessExecution carry setup time. A raw
   // completion snapshot is the final fallback. This keeps setup once across a
@@ -1133,6 +1136,7 @@ async function correctHistoricalStandard(
       setupMilliseconds: effectiveSetup,
       unitsPerProduct: laborUnitsPerProduct,
     });
+    if (batchAmounts.has(pool.id)) snapshot.totalStandardLaborMilliseconds = batchAmounts.get(pool.id)!;
     let claimedQty = 0;
     let claimedLabor = 0n;
     const replacementLaborByClaim = redistributeStandardLaborByExistingShares({
@@ -1204,6 +1208,7 @@ async function correctHistoricalStandard(
         remainingStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds - claimedLabor,
         countsForEfficiency: standard.countsForEfficiency,
         standardSource: 'product_time_deployment',
+        ...(batchAmounts.has(pool.id) ? { batchTotalStandardLaborMilliseconds: batchTotal } : {}),
         productTimeProfileVersion: input.profile.version,
         version: { increment: 1 },
       },

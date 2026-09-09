@@ -56,3 +56,8 @@ test('production and planning retain direct entry and sample mode without forcin
   const warehouse = PLATFORM_NAVIGATION_GROUPS.find(group => group.id === 'materials')!.items.find(item => item.href === '/workspace/warehouse')!;
   assert.equal(platformNavigationHref(warehouse, '/production?branch=samples', 'sample'), '/workspace/warehouse?chooseMode=1&branch=samples');
 });
+
+test('report recovery belongs to the production workbench rather than a navigation branch', () => {
+  assert.equal(PLATFORM_NAVIGATION_GROUPS.flatMap(group => group.items).some(item => item.href === '/workspace/reporting-recovery'), false);
+  assert.equal(activePlatformNavigationItem('/production?recovery=1&submissionId=one')?.label, '生产执行');
+});

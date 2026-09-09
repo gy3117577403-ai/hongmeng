@@ -126,10 +126,13 @@ export async function POST(
           reportedDefectUnitQty: body.reportedDefectUnitQty,
           defectDisposition: body.defectDisposition,
         });
-    if ('pending' in data) return data.pending
-      ? NextResponse.json({ ok: true, pending: true, submission: data.submission }, { status: 202 })
-      : NextResponse.json({ ok: true, data: data.data });
-    return NextResponse.json({ ok: true, data });
+    if ('pending' in data && data.pending) return NextResponse.json({ ok: true, pending: true, submission: data.submission }, { status: 202 });
+    const completed = 'pending' in data ? data.data : data;
+    const completionIds = 'items' in completed ? completed.items.map(item => item.result.completionId) : [completed.completionId];
+    const personal = await prisma.processLaborClaim.aggregate({ where: { employeeId: currentEmployee.id,
+      status: 'ACTIVE', pool: { completionId: { in: completionIds } } }, _sum: { standardLaborMilliseconds: true } });
+    return NextResponse.json({ ok: true, data: { ...completed, workDate: body.workDate,
+      personalLaborMilliseconds: Number(personal._sum.standardLaborMilliseconds || 0n) } });
   } catch (error) {
     if (error instanceof ForbiddenError) {
       return forbidden(error.message);

@@ -121,8 +121,10 @@ test(
         actualLaborMilliseconds: 7 * 60 * minute,
         attendanceConfirmed: true,
       }]);
-      assert.equal(attainment.effectiveProductionMilliseconds, 440 * minute);
-      assert.equal(attainment.attainmentCapacityMilliseconds, 418 * minute);
+      assert.equal(attainment.effectiveProductionMilliseconds, 480 * minute);
+      assert.equal(attainment.attainmentCapacityMilliseconds, 480 * minute);
+      assert.equal(attainment.creditedAbnormalMilliseconds, 38 * minute);
+      assert.equal(attainment.attainmentBasisPoints, 9500);
     } finally {
       await prisma.abnormalTimeEvent.deleteMany({
         where: { workOrderId: { in: [firstOrder.id, secondOrder.id] } },
