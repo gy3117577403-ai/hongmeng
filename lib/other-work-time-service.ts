@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Prisma, OtherWorkTimeStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import { employeePolicyOnDate } from '@/lib/employee-attainment-policy-service';
 import { parseWorkDate, dateKeyFromDatabase } from '@/lib/attendance';
 import { resolveAccessContext, type AccessGrant } from '@/lib/department-access';
 import { legacyFallbackGrants } from '@/lib/legacy-access-policy';
@@ -132,6 +133,17 @@ async function notify(tx: Tx, row: RecordWithDetail, actor: Actor, action: strin
     sourceType: 'other_work_time', sourceId: row.id, actorId: actor.id, recipientUserIds: ids });
 }
 
+export async function refreshOtherWorkAfterPolicyChange(tx: Tx, requestId: string, actorId: string) {
+  const row = await tx.otherWorkTimeRequest.findUniqueOrThrow({ where: { id: requestId }, include: otherWorkInclude });
+  if (row.status !== 'PENDING') return;
+  await tx.systemNotificationRecipient.updateMany({ where: { notification: { sourceType: 'other_work_time', sourceId: row.id }, completedAt: null },
+    data: { completedAt: new Date(), completionKind: 'SYSTEM', completionReason: '调岗后重新分配审批范围' } });
+  await createSystemNotification(tx, { eventType: 'other_work_policy_change', dedupeKey: `other-work-policy:${row.id}:${row.version}`,
+    category: 'APPROVAL', title: row.employeeNameSnapshot + '的其他工时待审批', body: '调岗口径已同步 · ' + dateKeyFromDatabase(row.workDate),
+    targetRoute: '/workspace/other-hours/approvals?id=' + row.id, sourceType: 'other_work_time', sourceId: row.id,
+    actorId, recipientUserIds: await reviewerIds(tx, row) });
+}
+
 export async function createOtherWork(actor: Actor, data: Record<string, unknown>) {
   const input = parseOtherWorkInput(data, actor);
   const employeeId = typeof data.employeeId === 'string' && actor.laborRole === 'ADMIN' ? data.employeeId : actor.employeeId;
@@ -159,17 +171,19 @@ export async function createOtherWork(actor: Actor, data: Record<string, unknown
       if (await tx.otherWorkTimeRequest.count({ where: { correctionOfId, status: { in: ['DRAFT', 'PENDING', 'APPROVED'] } } })) throw new OtherWorkError('原记录已有更正申请，请处理现有申请', 409);
     }
     const attendance = await tx.attendanceRecord.findFirst({ where: { employeeId, workDate: input.workDate } });
+    const datedPolicy = await employeePolicyOnDate(tx, employee, input.workDate);
+    const useDatedPolicy = !attendance?.attainmentPolicyOverride && (Boolean(datedPolicy.effectiveDate) || !attendance);
     const membership = await tx.productionPlanningMembership.findFirst({ where: { employeeId, isActive: true,
       effectiveFrom: { lte: input.workDate }, OR: [{ effectiveTo: null }, { effectiveTo: { gte: input.workDate } }], teamId: { not: null } }, include: { team: true }, orderBy: { effectiveFrom: 'desc' } });
-    const historicalTeam = attendance?.teamSnapshot;
+    const historicalTeam = useDatedPolicy ? datedPolicy.policy.team : attendance?.teamSnapshot;
     const teamName = historicalTeam || membership?.team?.name || employee.team;
     const team = historicalTeam
       ? await tx.productionTeam.findFirst({ where: { OR: [{ name: historicalTeam }, { legacyTeamName: historicalTeam }, { code: historicalTeam }] } })
       : membership?.team || (teamName ? await tx.productionTeam.findFirst({ where: { OR: [{ name: teamName }, { legacyTeamName: teamName }, { code: teamName }] } }) : null);
     const row = await tx.otherWorkTimeRequest.create({ data: { ...input, employeeId, createdById: actor.id,
       employeeNameSnapshot: employee.name, employeeNoSnapshot: employee.employeeNo, teamSnapshot: historicalTeam || team?.name || teamName,
-      teamIdSnapshot: team?.id, attainmentEligibleSnapshot: attendance?.attainmentEligibleSnapshot ?? employee.attainmentEligible,
-      attainmentStreamSnapshot: attendance?.attainmentStreamSnapshot ?? employee.attainmentStream,
+      teamIdSnapshot: team?.id, attainmentEligibleSnapshot: useDatedPolicy ? datedPolicy.policy.attainmentEligible : attendance?.attainmentEligibleSnapshot ?? datedPolicy.policy.attainmentEligible,
+      attainmentStreamSnapshot: useDatedPolicy ? datedPolicy.policy.attainmentStream : attendance?.attainmentStreamSnapshot ?? datedPolicy.policy.attainmentStream,
       categoryNameSnapshot: category.name, correctionOfId, idempotencyKey: key, requestHash: hash }, include: otherWorkInclude });
     await audit(tx, row, actor, 'CREATE', { ...input, workDate: input.workDate.toISOString(), startedAt: input.startedAt?.toISOString() ?? null, endedAt: input.endedAt?.toISOString() ?? null }, input.backfillReason);
     return serializeOtherWork(row, actor);

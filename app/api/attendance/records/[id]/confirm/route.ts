@@ -11,6 +11,8 @@ import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
 import { hasCapability } from '@/lib/department-access';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { employeePolicyOnDate } from '@/lib/employee-attainment-policy-service';
+import { attendancePolicySnapshot, policyFromAttendance } from '@/lib/employee-attainment-policy';
 import { cleanProcessText } from '@/lib/process-time';
 import { isEmployeeEmployedOnDate } from '@/lib/production-workforce';
 
@@ -66,17 +68,21 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       confirmedAt: new Date(),
       updatedById: user.id,
     } satisfies Prisma.AttendanceRecordUncheckedUpdateInput;
-    const record = historicalCorrection
-      ? await prisma.$transaction(async tx => {
+    const record = await prisma.$transaction(async tx => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'other-work:' + existing.employeeId}))`;
+        const current = await tx.attendanceRecord.findUniqueOrThrow({ where: { id: existing.id }, include });
+        if (current.status === 'confirmed') return current;
+        const dated = await employeePolicyOnDate(tx, current.employee, current.workDate);
+        const policy = dated.effectiveDate && !current.attainmentPolicyOverride ? dated.policy : policyFromAttendance(current, dated.policy);
         const corrected = await tx.attendanceRecord.update({
           where: { id: existing.id },
-          data: updateData,
+          data: { ...updateData, ...attendancePolicySnapshot(policy) },
           include,
         });
         await tx.operationLog.create({
           data: {
             userId: user.id,
-            action: 'correct_departed_employee_attendance',
+            action: historicalCorrection ? 'correct_departed_employee_attendance' : 'confirm_attendance_with_effective_policy',
             targetType: 'attendance_record',
             targetId: corrected.id,
             detail: {
@@ -84,10 +90,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
               workDate: workDateKey,
               correctionReason,
               before: {
-                status: existing.status,
-                confirmedById: existing.confirmedById,
-                confirmedAt: existing.confirmedAt?.toISOString() || null,
-                updatedAt: existing.updatedAt.toISOString(),
+                status: current.status,
+                confirmedById: current.confirmedById,
+                confirmedAt: current.confirmedAt?.toISOString() || null,
+                updatedAt: current.updatedAt.toISOString(),
               },
               after: {
                 status: corrected.status,
@@ -99,8 +105,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           },
         });
         return corrected;
-      })
-      : await prisma.attendanceRecord.update({ where: { id: existing.id }, data: updateData, include });
+      });
     if (!historicalCorrection) {
       await logOp({
         userId: user.id,

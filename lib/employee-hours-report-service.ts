@@ -5,6 +5,8 @@ import {
   parseWorkDate,
 } from '@/lib/attendance';
 import { prisma } from '@/lib/prisma';
+import { employeePolicyChanges } from '@/lib/employee-attainment-policy-service';
+import { policyForWorkDate } from '@/lib/employee-attainment-policy';
 import {
   aggregateDailyAttainment,
   shouldIncludeEmployeeInAttainmentReport,
@@ -72,6 +74,9 @@ function emptyRow(employee: Parameters<typeof serializeEmployee>[0]): EmployeeAt
 }
 
 type DailyAttainment = DailyAttainmentInput & {
+  attainmentPolicyOverride?: boolean;
+  attainmentPolicyReason?: string | null;
+  attainmentPolicyEffectiveDate?: string | null;
   attendanceStatus: 'missing' | 'draft' | 'confirmed';
   attendanceType: AttendanceType | null;
   scheduledMilliseconds: number;
@@ -140,6 +145,9 @@ function employeeDayDto(date: string, day: DailyAttainment): EmployeeAttainmentD
     attendanceRequired: day.attendanceRequired,
     attainmentEligible: day.attainmentEligible,
     attainmentStream: day.attainmentStream,
+    attainmentPolicyOverride: day.attainmentPolicyOverride,
+    attainmentPolicyReason: day.attainmentPolicyReason,
+    attainmentPolicyEffectiveDate: day.attainmentPolicyEffectiveDate,
     attainmentFactorBasisPoints: day.attainmentFactorBasisPoints,
     isFuture: day.isFuture,
     attendanceStatus: day.attendanceStatus,
@@ -295,6 +303,8 @@ export async function loadEmployeeHoursReport(input: {
           attainmentEligibleSnapshot: true,
           attainmentFactorBasisPointsSnapshot: true,
           attainmentStreamSnapshot: true,
+          attainmentPolicyOverride: true,
+          attainmentPolicyReason: true,
           workDate: true,
           status: true,
           attendanceType: true,
@@ -346,6 +356,7 @@ export async function loadEmployeeHoursReport(input: {
       }),
     ]);
     const productionEmployeeIds = new Set(employees.map(employee => employee.id));
+    const policyHistory = await employeePolicyChanges(prisma, employees.map(employee => employee.id));
     const employeeById = new Map(employees.map(employee => [employee.id, employee]));
     const groups = new Map<string, EmployeeAttainmentRowDTO>();
     for (const employee of employees) groups.set(employee.id, emptyRow(employee));
@@ -364,7 +375,8 @@ export async function loadEmployeeHoursReport(input: {
       }
       let daily = employeeDays.get(workDate);
       if (!daily) {
-        const configuration = employeeConfiguration.get(employeeIdValue);
+        const historical = policyForWorkDate(employeeById.get(employeeIdValue) || {}, policyHistory.get(employeeIdValue) || [], workDate);
+        const configuration = historical.hasHistory ? { eligible: historical.policy.attainmentEligible, factor: historical.policy.attainmentFactorBasisPoints, stream: historical.policy.attainmentStream } : employeeConfiguration.get(employeeIdValue);
         daily = emptyDailyAttainment(
           configuration?.eligible ?? true,
           configuration?.factor ?? (configuration?.eligible === false ? 0 : 10_000),
@@ -393,6 +405,8 @@ export async function loadEmployeeHoursReport(input: {
       activityEmployeeIds.add(attendance.employeeId);
       const daily = dailyFor(attendance.employeeId, attendanceDateKey);
       daily.teamSnapshot = attendance.teamSnapshot || daily.teamSnapshot;
+      daily.attainmentPolicyOverride = attendance.attainmentPolicyOverride;
+      daily.attainmentPolicyReason = attendance.attainmentPolicyReason;
       daily.attendanceStatus = attendance.status === 'confirmed' ? 'confirmed' : 'draft';
       daily.attendanceType = ['partial_leave', 'leave', 'absent', 'rest'].includes(attendance.attendanceType)
         ? attendance.attendanceType as AttendanceType
@@ -563,7 +577,15 @@ export async function loadEmployeeHoursReport(input: {
       const employedDateKeys = dateKeys.filter(dateKey => isEmployeeEmployedOnDate(row.employee, dateKey));
       const dailyInputs = employedDateKeys.map(dateKey => {
         const existing = days.get(dateKey);
-        const day = existing || emptyDailyAttainment(row.employee.attainmentEligible, row.employee.attainmentFactorBasisPoints, row.employee.attainmentStream);
+        const historical = policyForWorkDate(row.employee, policyHistory.get(row.employee.id) || [], dateKey);
+        const day = existing || emptyDailyAttainment(historical.policy.attainmentEligible, historical.policy.attainmentFactorBasisPoints, historical.policy.attainmentStream);
+        if (historical.effectiveDate && !day.attainmentPolicyOverride) {
+          day.attainmentEligible = historical.policy.attainmentEligible;
+          day.attainmentStream = historical.policy.attainmentStream;
+          day.attainmentFactorBasisPoints = historical.policy.attainmentFactorBasisPoints;
+          day.teamSnapshot = historical.policy.team || day.teamSnapshot;
+          day.attainmentPolicyEffectiveDate = historical.effectiveDate;
+        }
         day.teamSnapshot ||= row.employee.team || row.employee.position || '未分组';
         const override = calendarByDate.get(dateKey);
         const calendar = resolveAttendanceCalendarDay(dateKey, override ? { ...override, dayType: override.dayType as AttendanceCalendarDayType } : null);
@@ -585,7 +607,7 @@ export async function loadEmployeeHoursReport(input: {
           );
       row.attainmentFactorBasisPoints = row.employee.attainmentFactorBasisPoints;
       // Period presentation must agree with historical daily eligibility even after a personnel change.
-      row.attainmentStream = row.attainmentEligible ? 'batch' : row.employee.attainmentStream;
+      row.attainmentStream = row.attainmentEligible ? 'batch' : dailyInputs.find(day => !day.isFuture)?.attainmentStream ?? row.employee.attainmentStream;
       const dailySummary = aggregateDailyAttainment(dailyInputs);
       Object.assign(row, dailySummary);
       row.attendanceConfirmedDays = dailyInputs.filter(day => day.attendanceConfirmed && !day.isFuture).length;

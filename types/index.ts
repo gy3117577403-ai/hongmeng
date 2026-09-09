@@ -2523,6 +2523,8 @@ export type AttendanceSegmentDTO = {
 };
 
 export type AttendanceRecordDTO = {
+  attainmentPolicyOverride?: boolean;
+  attainmentPolicyReason?: string | null;
   id: string;
   employeeId: string;
   employee: EmployeeDTO;
@@ -3211,6 +3213,9 @@ export type EmployeeAttainmentRowDTO = EmployeeHoursMetricFieldsDTO & {
 };
 
 export type EmployeeAttainmentDayDTO = EmployeeHoursMetricFieldsDTO & {
+  attainmentPolicyOverride?: boolean;
+  attainmentPolicyEffectiveDate?: string | null;
+  attainmentPolicyReason?: string | null;
   plannedOvertimeMilliseconds?: number;
   attendanceRequired?: boolean;
   attainmentEligible?: boolean;

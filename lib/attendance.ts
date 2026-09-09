@@ -277,6 +277,8 @@ export function segmentsFromJson(value: Prisma.JsonValue): AttendanceSegmentDTO[
 
 export function serializeAttendanceRecord(record: AttendanceWithRelations): AttendanceRecordDTO {
   return {
+    attainmentPolicyOverride: record.attainmentPolicyOverride,
+    attainmentPolicyReason: record.attainmentPolicyReason,
     id: record.id,
     employeeId: record.employeeId,
     employee: serializeEmployee(record.employee),

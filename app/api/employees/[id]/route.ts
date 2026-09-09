@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
+import { AttainmentPolicyError, sameEmployeeAttainmentPolicy } from '@/lib/employee-attainment-policy';
+import { applyEmployeeAttainmentChange, previewTarget } from '@/lib/employee-attainment-policy-service';
 import {
   forbidden,
   ForbiddenError,
@@ -88,9 +91,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const attendanceGroup = body.attendanceGroup === undefined
       ? existing.attendanceGroup
       : parseOptionalAttendanceGroup(body.attendanceGroup) ?? 'UNASSIGNED';
-    const employee = await prisma.employee.update({
-      where: { id: existing.id },
-      data: {
+    const updateData: Prisma.EmployeeUpdateInput = {
         name,
         ...(resolvedDepartment
           ? {
@@ -114,9 +115,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         attainmentEligible: attainmentEligibleFromConfiguration(requestedFactor, requestedStream),
         attainmentFactorBasisPoints: requestedFactor,
         attainmentStream: requestedStream,
-      },
-      include: employeeAccessAdminInclude,
-    });
+      };
+    const targetPolicy = await previewTarget(existing, body);
+    const needsPolicyChange = !sameEmployeeAttainmentPolicy(existing, targetPolicy) || body.attainmentChange !== undefined;
+    if (needsPolicyChange && !body.attainmentChange) throw new AttainmentPolicyError('调岗或达成口径变更需要生效日期及影响预览', 409, 'ATTAINMENT_EFFECTIVE_DATE_REQUIRED');
+    const policyResult = needsPolicyChange ? await applyEmployeeAttainmentChange(existing.id, user.id, targetPolicy, body, updateData) : null;
+    const employee = policyResult?.employee ?? await prisma.employee.update({ where: { id: existing.id }, data: updateData, include: employeeAccessAdminInclude });
     const serializedEmployee = serializeEmployeeAccessAdmin(employee);
     await logOp({
       userId: user.id,
@@ -132,10 +136,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         attainmentStream: employee.attainmentStream,
         previousAttendanceGroup: existing.attendanceGroup,
         attendanceGroup: employee.attendanceGroup,
+        ...(policyResult ? { attainmentEffectiveChange: policyResult.impact } : {}),
       },
     });
-    return NextResponse.json({ ok: true, employee: serializedEmployee });
+    return NextResponse.json({ ok: true, employee: serializedEmployee, attainmentImpact: policyResult?.impact });
   } catch (error) {
+    if (error instanceof AttainmentPolicyError) return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof ForbiddenError) return forbidden('只有人事部或管理员可以修改员工档案');
     if (error instanceof EmployeeDepartmentInputError) {

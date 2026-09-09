@@ -16,8 +16,8 @@ test('attendance API returns historical roster rows without bypassing the histor
 test('departed attendance correction is atomic and keeps a reason plus before and after snapshots', () => {
   const source = readFileSync(resolve(repositoryRoot, 'app/api/attendance/records/route.ts'), 'utf8');
   assert.match(source, /historicalCorrection[\s\S]*prisma\.\$transaction/);
-  assert.match(source, /action:\s*'correct_departed_employee_attendance'/);
-  assert.match(source, /correctionReason,[\s\S]*before:\s*attendanceAuditSnapshot\(existing!\),[\s\S]*after:\s*attendanceAuditSnapshot\(corrected\)/);
+  assert.match(source, /action:\s*historicalCorrection\s*\?\s*'correct_departed_employee_attendance'/);
+  assert.match(source, /correctionReason,[\s\S]*before:\s*currentRecord\s*\?\s*attendanceAuditSnapshot\(currentRecord\)\s*:\s*null,[\s\S]*after:\s*attendanceAuditSnapshot\(corrected\)/);
 });
 
 test('attendance UI shows departed historical rows but excludes them from batch mutations', () => {

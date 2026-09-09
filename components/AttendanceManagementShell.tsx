@@ -106,6 +106,8 @@ type EventsResponse = {
 };
 
 type AttendanceDraft = {
+  attainmentPolicyOverride: boolean;
+  attainmentPolicyReason: string;
   employeeId: string;
   attendanceType: AttendanceType;
   morningStart: string;
@@ -130,7 +132,7 @@ export type AttendancePreviewData = {
   selectedGroup?: AttendanceGroup;
 };
 
-type AttendanceBatchDraft = Omit<AttendanceDraft, 'employeeId' | 'attainmentFactorBasisPoints' | 'attainmentStream' | 'correctionReason'>;
+type AttendanceBatchDraft = Omit<AttendanceDraft, 'attainmentPolicyOverride' | 'attainmentPolicyReason' | 'employeeId' | 'attainmentFactorBasisPoints' | 'attainmentStream' | 'correctionReason'>;
 
 type AbnormalDraft = {
   id?: string;
@@ -496,6 +498,8 @@ export default function AttendanceManagementShell({ user, previewData }: { user:
       leaveMinutes: record ? String(record.leaveMilliseconds / 60000) : '0',
       attainmentFactorBasisPoints: record?.attainmentFactorBasisPoints ?? employee.attainmentFactorBasisPoints,
       attainmentStream: record?.attainmentStream ?? employee.attainmentStream,
+      attainmentPolicyOverride: record?.attainmentPolicyOverride ?? false,
+      attainmentPolicyReason: record?.attainmentPolicyReason || '',
       remark: record?.remark || '',
       correctionReason: '',
     });
@@ -1070,7 +1074,11 @@ export default function AttendanceManagementShell({ user, previewData }: { user:
               <fieldset><legend>正常班（午休 12:00–13:00 不计）</legend><label><span>上午开始</span><input type="time" value={attendanceDraft.morningStart} onChange={event => setAttendanceDraft({ ...attendanceDraft, morningStart: event.target.value })} /></label><label><span>上午结束</span><input type="time" value={attendanceDraft.morningEnd} onChange={event => setAttendanceDraft({ ...attendanceDraft, morningEnd: event.target.value })} /></label><label><span>下午开始</span><input type="time" value={attendanceDraft.afternoonStart} onChange={event => setAttendanceDraft({ ...attendanceDraft, afternoonStart: event.target.value })} /></label><label><span>下午结束</span><input type="time" value={attendanceDraft.afternoonEnd} onChange={event => setAttendanceDraft({ ...attendanceDraft, afternoonEnd: event.target.value })} /></label></fieldset>
               <fieldset><legend>不定时加班与请假</legend><label><span>加班开始</span><input type="time" value={attendanceDraft.overtimeStart} onChange={event => setAttendanceDraft({ ...attendanceDraft, overtimeStart: event.target.value })} /></label><label><span>加班结束</span><input type="time" value={attendanceDraft.overtimeEnd} onChange={event => setAttendanceDraft({ ...attendanceDraft, overtimeEnd: event.target.value })} /></label><label><span>{attendanceDraft.attendanceType === 'partial_leave' ? '实际请假分钟数' : '请假分钟数（应为 0）'}</span><input type="number" min="0" step="1" value={attendanceDraft.leaveMinutes} onChange={event => setAttendanceDraft({ ...attendanceDraft, leaveMinutes: event.target.value })} /></label></fieldset>
             </>}
-            <fieldset className="attendance-attainment-policy"><legend>当天达成率口径</legend><label><span>统计分账</span><select value={attendanceDraft.attainmentStream} onChange={event => { const attainmentStream = event.target.value as AttainmentStream; setAttendanceDraft({ ...attendanceDraft, attainmentStream, attainmentFactorBasisPoints: attainmentStream === 'excluded' ? 0 : attendanceDraft.attainmentFactorBasisPoints || 10000 }); }}><option value="batch">批量生产</option><option value="sample">样品组</option><option value="excluded">当天不计入</option></select></label><label><span>个人计入比例（任意值）</span><span className="attendance-factor-input"><input type="number" min="0" max="100" step="0.1" disabled={attendanceDraft.attainmentStream === 'excluded'} value={attendanceDraft.attainmentFactorBasisPoints / 100} onChange={event => setAttendanceDraft({ ...attendanceDraft, attainmentFactorBasisPoints: Math.max(0, Math.min(10000, Math.round(Number(event.target.value || 0) * 100))) })} /><b>%</b></span></label><small>部分请假先按实际出勤小时折算，再乘此比例；例如工作 3 小时、个人比例 50%，当天产能分母按 3h × 95% × 50% 计算。</small></fieldset>
+            <fieldset className="attendance-attainment-policy"><legend>当天达成率口径</legend>
+              <label><span><input type="checkbox" checked={attendanceDraft.attainmentPolicyOverride} onChange={event => setAttendanceDraft({ ...attendanceDraft, attainmentPolicyOverride: event.target.checked })} /> 仅当天单独设置（临时借调）</span></label>
+              {attendanceDraft.attainmentPolicyOverride ? <><label><span>统计分账</span><select value={attendanceDraft.attainmentStream} onChange={event => { const attainmentStream = event.target.value as AttainmentStream; setAttendanceDraft({ ...attendanceDraft, attainmentStream, attainmentFactorBasisPoints: attainmentStream === 'excluded' ? 0 : 10000 }); }}><option value="batch">批量生产</option><option value="sample">样品组</option><option value="excluded">当天不计入</option></select></label><label><span>当天口径调整原因</span><input aria-label="当天口径调整原因" value={attendanceDraft.attainmentPolicyReason} maxLength={500} onChange={event => setAttendanceDraft({ ...attendanceDraft, attainmentPolicyReason: event.target.value })} /></label></> : <small>按工作日期自动采用当时有效的档案口径。取消单独设置并保存，可恢复跟随档案。</small>}
+              <small>量产达成率＝（完成＋已确认损耗＋其他工时）÷（实际出勤×95%）；出勤已包含实际加班。</small>
+            </fieldset>
             <label className="wide"><span>考勤备注</span><textarea maxLength={500} rows={3} value={attendanceDraft.remark} onChange={event => setAttendanceDraft({ ...attendanceDraft, remark: event.target.value })} placeholder="迟到、早退、连班或其他说明" /></label>
             {correctingDepartedAttendance && <label className="wide"><span>历史纠正原因（必填）</span><textarea required maxLength={500} rows={3} value={attendanceDraft.correctionReason} onChange={event => setAttendanceDraft({ ...attendanceDraft, correctionReason: event.target.value })} placeholder="例如：离职后核对纸质考勤，原记录请假分钟填写错误" /></label>}
           </div>

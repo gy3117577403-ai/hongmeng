@@ -9,6 +9,8 @@ import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
 import { attendanceGroupEmployeeWhere, parseOptionalAttendanceGroup } from '@/lib/attendance-groups';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { employeePolicyOnDate } from '@/lib/employee-attainment-policy-service';
+import { attendancePolicySnapshot, policyFromAttendance } from '@/lib/employee-attainment-policy';
 import {
   attendanceEmployeeWhere,
   attendanceRecordScopeWhere,
@@ -84,24 +86,29 @@ export async function POST(req: NextRequest) {
     const now = new Date();
     const employeeById = new Map(employees.map(employee => [employee.id, employee]));
     const confirmedRecords = draftRecords.length
-      ? await prisma.$transaction(draftRecords.map(record => {
-          const employee = employeeById.get(record.employeeId)!;
-          return prisma.attendanceRecord.update({
+      ? await prisma.$transaction(async tx => {
+        const result: Array<{ id: string }> = [];
+        for (const selected of [...draftRecords].sort((a, b) => a.employeeId.localeCompare(b.employeeId))) {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'other-work:' + selected.employeeId}))`;
+          const record = await tx.attendanceRecord.findUniqueOrThrow({ where: { id: selected.id } });
+          if (record.status !== 'draft') continue;
+          const employee = await tx.employee.findUniqueOrThrow({ where: { id: record.employeeId } });
+          const dated = await employeePolicyOnDate(tx, employee, workDate.value);
+          const policy = dated.effectiveDate && !record.attainmentPolicyOverride ? dated.policy : policyFromAttendance(record, dated.policy);
+          result.push(await tx.attendanceRecord.update({
             where: { id: record.id },
             data: {
               status: 'confirmed',
-              attainmentEligibleSnapshot: record.attainmentEligibleSnapshot ?? employee.attainmentEligible,
-              attainmentFactorBasisPointsSnapshot: record.attainmentFactorBasisPointsSnapshot
-                ?? employee.attainmentFactorBasisPoints,
-              attainmentStreamSnapshot: record.attainmentStreamSnapshot ?? employee.attainmentStream,
-              attendanceGroupSnapshot: record.attendanceGroupSnapshot ?? employee.attendanceGroup,
               confirmedById: user.id,
               confirmedAt: now,
               updatedById: user.id,
+              ...attendancePolicySnapshot(policy),
             },
             select: { id: true },
-          });
-        }))
+          }));
+        }
+        return result;
+      }, { timeout: 20000 })
       : [];
     await logOp({
       userId: user.id,

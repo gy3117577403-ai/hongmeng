@@ -15,10 +15,11 @@ import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
 import { attendanceGroupEmployeeWhere, parseOptionalAttendanceGroup } from '@/lib/attendance-groups';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { employeePolicyOnDate } from '@/lib/employee-attainment-policy-service';
+import { attendancePolicySnapshot } from '@/lib/employee-attainment-policy';
 import {
   attendanceEmployeeWhere,
   employeeHiredOnOrBeforeWhere,
-  normalizeEmployeeDepartment,
   parseAttendanceWorkforceScope,
   type AttendanceWorkforceScope,
 } from '@/lib/production-workforce';
@@ -69,16 +70,15 @@ export async function POST(req: NextRequest) {
     }
     if (!employees.length) return NextResponse.json({ ok: false, error: '没有可生成考勤的在用员工' }, { status: 400 });
     const segments = defaultAttendanceSegments(workDate.key);
-    const result = await prisma.attendanceRecord.createMany({
-      data: employees.map(employee => ({
+    const result = await prisma.$transaction(async tx => {
+      const data: Prisma.AttendanceRecordCreateManyInput[] = [];
+      for (const selected of [...employees].sort((a, b) => a.id.localeCompare(b.id))) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'other-work:' + selected.id}))`;
+        const employee = await tx.employee.findUniqueOrThrow({ where: { id: selected.id } });
+        const dated = await employeePolicyOnDate(tx, employee, workDate.value);
+        data.push({
         employeeId: employee.id,
-        departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
-        teamSnapshot: employee.team,
-        positionSnapshot: employee.position,
-        attendanceGroupSnapshot: employee.attendanceGroup,
-        attainmentEligibleSnapshot: employee.attainmentEligible,
-        attainmentFactorBasisPointsSnapshot: employee.attainmentFactorBasisPoints,
-        attainmentStreamSnapshot: employee.attainmentStream,
+        ...attendancePolicySnapshot(dated.policy),
         workDate: workDate.value,
         status: 'draft',
         attendanceType: 'normal',
@@ -90,9 +90,10 @@ export async function POST(req: NextRequest) {
         source: 'manual_default',
         createdById: user.id,
         updatedById: user.id,
-      })),
-      skipDuplicates: true,
-    });
+        });
+      }
+      return tx.attendanceRecord.createMany({ data, skipDuplicates: true });
+    }, { timeout: 20000 });
     await logOp({
       userId: user.id,
       action: 'batch_create_default_attendance',

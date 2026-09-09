@@ -28,6 +28,8 @@ import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
 import { hasCapability } from '@/lib/department-access';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { employeePolicyOnDate } from '@/lib/employee-attainment-policy-service';
+import { attendanceWritePolicy, policyFromAttendance } from '@/lib/employee-attainment-policy';
 import {
   attendanceEmployeeWhere,
   attendanceRecordScopeWhere,
@@ -61,6 +63,8 @@ function attendanceAuditSnapshot(record: AttendanceAuditRecord) {
     attainmentEligibleSnapshot: record.attainmentEligibleSnapshot,
     attainmentFactorBasisPointsSnapshot: record.attainmentFactorBasisPointsSnapshot,
     attainmentStreamSnapshot: record.attainmentStreamSnapshot,
+    attainmentPolicyOverride: record.attainmentPolicyOverride,
+    attainmentPolicyReason: record.attainmentPolicyReason,
     confirmedById: record.confirmedById,
     confirmedAt: record.confirmedAt?.toISOString() || null,
     updatedAt: record.updatedAt.toISOString(),
@@ -297,27 +301,33 @@ export async function POST(req: NextRequest) {
       },
       include,
     } satisfies Prisma.AttendanceRecordUpsertArgs;
-    const record = historicalCorrection
-      ? await prisma.$transaction(async tx => {
-        const corrected = await tx.attendanceRecord.upsert(upsertArgs);
+    const record = await prisma.$transaction(async tx => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'other-work:' + employeeId}))`;
+        const currentEmployee = await tx.employee.findUniqueOrThrow({ where: { id: employeeId } });
+        if (!isEmployeeEmployedOnDate(currentEmployee, workDate.key)) throw new Error('员工任职区间已变更，请刷新后重试');
+        const currentRecord = await tx.attendanceRecord.findUnique({ where: { employeeId_workDate: { employeeId, workDate: workDate.value } }, include });
+        const dated = await employeePolicyOnDate(tx, currentEmployee, workDate.value);
+        const inherited = dated.effectiveDate || !currentRecord ? dated.policy : policyFromAttendance(currentRecord, dated.policy);
+        const policy = attendanceWritePolicy(body, inherited, currentRecord);
+        const corrected = await tx.attendanceRecord.upsert({ ...upsertArgs,
+          create: { ...upsertArgs.create, ...policy }, update: { ...upsertArgs.update, ...policy } });
         await tx.operationLog.create({
           data: {
             userId: user.id,
-            action: 'correct_departed_employee_attendance',
+            action: historicalCorrection ? 'correct_departed_employee_attendance' : 'save_attendance_with_effective_policy',
             targetType: 'attendance_record',
             targetId: corrected.id,
             detail: {
               employeeId,
               workDate: workDate.key,
               correctionReason,
-              before: attendanceAuditSnapshot(existing!),
+              before: currentRecord ? attendanceAuditSnapshot(currentRecord) : null,
               after: attendanceAuditSnapshot(corrected),
             },
           },
         });
         return corrected;
-      })
-      : await prisma.attendanceRecord.upsert(upsertArgs);
+      });
     if (!historicalCorrection) {
       await logOp({
         userId: user.id,

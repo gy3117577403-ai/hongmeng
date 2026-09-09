@@ -178,6 +178,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/other-work-hours-integration.test.ts
+      - name: Employee attainment effective-date PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/employee-attainment-policy-integration.test.ts
       - name: Pending report coverage PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

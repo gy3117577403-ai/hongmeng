@@ -31,7 +31,7 @@ type Context = { attendanceStatus: string; attendanceMilliseconds: number; confi
   executions: { startedAt: string; endedAt: string; actualLaborMilliseconds: number }[]; reviewHint: string };
 type Form = { workDate: string; categoryId: string; requestedMinutes: number; description: string; arranger: string; sampleReference: string; backfillReason: string; startedAt: string; endedAt: string; employeeId: string };
 const states: Record<string, string> = { DRAFT: '草稿', PENDING: '待审批', APPROVED: '已通过', REJECTED: '已退回', WITHDRAWN: '已撤回', VOIDED: '已作废' };
-const actions: Record<string, string> = { CREATE: '保存草稿', EDIT: '修改草稿', SUBMIT: '提交审批', APPROVE: '审批通过', REJECT: '退回修改', WITHDRAW: '撤回申请', VOID: '作废记录', CORRECTION_REQUEST: '申请更正', UPLOAD_PHOTO: '上传照片', DELETE_PHOTO: '移除照片' };
+const actions: Record<string, string> = { CREATE: '保存草稿', EDIT: '修改草稿', SUBMIT: '提交审批', APPROVE: '审批通过', REJECT: '退回修改', WITHDRAW: '撤回申请', VOID: '作废记录', CORRECTION_REQUEST: '申请更正', UPLOAD_PHOTO: '上传照片', DELETE_PHOTO: '移除照片', POLICY_CHANGE: '调岗口径同步' };
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
 const hours = (minutes: number) => (minutes / 60).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) + ' 小时';
 const dateTime = (date: string) => new Date(date).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });

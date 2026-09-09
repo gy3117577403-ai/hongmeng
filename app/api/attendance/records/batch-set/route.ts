@@ -7,10 +7,7 @@ import {
 } from '@/lib/attendance-access';
 import {
   attendanceTotals,
-  attainmentEligibleFromConfiguration,
   defaultAttendanceSegments,
-  parseAttainmentFactorBasisPoints,
-  parseAttainmentStream,
   parseAttendanceSegments,
   parseAttendanceType,
   parseAttendanceEmployeeIds,
@@ -22,10 +19,11 @@ import { attendanceGroupEmployeeWhere, parseOptionalAttendanceGroup } from '@/li
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { employeePolicyOnDate } from '@/lib/employee-attainment-policy-service';
+import { attendanceWritePolicy, policyFromAttendance } from '@/lib/employee-attainment-policy';
 import {
   attendanceEmployeeWhere,
   employeeHiredOnOrBeforeWhere,
-  normalizeEmployeeDepartment,
   parseAttendanceWorkforceScope,
   type AttendanceWorkforceScope,
 } from '@/lib/production-workforce';
@@ -97,23 +95,19 @@ export async function POST(req: NextRequest) {
     const remark = cleanProcessText(body.remark, 500) || null;
 
     if (writable.length) {
-      await prisma.$transaction(writable.map(employee => {
-        const attainmentStream = parseAttainmentStream(body.attainmentStream, parseAttainmentStream(employee.attainmentStream));
-        const attainmentFactorBasisPoints = attainmentStream === 'excluded'
-          ? 0
-          : parseAttainmentFactorBasisPoints(body.attainmentFactorBasisPoints, employee.attainmentFactorBasisPoints);
-        const attainmentEligible = attainmentEligibleFromConfiguration(attainmentFactorBasisPoints, attainmentStream);
-        return prisma.attendanceRecord.upsert({
+      await prisma.$transaction(async tx => {
+        for (const selected of [...writable].sort((a, b) => a.id.localeCompare(b.id))) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'other-work:' + selected.id}))`;
+        const employee = await tx.employee.findUniqueOrThrow({ where: { id: selected.id } });
+        const current = await tx.attendanceRecord.findUnique({ where: { employeeId_workDate: { employeeId: employee.id, workDate: workDate.value } } });
+        if (current?.status === 'confirmed') throw new Error('所选考勤刚被确认，请刷新后重新批量设置');
+        const dated = await employeePolicyOnDate(tx, employee, workDate.value);
+        const inherited = dated.effectiveDate || !current ? dated.policy : policyFromAttendance(current, dated.policy);
+        const policy = attendanceWritePolicy(body, inherited, current);
+        await tx.attendanceRecord.upsert({
         where: { employeeId_workDate: { employeeId: employee.id, workDate: workDate.value } },
         create: {
           employeeId: employee.id,
-          departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
-          teamSnapshot: employee.team,
-          positionSnapshot: employee.position,
-          attendanceGroupSnapshot: employee.attendanceGroup,
-          attainmentEligibleSnapshot: attainmentEligible,
-          attainmentFactorBasisPointsSnapshot: attainmentFactorBasisPoints,
-          attainmentStreamSnapshot: attainmentStream,
           workDate: workDate.value,
           status: 'draft',
           attendanceType,
@@ -124,12 +118,10 @@ export async function POST(req: NextRequest) {
           remark,
           createdById: user.id,
           updatedById: user.id,
+          ...policy,
         },
         update: {
           status: 'draft',
-          attainmentEligibleSnapshot: attainmentEligible,
-          attainmentFactorBasisPointsSnapshot: attainmentFactorBasisPoints,
-          attainmentStreamSnapshot: attainmentStream,
           attendanceType,
           plannedMilliseconds: STANDARD_DAY_MILLISECONDS,
           ...totals,
@@ -139,9 +131,11 @@ export async function POST(req: NextRequest) {
           updatedById: user.id,
           confirmedById: null,
           confirmedAt: null,
+          ...policy,
         },
         });
-      }));
+        }
+      }, { timeout: 20000 });
     }
     await logOp({
       userId: user.id,

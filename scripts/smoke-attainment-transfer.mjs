@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+
+const fixture = JSON.parse(readFileSync('.docker/transfer-fixture.json', 'utf8'));
+const base = process.env.APP_BASE_URL || 'http://127.0.0.1:3120';
+if (new URL(base).hostname !== '127.0.0.1' || new URL(base).port !== '3120' || !fixture.marker.startsWith('TRANSFER-')) throw Error('Only the isolated transfer QA runtime is allowed');
+const cookies = new Map(), steps = [], employeeId = fixture.users[0].employeeId;
+const body = (data, method = 'POST') => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+async function request(index, path, options = {}, expected = 200) {
+  const result = await fetch(base + path, { ...options, headers: { cookie: cookies.get(index) || '', origin: base, ...options.headers }, redirect: 'manual' });
+  const cookie = result.headers.getSetCookie().find(value => value.startsWith('hm_session='));
+  if (cookie) cookies.set(index, cookie.split(';')[0]);
+  const text = await result.text();
+  assert.equal(result.status, expected, path + ': ' + text.slice(0, 350));
+  return JSON.parse(text);
+}
+for (let i = 0; i < fixture.users.length; i++) await request(i, '/api/auth/login', body({ username: fixture.users[i].username, password: fixture.password }));
+const policyPath = '/api/employees/' + employeeId + '/attainment-policy';
+const employeePath = '/api/employees/' + employeeId;
+await request(99, policyPath, {}, 401);
+await request(0, policyPath, body({}), 403);
+await request(2, policyPath, body({}), 403);
+await request(0, employeePath, body({ attainmentStream: 'batch' }, 'PATCH'), 403);
+steps.push('Login required; employee and team leader cannot alter HR transfer policies');
+const change = { attainmentStream: 'batch', attainmentFactorBasisPoints: 10000, attainmentChange: { effectiveDate: '2026-08-01', reason: '隔离验收八月调岗口径' } };
+await request(1, employeePath, body({ attainmentStream: 'sample' }, 'PATCH'), 409);
+await request(1, policyPath, body({ ...change, attainmentChange: { ...change.attainmentChange, effectiveDate: '2999-08-01' } }), 400);
+await request(1, policyPath, body({ ...change, attainmentChange: { ...change.attainmentChange, reason: '' } }), 400);
+const preview = (await request(1, policyPath, body(change))).preview;
+assert.equal(preview.effectiveDate, '2026-08-01');
+assert.equal(preview.preservedOverrideCount, 1);
+assert.ok(preview.dates.every(day => day.date >= '2026-08-01'));
+await request(1, employeePath, body({ ...change, attainmentChange: { ...change.attainmentChange, token: 'stale-token', requestId: randomUUID() } }, 'PATCH'), 409);
+steps.push('Effective date, reason, preserved day overrides and stale preview guards');
+const report = async (period, date) => (await request(1, '/api/reports/employee-attainment?' + new URLSearchParams({ period, date, employeeId }))).report;
+const day = await report('today', '2026-09-09');
+const row = day.rows.find(value => value.employee.id === employeeId);
+assert.equal(row.attainmentBasisPoints, 7830);
+assert.equal(row.attendanceMilliseconds, 10.5 * 3600000);
+assert.equal(row.standardLaborMilliseconds, 7.31 * 3600000);
+assert.equal(row.exemptAbnormalMilliseconds, .5 * 3600000);
+assert.equal(row.days[0].attainmentPolicyEffectiveDate, '2026-08-01');
+for (const period of ['today', 'week', 'month']) {
+  const individual = await report(period, '2026-09-09');
+  const operations = (await request(1, '/api/reports/operations?' + new URLSearchParams({ period, date: '2026-09-09' }))).report;
+  const matrix = operations.employeeMatrix.find(value => value.employee.id === employeeId);
+  assert.equal(matrix.attainmentBasisPoints, individual.summary.attainmentBasisPoints);
+  assert.equal(matrix.attainmentBasisPoints, 7830);
+}
+assert.equal((await report('today', '2026-07-31')).rows.find(value => value.employee.id === employeeId).attainmentBasisPoints, null);
+const manual = (await report('today', '2026-08-03')).rows.find(value => value.employee.id === employeeId);
+assert.equal(manual.attainmentBasisPoints, null); assert.equal(manual.days[0].attainmentPolicyOverride, true);
+steps.push('78.3% screenshot reproduction; day/week/month/matrix equality; July and temporary sample date preserved');
+const history = await request(1, policyPath);
+assert.ok(history.changes.some(value => value.effectiveDate.slice(0, 10) === '2026-08-01'));
+// Exercise a new historical day without changing fixture report totals: an absent day has zero hours.
+const save = (date, extra = {}) => request(1, '/api/attendance/records', body({ employeeId, workDate: date, attendanceType: 'absent', segments: [], confirm: false, ...extra }));
+let saved = (await save('2026-07-30')).record;
+assert.equal(saved.attainmentStream, 'sample');
+saved = (await save('2026-08-04')).record;
+assert.equal(saved.attainmentStream, 'batch');
+await request(1, '/api/attendance/records', body({ employeeId, workDate: '2026-08-04', attendanceType: 'absent', segments: [], attainmentPolicyOverride: true, attainmentStream: 'sample', attainmentPolicyReason: '' }), 400);
+saved = (await save('2026-08-04', { attainmentPolicyOverride: true, attainmentStream: 'sample', attainmentPolicyReason: '临时借调样品验收' })).record;
+assert.equal(saved.attainmentStream, 'sample'); assert.equal(saved.attainmentPolicyOverride, true);
+saved = (await save('2026-08-04', { attainmentPolicyOverride: false })).record;
+assert.equal(saved.attainmentStream, 'batch'); assert.equal(saved.attainmentPolicyOverride, false);
+await request(1, '/api/attendance/records/' + saved.id + '/confirm', body({}));
+const confirmed = (await request(1, '/api/attendance/records?' + new URLSearchParams({ employeeId, period: 'today', date: '2026-08-04' }))).records.find(value => value.id === saved.id);
+assert.equal(confirmed.status, 'confirmed'); assert.equal(confirmed.attainmentStream, 'batch');
+steps.push('Historical new attendance uses date policy; single-day reason, reset and confirmation retain the correct stream');
+mkdirSync('artifacts/attainment-transfer-v134150', { recursive: true });
+writeFileSync('artifacts/attainment-transfer-v134150/http-smoke.json', JSON.stringify({ base, at: new Date().toISOString(), steps, employeeId, attainmentBasisPoints: row.attainmentBasisPoints }, null, 2));
+console.log(JSON.stringify({ ok: true, groups: steps.length, steps }, null, 2));

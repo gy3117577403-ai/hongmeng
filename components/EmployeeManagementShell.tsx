@@ -1,5 +1,8 @@
 'use client';
 
+import EmployeeAttainmentChangeReview, { type AttainmentChangeConfirmation } from './EmployeeAttainmentChangeReview';
+import { sameEmployeeAttainmentPolicy } from '@/lib/employee-attainment-policy';
+
 import {
   Activity,
   AlertTriangle,
@@ -703,8 +706,15 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [draft, setDraft] = useState<EmployeeDraft>(emptyDraft);
   const [baseline, setBaseline] = useState<EmployeeDraft>(emptyDraft);
+  const draftEmployeeId = useRef<string | null>(null);
+  const [policyEffectiveDate, setPolicyEffectiveDate] = useState('');
+  const [policyReason, setPolicyReason] = useState('');
+  const [repairAttainment, setRepairAttainment] = useState(false);
+  const [policyReviewBody, setPolicyReviewBody] = useState<Record<string, unknown> | null>(null);
   const [creating, setCreating] = useState(false);
   const [directoryEditing, setDirectoryEditing] = useState(false);
+  const needsPolicyChange = !creating && (repairAttainment || !sameEmployeeAttainmentPolicy(baseline, draft));
+  useEffect(() => { setPolicyEffectiveDate(''); setPolicyReason(''); setRepairAttainment(false); setPolicyReviewBody(null); }, [selectedEmployeeId, directoryEditing]);
   const [nextEmployeeNo, setNextEmployeeNo] = useState('');
   const [nextEmployeeNoLoading, setNextEmployeeNoLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -918,8 +928,9 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }, [loadHumanResources]);
 
   useEffect(() => {
-    if (creating || directoryEditing || !selectedEmployee) return;
+    if (creating || !selectedEmployee || (directoryEditing && draftEmployeeId.current === selectedEmployee.id)) return;
     const nextDraft = toDraft(selectedEmployee);
+    draftEmployeeId.current = selectedEmployee.id;
     setDraft(nextDraft);
     setBaseline(nextDraft);
     setFormError('');
@@ -1572,12 +1583,22 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     setNumberReorderOpen(true);
   }
 
-  async function saveEmployee(): Promise<void> {
+  async function saveEmployee(confirmation?: AttainmentChangeConfirmation): Promise<void> {
     if (savingRef.current || !editorUnlocked) return;
     if (!draft.name.trim()) {
       setDirectoryDetailTab('basic');
       requestAnimationFrame(() => document.getElementById('hr-employee-name')?.focus());
       setFormError('请填写员工姓名');
+      return;
+    }
+    if (needsPolicyChange && !confirmation) {
+      if (!policyEffectiveDate || !policyReason.trim()) {
+        setDirectoryDetailTab('appointment');
+        setFormError('请填写调岗或口径修正的生效日期和原因，再预览影响范围');
+        return;
+      }
+      setFormError('');
+      setPolicyReviewBody({ ...draft, attainmentChange: { effectiveDate: policyEffectiveDate, reason: policyReason } });
       return;
     }
     savingRef.current = true;
@@ -1588,11 +1609,14 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       const response = await fetch(wasCreating ? '/api/employees' : `/api/employees/${selectedEmployeeId}`, {
         method: wasCreating ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify(confirmation ? { ...confirmation.payload, attainmentChange: {
+          ...(confirmation.payload.attainmentChange as Record<string, unknown>), token: confirmation.token, requestId: confirmation.requestId,
+        } } : draft),
       });
       const body = await response.json() as EmployeesResponse;
       if (!response.ok || !body.employee) throw new Error(body.error || '保存员工档案失败');
       const savedEmployee = body.employee;
+      setPolicyReviewBody(null);
       setEmployees(current => sortEmployees(wasCreating
         ? [...current, savedEmployee]
         : current.map(employee => employee.id === savedEmployee.id ? savedEmployee : employee)));
@@ -1602,7 +1626,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       const nextDraft = toDraft(savedEmployee);
       setDraft(nextDraft);
       setBaseline(nextDraft);
-      setToast(wasCreating ? `员工档案已创建，员工编号 ${savedEmployee.employeeNo}` : '员工档案已保存');
+      setToast(wasCreating ? `员工档案已创建，员工编号 ${savedEmployee.employeeNo}` : confirmation ? '档案已保存，生效日起的考勤和报表口径已同步' : '员工档案已保存');
       const url = new URL(window.location.href);
       url.searchParams.set('view', 'directory');
       url.searchParams.set('employeeId', savedEmployee.id);
@@ -1969,7 +1993,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
           ? '当前员工已办理离职，不再进入派工、报工、考勤和员工登录名单。'
           : !draft.attendanceEnabled
             ? '当前属于生产部，但尚未启用考勤；启用考勤后才会进入生产报工与达成率。'
-            : '当前属于生产部、在职且已启用考勤，系统会自动加入生产报工与达成率。';
+            : '当前可进行生产报工；是否参与达成按工作日期的统计分账确定。';
     const profileEmployeeNo = creating
       ? nextEmployeeNoLoading
         ? '编号生成中…'
@@ -2284,7 +2308,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                   {editorUnlocked ? <div className="hr-editor-switches">
                     <label>
                       <input type="checkbox" disabled={saving || !editorUnlocked || !draft.isActive} checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
-                      <span><strong>启用员工考勤</strong><small>所有部门均可登记出勤；生产部进入达成率，其他部门仅统计出勤。</small></span>
+                      <span><strong>启用员工考勤</strong><small>启用后可登记出勤；达成按工作日期的统计分账确定。</small></span>
                     </label>
                     <div className="hr-attainment-policy">
                       <div><strong>达成率统计口径</strong><small>批量与样品分账；不计入用于主管、组长、调模等岗位。</small></div>
@@ -2300,7 +2324,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                               attainmentStream,
                               attainmentFactorBasisPoints: attainmentStream === 'excluded'
                                 ? 0
-                                : current.attainmentFactorBasisPoints || 10000,
+                                : 10000,
                               attainmentEligible: attainmentStream !== 'excluded',
                             }));
                           }}
@@ -2310,25 +2334,14 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                           <option value="excluded">不计入</option>
                         </select>
                       </label>
-                      <label>
-                        <span>默认计入比例</span>
-                        <span className="hr-attainment-factor-input">
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.1"
-                            disabled={saving || !editorUnlocked || !draft.isActive || !draft.attendanceEnabled || draft.attainmentStream === 'excluded'}
-                            value={draft.attainmentFactorBasisPoints / 100}
-                            onChange={event => {
-                              const factor = Math.max(0, Math.min(10000, Math.round(Number(event.target.value || 0) * 100)));
-                              setDraft(current => ({ ...current, attainmentFactorBasisPoints: factor, attainmentEligible: current.attainmentStream !== 'excluded' && factor > 0 }));
-                            }}
-                          />
-                          <b>%</b>
-                        </span>
-                      </label>
+                      <p>批量生产按（完成＋已确认损耗＋其他工时）÷（出勤×95%）计算。样品组和不计入人员仅保留工时。</p>
                     </div>
+                    {!creating && <button type="button" className="hr-secondary-button" disabled={saving || !draft.isActive} onClick={() => { setRepairAttainment(true); setPolicyEffectiveDate(''); setPolicyReason(''); }}>修正已生成考勤的达成口径</button>}
+                    {needsPolicyChange && <fieldset className="employee-policy-controls"><legend>调岗 / 口径修正生效范围</legend>
+                      <label><span>口径生效日期</span><input type="date" aria-label="口径生效日期" value={policyEffectiveDate} disabled={saving} onChange={event => setPolicyEffectiveDate(event.target.value)} /></label>
+                      <label><span>调岗或修正原因</span><textarea aria-label="调岗或修正原因" maxLength={500} rows={2} value={policyReason} disabled={saving} onChange={event => setPolicyReason(event.target.value)} placeholder="例如：从本日起由样品组调入量产，补正已生成考勤口径" /></label>
+                      <p>请核对上方“统计分账”。保存前会预览生效日起的考勤与其他工时；生效日前记录、已单独设置的临时口径保留。</p>
+                    </fieldset>}
                     {!creating && profileEmployee && (
                       <div className={`hr-employment-state ${profileEmployee.isActive ? 'active' : 'resigned'}`}>
                         <span>{profileEmployee.isActive ? <UserRoundCheck /> : <RotateCcw />}</span>
@@ -3252,6 +3265,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
         </section>
       </div>
     )}
+    {policyReviewBody && <EmployeeAttainmentChangeReview employeeId={selectedEmployeeId} payload={policyReviewBody} busy={saving} error={formError} onClose={() => { setPolicyReviewBody(null); setFormError(''); }} onConfirm={saveEmployee} />}
     {numberReorderOpen && <EmployeeNumberReorderDialog
       employees={employees}
       backgroundRef={workbenchRef}

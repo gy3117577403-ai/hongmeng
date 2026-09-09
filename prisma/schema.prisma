@@ -1332,6 +1332,7 @@ model OtherWorkTimeReview {
 }
 
 model Employee {
+  attainmentPolicyChanges          EmployeeAttainmentPolicyChange[]
   otherWorkRequests                OtherWorkTimeRequest[]
   id                               String                               @id @default(uuid())
   employeeNo                       String                               @unique @map("employee_no")
@@ -1401,6 +1402,26 @@ model Employee {
   @@index([attendanceEnabled, isActive])
   @@index([attendanceGroup, attendanceEnabled, isActive])
   @@map("employees")
+}
+
+model EmployeeAttainmentPolicyChange {
+  id            String   @id @default(uuid())
+  revision      Int      @unique @default(autoincrement())
+  employeeId    String   @map("employee_id")
+  effectiveDate DateTime @map("effective_date") @db.Date
+  beforePolicy Json     @map("before_policy")
+  afterPolicy  Json     @map("after_policy")
+  reason        String
+  actorId       String   @map("actor_id")
+  requestId     String   @map("request_id")
+  requestHash   String   @map("request_hash")
+  impact        Json
+  createdAt     DateTime @default(now()) @map("created_at")
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, requestId])
+  @@index([employeeId, effectiveDate, revision], map: "employee_attainment_policy_changes_employee_id_effective_date_i")
+  @@map("employee_attainment_policy_changes")
 }
 
 model EmployeeEmploymentEvent {
@@ -2627,6 +2648,8 @@ model ProcessLaborClaim {
 }
 
 model AttendanceRecord {
+  attainmentPolicyOverride            Boolean   @default(false) @map("attainment_policy_override")
+  attainmentPolicyReason              String?   @map("attainment_policy_reason")
   id                                  String    @id @default(uuid())
   employeeId                          String    @map("employee_id")
   departmentSnapshot                  String?   @map("department_snapshot")
