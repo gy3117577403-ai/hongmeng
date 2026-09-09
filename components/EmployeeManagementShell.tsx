@@ -3088,7 +3088,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
 
   return (<>
     <main ref={workbenchRef} className="hr-workbench hr-workbench-v5 hm-workbench-root">
-      <AppWorkbenchHeader user={user} activeHref="/workspace/employees" subtitle="人事管理" menuItems={[]} hideHeader sidebarTriggerTargetId="hr-platform-navigation-trigger" />
+      <AppWorkbenchHeader user={user} activeHref="/workspace/employees" subtitle="人事管理" menuItems={[]} hideHeader sidebarTriggerTargetId="hr-platform-navigation-trigger" onBeforeNavigate={confirmDiscard} />
       <div className="hr-shell">
         <nav className="hr-module-tabs" aria-label="人事管理功能导航">
           <div id="hr-platform-navigation-trigger" className="hm-cockpit-navigation-trigger hr-platform-navigation-trigger" />

@@ -3,7 +3,7 @@
 import { ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PortalMenu } from '@/components/PortalMenu';
@@ -31,6 +31,7 @@ type AppWorkbenchHeaderProps = {
   sidebarTriggerTargetId?: string;
   sidebarExpanded?: boolean;
   onSidebarExpandedChange?: (expanded: boolean) => void;
+  onBeforeNavigate?: () => boolean | Promise<boolean>;
   moduleModeSwitcher?: {
     mode: BusinessMode;
     drawerId: string;
@@ -52,6 +53,7 @@ export function AppWorkbenchHeader({
   sidebarTriggerTargetId,
   sidebarExpanded: controlledSidebarExpanded,
   onSidebarExpandedChange,
+  onBeforeNavigate,
   moduleModeSwitcher,
 }: AppWorkbenchHeaderProps) {
   const router = useRouter();
@@ -61,6 +63,7 @@ export function AppWorkbenchHeader({
   const userButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
+  const navigationPending = useRef(false);
   const displayName = user.displayName || user.username;
   const moduleName = activePlatformNavigationItem(activeHref)?.label || '工作台';
   const isHome = activePlatformNavigationItem(activeHref)?.href === '/home';
@@ -76,6 +79,24 @@ export function AppWorkbenchHeader({
     if (controlledSidebarExpanded === undefined) setInternalSidebarExpanded(nextValue);
     onSidebarExpandedChange?.(nextValue);
   }, [controlledSidebarExpanded, onSidebarExpandedChange, sidebarExpanded]);
+
+  const navigateWithGuard = useCallback(async (href: string): Promise<void> => {
+    if (navigationPending.current) return;
+    navigationPending.current = true;
+    try {
+      updateSidebarExpanded(false);
+      if (!onBeforeNavigate || await onBeforeNavigate()) router.push(href, { scroll: false });
+    } finally { navigationPending.current = false; }
+  }, [onBeforeNavigate, router, updateSidebarExpanded]);
+
+  function handleNavigation(event: MouseEvent<HTMLAnchorElement>): void {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (onBeforeNavigate) {
+      const href = event.currentTarget.getAttribute('href');
+      event.preventDefault();
+      if (href) void navigateWithGuard(href);
+    } else closeSidebar(false);
+  }
 
   useEffect(() => {
     if (!sidebarTriggerTargetId) {
@@ -113,11 +134,11 @@ export function AppWorkbenchHeader({
       if (isHome) return;
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k') return;
       event.preventDefault();
-      router.push('/home?focusSearch=1', { scroll: false });
+      void navigateWithGuard('/home?focusSearch=1');
     }
     window.addEventListener('keydown', openGlobalSearch);
     return () => window.removeEventListener('keydown', openGlobalSearch);
-  }, [isHome, router]);
+  }, [isHome, navigateWithGuard]);
 
   function closeSidebar(restoreFocus = true): void {
     updateSidebarExpanded(false);
@@ -135,7 +156,7 @@ export function AppWorkbenchHeader({
       <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={() => closeSidebar()} />
       <PlatformNavigation user={user} activeHref={activeHref} brandTitle={brandTitle} landingHref={landingHref}
         expanded={sidebarExpanded} navigationRef={sidebarRef} onExpandedChange={updateSidebarExpanded}
-        onNavigate={() => closeSidebar(false)} moduleModeSwitcher={moduleModeSwitcher} />
+        onNavigate={handleNavigation} moduleModeSwitcher={moduleModeSwitcher} />
 
       {sidebarTriggerTarget && createPortal(sidebarTrigger, sidebarTriggerTarget)}
 

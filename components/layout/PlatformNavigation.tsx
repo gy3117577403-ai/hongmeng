@@ -2,7 +2,7 @@
 
 import { BarChart3, Boxes, Check, ChevronRight, Factory, FolderKanban, HelpCircle, Home, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, UsersRound, Workflow, X, type LucideIcon } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { canAccessAppRoute } from '@/lib/app-route-access';
 import { activePlatformNavigationGroup, activePlatformNavigationItem, platformNavigationForUser, platformNavigationHref, platformRouteKey, restorePlatformNavigationGroup, type PlatformNavigationGroup, type PlatformNavigationItem, type PlatformNavigationPreference } from '@/lib/platform-navigation';
@@ -19,7 +19,7 @@ type Props = {
   expanded: boolean;
   navigationRef: RefObject<HTMLElement>;
   onExpandedChange: (expanded: boolean) => void;
-  onNavigate: () => void;
+  onNavigate: (event: MouseEvent<HTMLAnchorElement>) => void;
   moduleModeSwitcher?: { mode: BusinessMode; drawerId: string; drawerOpen: boolean; onToggle: () => void; openFromSidebar?: boolean };
 };
 
@@ -131,8 +131,8 @@ export function PlatformNavigation({ user, activeHref, brandTitle, landingHref, 
       aria-current={active ? 'page' : undefined}
       onClick={event => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-        onNavigate();
         closeFlyout();
+        onNavigate(event);
       }}><span>{item.label}</span>{active && <Check size={16} aria-hidden="true" />}</Link>;
   }
 
@@ -159,7 +159,7 @@ export function PlatformNavigation({ user, activeHref, brandTitle, landingHref, 
     if (!canAccessAppRoute(user.access, href)) return null;
     return <Link className={`hm-nav-row hm-nav-direct${activeItem?.href === href ? ' is-current' : ''}`} href={href} prefetch={false}
       aria-label={label} aria-current={activeItem?.href === href ? 'page' : undefined}
-      onClick={event => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) onNavigate(); }}>
+      onClick={event => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) onNavigate(event); }}>
       <Icon size={20} aria-hidden="true" /><span className="hm-nav-label">{label}</span>{!expanded && <span className="hm-nav-tooltip" aria-hidden="true">{label}</span>}
     </Link>;
   }

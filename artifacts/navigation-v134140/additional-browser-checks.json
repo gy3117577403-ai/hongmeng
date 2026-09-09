@@ -1,0 +1,20 @@
+{
+  "verifiedAt": "2026-09-09T03:08:51.125Z",
+  "version": "v1.34.141",
+  "base": "http://127.0.0.1:3110",
+  "checks": [
+    {
+      "check": "Reduced motion disables animation and transition; narrow overlay Tab/Shift+Tab contain focus; Escape closes and returns focus",
+      "passed": true
+    },
+    {
+      "check": "Restricted reader browser omits people/system groups and successfully enters drawing library with existing access filtering",
+      "passed": true
+    },
+    {
+      "check": "v1.34.141 HR unsaved navigation: compact/expanded menu and Ctrl+K prompt; Continue retains input; Discard reaches quality data",
+      "passed": true
+    }
+  ],
+  "physicalDeviceTested": false
+}
