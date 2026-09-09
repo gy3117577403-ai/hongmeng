@@ -34,8 +34,8 @@ try {
     await page.goto(base+'/workspace/reporting-recovery?id='+id);
     const recovery=()=>page.locator('.reporting-recovery-root');
     await page.getByRole('dialog',{name:'报工资料核对',exact:true}).waitFor();
-    check(new URL(page.url()).pathname==='/production','legacy handler link opens original production page');
-    check(new URL(page.url()).searchParams.get('submissionId')===id,'legacy link retains the original submission');
+    check(page.url().startsWith(base+'/production?'),'legacy handler link opens original production page');
+    check(page.url().includes('submissionId='+id),'legacy link retains the original submission');
     await recovery().getByRole('heading',{name:'核对实际完成的整套数量'}).waitFor();
     check(await recovery().locator('textarea[required],input[type=text][required]').count()===0,'no mandatory free text');
     const submit=recovery().getByRole('button',{name:'确认并完成原报工',exact:true});
@@ -54,7 +54,7 @@ try {
     await page.setViewportSize({width:390,height:844});
     await page.goto(base+'/workspace/reporting-recovery?id='+id);
     await recovery().getByRole('heading',{name:'原报工已完成',exact:true}).waitFor();
-    check(new URL(page.url()).pathname==='/workspace/reporting-recovery','field operator retains authorized historical receipt without production access');
+    check(page.url().startsWith(base+'/workspace/reporting-recovery?'),'field operator retains authorized historical receipt without production access');
     check(await recovery().getByRole('button',{name:'确认并完成原报工',exact:true}).count()===0,'operator sees own receipt without handler controls');
     const size=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));check(size.scroll<=size.width,'mobile recovery has no horizontal overflow');
     await page.screenshot({path:out+'/recovery-mobile-receipt.png',fullPage:true});
