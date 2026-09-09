@@ -90,7 +90,6 @@ try {
   } elseif ($Stage -eq 'verify') {
     $health = Invoke-RestMethod 'http://127.0.0.1:3118/api/health'
     $ready = Invoke-RestMethod 'http://127.0.0.1:3118/api/ready'
-    $logs = Docker @('logs',$app)
     $inspect = ((Docker @('inspect',$app)) -join "`n" | ConvertFrom-Json)[0]
     if ($inspect.Config.Image -ne $Image) { throw 'Unexpected running image' }
     if ($ExpectedRevision -and $inspect.Config.Labels.'org.opencontainers.image.revision' -ne $ExpectedRevision) { throw 'Unexpected image revision' }
