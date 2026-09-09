@@ -46,6 +46,16 @@ try {
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+2),'phone source no horizontal overflow');
       await sheet().getByRole('button',{name:'提交待处理申报',exact:true}).click();
       await page.locator('.field-report-success').waitFor();check((await page.locator('.field-report-success').innerText()).includes('尚未计入正式报工和员工工时'),'pending receipt does not claim completion');await snap('phone-pending-receipt');
+      const receiptUrl=page.url();
+      await page.locator('.field-report-success').getByRole('button',{name:'就地核对原申报资料',exact:true}).click();
+      const recovery=page.getByRole('dialog',{name:'报工资料核对',exact:true});
+      await recovery.getByRole('heading',{name:'报工资料核对',exact:true}).waitFor();
+      await recovery.getByText('等待处理账号完成核对',{exact:true}).waitFor();
+      check(page.url()===receiptUrl,'pending receipt opens its details on the same original QR page');
+      check(await recovery.getByRole('button',{name:'确认并完成原报工',exact:true}).count()===0,'operator does not gain material or process approval controls');
+      await snap('phone-pending-details');
+      await recovery.getByRole('button',{name:'关闭资料核对',exact:true}).click();
+      await recovery.waitFor({state:'hidden'});
       let ticket=(await get('/api/field-report/tickets/'+w.orders.expired.publicCode+'?stepId='+w.orders.expired.stepId)).data;
       check(ticket.context.reportableQty===34,'pending quantity is reserved from subsequent reports');
       check(ticket.context.recentCompletions.length===0,'pending WIP receipt creates no formal completion');
@@ -67,6 +77,7 @@ try {
       await qty().fill('40');await sheet().getByRole('button',{name:'确认报工并自动记工',exact:true}).click();await page.getByRole('button',{name:'确认全部报工',exact:true}).click();
       await sheet().getByText('本机待上传，结果尚未确认',{exact:true}).waitFor();await sheet().getByText('本机待上传，结果尚未确认',{exact:true}).scrollIntoViewIfNeeded();await sheet().getByRole('button',{name:'正在提交...',exact:true}).waitFor({state:'hidden'});await snap('phone-local-upload');
       await page.reload();await page.locator('.field-report-success').waitFor();
+      check((await page.locator('.field-report-success').innerText()).includes('本人 '+f.workDate+' 完成工时已记入'),'recovered receipt reports personal hours on the original business date');
       check(requests.length===2 && requests[0].idempotencyKey===requests[1].idempotencyKey,'lost response replays the same idempotency key');
       check(JSON.stringify(requests[0])===JSON.stringify(requests[1]),'retry uses identical frozen payload');
       ticket=(await get('/api/field-report/tickets/'+w.orders.current.publicCode+'?stepId='+w.orders.current.stepId)).data;

@@ -10,7 +10,9 @@ const database = new URL(process.env.DATABASE_URL);
 const base = process.env.REPORT_QA_BASE || 'http://127.0.0.1:3480';
 assert.ok(['127.0.0.1', 'localhost'].includes(database.hostname));
 assert.ok(/^\/employee_access_(it\d*|release_[ab])$/.test(database.pathname)
-  || (process.env.CI === 'true' && database.pathname === '/hongmeng_ci'));
+  || (process.env.CI === 'true' && database.pathname === '/hongmeng_ci')
+  || (process.env.HOURS_QA_ALLOW === 'disposable-hours-runtime' && database.port === '55442'
+    && database.pathname === '/hongmeng_employee_hours_v134142_dev' && base === 'http://127.0.0.1:3112'));
 assert.equal(new URL(base).hostname, '127.0.0.1');
 const db = new PrismaClient();
 const password = 'AccessVerify!2026x';
@@ -129,7 +131,7 @@ try {
       headers: { Cookie: cookies[key] }, redirect: 'manual',
     });
     assert.equal(page.status, 200, `${key} daily-attainment page must not redirect to another report`);
-    assert.match(await page.text(), /员工每日达成/);
+    assert.match(await page.text(), /员工工时达成/);
   }
   assert.equal((await request(reportPath, 'worker')).status, 403);
   assert.equal((await request(reportPath, null)).status, 401);
@@ -140,14 +142,20 @@ try {
   assert.equal(workerRow.claimDetails[0].specification, 'HX-2026-A');
   assert.equal(workerRow.claimDetails[0].processCode, 'QA-P01');
   assert.equal(workerRow.details[0].processName, '成品检验');
+  const dailyReport = await request('/api/reports/employee-attainment?period=today&date=2026-08-04&employeeId=' + workerA.id, 'admin');
+  assert.equal(dailyReport.status, 200);
+  const dailyWorker = dailyReport.data.report.rows.find(row => row.employee.id === workerA.id);
+  assert.equal(dailyWorker.attendanceMilliseconds, 8 * hour);
+  assert.equal(dailyWorker.standardLaborMilliseconds, 6 * hour);
+  assert.equal(dailyWorker.attainmentBasisPoints, 7500, 'six completed hours over eight attendance hours uses the new attainment formula');
   results.push('Supervisor with legacy EMPLOYEE role, team leader and HR receive the same per-employee data as administrator, including another team; field and anonymous accounts denied');
-  results.push('Eight claims plus one direct report preserve exact product/model/process/quantity and six standard hours without truncation');
+  results.push('Eight claims plus one direct report preserve exact product/model/process/quantity and six completed hours without truncation; six over eight attendance hours gives 75%');
 
   // Exercise every real report page and data source with and without the old
   // personnel-reader grant. Merely showing a navigation tab is insufficient.
   const reportBranches = {
     production: ['weekly-plan-attainment', 'process-bottlenecks'],
-    people: ['attendance-attainment', 'employee-attainment', 'employee-matrix', 'labor-ledger', 'unmatched-labor'],
+    people: ['attendance-attainment', 'employee-attainment', 'employee-matrix', 'team-hours', 'labor-ledger'],
     quality: ['affected-labor', 'cause-distribution', 'open-events', 'event-ledger'],
     governance: ['completeness', 'missing-route', 'missing-standard', 'missing-drawing', 'missing-material'],
     sample: ['sample-tasks', 'sample-attainment', 'pending-review', 'published-materials', 'review-attainment'],
@@ -177,6 +185,9 @@ try {
   assert.equal(adminPools.status, 200);
   assert.equal(adminPools.data.pools.length, 8);
   for (const key of ['hr', 'hrOnly']) {
+    const legacyPage = await fetch(base + '/workspace/reports/people/unmatched-labor?period=month&date=2026-08-04', { headers: { Cookie: cookies[key] }, redirect: 'manual' });
+    assert.equal(legacyPage.status, 307, `${key}: retired unmatched-hours URL redirects`);
+    assert.equal(legacyPage.headers.get('location'), '/workspace/reports/people/employee-attainment?period=month&date=2026-08-04');
     for (const [domain, branches] of Object.entries(reportBranches)) {
       for (const branch of branches) {
         const path = `/workspace/reports/${domain}/${branch}?period=month&date=2026-08-04`;
@@ -215,8 +226,8 @@ try {
     assert.equal((await request(`/api/reports/${name}`, null)).status, 401, `anonymous remains restricted: ${name}`);
   }
   const readerPage = await fetch(base + '/workspace/reports/people/employee-attainment', { headers: { Cookie: cookies.peopleReader }, redirect: 'manual' });
-  assert.equal(readerPage.status, 307);
-  assert.match(readerPage.headers.get('location'), /\/workspace\/reports\/people\/unmatched-labor$/);
+  assert.equal(readerPage.status, 200, 'personnel-only reader opens the unified hours report');
+  assert.match(await readerPage.text(), /员工工时达成/);
   results.push('Both HR-only and HR plus legacy reader accounts open all 21 report pages with export; all report APIs match administrator datasets, including cross-team abnormal time and labor claims');
   results.push('HR report reads leave work orders, abnormal events and labor pools unchanged; production edits, quality review, labor claims and access grants remain denied; non-HR reader, field and anonymous boundaries preserved');
 

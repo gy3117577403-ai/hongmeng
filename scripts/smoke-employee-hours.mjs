@@ -64,12 +64,12 @@ async function main() {
   if (process.env.HOURS_QA_CHECK_BOOTSTRAP === '1') {
     const initial = await login(process.env.SEED_ADMIN_USERNAME, process.env.SEED_ADMIN_PASSWORD);
     assert.equal(initial.mustChangePassword, true);
-    await request('fresh seed cannot read reports before changing password', '/api/reports/employee-attainment', { status: 401 });
+    await request('fresh seed cannot read reports before changing password', '/api/reports/employee-attainment', { status: 403 });
     const nextPassword = 'Hours-Fresh-' + randomUUID();
     await request('fresh seed must change password', '/api/auth/change-password', { method: 'POST', body: {
       currentPassword: process.env.SEED_ADMIN_PASSWORD, newPassword: nextPassword, confirmPassword: nextPassword,
     } });
-    await request('password change invalidates the previous session', '/api/reports/employee-attainment', { status: 401 });
+    await request('password change invalidates the previous session', '/api/reports/employee-attainment', { status: 403 });
     await request('old bootstrap password no longer works', '/api/auth/login', { method: 'POST', status: 401, authenticated: false,
       body: { username: process.env.SEED_ADMIN_USERNAME, password: process.env.SEED_ADMIN_PASSWORD } });
     const updated = await login(process.env.SEED_ADMIN_USERNAME, nextPassword);
