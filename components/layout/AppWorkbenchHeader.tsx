@@ -1,44 +1,14 @@
 'use client';
 
-import {
-  BarChart3,
-  Bell,
-  BookOpen,
-  Boxes,
-  CalendarClock,
-  CalendarDays,
-  ChevronDown,
-  ChevronRight,
-  Clock3,
-  ClipboardCheck,
-  FolderKanban,
-  GitPullRequestArrow,
-  HelpCircle,
-  Home,
-  LayoutDashboard,
-  ListTree,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PackageSearch,
-  PackageOpen,
-  Search,
-  Settings,
-  Settings2,
-  PanelsTopLeft,
-  ShieldAlert,
-  ShieldCheck,
-  TimerOff,
-  UsersRound,
-  Workflow,
-  Warehouse,
-  type LucideIcon,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PortalMenu } from '@/components/PortalMenu';
+import { PlatformNavigation } from '@/components/layout/PlatformNavigation';
+import { activePlatformNavigationItem } from '@/lib/platform-navigation';
 import type { BusinessMode } from '@/components/layout/ModuleModeDrawer';
 import { canAccessAppRoute, landingRouteForAccess } from '@/lib/app-route-access';
 import type { CurrentUserDTO } from '@/types';
@@ -70,101 +40,6 @@ type AppWorkbenchHeaderProps = {
   };
 };
 
-type SideNavigationItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  planned?: boolean;
-  modeSwitchable?: boolean;
-  openModeOnEnter?: boolean;
-};
-
-const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
-  {
-    label: '业务中心',
-    items: [
-      { href: '/production', label: '生产执行', icon: LayoutDashboard, modeSwitchable: true, openModeOnEnter: false },
-      { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays, modeSwitchable: true, openModeOnEnter: false },
-      { href: '/workspace/daily-plans', label: '日出货计划', icon: CalendarClock },
-      { href: '/workspace/weekly-processes', label: '周工序总览', icon: ListTree },
-      { href: '/workspace/wip', label: '半成品仓', icon: PackageOpen },
-      { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
-      { href: '/workspace/material-library', label: '物料库', icon: PackageOpen },
-      { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },
-      { href: '/connector-parameters', label: '连接器参数', icon: Boxes },
-      { href: '/workspace/terminal-tooling', label: '端子调模', icon: Settings2 },
-      { href: '/workspace/capability-showcase', label: '能力展厅', icon: PanelsTopLeft },
-    ],
-  },
-  {
-    label: '协同规划',
-    items: [
-      { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
-      { href: '/workspace/quality', label: '质量管理', icon: ShieldAlert },
-      { href: '/workspace/quality/data', label: '质量数据', icon: ClipboardCheck },
-      { href: '/workspace/quality-tasks', label: '我的质量任务', icon: ClipboardCheck },
-      { href: '/workspace/quality-confirmation', label: '品质确认', icon: ShieldCheck },
-      { href: '/workspace/approvals', label: '重大审批', icon: ClipboardCheck },
-      { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
-      { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
-      { href: '/workspace/reporting-recovery', label: '报工待处理', icon: ClipboardCheck },
-      { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse, modeSwitchable: true },
-      { href: '/workspace/procurement', label: '物料跟进', icon: PackageSearch },
-      { href: '/workspace/product-times', label: '产品工序与工时', icon: Clock3 },
-      { href: '/workspace/employees', label: '人事管理', icon: UsersRound },
-      { href: '/workspace/attendance', label: '考勤与异常', icon: CalendarClock },
-      { href: '/workspace/abnormal-times', label: '异常工时', icon: TimerOff },
-      { href: '/workspace/knowledge', label: '知识库', icon: BookOpen },
-      { href: '/workspace/reports', label: '报表中心', icon: BarChart3 },
-      { href: '/workspace/permissions', label: '权限与数据联通', icon: ShieldCheck },
-      { href: '/workspace/messages', label: '消息中心', icon: Bell },
-    ],
-  },
-];
-
-function navigationForUser(
-  user: CurrentUserDTO,
-): Array<{ label: string; items: SideNavigationItem[] }> {
-  return sideNavigation
-    .map(group => ({
-      ...group,
-      items: group.items.filter(item => {
-        if (item.href === '/workspace/daily-plans' && !user.canAccessDailyPlans) return false;
-        if (item.href === '/workspace/weekly-processes' && !user.canAccessWeeklyProcesses) return false;
-        return canAccessAppRoute(user.access, item.href);
-      }),
-    }))
-    .filter(group => group.items.length > 0);
-}
-
-function routePath(href: string): string {
-  return href.split('?')[0] || '/';
-}
-
-function isActiveRoute(activeHref: string, href: string): boolean {
-  const active = routePath(activeHref);
-  const target = routePath(href);
-  if (target === '/workspace/quality') return active === target || (active.startsWith(`${target}/`) && !sideNavigation.some(group => group.items.some(item => item.href !== target && routePath(item.href) === active)));
-  return active === target;
-}
-
-function activeModuleName(activeHref: string): string {
-  if (isActiveRoute(activeHref, '/home')) return '首页';
-  for (const group of sideNavigation) {
-    const item = group.items.find(entry => isActiveRoute(activeHref, entry.href));
-    if (item) return item.label;
-  }
-  return '工作台';
-}
-
-function modeSwitchHref(href: string, mode: BusinessMode, openModeOnEnter = true): string {
-  const params = new URLSearchParams();
-  if (openModeOnEnter) params.set('chooseMode', '1');
-  if (mode === 'sample') params.set('branch', 'samples');
-  const query = params.toString();
-  return query ? `${href}?${query}` : href;
-}
-
 export function AppWorkbenchHeader({
   user,
   activeHref,
@@ -187,11 +62,9 @@ export function AppWorkbenchHeader({
   const sidebarButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const displayName = user.displayName || user.username;
-  const moduleName = activeModuleName(activeHref);
-  const isHome = isActiveRoute(activeHref, '/home');
-  const visibleNavigation = navigationForUser(user);
+  const moduleName = activePlatformNavigationItem(activeHref)?.label || '工作台';
+  const isHome = activePlatformNavigationItem(activeHref)?.href === '/home';
   const landingHref = landingRouteForAccess(user.access);
-  const canOpenHome = canAccessAppRoute(user.access, '/home');
   const canOpenSystemSettings = canAccessAppRoute(user.access, '/dashboard?openSettings=1');
   const sidebarExpanded = controlledSidebarExpanded ?? internalSidebarExpanded;
   const visibleMenuItems = canOpenSystemSettings
@@ -260,66 +133,9 @@ export function AppWorkbenchHeader({
   return (
     <>
       <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={() => closeSidebar()} />
-      <aside ref={sidebarRef} className={`hm-platform-sidebar ${sidebarExpanded ? 'expanded' : ''}`} id="hm-platform-sidebar" aria-label={`${brandTitle}业务导航`}>
-        <button className="hm-platform-sidebar-close" type="button" aria-label="收起平台导航" title="收起平台导航" onClick={() => closeSidebar()}><PanelLeftClose size={18} aria-hidden="true" /></button>
-        <Link className="hm-platform-brand" href={landingHref} prefetch={false} title={`返回${brandTitle}`} onClick={() => closeSidebar(false)}>
-          <span aria-hidden="true">杭</span>
-          <div><strong>{brandTitle}</strong><small>生产与技术协同工作台</small></div>
-        </Link>
-        {canOpenHome && <Link className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" prefetch={false} title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined} onClick={() => closeSidebar(false)}>
-          <Home size={18} aria-hidden="true" /><b>首页</b>
-        </Link>}
-        <nav className="hm-platform-side-nav">
-          {visibleNavigation.map(group => (
-            <section key={group.label}>
-              <h2>{group.label}</h2>
-              {group.items.map(item => {
-                const Icon = item.icon;
-                const active = isActiveRoute(activeHref, item.href);
-                const activeModeSwitch = Boolean(active && item.modeSwitchable && moduleModeSwitcher);
-                const canOpenModeFromSidebar = Boolean(activeModeSwitch
-                  && item.openModeOnEnter !== false
-                  && moduleModeSwitcher?.openFromSidebar !== false);
-                const href = item.modeSwitchable
-                  ? activeModeSwitch
-                    ? activeHref
-                    : modeSwitchHref(item.href, moduleModeSwitcher?.mode || 'mass', item.openModeOnEnter !== false)
-                  : item.href;
-                return (
-                  <Link
-                    className={`${active ? 'active' : ''} ${item.planned ? 'planned' : ''} ${canOpenModeFromSidebar ? 'mode-switch' : ''}`.trim()}
-                    href={href}
-                    prefetch={false}
-                    key={item.href}
-                    title={`${item.label}${activeModeSwitch ? `（当前${moduleModeSwitcher?.mode === 'sample' ? '样品' : '量产'}）` : item.planned ? '（规划中）' : ''}`}
-                    aria-current={active ? 'page' : undefined}
-                    aria-controls={canOpenModeFromSidebar ? moduleModeSwitcher?.drawerId : undefined}
-                    aria-expanded={canOpenModeFromSidebar ? moduleModeSwitcher?.drawerOpen : undefined}
-                    onClick={event => {
-                      if (activeModeSwitch) {
-                        event.preventDefault();
-                        closeSidebar();
-                        if (canOpenModeFromSidebar) moduleModeSwitcher?.onToggle();
-                        return;
-                      }
-                      closeSidebar(false);
-                    }}
-                  >
-                    <Icon size={18} aria-hidden="true" />
-                    <span>{item.label}</span>
-                    {item.planned && <em>规划</em>}
-                    {activeModeSwitch && <><em className="mode-label">{moduleModeSwitcher?.mode === 'sample' ? '样品' : '量产'}</em>{canOpenModeFromSidebar && <ChevronDown className={moduleModeSwitcher?.drawerOpen ? 'mode-chevron open' : 'mode-chevron'} size={13} aria-hidden="true" />}</>}
-                  </Link>
-                );
-              })}
-            </section>
-          ))}
-        </nav>
-        <div className="hm-platform-sidebar-footer">
-          <Link href="/workspace/help" prefetch={false} title="使用帮助（规划中）" className="planned" onClick={() => closeSidebar(false)}><HelpCircle size={18} aria-hidden="true" /><span>使用帮助</span><em>规划</em></Link>
-          {canOpenSystemSettings && <Link href="/dashboard?openSettings=1" prefetch={false} title="系统设置" onClick={() => closeSidebar(false)}><Settings size={18} aria-hidden="true" /><span>系统设置</span></Link>}
-        </div>
-      </aside>
+      <PlatformNavigation user={user} activeHref={activeHref} brandTitle={brandTitle} landingHref={landingHref}
+        expanded={sidebarExpanded} navigationRef={sidebarRef} onExpandedChange={updateSidebarExpanded}
+        onNavigate={() => closeSidebar(false)} moduleModeSwitcher={moduleModeSwitcher} />
 
       {sidebarTriggerTarget && createPortal(sidebarTrigger, sidebarTriggerTarget)}
 

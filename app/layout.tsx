@@ -7,6 +7,7 @@ import './styles/hm-toast.css';
 import './globals.css';
 import './account.css';
 import './styles/quality-related-surfaces.css';
+import './styles/hm-platform-navigation.css';
 export const metadata:Metadata={
   title:'杭连协同平台',
   description:'计划、技术、生产高效闭环协同平台',

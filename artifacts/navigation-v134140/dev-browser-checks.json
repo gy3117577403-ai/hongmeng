@@ -1,0 +1,31 @@
+{
+  "verifiedAt": "2026-09-09T02:57:25.081Z",
+  "base": "http://127.0.0.1:3110",
+  "checks": [
+    {
+      "check": "compact technology flyout 1366x768",
+      "passed": true
+    },
+    {
+      "check": "Escape closes flyout and returns focus; outside click closes flyout",
+      "passed": true
+    },
+    {
+      "check": "1366x768 expanded long group, fixed footer, no horizontal overflow",
+      "passed": true
+    },
+    {
+      "check": "HR global navigation integrated, 1366x768 edit footer bottom 751.33, expanded/compact no horizontal overflow",
+      "passed": true
+    },
+    {
+      "check": "390x844 overlay; 320x640 compact long flyout stays within viewport; child targets >=44px",
+      "passed": true
+    },
+    {
+      "check": "Planning toolbar changes mass to sample; production navigation keeps branch=samples and renders sample execution",
+      "passed": true
+    }
+  ],
+  "physicalDeviceTested": false
+}

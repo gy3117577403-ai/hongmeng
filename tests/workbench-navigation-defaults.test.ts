@@ -13,11 +13,11 @@ test('every workbench route starts with collapsed platform navigation', () => {
 });
 
 test('planning center opens focused and keeps navigation and mode chooser mutually exclusive', () => {
-  const header = readFileSync('components/layout/AppWorkbenchHeader.tsx', 'utf8');
+  const navigation = readFileSync('lib/platform-navigation.ts', 'utf8');
   const planning = readFileSync('components/PlanningCenterShell.tsx', 'utf8');
   const sample = readFileSync('components/SampleTeamCenter.tsx', 'utf8');
 
-  assert.match(header, /href: '\/weekly-plan-center'.*openModeOnEnter: false/);
+  assert.match(navigation, /href: '\/weekly-plan-center'.*openModeOnEnter: false/);
 
   for (const component of [planning, sample]) {
     assert.match(component, /const \[navigationOpen, setNavigationOpen\] = useState\(false\)/);

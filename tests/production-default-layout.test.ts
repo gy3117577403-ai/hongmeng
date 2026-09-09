@@ -4,12 +4,14 @@ import test from 'node:test';
 
 test('production execution opens in a focused workspace at tablet width', () => {
   const header = readFileSync('components/layout/AppWorkbenchHeader.tsx', 'utf8');
+  const navigation = readFileSync('lib/platform-navigation.ts', 'utf8');
+  const sidebar = readFileSync('components/layout/PlatformNavigation.tsx', 'utf8');
   const production = readFileSync('components/ProductionExecutionCenter.tsx', 'utf8');
   const stylesheet = readFileSync('app/production/production-workbench.css', 'utf8');
 
-  assert.match(header, /href: '\/production'.*openModeOnEnter: false/);
+  assert.match(navigation, /href: '\/production'.*openModeOnEnter: false/);
   assert.match(header, /openFromSidebar\?: boolean/);
-  assert.match(header, /if \(canOpenModeFromSidebar\) moduleModeSwitcher\?\.onToggle\(\)/);
+  assert.doesNotMatch(sidebar, /moduleModeSwitcher\??\.onToggle\(/);
   assert.match(production, /const \[navigationOpen, setNavigationOpen\] = useState\(false\)/);
   assert.match(production, /const \[insightsOpen, setInsightsOpen\] = useState\(false\)/);
   assert.doesNotMatch(production, /setInsightsOpen\(window\.matchMedia/);

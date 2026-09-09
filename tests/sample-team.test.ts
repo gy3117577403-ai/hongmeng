@@ -238,7 +238,7 @@ test('pending review summary counts active submission packages rather than child
 });
 
 test('production, planning, and warehouse share a push-down mass/sample mode drawer', () => {
-  const header = readFileSync('components/layout/AppWorkbenchHeader.tsx', 'utf8');
+  const navigation = readFileSync('lib/platform-navigation.ts', 'utf8');
   const drawer = readFileSync('components/layout/ModuleModeDrawer.tsx', 'utf8');
   const foundation = readFileSync('app/styles/hm-workbench-foundation.css', 'utf8');
   const production = readFileSync('components/ProductionExecutionCenter.tsx', 'utf8');
@@ -246,9 +246,9 @@ test('production, planning, and warehouse share a push-down mass/sample mode dra
   const sample = readFileSync('components/SampleTeamCenter.tsx', 'utf8');
   const warehousePage = readFileSync('app/workspace/warehouse/page.tsx', 'utf8');
 
-  assert.match(header, /href: '\/production'.*modeSwitchable: true/);
-  assert.match(header, /href: '\/weekly-plan-center'.*modeSwitchable: true/);
-  assert.match(header, /href: '\/workspace\/warehouse'.*modeSwitchable: true/);
+  assert.match(navigation, /href: '\/production'.*modeSwitchable: true/);
+  assert.match(navigation, /href: '\/weekly-plan-center'.*modeSwitchable: true/);
+  assert.match(navigation, /href: '\/workspace\/warehouse'.*modeSwitchable: true/);
   assert.match(drawer, /量产与样品共用模块入口/);
   assert.match(foundation, /\.hm-module-mode-drawer\s*\{[^}]*position:\s*relative/s);
   assert.doesNotMatch(foundation, /\.hm-module-mode-drawer\s*\{[^}]*position:\s*(?:fixed|absolute)/s);
