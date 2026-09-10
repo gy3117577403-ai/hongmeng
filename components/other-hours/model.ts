@@ -54,8 +54,12 @@ export function queryFor(filters: Filters, page: number) {
   return query;
 }
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, { cache: 'no-store', ...options });
-  const value = await response.json();
+  let response: Response;
+  try { response = await fetch(path, { cache: 'no-store', ...options }); }
+  catch { throw new Error('网络连接失败，请检查网络后重试'); }
+  let value;
+  try { value = await response.json(); }
+  catch { throw new Error('服务暂时不可用，请稍后重试'); }
   if (!response.ok || value.ok === false) throw new Error(value.error || '操作失败，请重试');
   return value;
 }
