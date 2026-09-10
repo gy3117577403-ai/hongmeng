@@ -1,5 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, ShieldAlert, X, ZoomIn } from 'lucide-react';
 import { useModalLayer } from '@/components/useModalLayer';
 import type { QuickQualityDTO, QuickQualityPhoto } from '@/lib/quality-quick-shared';
@@ -7,13 +8,16 @@ import './quick-quality.css';
 
 export function QuickPhotoViewer({photos,index,onClose}:{photos:QuickQualityPhoto[];index:number;onClose:()=>void}) {
   const [at,setAt]=useState(index),[zoom,setZoom]=useState(false),ref=useRef<HTMLDivElement>(null);
-  useModalLayer({open:true,layerRef:ref,onClose});
+  const [mounted,setMounted]=useState(false);
+  useEffect(()=>setMounted(true),[]);
+  useModalLayer({open:mounted,layerRef:ref,onClose});
+  if(!mounted)return null;
   const photo=photos[at];
-  return <div ref={ref} className="qq-lightbox" role="dialog" aria-modal="true" aria-label="现场图片" tabIndex={-1}>
+  return createPortal(<div ref={ref} className="qq-lightbox" role="dialog" aria-modal="true" aria-label="现场图片" tabIndex={-1}>
     <header><span>{at+1} / {photos.length} · {photo.name}</span><button onClick={()=>setZoom(!zoom)} aria-label="切换图片缩放"><ZoomIn/></button><button onClick={onClose} aria-label="关闭图片"><X/></button></header>
     <div className={'qq-lightbox-image '+(zoom?'zoom':'')}><img src={photo.url} alt={photo.name}/></div>
     {photos.length>1&&<footer><button onClick={()=>{setAt((at-1+photos.length)%photos.length);setZoom(false);}} aria-label="上一张"><ChevronLeft/></button><button onClick={()=>{setAt((at+1)%photos.length);setZoom(false);}} aria-label="下一张"><ChevronRight/></button></footer>}
-  </div>;
+  </div>,document.body);
 }
 export function QuickWarningCards({rows}:{rows:QuickQualityDTO[]}) {
   const [view,setView]=useState<{photos:QuickQualityPhoto[];index:number}|null>(null);

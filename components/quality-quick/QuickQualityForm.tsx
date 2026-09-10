@@ -13,7 +13,7 @@ export default function QuickQualityForm({record,workOrderId,code,onClose,onSave
   const [busy,setBusy]=useState(false),[progress,setProgress]=useState(''),[error,setError]=useState(''),[dirty,setDirty]=useState(false),[scopeConfirmed,setScopeConfirmed]=useState(false);
   const layer=useRef<HTMLDivElement>(null),camera=useRef<HTMLInputElement>(null),album=useRef<HTMLInputElement>(null),key=useRef(crypto.randomUUID()),urls=useRef<string[]>([]),request=useRef<XMLHttpRequest|null>(null);
   function close(){if(!busy&&(!dirty||window.confirm('内容尚未保存，确定离开？')))onClose();}
-  useModalLayer({open:true,layerRef:layer,onClose:close});
+  useModalLayer({open:true,layerRef:layer,onClose:close,interactionEnabled:!annotate});
   useEffect(()=>()=>{urls.current.forEach(u=>URL.revokeObjectURL(u));request.current?.abort();},[]);
   useEffect(()=>{if(!dirty)return;const unload=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',unload);return()=>window.removeEventListener('beforeunload',unload);},[dirty]);
   useEffect(()=>{const a=new AbortController();const timer=setTimeout(async()=>{try{const query=new URLSearchParams({q:search,...(!record&&workOrderId&&!search?{ids:workOrderId}:{}),...(!record&&code&&!search?{code}:{})});const r=await fetch('/api/quality-quick/options?'+query,{signal:a.signal});const b=await r.json();if(!r.ok)throw new Error(b.error);setOptions(b.rows);if(!record&&(workOrderId||code)&&!search)setOrders(current=>current.length?current:b.rows);}catch(e){if(!a.signal.aborted)setError(e instanceof Error?e.message:'工单加载失败');}},200);return()=>{clearTimeout(timer);a.abort();};},[search,record,workOrderId,code]);

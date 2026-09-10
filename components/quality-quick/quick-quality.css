@@ -4,3 +4,4 @@
 @media(prefers-reduced-motion:reduce){.qq-workbench *,.qq-modal *{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 
 .qq-frame .hm-cockpit-command{grid-template-columns:40px minmax(0,1fr) auto}.qq-inline-warnings{grid-column:1 / -1}
+.qq-modal{z-index:var(--z-modal,2000)}.qq-modal .qq-modal{z-index:calc(var(--z-modal,2000) + 10)}.qq-lightbox{z-index:calc(var(--z-modal,2000) + 20)}.qq-lightbox button{font:inherit}

@@ -1130,7 +1130,7 @@ export function DrawingLibraryShell({
                     {selectedItem.fileCount > 0 && <small>{selectedItem.fileCount} 个文件</small>}
                     <small>更新于 {dt(selectedItem.updatedAt)}</small>
                     {selectedItem.isAnomaly && <small className="anomaly">{selectedItem.anomalyReason}</small>}
-                    {qualityWarnings.length > 0 && <button className="drawing-quality-warning-chip" type="button" onClick={() => requestPreviewLeave(() => { setQualityWarningMode(true); setFilePanelOpen(false); })}><ShieldAlert size={12} />{qualityWarnings.length} 条异常警示</button>}
+                    {qualityWarnings.length > 0 && <button className="drawing-quality-warning-chip" type="button" onClick={() => requestPreviewLeave(() => { setQualityWarningMode(true); setFilePanelOpen(false); })}><ShieldAlert size={12} />{qualityWarnings.length} 条重大异常</button>}
                   </p>
                 </div>
                 <div className="drawing-head-actions">
@@ -1160,7 +1160,7 @@ export function DrawingLibraryShell({
                 <nav className="drawing-category-rail">
                   <button className={`drawing-quality-warning-entry ${qualityWarningMode ? 'active' : ''} ${qualityWarnings.length ? 'has-warning' : ''}`} type="button" onClick={() => requestPreviewLeave(() => { setQualityWarningMode(true); setFilePanelOpen(false); })}>
                     <ShieldAlert size={14} aria-hidden="true" />
-                    <strong>异常警示</strong>
+                    <strong>重大异常</strong>
                     <em>{qualityWarningsLoading ? '…' : qualityWarnings.length}</em>
                   </button>
                   {categories.map(category => {
@@ -1191,8 +1191,8 @@ export function DrawingLibraryShell({
                 <div className="drawing-preview">
                   <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
                   {qualityWarningMode ? <div className="drawing-quality-warning-workspace">
-                    <header><div><ShieldAlert size={20} /><span><strong>产品异常警示</strong><small>来自已归档重大异常 · 自动随产品版本下沉</small></span></div><em>{qualityWarnings.length} 条生效</em></header>
-                    {qualityWarningsLoading ? <div className="drawing-quality-warning-empty"><span className="spin" /><strong>正在加载产品警示</strong></div> : !selectedQualityWarning ? <div className="drawing-quality-warning-empty"><ShieldCheck size={36} /><strong>当前产品没有活动异常警示</strong><p>撤销、过期或尚未归档的异常不会显示在产品警示库。</p></div> : <div className="drawing-quality-warning-body">
+                    <header><div><ShieldAlert size={20} /><span><strong>产品重大异常</strong><small>来自已归档重大异常 · 自动随产品版本下沉</small></span></div><em>{qualityWarnings.length} 条生效</em></header>
+                    {qualityWarningsLoading ? <div className="drawing-quality-warning-empty"><span className="spin" /><strong>正在加载产品警示</strong></div> : !selectedQualityWarning ? <div className="drawing-quality-warning-empty"><ShieldCheck size={36} /><strong>当前产品没有活动重大异常</strong><p>撤销、过期或尚未归档的异常不会显示在产品警示库。</p></div> : <div className="drawing-quality-warning-body">
                       <aside>{qualityWarnings.map(warning => <button className={`${warning.id === selectedQualityWarning.id ? 'active' : ''} severity-${warning.severity.toLowerCase()}`} type="button" key={warning.id} onClick={() => setSelectedWarningId(warning.id)}><span><ShieldAlert size={15} /><b>{qualitySeverityLabels[warning.severity]}</b></span><strong>{warning.title}</strong><small>{warning.reportNo} · R{warning.revisionNumber}</small><em>{warningPrintPolicyLabels[warning.printPolicy]}</em></button>)}</aside>
                       <section className="drawing-quality-warning-detail"><header><div><span>{selectedQualityWarning.reportNo} · R{selectedQualityWarning.revisionNumber}</span><h2>{selectedQualityWarning.title}</h2><p>{qualitySeverityLabels[selectedQualityWarning.severity]} · 归档于 {dt(selectedQualityWarning.archivedAt)}</p></div><a href={selectedQualityWarning.detailUrl}><ExternalLink size={14} />查看完整归档</a></header>
                         <article className="drawing-quality-warning-summary"><AlertTriangle size={19} /><div><strong>异常现象与风险</strong><p>{selectedQualityWarning.warningSummary || '归档警示摘要未填写'}</p></div></article>
