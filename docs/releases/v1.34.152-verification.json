@@ -1,0 +1,127 @@
+{
+  "version": "v1.34.152",
+  "revision": "ac4bc8d5f5c918e223f88f5908d6fb331c3defa5",
+  "image": "crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:v1.34.152",
+  "digest": "sha256:2478543596679700314b924043c4ea5dc143e6b600f4e243a0d3b1763923bf8f",
+  "platform": "linux/amd64",
+  "ci": {
+    "conclusion": "success",
+    "status": "completed",
+    "url": "https://github.com/gy3117577403-ai/hongmeng/actions/runs/34430158989"
+  },
+  "anonymous": {
+    "verified": true,
+    "credentialFreeDockerPull": true,
+    "allBlobBytes": 182830339,
+    "retries": 0
+  },
+  "cleanRuntime": {
+    "postgresMigrationsApplied": 147,
+    "unfinishedMigrations": 0,
+    "databaseReady": true,
+    "storageReady": true,
+    "appRestartPassed": true
+  },
+  "business": {
+    "httpGroupsPassed": 9,
+    "httpChecks": [
+      "All five real account logins",
+      "Login required and employee management denied",
+      "Draft idempotency, employee binding and cross-origin guard",
+      "Actual S3 photo bytes, attachment ownership and submitted evidence lock",
+      "Concurrent approval once, full approved hours, original-day 95% target",
+      "Day/week/month, matrix and team facts reconcile",
+      "Actual Excel download and approval audit sheet",
+      "Correction request, administrator void, original-day rollback and no direct reapproval",
+      "Rejected edit, resubmission and reduced approval stay traceable"
+    ],
+    "uiSubmissions": 2,
+    "uiApprovedMinutes": 90,
+    "approvalAutoAdvancePassed": true,
+    "emptyPendingQueuePassed": true,
+    "report": {
+      "workDate": "2026-09-10",
+      "approvedOtherMinutes": 90,
+      "attendanceHours": 8,
+      "capacityHours": 7.6,
+      "attainmentBasisPoints": 1974
+    },
+    "excelSheets": 2,
+    "excelDataUnchangedAfterRestart": true
+  },
+  "browser": {
+    "exactImageMobileWidths": [
+      320,
+      390
+    ],
+    "desktopViewports": [
+      [
+        1366,
+        768
+      ],
+      [
+        1366,
+        1024
+      ]
+    ],
+    "mobileFormulaAbsent": true,
+    "permanentQrDownloaded": true,
+    "consoleErrors": 0,
+    "consoleWarnings": 0,
+    "physicalWechatDeviceVerified": false,
+    "sourceRuntimeAdditionalChecks": [
+      "32-row pagination and preserved scroll",
+      "combined date status search filters",
+      "partial drafts and evidence before completion",
+      "withdraw edit resubmit",
+      "save before account switch",
+      "offline upload retry"
+    ]
+  },
+  "production": {
+    "imageSwitched": false,
+    "formalDataChanged": false
+  },
+  "artifacts": [
+    {
+      "name": "mobile-form-320.png",
+      "bytes": 37372,
+      "sha256": "1152e9723fd4d2de5308dcc9a42c34c25b41d048086c5707c37ee77fa7111fbe"
+    },
+    {
+      "name": "mobile-form-390.png",
+      "bytes": 38325,
+      "sha256": "defb9cba93f5031e105788f9d67948d338f4be3f1c05896f640c9e16f2841f26"
+    },
+    {
+      "name": "mobile-records.png",
+      "bytes": 31796,
+      "sha256": "6ae4c19e5c1b5cc2f3c9db08e97a1c2e79f9ba265e7f1e784499e9878829e0ec"
+    },
+    {
+      "name": "desktop-approval.png",
+      "bytes": 82953,
+      "sha256": "74d891051424f1e392a052b579f4f84cafe33844f28ef88eb2cf4d49af0c524f"
+    },
+    {
+      "name": "desktop-ledger.png",
+      "bytes": 90654,
+      "sha256": "51cd022c424154e57fe1e8962acb5b37ee5b523c02aebfc2199f15dee9cb7ae6"
+    },
+    {
+      "name": "ledger.xlsx",
+      "bytes": 9411,
+      "sha256": "ab2ec63d257ed328e357bcde6f67bc98fc660865d6afb20a62a8a20ee668c477"
+    },
+    {
+      "name": "ledger-after-restart.xlsx",
+      "bytes": 9411,
+      "sha256": "267c895ffa7a0ee9a2b5697352d9b305f34c63b1530f17565f11376a155463be"
+    },
+    {
+      "name": "permanent-qr.png",
+      "bytes": 11769,
+      "sha256": "96f29b0c013e4fa423f62b19a0014371bf73504cb91568c6ce26690e2c0e728c"
+    }
+  ]
+}
