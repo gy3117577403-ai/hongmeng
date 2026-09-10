@@ -26,6 +26,9 @@ type ApiRule = {
 
 /** Specific routes must appear before their broader namespace. */
 export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
+  { prefix: '/api/quality-quick/warnings', anyOf: ['QUALITY','QUALITY_DATA','FIELD_REPORT','PRODUCTION','ENGINEERING','PLANNING','BUSINESS','DRAWING_LIBRARY'], action: 'READ', allowedMethods: ['GET','HEAD'] },
+  { prefix: '/api/quality-quick/photos', anyOf: ['QUALITY','QUALITY_DATA','FIELD_REPORT','PRODUCTION','ENGINEERING','PLANNING','BUSINESS','DRAWING_LIBRARY'], action: 'READ', allowedMethods: ['GET','HEAD'] },
+  { prefix: '/api/quality-quick', anyOf: ['QUALITY'], actionsByMethod: { POST: 'UPDATE' } },
   // Handlers enforce ownership and independent approval scope for every mutation.
   { prefix: '/api/other-work-times', anyOf: ['ACCOUNT_SELF', 'FIELD_REPORT'], action: 'READ' },
   { prefix: '/api/me', anyOf: ['ACCOUNT_SELF'] },

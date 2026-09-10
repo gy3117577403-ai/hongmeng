@@ -50,6 +50,10 @@ jobs:
         run: npx prisma migrate deploy
       - name: Verify Prisma migration status
         run: npx prisma migrate status
+      - name: Quality quick lifecycle PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test tests/quality-quick-integration.test.ts
       - name: Production control pause and date PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

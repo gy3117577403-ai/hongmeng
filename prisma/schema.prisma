@@ -716,6 +716,7 @@ model UserAccessGrant {
 }
 
 model WorkOrder {
+  quickQualityLinks            QuickQualityWorkOrder[]
   reportingSubmissions         ProcessReportSubmission[]
   id                           String                               @id @default(uuid())
   code                         String                               @unique
@@ -1409,8 +1410,8 @@ model EmployeeAttainmentPolicyChange {
   revision      Int      @unique @default(autoincrement())
   employeeId    String   @map("employee_id")
   effectiveDate DateTime @map("effective_date") @db.Date
-  beforePolicy Json     @map("before_policy")
-  afterPolicy  Json     @map("after_policy")
+  beforePolicy  Json     @map("before_policy")
+  afterPolicy   Json     @map("after_policy")
   reason        String
   actorId       String   @map("actor_id")
   requestId     String   @map("request_id")
@@ -2989,6 +2990,7 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
+  quickQualityRecords      QuickQualityRecord[]
   id                       String                               @id @default(uuid())
   customerName             String                               @map("customer_name")
   customerCode             String?                              @map("customer_code")
@@ -6551,4 +6553,84 @@ model MaterialLibraryPhoto {
   @@index([materialItemId, deletedAt, isCover, createdAt])
   @@index([sha256, materialItemId])
   @@map("material_library_photos")
+}
+
+model QuickQualityRecord {
+  id                String                   @id @default(uuid())
+  number            String                   @unique
+  requestKey        String                   @unique @map("request_key")
+  description       String
+  state             String                   @default("SAVED")
+  scope             String                   @default("WORK_ORDER")
+  productId         String?                  @map("product_id")
+  productSignature  String?                  @map("product_signature")
+  processName       String                   @default("") @map("process_name")
+  occurredAt        DateTime                 @map("occurred_at")
+  effectiveUntil    DateTime?                @map("effective_until")
+  printPolicy       String                   @default("SYSTEM_ONLY") @map("print_policy")
+  version           Int                      @default(1)
+  publishedAt       DateTime?                @map("published_at")
+  createdById       String                   @map("created_by_id")
+  createdByName     String                   @map("created_by_name")
+  deletedAt         DateTime?                @map("deleted_at")
+  deletedById       String?                  @map("deleted_by_id")
+  escalatedReportId String?                  @unique @map("escalated_report_id")
+  createdAt         DateTime                 @default(now()) @map("created_at")
+  updatedAt         DateTime                 @updatedAt @map("updated_at")
+  product           DrawingLibraryItem?      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  orders            QuickQualityWorkOrder[]
+  photos            QuickQualityAttachment[]
+  activities        QuickQualityActivity[]
+
+  @@index([deletedAt, state, updatedAt])
+  @@index([productId, state])
+  @@map("quick_quality_records")
+}
+
+model QuickQualityWorkOrder {
+  recordId    String             @map("record_id")
+  workOrderId String             @map("work_order_id")
+  record      QuickQualityRecord @relation(fields: [recordId], references: [id], onDelete: Restrict)
+  workOrder   WorkOrder          @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+
+  @@id([recordId, workOrderId])
+  @@index([workOrderId])
+  @@map("quick_quality_work_orders")
+}
+
+model QuickQualityAttachment {
+  id               String             @id @default(uuid())
+  recordId         String             @map("record_id")
+  displayName      String             @map("display_name")
+  objectKey        String             @unique @map("object_key")
+  mimeType         String             @map("mime_type")
+  size             Int
+  sha256           String
+  imageWidth       Int                @map("image_width")
+  imageHeight      Int                @map("image_height")
+  imageOrientation Int                @default(1) @map("image_orientation")
+  deletedAt        DateTime?          @map("deleted_at")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  record           QuickQualityRecord @relation(fields: [recordId], references: [id], onDelete: Restrict)
+
+  @@index([recordId, deletedAt])
+  @@map("quick_quality_attachments")
+}
+
+model QuickQualityActivity {
+  id          String             @id @default(uuid())
+  recordId    String             @map("record_id")
+  mutationKey String             @unique @map("mutation_key")
+  payloadHash String             @map("payload_hash")
+  version     Int
+  action      String
+  reason      String             @default("")
+  actorId     String             @map("actor_id")
+  actorName   String             @map("actor_name")
+  snapshot    Json
+  createdAt   DateTime           @default(now()) @map("created_at")
+  record      QuickQualityRecord @relation(fields: [recordId], references: [id], onDelete: Restrict)
+
+  @@unique([recordId, version])
+  @@map("quick_quality_activities")
 }

@@ -15,6 +15,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
   const [phases, setPhases] = useState<Record<string, number>>({});
   const [risk, setRisk] = useState(emptyRisk);
   const [eightD, setEightD] = useState(emptyEightD);
+  const [quick, setQuick] = useState({total:0,active:0});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -32,12 +33,13 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
       setPhases(riskBody.workflowCounts || {});
       setRisk(riskBody.summary || emptyRisk);
       setEightD(eightDBody.summary || emptyEightD);
+      if(user.access.capabilities.includes('QUALITY:READ')) { const qr=await fetch('/api/quality-quick/summary',{cache:'no-store'});const qb=await qr.json();if(!qr.ok)throw new Error(qb.error||'快处概况加载失败');setQuick(qb); }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '质量管理概况加载失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [user.access.capabilities]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -52,7 +54,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
         context={<><span>{risk.activeAlerts} 条工单预警</span><span>{risk.critical} 个重大风险</span><span>{eightD.total} 份8D档案</span></>}
         actions={<button type="button" disabled={loading} onClick={() => { void load(); }}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>}
       />
-      <QualityModuleTabs active="overview" riskCount={risk.total} eightDCount={eightD.total} canViewData={user.access.capabilities.includes('QUALITY_DATA:READ')} />
+      <QualityModuleTabs canViewQuick={user.access.capabilities.includes('QUALITY:READ')} active="overview" riskCount={risk.total} eightDCount={eightD.total} canViewData={user.access.capabilities.includes('QUALITY_DATA:READ')} />
       {error && <div className="quality-home-error"><AlertTriangle size={16} />{error}</div>}
       <nav className="quality-entry-shortcuts"><Link href="/workspace/quality-tasks">我的责任任务</Link><Link href="/workspace/quality-confirmation">品质确认 · {phases.VERIFYING || 0} 份待确认</Link><Link href="/workspace/approvals">重大事项审批</Link><span>待接单 {phases.SUBMITTED || 0} · 处理中 {phases.COLLABORATING || 0} · 待汇总 {phases.SUMMARIZING || 0} · 待归档 {phases.PENDING_CLOSE || 0}</span></nav>
       <section className="quality-home-kpis" aria-label="质量管理关键指标">
@@ -62,6 +64,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
         <article className="success"><span>已归档异常</span><strong>{risk.archived}</strong><small>可追溯不可覆盖</small></article>
         <article><span>8D受控档案</span><strong>{eightD.total}</strong><small>{eightD.productCount} 产品 · {eightD.issueCount} 问题</small></article>
       </section>
+      {user.access.capabilities.includes('QUALITY:READ')&&<div className="quality-entry-shortcuts"><Link href="/workspace/quality/quick">异常快处 · {quick.total} 条记录</Link><span>{quick.active} 条快处警示正在生效</span></div>}
       <section className="quality-home-modules">
         <Link className="risk-module" href="/workspace/quality/internal-risks">
           <header><span><ShieldAlert size={20} /></span><em>内部闭环</em></header>

@@ -1,4 +1,5 @@
 import { qualityWorkflowView, QUALITY_PHASE_LABELS } from './quality-workbench';
+import { handoffQuickWarnings } from '@/lib/quality-quick';
 import { qualityPhaseWhere, qualityWorkViewWhere } from './quality-workbench-query';
 import crypto from 'node:crypto';
 import { resolveQualityPrintImages } from '@/lib/quality-print-image-source';
@@ -1239,6 +1240,7 @@ export async function archiveInternalQualityRisk(
   if (publishWarning && readiness.publicationBlockers?.length) throw new InternalQualityRiskError(readiness.publicationBlockers.map(item => item.message).join('；'), 409, 'QUALITY_RISK_PUBLICATION_BLOCKED');
   if (!publishWarning && report.warningState === 'ACTIVE') throw new InternalQualityRiskError('旧版警示仍有效；仅归档前请先明确撤销旧警示，避免旧工单静默失去指引', 409);
   const archivedAt = new Date();
+  if (publishWarning) await handoffQuickWarnings(tx, reportId, actor);
   await tx.workOrderQualityAlert.updateMany({
     where: { reportId, state: { in: [...QUALITY_ALERT_ACTIVE_STATES] } },
     data: { state: 'SUPERSEDED', supersededAt: archivedAt },

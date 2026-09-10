@@ -1,4 +1,5 @@
 'use client';
+import QuickWarnings from '@/components/quality-quick/QuickWarnings';
 
 import { AlertTriangle, ArchiveRestore, ArrowLeft, BookOpenText, Clock3, ExternalLink, FileCheck2, FileImage, Files, FileWarning, MoreHorizontal, Pencil, Plus, Search, Settings2, ShieldAlert, ShieldCheck, ShieldOff, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1117,6 +1118,7 @@ export function DrawingLibraryShell({
             )
           ) : (
             <>
+              <QuickWarnings productId={selectedItem.id}/>
               <div className="drawing-detail-head">
                 <div>
                   <span>当前资料</span>

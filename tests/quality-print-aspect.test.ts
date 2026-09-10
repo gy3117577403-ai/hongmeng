@@ -10,6 +10,17 @@ const photo = (id: string, width = 1600, height = 900, extra = {}) => ({ id, ima
 const warning = (attachments: Warning['attachments'], extra = {}) => ({ title: '压接尺寸偏差', printLayoutVersion: 'ASPECT_V1', defectPhenomenon: '发现尺寸偏高', rootCause: '换型后参数未核对', correctiveAction: '重新调整并确认首件', attachments, ...extra } as Warning);
 const blocks = (input: Warning) => buildQualityWarningPages(input).flatMap(page => page.blocks).filter(block => block.kind === 'photos');
 
+test('quick warning appendix preserves the combined account once without inventing a root cause or solution', () => {
+  const description = '现场发现端子未压到位，已重新压接并确认。'.repeat(60);
+  const input = warning([photo('quick')], { alertId: 'quick:record', title: '现场提醒', defectPhenomenon: description, rootCause: null, correctiveAction: null });
+  const pages = buildQualityWarningPages(input);
+  const text = pages.flatMap(page => page.blocks).filter(block => block.kind === 'text');
+  assert.ok(pages.length > 1);
+  assert.ok(text.every(block => block.title.startsWith('问题与处理说明')));
+  assert.equal(text.flatMap(block => block.lines).join(''), description);
+  assert.deepEqual(blocks(input).flatMap(block => block.photos.map(p => p.id)), ['quick']);
+});
+
 test('three 16:9 pictures fit one A4 with short content and the third stays the same size', () => {
   const input = warning([photo('one'), photo('two'), photo('three')]);
   assert.equal(buildQualityWarningPages(input).length, 1);

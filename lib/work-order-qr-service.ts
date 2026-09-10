@@ -15,6 +15,7 @@ import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
 import { materializeProductQualityWarningsForWorkOrders } from '@/lib/internal-quality-risks';
 import { qualityWarningEmployeePath } from '@/lib/quality-warning-employee';
+import { quickWarningsForOrders } from '@/lib/quality-quick';
 import { resolveQualityPrintImages } from '@/lib/quality-print-image-source';
 import { qualityPrintHeaderExtraMm } from '@/lib/quality-warning-print-layout';
 import {
@@ -664,6 +665,15 @@ async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<
   });
   const severityRank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
   const result = new Map<string, WorkOrderQualityWarningSnapshot[]>();
+  const quickWarnings = await quickWarningsForOrders(workOrderIds);
+  for (const [orderId, warnings] of quickWarnings) result.set(orderId, warnings.filter(w=>w.printPolicy==='OPTIONAL').map(w=>({
+    alertId:'quick:'+w.id, reportId:w.id, reportNo:w.number, revisionId:'quick:'+w.id+':'+w.version, revisionNumber:w.version,
+    severity:'LOW', title:'快速处理 · '+w.description.split('\n')[0].slice(0,48), warningSummary:w.description, defectPhenomenon:w.description, rootCause:null,
+    requiredAction:null, inspectionMethod:null, inspectionFrequency:null, acceptanceCriteria:null, stopConditions:null, escalationContact:null,
+    applicableProcess:w.processName||null, effectiveFrom:null, effectiveUntil:w.effectiveUntil, printPolicy:'OPTIONAL' as const, archivedAt:w.updatedAt,
+    employeePath:null, correctiveAction:null, finalConclusion:null, printLayoutVersion:'ASPECT_V1' as const,
+    attachments:w.photos.map(p=>({id:p.id,displayName:p.name,mimeType:p.mimeType||'image/jpeg',caption:null,category:'DEFECT',imageWidth:p.imageWidth,imageHeight:p.imageHeight,printIncluded:true,contentUrl:p.url+'?revision='+w.version})),
+  })));
   for (const alert of alerts) {
     const frozen = (alert.revision.snapshot || {}) as Record<string, unknown>;
     const frozenAttachments = Array.isArray(frozen.attachments) ? frozen.attachments as Array<Record<string, unknown>> : [];

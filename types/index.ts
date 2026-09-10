@@ -1324,6 +1324,7 @@ export type WorkOrderQualityRiskSuggestionDTO = {
 };
 
 export type WorkOrderQualityAlertsDTO = {
+  quickWarningCount?: number;
   workOrder: InternalQualityRiskWorkOrderDTO;
   alerts: WorkOrderQualityAlertDTO[];
   suggestions: WorkOrderQualityRiskSuggestionDTO[];

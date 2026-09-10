@@ -1,4 +1,5 @@
 'use client';
+import QuickWarnings from '@/components/quality-quick/QuickWarnings';
 import { useProcessReportDraft, ProcessReportRequestError } from '@/components/useProcessReportDraft';
 import { ProcessReportDraftNotice } from '@/components/ProcessReportDraftNotice';
 import { processReportReceiptText, RECOVERABLE_PROCESS_REPORT_CODES, type ProcessReportDraft } from '@/lib/process-report-draft';
@@ -4958,7 +4959,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
     }
   }
 
-  const qualityAlertCount = qualityData?.alerts.filter(alert => alert.state === 'ACTIVE' || alert.state === 'ACKNOWLEDGED').length ?? order.qualityRiskAlertCount;
+  const qualityAlertCount = qualityData ? qualityData.alerts.filter(alert => alert.state === 'ACTIVE' || alert.state === 'ACKNOWLEDGED').length + (qualityData.quickWarningCount || 0) : order.qualityRiskAlertCount;
   return (
     <><div className="modal-backdrop"><section className="production-dialog detail" role="dialog" aria-modal="true" aria-label="生产工单详情">
       <div className="dialog-title"><div><strong>{specText(order)}</strong><small>{order.customerName || '客户待补充'} · {order.productName || '品名待补充'}</small></div><button type="button" aria-label="关闭" onClick={close}>×</button></div>
@@ -4986,11 +4987,12 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
           </article>)}</div>
         </section>}</>}
         {tab === 'quality' && <div className="production-quality-risk-panel">
-          <header className="production-quality-risk-heading"><div><AlertTriangle size={18} /><span><strong>工单质量问题预警</strong><small>已归档重大异常会同步原因、结论与现场控制要求；预警本身不会自动暂停生产。</small></span></div>{canViewQualityRisks && <Link href={`/workspace/quality/internal-risks?workOrderId=${encodeURIComponent(order.id)}`} prefetch={false}>进入质量管理</Link>}</header>
+          <header className="production-quality-risk-heading"><div><AlertTriangle size={18} /><span><strong>工单质量问题预警</strong><small>查看当前工单的快处提醒与已发布重大异常。</small></span></div>{canViewQualityRisks && <Link href={`/workspace/quality/internal-risks?workOrderId=${encodeURIComponent(order.id)}`} prefetch={false}>进入质量管理</Link>}</header>
           {qualityLoading && <div className="production-loading"><Loader2 className="spin" size={16} />质量预警加载中...</div>}
           {qualityError && <div className="form-error">{qualityError}<button type="button" onClick={() => setQualityReloadToken(value => value + 1)}>重试</button></div>}
           {!qualityLoading && qualityData && <>
-            <section className="production-quality-risk-section"><div className="production-quality-risk-section-title"><strong>当前工单预警</strong><span>{qualityData.alerts.length} 条记录</span></div>
+            <QuickWarnings workOrderId={order.id} manage={canManageQualityRisks}/>
+            <section className="production-quality-risk-section"><div className="production-quality-risk-section-title"><strong>重大异常预警</strong><span>{qualityData.alerts.length} 条记录</span></div>
               <div className="production-quality-risk-list">{qualityData.alerts.map(alert => {
                 const acknowledgedByMe = alert.acknowledgements.some(item => item.acknowledgedById === userId);
                 return <article className={`production-quality-risk-card severity-${alert.severity.toLowerCase()} state-${alert.state.toLowerCase()}`} key={alert.id}>

@@ -98,7 +98,7 @@ function buildAspectPagesV1(warning: WorkOrderQualityWarningSnapshot): QualityPr
       blocks.push({ kind: 'text', title: i ? `${title}（续）` : title, lines: part, emphasis, heightMm: 9 + part.length * 5.5 });
     }
   };
-  addText('具体问题', warning.defectPhenomenon || warning.warningSummary, true);
+  addText(warning.alertId?.startsWith('quick:') ? '问题与处理说明' : '具体问题', warning.defectPhenomenon || warning.warningSummary, true);
   addText('确认原因', warning.rootCause);
   addText('解决方案', warning.correctiveAction || warning.controlRequirement, true);
   addText('处理结论', warning.finalConclusion);

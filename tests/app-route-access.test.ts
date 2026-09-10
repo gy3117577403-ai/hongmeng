@@ -155,3 +155,12 @@ test('material library is standalone and mobile upload stays quality-only', () =
   assert.equal(canAccessAppRoute(access('ISSUE_MANAGEMENT'), '/workspace/material-library'), false);
   assert.equal(canAccessAppRoute(access('PLANNING'), '/material-upload/signed-code'), false);
 });
+
+test('quality-only staff can enter an existing work order QR and quick capture without opening production workspace', () => {
+  const quality = access('QUALITY');
+  assert.equal(canAccessAppRoute(quality, '/field-report/existing-code'), true);
+  assert.equal(canAccessAppRoute(quality, '/quality-quick-capture/existing-code'), true);
+  assert.equal(canAccessAppRoute(quality, '/workspace/quality/quick'), true);
+  assert.equal(canAccessAppRoute(quality, '/production'), false);
+  assert.equal(canAccessAppRoute(access('FIELD_REPORT'), '/workspace/quality/quick'), false);
+});

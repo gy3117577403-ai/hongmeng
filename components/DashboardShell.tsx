@@ -1,4 +1,5 @@
 'use client';
+import QuickWarnings from '@/components/quality-quick/QuickWarnings';
 
 import { AlertTriangle, ArrowLeft, BadgeCheck, BellRing, Building2, CalendarClock, ClipboardList, Download, HelpCircle, History, KeyRound, ListFilter, LogOut, Monitor, MonitorDown, Plus, QrCode, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, Trash2, UserRoundCheck, UserRoundCog, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -3208,6 +3209,7 @@ export default function DashboardShell({
           ) : (
             <div className="dashboard-content-grid">
               <section className="preview-card">
+                {order && <QuickWarnings workOrderId={order.id} manage={user.access.capabilities.includes('QUALITY:UPDATE')}/>}
                 <div className="preview-file-bar">
                   {file ? (
                     <button className="preview-file-capsule" type="button" onClick={() => openTool('info')} title={displayFileName(file)}>

@@ -1,4 +1,5 @@
 'use client';
+import QuickWarnings from '@/components/quality-quick/QuickWarnings';
 import './process-report-recovery.css';
 import ReportingRecoveryDialog from '@/components/ReportingRecoveryDialog';
 
@@ -915,6 +916,7 @@ export default function FieldReportMobile({
 
   const ticket = payload.ticket;
   return <main className="field-report-app">
+    <QuickWarnings workOrderId={ticket.workOrder.id}/>
     <header className="field-report-topbar">
       <div className="field-report-mark">杭</div>
       <span><small>现场扫码报工</small><strong>{ticket.workOrder.specification || ticket.workOrder.productName}</strong></span>

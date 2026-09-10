@@ -1,3 +1,4 @@
+import { quickWarningsForOrders } from '@/lib/quality-quick';
 import { randomUUID } from 'node:crypto';
 import { ProductionSnapshotExpiredError } from '@/lib/production-execution-snapshot';
 import { NextRequest, NextResponse } from 'next/server';
@@ -126,11 +127,13 @@ export async function GET(req: NextRequest) {
       response.headers.set('X-Request-Id', requestId);
       return response;
     }
+    const quick = await quickWarningsForOrders(readResult.value.data.items.map(item=>item.id));
+    const data = {...readResult.value.data,items:readResult.value.data.items.map(item=>({...item,qualityRiskAlertCount:item.qualityRiskAlertCount+(quick.get(item.id)?.length||0)}))};
     const loadedAt = performance.now();
     const response = NextResponse.json({
       ok: true,
       requestId,
-      data: readResult.value.data,
+      data,
       warnings: readResult.value.warnings,
     });
     response.headers.set('Cache-Control', 'private, no-store');

@@ -24,7 +24,7 @@ export default function QualityDataMobile({ code,user }: { code: string; user: C
   function saved(r:QualityRecord,submitted:boolean){setRefresh(v=>v+1);if(submitted){setEdit(null);setSelected(r);setMessage('记录已提交，后台质量数据已同步');}}
   return <main className="qd-mobile-root">
     <header className="qd-mobile-header"><div><ClipboardCheck size={20}/><b>质量现场填报</b></div><span>{user.displayName || user.username}</span></header>
-    <QualityScanTabs code={code} active="quality" canReport={user.access.capabilities.includes('FIELD_REPORT:READ')}/>
+    <QualityScanTabs code={code} active="quality" canQuick={user.access.capabilities.includes('QUALITY:READ')} canReport={user.access.capabilities.includes('FIELD_REPORT:READ')}/>
     {error&&<div role="alert" className="qd-alert error">{error}</div>}
     {message&&<div role="status" className="qd-alert success">{message}</div>}
     {!order&&!error&&<p className="qd-help">正在读取工单…</p>}
