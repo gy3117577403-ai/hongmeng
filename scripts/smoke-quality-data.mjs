@@ -31,8 +31,10 @@ for(const kind of ['employee','process']){
 await request('quality','/api/field-report/tickets/'+fixture.orders[0].publicCode+'/completions','POST',{},[401,403]);
 await request('employee','/api/field-report/tickets/'+fixture.orders[0].publicCode);
 for(const kind of ['quality','leader','tooling','admin'])await request(kind,api+'qr/'+fixture.orders[0].publicCode);
-const qualityLanding=await request('quality','/field-report/'+fixture.orders[0].publicCode,'GET',undefined,307);
-assert.ok(qualityLanding.response.headers.get('location').includes('/quality-capture/'));
+const qualityLanding=await request('quality','/field-report/'+fixture.orders[0].publicCode);
+assert.ok(qualityLanding.body.toString().includes('href="/quality-capture/'+fixture.orders[0].publicCode+'"'),'quality staff retain the inspection entry');
+assert.ok(qualityLanding.body.toString().includes('href="/quality-quick-capture/'+fixture.orders[0].publicCode+'"'),'quality staff can enter quick handling with the same order QR');
+assert.ok(!qualityLanding.body.toString().includes('href="/field-report/'+fixture.orders[0].publicCode+'?mode=report"'),'quality-only staff do not receive a production reporting entry');
 const ordinaryLanding=await request('employee','/field-report/'+fixture.orders[0].publicCode);
 assert.ok(!ordinaryLanding.body.toString().includes('工单扫码功能'),'ordinary scan has no quality tabs');
 const dualLanding=await request('leader','/field-report/'+fixture.orders[0].publicCode);
