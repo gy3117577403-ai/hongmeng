@@ -14,7 +14,7 @@ const h=3600000;
 test('other work independent workflow, concurrent approval, evidence lock and report reconciliation', {skip:!enabled}, async t=>{
   const url=new URL(process.env.DATABASE_URL || '');
   assert.ok(['127.0.0.1','localhost'].includes(url.hostname));
-  assert.ok(url.pathname==='/hongmeng_other_hours_v134147' && url.port==='55448' || url.pathname==='/hongmeng_ci' && process.env.CI==='true', 'Only isolated QA or named CI databases');
+  assert.ok(url.pathname==='/hongmeng_other_hours_v134147' && url.port==='55448' || url.pathname==='/hongmeng_other_hours_ux_v134151' && url.port==='55452' || url.pathname==='/hongmeng_ci' && process.env.CI==='true', 'Only isolated QA or named CI databases');
   const marker='OTHER-IT-'+randomUUID().slice(0,8);
   const today=otherWorkToday();
   const prior=new Date(new Date(today+'T00:00:00Z').getTime()-86400000).toISOString().slice(0,10);
@@ -113,6 +113,42 @@ test('other work independent workflow, concurrent approval, evidence lock and re
       const scoped=await listOtherWork(leader,new URLSearchParams({scope:'manage'}));
       assert.ok(scoped.rows.some(r=>r.id===a.id));
       await assert.rejects(listOtherWork(operator,new URLSearchParams({scope:'manage'})),/管理权限/);
+    });
+    await t.test('partial drafts preserve evidence and legacy notes but cannot submit empty work',async()=>{
+      const draft=await createOtherWork(operator,{...workInput('',0),backfillReason:'',arranger:'原安排人',sampleReference:'原样品关联'});
+      assert.equal(draft.status,'DRAFT');assert.equal(draft.requestedMinutes,0);
+      const attached=await mutateOtherWorkAttachment(operator,draft.id,draft.version,{objectKey:marker+'/partial.jpg',mimeType:'image/jpeg',size:100,originalName:'partial.jpg'});
+      await assert.rejects(commands(operator,draft.id,'SUBMIT'),/补报原因/);
+      await commands(operator,draft.id,'EDIT',{...workInput('',0)});
+      await assert.rejects(commands(operator,draft.id,'SUBMIT'),/实际耗时/);
+      await commands(operator,draft.id,'EDIT',{...workInput('',17)});
+      await assert.rejects(commands(operator,draft.id,'SUBMIT'),/工作说明/);
+      await assert.rejects(prisma.otherWorkTimeRequest.update({where:{id:draft.id},data:{requestedMinutes:0,status:'PENDING'}}));
+      await commands(operator,draft.id,'EDIT',{...workInput('补全早先保存的辅助工作',17)});
+      const pending=await commands(operator,draft.id,'SUBMIT');
+      assert.equal(pending.status,'PENDING');assert.equal(pending.attachments[0].id,attached.attachments[0].id);
+      assert.equal(pending.arranger,'原安排人');assert.equal(pending.sampleReference,'原样品关联');
+    });
+    await t.test('state chips keep scoped totals consistent across date and status filters',async()=>{
+      const base={scope:'manage',employeeId:people[0].id,from:prior,to:prior,categoryId:'other-sample'};
+      const all=await listOtherWork(leader,new URLSearchParams(base));
+      const pending=await listOtherWork(leader,new URLSearchParams({...base,status:'PENDING'}));
+      assert.ok(pending.rows.length);assert.ok(pending.rows.every(r=>r.status==='PENDING'));
+      assert.deepEqual(pending.summary,all.summary);assert.equal(pending.summary.approvedMinutes,90);
+      assert.equal(pending.summary.pending,pending.pagination.total);
+      assert.equal(pending.statusCounts.PENDING,pending.pagination.total);
+      const processed=await listOtherWork(leader,new URLSearchParams({...base,status:'PROCESSED'}));
+      assert.ok(processed.rows.length);assert.ok(processed.rows.every(r=>['APPROVED','REJECTED','VOIDED'].includes(r.status)));
+      assert.deepEqual(processed.summary,all.summary);
+      const corrected=processed.rows.find(r=>r.status==='APPROVED')!;
+      await commands(operator,corrected.id,'CORRECTION_REQUEST',{reason:'验证更正筛选交集'});
+      const corrections=await listOtherWork(leader,new URLSearchParams({...base,corrections:'1',status:'PENDING'}));
+      assert.equal(corrections.pagination.total,0);assert.equal(corrections.statusCounts.APPROVED,1);
+      const noDay=await listOtherWork(leader,new URLSearchParams({...base,from:today,to:today,status:'PENDING'}));
+      assert.deepEqual(noDay.summary,{approvedMinutes:0,pending:0});
+      const foreign={...leader,access:resolveAccessContext([{...grants[1],scopeKey:'TEAM:another-team'}])};
+      const denied=await listOtherWork(foreign,new URLSearchParams({...base,status:'PENDING'}));
+      assert.equal(denied.pagination.total,0);assert.deepEqual(denied.summary,{approvedMinutes:0,pending:0});assert.deepEqual(denied.statusCounts,{});
     });
   } finally {
     const ids=(await prisma.otherWorkTimeRequest.findMany({where:{employeeId:{in:people.map(p=>p.id)}},select:{id:true}})).map(r=>r.id);

@@ -16,7 +16,7 @@ const dockerfile = readFileSync(resolve(repositoryRoot, 'Dockerfile'), 'utf8');
 const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/docker-image.yml'), 'utf8');
 const appInfo = readFileSync(resolve(repositoryRoot, 'lib/app-info.ts'), 'utf8');
 
-const expectedPackageVersion = '1.34.150';
+const expectedPackageVersion = '1.34.151';
 const expectedImageVersion = `v${expectedPackageVersion}`;
 
 test('release version stays aligned across npm, Docker, and GHCR publishing', () => {
@@ -24,6 +24,9 @@ test('release version stays aligned across npm, Docker, and GHCR publishing', ()
   assert.equal(packageLock.version, expectedPackageVersion);
   assert.equal(packageLock.packages['']?.version, expectedPackageVersion);
   assert.match(dockerfile, new RegExp(`^ARG APP_VERSION=${expectedImageVersion}$`, 'm'));
+  const stageVersions = [...dockerfile.matchAll(/^ARG APP_VERSION=(.+)$/gm)].map(match => match[1].trim());
+  assert.ok(stageVersions.length > 0);
+  assert.ok(stageVersions.every(version => version === expectedImageVersion), 'Every Docker stage must default to the release version');
   assert.match(appInfo, new RegExp(`APP_VERSION = process\\.env\\.APP_VERSION\\?\\.trim\\(\\) \\|\\| '${expectedImageVersion}'`));
   assert.match(workflow, /^\s+tags: \["v\*"\]$/m);
   assert.match(workflow, /^\s+type=ref,event=tag$/m);

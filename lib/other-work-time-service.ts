@@ -53,7 +53,7 @@ function positiveMinutes(value: unknown) {
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0 || value > 1440) throw new OtherWorkError('实际耗时必须为 1 至 1440 分钟');
   return value;
 }
-export function parseOtherWorkInput(data: Record<string, unknown>, actor: Actor, now = new Date()) {
+export function parseOtherWorkInput(data: Record<string, unknown>, actor: Actor, now = new Date(), draft = false) {
   if (typeof data.workDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.workDate)) throw new OtherWorkError('工作日期格式不正确');
   let parsed: ReturnType<typeof parseWorkDate>;
   try { parsed = parseWorkDate(data.workDate); }
@@ -64,8 +64,8 @@ export function parseOtherWorkInput(data: Record<string, unknown>, actor: Actor,
   const configured = Number(process.env.OTHER_WORK_BACKFILL_DAYS || 7);
   const windowDays = Number.isInteger(configured) && configured >= 1 && configured <= 90 ? configured : 7;
   if (days >= windowDays && actor.laborRole !== 'ADMIN') throw new OtherWorkError('仅可申报当天及近 ' + windowDays + ' 个自然日；更早日期请管理员补录');
-  const backfillReason = days > 0 ? requiredText(data.backfillReason, '补报原因', 500) : optionalText(data.backfillReason, 500);
-  const requestedMinutes = positiveMinutes(data.requestedMinutes);
+  const backfillReason = days > 0 && !draft ? requiredText(data.backfillReason, '补报原因', 500) : optionalText(data.backfillReason, 500);
+  const requestedMinutes = draft && (data.requestedMinutes === 0 || data.requestedMinutes === undefined) ? 0 : positiveMinutes(data.requestedMinutes);
   const startedAt = data.startedAt ? new Date(String(data.startedAt)) : null;
   const endedAt = data.endedAt ? new Date(String(data.endedAt)) : null;
   if (Boolean(startedAt) !== Boolean(endedAt)) throw new OtherWorkError('起止时间需要同时填写');
@@ -77,7 +77,7 @@ export function parseOtherWorkInput(data: Record<string, unknown>, actor: Actor,
   if (endedAt && endedAt > now) throw new OtherWorkError('不能申报尚未结束的工作时段');
   if (typeof data.categoryId !== 'string' || !data.categoryId) throw new OtherWorkError('请选择事项分类');
   return { workDate: parsed.value, categoryId: data.categoryId, requestedMinutes,
-    description: requiredText(data.description, '工作说明'), arranger: optionalText(data.arranger),
+    description: draft ? optionalText(data.description, 1000) || '' : requiredText(data.description, '工作说明'), arranger: optionalText(data.arranger),
     sampleReference: optionalText(data.sampleReference), backfillReason, startedAt, endedAt };
 }
 async function lockEmployee(tx: Tx, employeeId: string) {
@@ -145,7 +145,7 @@ export async function refreshOtherWorkAfterPolicyChange(tx: Tx, requestId: strin
 }
 
 export async function createOtherWork(actor: Actor, data: Record<string, unknown>) {
-  const input = parseOtherWorkInput(data, actor);
+  const input = parseOtherWorkInput(data, actor, new Date(), true);
   const employeeId = typeof data.employeeId === 'string' && actor.laborRole === 'ADMIN' ? data.employeeId : actor.employeeId;
   if (data.employeeId && data.employeeId !== actor.employeeId && actor.laborRole !== 'ADMIN') throw new OtherWorkError('只能为本人申报', 403);
   if (!employeeId) throw new OtherWorkError('请先将账号绑定到员工档案', 403);
@@ -201,7 +201,8 @@ export async function commandOtherWork(actor: Actor, id: string, data: Record<st
     if (['EDIT', 'SUBMIT', 'WITHDRAW', 'CORRECTION_REQUEST'].includes(action) && row.createdById !== actor.id && !(action === 'CORRECTION_REQUEST' && actor.employeeId === row.employeeId)) throw new OtherWorkError('只能操作本人申报', 403);
     if (action === 'EDIT') {
       if (!editable.includes(row.status)) throw new OtherWorkError('提交后内容已锁定，请先撤回', 409);
-      const input = parseOtherWorkInput(data, actor);
+      const input = parseOtherWorkInput({ ...data, arranger: data.arranger === undefined ? row.arranger : data.arranger,
+        sampleReference: data.sampleReference === undefined ? row.sampleReference : data.sampleReference }, actor, new Date(), true);
       if (dateKeyFromDatabase(input.workDate) !== dateKeyFromDatabase(row.workDate)) throw new OtherWorkError('修改工作日期请新建申报，以保留原日人员快照');
       const category = await tx.otherWorkTimeCategory.findUnique({ where: { id: input.categoryId } });
       if (!category?.isActive) throw new OtherWorkError('分类已停用');
@@ -209,6 +210,7 @@ export async function commandOtherWork(actor: Actor, id: string, data: Record<st
     } else if (action === 'SUBMIT') {
       if (!editable.includes(row.status)) throw new OtherWorkError('当前状态不能提交', 409);
       parseOtherWorkInput({ ...row, workDate: dateKeyFromDatabase(row.workDate) }, actor);
+      if (row.employeeId !== actor.employeeId) requiredText(row.backfillReason, '管理员补录原因', 500);
       const category = await tx.otherWorkTimeCategory.findUnique({ where: { id: row.categoryId } });
       if (!category?.isActive) throw new OtherWorkError('分类已停用，请修改后重提');
       await validateOverlap(tx, row);
@@ -249,30 +251,36 @@ export function otherWorkListWhere(actor: Actor, query: URLSearchParams) {
   const manage = query.get('scope') === 'manage';
   const where: Prisma.OtherWorkTimeRequestWhereInput = manage ? scopeWhere(actor) : { OR: [{ createdById: actor.id }, ...(actor.employeeId ? [{ employeeId: actor.employeeId }] : [])] };
   const state = query.get('status');
+  if (state === 'PROCESSED') where.status = { in: ['APPROVED', 'REJECTED', 'VOIDED'] };
   if (state && Object.values(OtherWorkTimeStatus).includes(state as OtherWorkTimeStatus)) where.status = state as OtherWorkTimeStatus;
-  if (query.get('corrections') === '1') { where.status = 'APPROVED'; where.correctionRequestedAt = { not: null }; }
+  const conditions: Prisma.OtherWorkTimeRequestWhereInput[] = [];
+  if (query.get('corrections') === '1') { conditions.push({ status: 'APPROVED' }); where.correctionRequestedAt = { not: null }; }
   if (query.get('employeeId')) where.employeeId = query.get('employeeId')!;
   if (query.get('from') || query.get('to')) where.workDate = { ...(query.get('from') ? { gte: parseWorkDate(query.get('from')).value } : {}), ...(query.get('to') ? { lte: parseWorkDate(query.get('to')).value } : {}) };
   const search = query.get('search')?.trim().slice(0, 100);
-  if (search) where.AND = [{ OR: ['employeeNameSnapshot', 'employeeNoSnapshot', 'description', 'categoryNameSnapshot'].map(key => ({ [key]: { contains: search, mode: 'insensitive' } })) }];
+  if (search) conditions.push({ OR: ['employeeNameSnapshot', 'employeeNoSnapshot', 'description', 'categoryNameSnapshot'].map(key => ({ [key]: { contains: search, mode: 'insensitive' } })) });
+  if (conditions.length) where.AND = conditions;
   if (query.get('categoryId')) where.categoryId = query.get('categoryId')!;
   return where;
 }
 export async function listOtherWork(actor: Actor, query: URLSearchParams) {
-  const manage = query.get('scope') === 'manage';
   const where = otherWorkListWhere(actor, query);
   const page = Math.max(1, Math.min(100000, Number(query.get('page')) || 1));
   const size = 30;
-  const [rows, total, sums, pending, categories, employees, byCategory] = await Promise.all([
+  // State chips select rows; totals share the same employee, date, search and category scope.
+  const scopeQuery = new URLSearchParams(query); scopeQuery.delete('status');
+  const summaryWhere = otherWorkListWhere(actor, scopeQuery);
+  const [rows, total, statusTotals, categories, employees, byCategory] = await Promise.all([
     prisma.otherWorkTimeRequest.findMany({ where, include: otherWorkInclude, orderBy: [{ workDate: 'desc' }, { createdAt: 'desc' }], skip: (page - 1) * size, take: size }),
     prisma.otherWorkTimeRequest.count({ where }),
-    prisma.otherWorkTimeRequest.aggregate({ where: { AND: [where, { status: 'APPROVED' }] }, _sum: { approvedMinutes: true } }),
-    prisma.otherWorkTimeRequest.count({ where: { AND: [manage ? scopeWhere(actor) : { createdById: actor.id }, { status: 'PENDING' }] } }),
+    prisma.otherWorkTimeRequest.groupBy({ by: ['status'], where: summaryWhere, _sum: { approvedMinutes: true }, _count: true }),
     prisma.otherWorkTimeCategory.findMany({ orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] }),
     actor.laborRole === 'ADMIN' ? prisma.employee.findMany({ select: { id: true, employeeNo: true, name: true }, orderBy: { employeeNo: 'asc' } }) : Promise.resolve([]),
-    prisma.otherWorkTimeRequest.groupBy({ by: ['categoryNameSnapshot'], where: { AND: [where, { status: 'APPROVED' }] }, _sum: { approvedMinutes: true }, _count: true }),
+    prisma.otherWorkTimeRequest.groupBy({ by: ['categoryNameSnapshot'], where: { AND: [summaryWhere, { status: 'APPROVED' }] }, _sum: { approvedMinutes: true }, _count: true }),
   ]);
-  return { rows: rows.map(row => serializeOtherWork(row, actor)), pagination: { page, size, total }, summary: { approvedMinutes: sums._sum.approvedMinutes || 0, pending },
+  const statusCounts = Object.fromEntries(statusTotals.map(row => [row.status, row._count]));
+  return { rows: rows.map(row => serializeOtherWork(row, actor)), pagination: { page, size, total }, statusCounts,
+    summary: { approvedMinutes: statusTotals.find(row => row.status === 'APPROVED')?._sum.approvedMinutes || 0, pending: statusCounts.PENDING || 0 },
     categories, employees, byCategory, permissions: { ...otherWorkScope(actor), admin: actor.laborRole === 'ADMIN' }, today: otherWorkToday() };
 }
 export async function detailOtherWork(actor: Actor, id: string) {
