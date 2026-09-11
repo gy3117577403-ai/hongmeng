@@ -1,6 +1,8 @@
 'use client';
 
 import QRCode from 'qrcode';
+import SampleSchedulePanel from '@/components/sample/SampleSchedulePanel';
+import { SAMPLE_VIEWS, sampleDateRange, sampleWarning, type SamplePlanView } from '@/lib/sample-plan-view';
 import {
   AlertTriangle,
   ArrowRight,
@@ -53,7 +55,7 @@ import type {
 } from '@/types';
 
 type CenterMode = 'planning' | 'execution' | 'materials';
-type TaskViewFilter = 'ALL' | 'TODAY' | 'OVERDUE' | 'PLANNED' | 'IN_PROGRESS' | 'PENDING_REVIEW' | 'COMPLETED' | 'CANCELLED';
+type TaskViewFilter = SamplePlanView;
 type DetailTab = 'overview' | 'data' | 'materials' | 'photos' | 'review' | 'published';
 type SampleDeletePreview = {
   task: { id: string; code: string; customerName: string; productName: string | null; specification: string; status: string; version: number; dataPurpose: string; completedAt: string | null; archivedAt: string | null };
@@ -97,6 +99,9 @@ type PlanForm = {
   customerLevelColor: string;
   sampleQuantity: string;
   dueDate: string;
+  issuedDate: string;
+  warningDays: string;
+  scheduleReason: string;
   priority: string;
   planRemark: string;
   assigneeEmployeeIds: string[];
@@ -180,6 +185,9 @@ const emptyPlanForm: PlanForm = {
   customerLevelColor: SAMPLE_CUSTOMER_LEVELS[0].color,
   sampleQuantity: '',
   dueDate: '',
+  issuedDate: '',
+  warningDays: '2',
+  scheduleReason: '',
   priority: String(SAMPLE_CUSTOMER_LEVELS[0].priority),
   planRemark: '',
   assigneeEmployeeIds: [],
@@ -329,13 +337,6 @@ function chinaTodayKey() {
   return `${value.year}-${value.month}-${value.day}`;
 }
 
-function taskMatchesView(task: SampleTaskDTO, view: TaskViewFilter, today: string) {
-  if (view === 'ALL') return task.status !== 'CANCELLED';
-  if (view === 'TODAY') return task.status !== 'COMPLETED' && task.status !== 'CANCELLED' && task.dueDate === today;
-  if (view === 'OVERDUE') return task.status !== 'COMPLETED' && task.status !== 'CANCELLED' && Boolean(task.dueDate && task.dueDate < today);
-  if (view === 'PENDING_REVIEW') return task.status !== 'CANCELLED' && task.counts.pendingReview > 0;
-  return task.status === view;
-}
 
 async function responseJson(response: Response) {
   return response.json().catch(() => ({})) as Promise<Record<string, any>>;
@@ -363,7 +364,15 @@ export default function SampleTeamCenter({
   const [selectedId, setSelectedId] = useState('');
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
-  const [taskView, setTaskView] = useState<TaskViewFilter>('ALL');
+  const [taskView, setTaskView] = useState<TaskViewFilter>('UNFINISHED');
+  const [filters, setFilters] = useState({ customer: '', dateBy: 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: 'issued_desc' });
+  const [moreFilters, setMoreFilters] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ page: 1, pageSize: 40, total: 0, totalPages: 1 });
+  const [customers, setCustomers] = useState<string[]>([]);
+  const [viewCounts, setViewCounts] = useState<Record<TaskViewFilter, number>>(Object.fromEntries(SAMPLE_VIEWS.map(view => [view, 0])) as Record<TaskViewFilter, number>);
+  const [queryReady, setQueryReady] = useState(false);
+  const [focusId, setFocusId] = useState('');
   const [detailTab, setDetailTab] = useState<DetailTab>('overview');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -411,23 +420,34 @@ export default function SampleTeamCenter({
   const initialSelectedRef = useRef(false);
   const lastDetailTaskRef = useRef('');
 
-  const todayKey = useMemo(chinaTodayKey, []);
-  const visibleTasks = useMemo(
-    () => tasks.filter(task => taskMatchesView(task, taskView, todayKey)),
-    [taskView, tasks, todayKey],
-  );
-  const selected = visibleTasks.find(task => task.id === selectedId) || visibleTasks[0] || null;
-  const activeTasks = useMemo(() => tasks.filter(task => task.status !== 'CANCELLED'), [tasks]);
-  const viewCounts = useMemo(() => ({
-    ALL: activeTasks.length,
-    TODAY: activeTasks.filter(task => task.status !== 'COMPLETED' && task.dueDate === todayKey).length,
-    OVERDUE: activeTasks.filter(task => task.status !== 'COMPLETED' && Boolean(task.dueDate && task.dueDate < todayKey)).length,
-    PLANNED: activeTasks.filter(task => task.status === 'PLANNED').length,
-    IN_PROGRESS: activeTasks.filter(task => task.status === 'IN_PROGRESS').length,
-    PENDING_REVIEW: activeTasks.reduce((count, task) => count + task.counts.pendingReview, 0),
-    COMPLETED: activeTasks.filter(task => task.status === 'COMPLETED').length,
-    CANCELLED: tasks.filter(task => task.status === 'CANCELLED').length,
-  }), [activeTasks, tasks, todayKey]);
+  const [todayKey, setTodayKey] = useState(chinaTodayKey);
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState !== 'hidden') { setTodayKey(chinaTodayKey()); setRefreshToken(value => value+1); } };
+    window.addEventListener('focus', refresh);
+    const timer = window.setInterval(refresh, 60000);
+    return () => { clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, []);
+  const visibleTasks = tasks;
+  const selected = tasks.find(task => task.id === selectedId) || tasks[0] || null;
+  const queryString = useMemo(() => {
+    const query = new URLSearchParams({ view: taskView, page: String(page), pageSize: '40', dateBy: filters.dateBy, sort: filters.sort });
+    if (debouncedKeyword) query.set('keyword', debouncedKeyword);
+    for (const key of ['customer', 'level', 'member', 'risk', 'from', 'to'] as const) if (filters[key]) query.set(key, filters[key]);
+    if (focusId) query.set('focusId', focusId);
+    return query.toString();
+  }, [taskView, page, filters, debouncedKeyword, focusId]);
+  function changeFilters(next: Partial<typeof filters>) { setFilters(current => ({ ...current, ...next })); setPage(1); setFocusId(''); }
+  function changeView(view: TaskViewFilter) { setTaskView(view); setPage(1); setFocusId(''); }
+  function clearFilters() { setKeyword(''); setFilters({ customer: '', dateBy: 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: 'issued_desc' }); setPage(1); setFocusId(''); setTaskView('UNFINISHED'); }
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const view = params.get('sampleView') as TaskViewFilter;
+    if (SAMPLE_VIEWS.includes(view)) setTaskView(view);
+    const id = params.get('taskId');
+    if (id) { setFocusId(id); setSelectedId(id); }
+    const keyword = params.get('sampleSearch') || '';
+    setKeyword(keyword); setDebouncedKeyword(keyword); setQueryReady(true);
+  }, []);
   const visibleMembers = showAllMembers ? context.members : context.members.filter(member => member.sampleTeam);
   const visibleProducts = useMemo(() => {
     const query = productSearch.trim().toLowerCase();
@@ -456,20 +476,23 @@ export default function SampleTeamCenter({
   }, []);
 
   useEffect(() => {
+    if (!queryReady) return;
     const controller = new AbortController();
-    const query = new URLSearchParams();
-    if (debouncedKeyword) query.set('keyword', debouncedKeyword);
     setLoading(true);
     setError('');
-    fetch(`/api/sample-tasks?${query.toString()}`, { cache: 'no-store', signal: controller.signal })
+    fetch(`/api/sample-tasks?${queryString}`, { cache: 'no-store', signal: controller.signal })
       .then(async response => {
         const body = await responseJson(response);
         if (!response.ok) throw new Error(body.error || '样品任务加载失败');
         const nextTasks = Array.isArray(body.tasks) ? body.tasks as SampleTaskDTO[] : [];
+        if (controller.signal.aborted) return;
         setTasks(nextTasks);
+        setViewCounts(body.viewCounts);
+        setPagination(body.pagination);
+        setCustomers(body.customers || []);
         setSummary(body.summary || emptySummary);
         setSelectedId(currentSelectedId => {
-          if (!initialSelectedRef.current || !nextTasks.some(task => task.id === currentSelectedId)) {
+          if (!nextTasks.some(task => task.id === currentSelectedId)) {
             initialSelectedRef.current = true;
             return nextTasks[0]?.id || '';
           }
@@ -480,9 +503,9 @@ export default function SampleTeamCenter({
         if (reason instanceof DOMException && reason.name === 'AbortError') return;
         setError(reason instanceof Error ? reason.message : '样品任务加载失败');
       })
-      .finally(() => setLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [debouncedKeyword, refreshToken]);
+  }, [queryString, queryReady, refreshToken]);
 
   useEffect(() => {
     setSelectedId(current => visibleTasks.some(task => task.id === current) ? current : visibleTasks[0]?.id || '');
@@ -507,12 +530,14 @@ export default function SampleTeamCenter({
 
   function replaceTask(task: SampleTaskDTO | null | undefined) {
     if (!task) return;
+    setFocusId('');
     setTasks(current => current.map(item => item.id === task.id ? task : item));
     setSelectedId(task.id);
+    setRefreshToken(value => value + 1);
   }
 
   function openCreate() {
-    setForm(emptyPlanForm);
+    setForm({ ...emptyPlanForm, issuedDate: chinaTodayKey() });
     setProductSearch('');
     setShowAllMembers(context.sampleMemberCount === 0);
     setFormError('');
@@ -604,6 +629,9 @@ export default function SampleTeamCenter({
       customerLevelColor: level.color,
       sampleQuantity: task.sampleQuantity === null ? '' : String(task.sampleQuantity),
       dueDate: task.dueDate || '',
+      issuedDate: task.issuedDate || '',
+      warningDays: String(task.warningDays ?? 2),
+      scheduleReason: '',
       priority: String(level.priority),
       planRemark: task.planRemark || '',
       assigneeEmployeeIds: task.assignees.map(item => item.employeeId),
@@ -929,8 +957,9 @@ export default function SampleTeamCenter({
           ? 1
           : 0;
   const taskViews = [
-    { key: 'ALL' as const, label: '全部任务', count: viewCounts.ALL, icon: <PackageCheck size={15} /> },
+    { key: 'UNFINISHED' as const, label: '未完成任务', count: viewCounts.UNFINISHED, icon: <PackageCheck size={15} /> },
     { key: 'TODAY' as const, label: '今日到期', count: viewCounts.TODAY, icon: <CalendarDays size={15} /> },
+    { key: 'SOON' as const, label: '即将到期', count: viewCounts.SOON, icon: <Clock3 size={15} />, attention: true },
     { key: 'OVERDUE' as const, label: '已经逾期', count: viewCounts.OVERDUE, icon: <Clock3 size={15} />, danger: true },
     { key: 'PLANNED' as const, label: '待开始', count: viewCounts.PLANNED, icon: <CircleDot size={15} /> },
     { key: 'IN_PROGRESS' as const, label: '采集中', count: viewCounts.IN_PROGRESS, icon: <Camera size={15} /> },
@@ -1027,6 +1056,8 @@ export default function SampleTeamCenter({
           </div>
           <div className="sample-team-rule-note"><Info size={16} /><span>{mode === 'materials' ? '样品辅料与照片全部选填' : '样品任务只记录资料'}<strong>{mode === 'materials' ? '不扣库存、不生成正式领料' : '不统计产量与个人效率'}</strong></span></div>
           <div className="sample-team-command-actions">
+            <Link className="hm-workbench-button" href="/home?sampleReturn=1" prefetch={false}>返回首页</Link>
+            <a className="hm-workbench-button" href={`/api/sample-tasks/export?${queryString}`} download><Download size={15} />导出清单</a>
             {mode === 'planning' && <a className="hm-workbench-button" href="/api/sample-tasks/import/template" download><Download size={15} />下载导入模板</a>}
             {mode === 'planning' && <button className="hm-workbench-button" type="button" onClick={openImport}><Upload size={15} />批量导入</button>}
             {mode === 'planning' && <button className="hm-workbench-button primary" type="button" onClick={openCreate}><Plus size={15} />新建样品计划</button>}
@@ -1045,32 +1076,48 @@ export default function SampleTeamCenter({
           onClose={modeDrawer.close}
         />
 
-        {!!tasks.length && <section className="sample-team-statusbar" aria-label="样品任务状态筛选">
-          <div>{taskViews.map(item => <button type="button" className={`${taskView === item.key ? 'active' : ''}${item.danger && item.count ? ' danger' : ''}${item.attention && item.count ? ' attention' : ''}${item.quiet ? ' quiet' : ''}`} aria-pressed={taskView === item.key} key={item.key} onClick={() => setTaskView(item.key)}>{item.icon}<span>{item.label}</span><b>{item.count}{item.unit || ''}</b></button>)}</div>
+        {<section className="sample-team-statusbar" aria-label="样品任务状态筛选">
+          <div>{taskViews.map(item => <button type="button" className={`${taskView === item.key ? 'active' : ''}${item.danger && item.count ? ' danger' : ''}${item.attention && item.count ? ' attention' : ''}${item.quiet ? ' quiet' : ''}`} aria-pressed={taskView === item.key} key={item.key} onClick={() => changeView(item.key)}>{item.icon}<span>{item.label}</span><b>{item.count}{item.unit || ''}</b></button>)}</div>
           <span className="sample-team-published-total"><CheckCircle2 size={15} />正式资料 <strong>{summary.publishedItems}</strong> 项</span>
         </section>}
+
+        <section className="sample-plan-filters" aria-label="样品计划筛选">
+          <div className="sample-plan-filter-line">
+            <label className="sample-plan-search"><Search size={16}/><input aria-label="搜索样品任务" value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); setFocusId(''); }} placeholder="搜索客户、型号、订单或成员" /></label>
+            <select aria-label="日期类型" value={filters.dateBy} onChange={event => changeFilters({ dateBy: event.target.value })}><option value="issued">下达日期</option><option value="due">出货日期</option><option value="completed">完成日期</option></select>
+            <select aria-label="日期范围" value={filters.period} onChange={event => changeFilters({ period: event.target.value, ...sampleDateRange(event.target.value) })}><option value="all">全部日期</option><option value="today">今天</option><option value="week">本周</option><option value="month">本月</option><option value="custom">自定义</option></select>
+            <select aria-label="客户筛选" value={filters.customer} onChange={event => changeFilters({ customer: event.target.value })}><option value="">全部客户</option>{customers.map(customer => <option key={customer}>{customer}</option>)}</select>
+            <select aria-label="排序方式" value={filters.sort} onChange={event => changeFilters({ sort: event.target.value })}><option value="issued_desc">最近下达</option><option value="issued_asc">最早下达</option><option value="due_asc">交期最近</option><option value="priority">客户优先级</option><option value="completed_desc">最近完成</option></select>
+            <button type="button" aria-expanded={moreFilters} onClick={() => setMoreFilters(value => !value)}>更多筛选</button><button type="button" aria-label="清除筛选" onClick={clearFilters}><X size={16}/></button>
+          </div>
+          {filters.period === 'custom' && <div className="sample-plan-filter-line"><label>从 <input aria-label="开始日期" type="date" value={filters.from} onChange={event => changeFilters({ from: event.target.value })}/></label><label>至 <input aria-label="结束日期" type="date" value={filters.to} onChange={event => changeFilters({ to: event.target.value })}/></label></div>}
+          {moreFilters && <div className="sample-plan-filter-line"><select aria-label="客户等级筛选" value={filters.level} onChange={event => changeFilters({ level: event.target.value })}><option value="">全部等级</option>{['A','B','C','D'].map(level => <option value={level} key={level}>{level}级</option>)}</select><select aria-label="样品成员筛选" value={filters.member} onChange={event => changeFilters({ member: event.target.value })}><option value="">全部成员</option>{context.members.map(member => <option value={member.id} key={member.id}>{member.name} · {member.employeeNo}</option>)}</select><select aria-label="交期预警筛选" value={filters.risk} onChange={event => changeFilters({ risk: event.target.value })}><option value="">全部交期</option><option value="WARNING">需关注交期</option><option value="MISSING">未设置出货日期</option></select></div>}
+        </section>
 
         {error && <div className="sample-team-error"><AlertTriangle size={18} /><span>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 
         {loading && !tasks.length ? <section className="sample-team-loading"><Loader2 className="spin" size={28} /><strong>正在加载样品任务</strong></section>
-          : !tasks.length && !debouncedKeyword ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'planning' ? '从第一条样品任务开始' : mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '建立任务与产品关联后，员工即可扫码填写数据和拍照；所有采集项都可留空。' : mode === 'materials' ? '计划中心下达样品任务后，可在这里选填辅料数据与上传照片；不会扣减库存。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />每个产品的本次提交只做一次整包审核</div></section>
-            : !tasks.length || !visibleTasks.length ? <section className="sample-filter-empty"><span className="sample-empty-icon"><Search size={30} /></span><h2>没有符合条件的样品任务</h2><p>调整搜索内容或任务状态后再查看。</p><button type="button" onClick={() => { setKeyword(''); setTaskView('ALL'); }}>清除筛选</button></section>
+          : viewCounts.ALL === 0 && !debouncedKeyword && !Object.values(filters).some(value => value && !['issued', 'all', 'issued_desc'].includes(value)) ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'planning' ? '从第一条样品任务开始' : mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '建立任务与产品关联后，员工即可扫码填写数据和拍照；所有采集项都可留空。' : mode === 'materials' ? '计划中心下达样品任务后，可在这里选填辅料数据与上传照片；不会扣减库存。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />每个产品的本次提交只做一次整包审核</div></section>
+            : !tasks.length || !visibleTasks.length ? <section className="sample-filter-empty"><span className="sample-empty-icon"><Search size={30} /></span><h2>没有符合条件的样品任务</h2><p>调整搜索内容或任务状态后再查看。</p><button type="button" onClick={clearFilters}>清除筛选</button></section>
               : <section className="sample-team-workspace">
           <aside className="sample-task-list" aria-label="样品任务列表">
-            <header className="sample-task-list-head"><div><strong>任务清单</strong><span>{visibleTasks.length} 个任务</span></div><label><Search size={16} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格、订单或成员" /></label></header>
+            <header className="sample-task-list-head"><div><strong>任务清单</strong><span>{pagination.total} 个任务</span></div></header>
             <div className="sample-task-list-scroll hm-scroll-region" tabIndex={0}>
-              {visibleTasks.map(task => {
-                const overdue = taskMatchesView(task, 'OVERDUE', todayKey);
+              {visibleTasks.map((task, index) => {
+                const warning = sampleWarning(task, todayKey);
+                const overdue = warning.kind === 'OVERDUE';
                 return <button className={`sample-task-card ${selected?.id === task.id ? 'active' : ''} status-${task.status.toLowerCase()}`} aria-pressed={selected?.id === task.id} type="button" key={task.id} onClick={() => setSelectedId(task.id)}>
                   <span className="sample-task-color" style={{ background: sampleCustomerLevelOrDefault(task.customerLevelCode).color }} />
                   <header className="sample-task-card-head"><div><em style={sampleCustomerLevelStyle(task.customerLevelCode)}>{taskLevelText(task)}</em>{task.dataPurpose !== 'PRODUCTION' && <em className="sample-data-purpose">{task.dataPurpose === 'TEST' ? '测试' : '培训'}</em>}<strong title={task.customerName}>{task.customerName}</strong></div><small>{task.code}</small></header>
-                  <h3 title={task.specification}>{task.specification}</h3>
+                  <h3 title={task.specification}><small className="sample-task-sequence">{String((pagination.page-1)*pagination.pageSize+index+1).padStart(3, '0')}</small>{task.specification}</h3>
                   <p>{task.productName || '未设置品名'}</p>
-                  <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{dateText(task.dueDate)}</span><span><UserRound size={12} />{task.assignees.map(item => item.name).join('、') || '未指派'}</span></div>
+                  <div className="sample-task-date-pair"><span>下达 {dateText(task.issuedDate)}</span><span>出货 {dateText(task.dueDate)}</span></div>
+                  <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{warning.label}</span><span><UserRound size={12} />{task.assignees.map(item => item.name).join('、') || '未指派'}</span></div>
                   <footer><span><FileText size={12} />数据 {task.counts.data}</span><span><ImageIcon size={12} />照片 {task.counts.photos}</span>{task.counts.pendingReview > 0 && <b>待审 1 包</b>}{task.status === 'COMPLETED' && <span>{task.archivedAt ? '已归档' : '未归档'}</span>}</footer>
                 </button>;
               })}
             </div>
+            <footer className="sample-plan-pagination"><button type="button" disabled={loading || pagination.page <= 1} onClick={() => { setFocusId(''); setPage(pagination.page-1); }}>上一页</button><span>{pagination.page} / {pagination.totalPages}</span><button type="button" disabled={loading || pagination.page >= pagination.totalPages} onClick={() => { setFocusId(''); setPage(pagination.page+1); }}>下一页</button></footer>
           </aside>
 
           <section className="sample-task-detail">
@@ -1092,9 +1139,10 @@ export default function SampleTeamCenter({
               <div className="sample-detail-body hm-scroll-region" tabIndex={0}>
                 {detailTab === 'overview' && <section className="sample-overview-content">
                   <ol className={`sample-stage-rail ${selected.status === 'CANCELLED' ? 'cancelled' : ''}`}>{['待开始', '采集中', '待审核', '已归档'].map((label, index) => <li className={index < stageIndex ? 'done' : index === stageIndex ? 'current' : ''} key={label}><span>{index < stageIndex ? <CheckCircle2 size={15} /> : index + 1}</span><strong>{label}</strong></li>)}</ol>
+                  <SampleSchedulePanel key={selected.id} task={selected} editable={mode === 'planning' && !terminalTask} onSaved={replaceTask} />
                   <section className="sample-detail-facts">
                     <div><span>任务状态</span><strong>{taskStatusLabels[selected.status]}</strong><small>{dataStatusLabels[selected.dataStatus]}</small></div>
-                    <div><span>计划日期</span><strong>{dateText(selected.dueDate)}</strong><small>{selected.sampleQuantity === null ? '数量未设置' : `${selected.sampleQuantity} 件/套`}</small></div>
+                    <div><span>计划数量</span><strong>{selected.sampleQuantity ?? '未设置'}</strong><small>{selected.sampleQuantity === null ? '数量未设置' : `${selected.sampleQuantity} 件/套`}</small></div>
                     <div><span>样品成员</span><strong>{selected.assignees.length || 0} 人</strong><small>{selected.assignees.map(item => item.name).join('、') || '尚未指派'}</small></div>
                     <div><span>本次采集</span><strong>{selected.counts.data} 条 · {selected.counts.photos} 图</strong><small>{selected.counts.pendingReview ? `待审核 1 包 · ${selected.counts.pendingItems} 项内容` : selected.archivedAt ? '已完成并归档' : '没有待审核提交包'}</small></div>
                   </section>
@@ -1280,7 +1328,10 @@ export default function SampleTeamCenter({
               </fieldset>
               <div className="sample-form-grid two sample-plan-core-fields">
                 <label><span>样品数量</span><input type="number" min="1" step="1" value={form.sampleQuantity} onChange={event => setForm(current => ({ ...current, sampleQuantity: event.target.value }))} placeholder="填写样品数量" /></label>
-                <label><span>计划日期</span><input type="date" value={form.dueDate} onChange={event => setForm(current => ({ ...current, dueDate: event.target.value }))} /></label>
+                <label><span>计划下达日期</span><input type="date" value={form.issuedDate} onChange={event => setForm(current => ({ ...current, issuedDate: event.target.value }))} /></label>
+                <label><span>提前预警天数</span><input type="number" min="0" max="30" value={form.warningDays} onChange={event => setForm(current => ({ ...current, warningDays: event.target.value }))} /></label>
+                {editOpen && <label className="wide"><span>日期或预警调整原因</span><input value={form.scheduleReason} maxLength={500} onChange={event => setForm(current => ({ ...current, scheduleReason: event.target.value }))} placeholder="修改日期或预警时必填" /></label>}
+                <label><span>计划出货日期</span><input type="date" value={form.dueDate} onChange={event => setForm(current => ({ ...current, dueDate: event.target.value }))} /></label>
               </div>
               {!editOpen && user.laborRole === 'ADMIN' && <label className="sample-data-purpose-field"><span>数据用途</span><select value={form.dataPurpose} onChange={event => setForm(current => ({ ...current, dataPurpose: event.target.value as PlanForm['dataPurpose'] }))}><option value="PRODUCTION">正式业务数据</option><option value="TEST">测试数据（可批量退役）</option><option value="TRAINING">培训数据</option></select><small>只有新建时可标记；正式数据不会被测试清理工具自动退役。</small></label>}
             </section>

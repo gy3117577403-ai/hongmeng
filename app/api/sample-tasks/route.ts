@@ -1,3 +1,4 @@
+import { listSamplePlans, SampleQueryError } from '@/lib/sample-plan-query';
 import { NextRequest, NextResponse } from 'next/server';
 import { DrawingLibraryResolutionError, resolveOrCreateDrawingProduct } from '@/lib/drawing-library-resolution';
 import { Prisma } from '@prisma/client';
@@ -32,56 +33,10 @@ function employeeIds(value: unknown): string[] {
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
-    const keyword = cleanSampleText(req.nextUrl.searchParams.get('keyword'), 100);
-    const status = cleanSampleText(req.nextUrl.searchParams.get('status'), 30);
-    const dataStatus = cleanSampleText(req.nextUrl.searchParams.get('dataStatus'), 40);
-    const assignedToMe = req.nextUrl.searchParams.get('assignedToMe') === 'true';
-    const tasks = await prisma.sampleTask.findMany({
-      where: {
-        deletedAt: null,
-        ...(status && status !== 'ALL' ? { status } : {}),
-        ...(dataStatus && dataStatus !== 'ALL' ? { dataStatus } : {}),
-        ...(assignedToMe && user.employeeId
-          ? { assignees: { some: { employeeId: user.employeeId } } }
-          : {}),
-        ...(keyword
-          ? {
-              OR: [
-                { code: { contains: keyword, mode: 'insensitive' } },
-                { sourceOrderNo: { contains: keyword, mode: 'insensitive' } },
-                { customerNameSnapshot: { contains: keyword, mode: 'insensitive' } },
-                { productNameSnapshot: { contains: keyword, mode: 'insensitive' } },
-                { specificationSnapshot: { contains: keyword, mode: 'insensitive' } },
-                { customerLevelCode: { contains: keyword, mode: 'insensitive' } },
-                { assignees: { some: { employee: { name: { contains: keyword, mode: 'insensitive' } } } } },
-              ],
-            }
-          : {}),
-      },
-      include: sampleTaskInclude,
-      orderBy: [
-        { status: 'asc' },
-        { priority: 'desc' },
-        { dueDate: 'asc' },
-        { updatedAt: 'desc' },
-      ],
-      take: 300,
-    });
-    const serialized = tasks.map(serializeSampleTask);
-    const today = chinaDateKey(new Date());
-    const active = serialized.filter(task => task.status !== 'CANCELLED');
-    const summary = {
-      total: active.length,
-      dueToday: active.filter(task => task.dueDate === today && task.status !== 'COMPLETED').length,
-      overdue: active.filter(task => Boolean(task.dueDate && task.dueDate < today) && task.status !== 'COMPLETED').length,
-      pendingReview: active.reduce((count, task) => count + task.counts.pendingReview, 0),
-      collecting: active.filter(task => task.status === 'PLANNED' || task.status === 'IN_PROGRESS').length,
-      completed: active.filter(task => task.status === 'COMPLETED').length,
-      publishedItems: active.reduce((sum, task) => sum + task.counts.published, 0),
-    };
-    return NextResponse.json({ ok: true, tasks: serialized, summary });
+    return NextResponse.json(await listSamplePlans(req.nextUrl.searchParams, user.employeeId));
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof SampleQueryError) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     console.error('sample task list failed', error);
     return NextResponse.json({ ok: false, error: '样品任务加载失败' }, { status: 500 });
   }
@@ -98,6 +53,10 @@ export async function POST(req: NextRequest) {
     const specification = cleanSampleText(body.specification, 180);
     const assignedEmployeeIds = employeeIds(body.assigneeEmployeeIds);
     const dueDate = parseOptionalSampleDate(body.dueDate);
+    const issuedDate = parseOptionalSampleDate(body.issuedDate || chinaDateKey(new Date()));
+    const warningDays = body.warningDays === undefined ? 2 : Number(body.warningDays);
+    if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) return NextResponse.json({ ok: false, error: '提前预警天数须为 0 至 30 的整数' }, { status: 400 });
+    if (issuedDate && dueDate && dueDate < issuedDate) return NextResponse.json({ ok: false, error: '出货日期不能早于下达日期' }, { status: 400 });
     const sampleQuantity = parseOptionalNonNegativeInteger(body.sampleQuantity);
     const customerLevel = sampleCustomerLevel(body.customerLevelCode);
     const dataPurpose = body.dataPurpose === 'TEST' || body.dataPurpose === 'TRAINING' ? body.dataPurpose : 'PRODUCTION';
@@ -145,6 +104,8 @@ export async function POST(req: NextRequest) {
           customerLevelColor: customerLevel.color,
           sampleQuantity,
           dueDate,
+          issuedDate,
+          warningDays,
           priority: customerLevel.priority,
           dataPurpose,
           planRemark: cleanSampleText(body.planRemark, 1000),

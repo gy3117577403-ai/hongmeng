@@ -23,6 +23,9 @@ import {
   X,
 } from 'lucide-react';
 import Link from 'next/link';
+import HomeSampleTasks, { type SampleHomeCounts } from './HomeSampleTasks';
+import { SAMPLE_HOME_STATE_KEY, type SampleHomeState } from '@/lib/sample-plan-view';
+import { FlaskConical } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   filterHomeNotifications,
@@ -170,6 +173,25 @@ export default function HomeNotificationCommandCenter({
   onFocusClear?: () => void;
   refreshKey?: string;
 }) {
+  const [sampleState, setSampleState] = useState<SampleHomeState>({ active: false, view: 'UNFINISHED', keyword: '', page: 1, scrollTop: 0 });
+  const [sampleCounts, setSampleCounts] = useState<SampleHomeCounts>({ UNFINISHED: 0, COMPLETED: 0, SOON: 0, TODAY: 0, OVERDUE: 0 });
+  const sampleOpen = sampleState.active;
+  useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get('sampleReturn') === '1') {
+        const stored = JSON.parse(sessionStorage.getItem(SAMPLE_HOME_STATE_KEY) || 'null');
+        if (stored && ['UNFINISHED', 'COMPLETED'].includes(stored.view)) setSampleState({ active: true, view: stored.view, keyword: String(stored.keyword || '').slice(0, 100), page: Math.max(1, Number(stored.page) || 1), scrollTop: Math.max(0, Number(stored.scrollTop) || 0) });
+      }
+    } catch { /* Session storage may be unavailable in private browsing. */ }
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/sample-tasks?compact=true&pageSize=1', { cache: 'no-store', signal: controller.signal }).then(response => response.json()).then(body => { if (body.ok && !controller.signal.aborted) setSampleCounts(body.viewCounts); }).catch(() => {});
+    return () => controller.abort();
+  }, [refreshKey]);
+  function saveSampleReturn(scrollTop: number) {
+    try { sessionStorage.setItem(SAMPLE_HOME_STATE_KEY, JSON.stringify({ ...sampleState, scrollTop })); } catch { /* Navigation remains usable without storage. */ }
+  }
   const [notifications, setNotifications] = useState<HomeNotification[]>([]);
   const [summary, setSummary] = useState<NotificationSummary>(EMPTY_SUMMARY);
   const [activeFilter, setActiveFilter] = useState<HomeNotificationFilter>('ACTIONABLE');
@@ -295,6 +317,7 @@ export default function HomeNotificationCommandCenter({
   useEffect(() => {
     if (!focusRequest || appliedFocusId.current === focusRequest.id) return;
     appliedFocusId.current = focusRequest.id;
+    setSampleState(current => ({ ...current, active: false }));
     const focusedState = homeNotificationFocusState(focusRequest.category);
     setActiveFilter(focusedState.filter);
     setQuery(focusedState.query);
@@ -385,6 +408,7 @@ export default function HomeNotificationCommandCenter({
   }, { hasMore: Boolean(nextCursor), enabled });
 
   function changeFilter(filter: HomeNotificationFilter): void {
+    setSampleState(current => ({ ...current, active: false }));
     setActiveFilter(filter);
     setQuery('');
     setUnreadOnly(false);
@@ -519,20 +543,20 @@ export default function HomeNotificationCommandCenter({
   return (
     <section className="hm-hcc-inbox" id="hm-hcc-inbox" aria-labelledby="hm-hcc-inbox-title" tabIndex={-1}>
       <header className="hm-hcc-inbox-heading">
-        <div><small>协同消息</small><h2 id="hm-hcc-inbox-title">消息提醒</h2></div>
+        <div><small>协同消息</small><h2 id="hm-hcc-inbox-title">{sampleOpen ? '样品任务' : '消息提醒'}</h2></div>
         <Link href="/workspace/messages" prefetch={false}>全部消息<ChevronRight aria-hidden="true" /></Link>
       </header>
 
       <div className="hm-hcc-message-summary" aria-live="polite">
         <div className="hm-hcc-status-tabs" role="tablist" aria-label="消息处理状态">
-          <button type="button" role="tab" aria-selected={view === 'pending'} className={view === 'pending' ? 'active' : ''} onClick={() => changeView('pending')}>
-            <UserRoundCheck aria-hidden="true" /><span>未完成消息</span><strong>{summary.pendingCount}</strong>
+          <button type="button" role="tab" aria-selected={sampleOpen ? sampleState.view === 'UNFINISHED' : view === 'pending'} className={(sampleOpen ? sampleState.view === 'UNFINISHED' : view === 'pending') ? 'active' : ''} onClick={() => sampleOpen ? setSampleState(current => ({ ...current, view: 'UNFINISHED', page: 1, scrollTop: 0 })) : changeView('pending')}>
+            <UserRoundCheck aria-hidden="true" /><span>{sampleOpen ? '未完成样品' : '未完成消息'}</span><strong>{sampleOpen ? sampleCounts.UNFINISHED : summary.pendingCount}</strong>
           </button>
-          <button type="button" role="tab" aria-selected={view === 'completed'} className={view === 'completed' ? 'active completed' : ''} onClick={() => changeView('completed')}>
-            <CheckCircle2 aria-hidden="true" /><span>已完成</span><strong>{summary.completedCount}</strong>
+          <button type="button" role="tab" aria-selected={sampleOpen ? sampleState.view === 'COMPLETED' : view === 'completed'} className={(sampleOpen ? sampleState.view === 'COMPLETED' : view === 'completed') ? 'active completed' : ''} onClick={() => sampleOpen ? setSampleState(current => ({ ...current, view: 'COMPLETED', page: 1, scrollTop: 0 })) : changeView('completed')}>
+            <CheckCircle2 aria-hidden="true" /><span>已完成</span><strong>{sampleOpen ? sampleCounts.COMPLETED : summary.completedCount}</strong>
           </button>
         </div>
-        <div className="hm-hcc-urgent-summary"><span>紧急</span><strong>{summary.urgentCount}</strong></div>
+        <div className="hm-hcc-urgent-summary"><span>{sampleOpen ? '交期预警' : '紧急'}</span><strong>{sampleOpen ? sampleCounts.SOON + sampleCounts.TODAY + sampleCounts.OVERDUE : summary.urgentCount}</strong></div>
       </div>
 
       <div className="hm-hcc-inbox-workspace">
@@ -544,8 +568,8 @@ export default function HomeNotificationCommandCenter({
             return (
               <button
                 type="button"
-                className={activeFilter === filter.value ? 'active' : ''}
-                aria-pressed={activeFilter === filter.value}
+                className={!sampleOpen && activeFilter === filter.value ? 'active' : ''}
+                aria-pressed={!sampleOpen && activeFilter === filter.value}
                 onClick={() => changeFilter(filter.value)}
                 key={filter.value}
               >
@@ -553,9 +577,10 @@ export default function HomeNotificationCommandCenter({
               </button>
             );
           })}
+          <button type="button" className={sampleOpen ? 'active' : ''} aria-pressed={sampleOpen} onClick={() => setSampleState(current => ({ ...current, active: true }))}><FlaskConical aria-hidden="true"/><span>样品</span><b>{sampleCounts.UNFINISHED}</b></button>
         </nav>
 
-        <div className="hm-hcc-message-pane">
+        {sampleOpen ? <HomeSampleTasks state={sampleState} onChange={setSampleState} onCounts={setSampleCounts} onNavigate={saveSampleReturn} refreshKey={refreshKey}/> : <div className="hm-hcc-message-pane">
           <div className="hm-hcc-message-toolbar">
             <label><Search aria-hidden="true" /><input aria-label="搜索消息" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索消息" /></label>
             {view === 'pending' && <button type="button" className={unreadOnly ? 'active' : ''} aria-pressed={unreadOnly} onClick={() => setUnreadOnly(value => !value)}><Filter aria-hidden="true" />仅看未读</button>}
@@ -629,7 +654,7 @@ export default function HomeNotificationCommandCenter({
               </div>
             )}
           </div>
-        </div>
+        </div>}
       </div>
     </section>
   );

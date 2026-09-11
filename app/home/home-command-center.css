@@ -1649,3 +1649,19 @@ main.hm-hcc-root.hm-sidebar-expanded { --hm-shell-rail: 224px; }
 
   .hm-hcc-node-grid .hm-hcc-node > a { min-height: 96px; }
 }
+
+/* Sample tasks share the inbox shell and keep business counts separate from messages. */
+.sample-home-pane { display:flex; flex-direction:column; min-height:0; }
+.sample-home-models { flex:1; min-height:0; }
+.sample-home-model { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:58px; padding:12px 16px; margin:0 10px; border-bottom:1px solid #e8eef5; color:#425f86; text-decoration:none; font-size:13px; }
+.sample-home-model span { min-width:0; overflow-wrap:anywhere; }
+.sample-home-model:hover,.sample-home-model:focus-visible { background:#fff6ed; color:#d45500; }
+.sample-home-model.warning-soon,.sample-home-model.warning-today { color:#b57416; }
+.sample-home-model.warning-overdue { color:#df4d3f; }
+.sample-home-empty { padding:34px 16px; color:#8b9caf; font-size:13px; text-align:center; }
+.sample-home-pagination { display:flex; align-items:center; justify-content:space-between; gap:4px; padding:10px; border-top:1px solid #e8eef5; color:#8b9cb3; font-size:11px; }
+.sample-home-pagination button { background:white; border:1px solid #e0e7f1; border-radius:6px; min-height:32px; padding:4px 8px; color:#617791; }
+.sample-home-pagination button:disabled { opacity:.4; }
+.hm-hcc-inbox .sample-home-model { color:#425f86; }
+.hm-hcc-inbox .sample-home-model.warning-soon,.hm-hcc-inbox .sample-home-model.warning-today { color:#b57416; }
+.hm-hcc-inbox .sample-home-model.warning-overdue { color:#df4d3f; }

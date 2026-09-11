@@ -3766,6 +3766,9 @@ model SampleTask {
   customerLevelColor       String?              @map("customer_level_color")
   sampleQuantity           Int?                 @map("sample_quantity")
   dueDate                  DateTime?            @map("due_date") @db.Date
+  issuedDate               DateTime?            @map("issued_date") @db.Date
+  warningDays              Int                  @default(2) @map("warning_days")
+  scheduleHistory          Json                 @default("[]") @map("schedule_history")
   priority                 Int                  @default(0)
   status                   String               @default("PLANNED")
   dataStatus               String               @default("NO_DATA") @map("data_status")
@@ -3808,6 +3811,7 @@ model SampleTask {
   acceptedSubmission       SampleSubmission?    @relation("SampleTaskAcceptedSubmission", fields: [acceptedSubmissionId], references: [id], onDelete: SetNull)
 
   @@index([drawingLibraryItemId, createdAt])
+  @@index([deletedAt, status, issuedDate])
   @@index([status, dueDate])
   @@index([dataStatus, updatedAt])
   @@index([customerLevelCode])

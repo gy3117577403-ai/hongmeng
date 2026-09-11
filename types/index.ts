@@ -304,6 +304,8 @@ export type SamplePhotoDTO = {
   contentUrl: string;
 };
 
+export type SampleScheduleChange = { at: string; actor: string; reason: string; fromDue: string | null; toDue: string | null; fromIssued: string | null; toIssued: string | null; fromWarning: number; toWarning: number };
+
 export type SampleTaskDTO = {
   id: string;
   code: string;
@@ -319,6 +321,9 @@ export type SampleTaskDTO = {
   customerLevelColor: string | null;
   sampleQuantity: number | null;
   dueDate: string | null;
+  issuedDate?: string | null;
+  warningDays?: number;
+  scheduleHistory?: SampleScheduleChange[];
   priority: number;
   status: SampleTaskStatusDTO;
   dataStatus: SampleDataStatusDTO;

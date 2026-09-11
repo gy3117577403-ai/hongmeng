@@ -16,13 +16,13 @@ export async function GET() {
       views: [{ state: 'frozen', ySplit: 4 }],
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
     });
-    sheet.mergeCells('A1:G1');
+    sheet.mergeCells('A1:I1');
     sheet.getCell('A1').value = '样品计划批量导入模板';
     sheet.getCell('A1').font = { name: 'Microsoft YaHei', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
     sheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
     sheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF05A0A' } };
     sheet.getRow(1).height = 30;
-    sheet.mergeCells('A2:G2');
+    sheet.mergeCells('A2:I2');
     sheet.getCell('A2').value = '每行建立 1 个样品计划；前 6 列必填，图纸库编号可留空由系统自动匹配。请勿改列名。';
     sheet.getCell('A2').font = { name: 'Microsoft YaHei', size: 10, color: { argb: 'FF9A3412' } };
     sheet.getCell('A2').alignment = { vertical: 'middle', wrapText: true };
@@ -31,7 +31,7 @@ export async function GET() {
     const header = sheet.getRow(4);
     SAMPLE_PLAN_IMPORT_HEADERS.forEach((name, index) => {
       const cell = header.getCell(index + 1);
-      cell.value = name;
+      cell.value = name === '计划日期' ? '计划出货日期' : name;
       cell.font = { name: 'Microsoft YaHei', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
       cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F2937' } };
@@ -45,12 +45,12 @@ export async function GET() {
     header.height = 28;
     sheet.columns = [
       { width: 20 }, { width: 24 }, { width: 34 }, { width: 12 },
-      { width: 13 }, { width: 15 }, { width: 34 },
+      { width: 13 }, { width: 15 }, { width: 34 }, { width: 23 }, { width: 23 },
     ];
     for (let rowIndex = 5; rowIndex <= 504; rowIndex += 1) {
       const row = sheet.getRow(rowIndex);
       row.height = 22;
-      for (let column = 1; column <= 7; column += 1) {
+      for (let column = 1; column <= 9; column += 1) {
         const cell = row.getCell(column);
         cell.font = { name: 'Microsoft YaHei', size: 10 };
         cell.alignment = { vertical: 'middle', wrapText: column === 3 || column === 7 };
@@ -69,18 +69,21 @@ export async function GET() {
         type: 'whole', operator: 'greaterThan', formulae: [0], allowBlank: false,
         showErrorMessage: true, errorTitle: '样品数量错误', error: '样品数量必须是大于 0 的整数。',
       };
+      row.getCell(8).numFmt = 'yyyy-mm-dd';
+      row.getCell(9).dataValidation = { type: 'whole', operator: 'between', formulae: [0, 30], allowBlank: true, showErrorMessage: true, error: '请输入 0 至 30 的整数' };
       row.getCell(6).numFmt = 'yyyy-mm-dd';
       row.getCell(6).dataValidation = {
         type: 'date', operator: 'between', formulae: [new Date('2020-01-01'), new Date('2099-12-31')], allowBlank: false,
         showErrorMessage: true, errorTitle: '计划日期错误', error: '请选择有效的计划日期。',
       };
     }
-    sheet.autoFilter = { from: 'A4', to: 'G504' };
+    sheet.autoFilter = { from: 'A4', to: 'I504' };
 
     const help = workbook.addWorksheet('填写说明');
     help.columns = [{ width: 22 }, { width: 74 }];
     help.addRow(['项目', '说明']);
     [
+      ['下达日期与预警', '计划下达日期可填；历史日期不清楚时留空，系统显示未记录，不推测补填。提前预警天数为 0 至 30 的整数，留空默认 2 天。'],
       ['前 6 列', '必填：客户名称、产品名称、型号/规格、客户等级、样品数量、计划日期。'],
       ['客户等级', '只能填写 A、B、C、D；系统固定显示为 A红、B黄、C蓝、D绿。'],
       ['图纸库编号', '选填。已明确知道图纸库编号时填写，可精确复用；留空时系统按客户和型号/规格自动匹配。'],

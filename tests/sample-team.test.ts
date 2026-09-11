@@ -230,10 +230,10 @@ test('sample planning workspace uses one compact master-detail surface instead o
 });
 
 test('pending review summary counts active submission packages rather than child items', () => {
-  const listRoute = readFileSync('app/api/sample-tasks/route.ts', 'utf8');
+  const listRoute = readFileSync('lib/sample-plan-query.ts', 'utf8');
   const serializer = readFileSync('lib/sample-team.ts', 'utf8');
 
-  assert.match(listRoute, /active\.reduce\(\(count, task\) => count \+ task\.counts\.pendingReview, 0\)/);
+  assert.match(listRoute, /s\.id=t\.active_submission_id AND s\.status='PENDING'/);
   assert.match(serializer, /pendingReview:\s*task\.activeSubmission\?\.status === 'PENDING' \? 1 : 0/);
 });
 

@@ -3,6 +3,7 @@ import SampleTeamCenter from '@/components/SampleTeamCenter';
 import { requirePageAccess } from '@/lib/page-access';
 import './warehouse-workbench.css';
 import '../../sample-team-workbench.css';
+import '../../sample-plan-schedule.css';
 
 export default async function WarehouseManagementPage({ searchParams }: { searchParams?: { branch?: string | string[]; chooseMode?: string | string[] } }) {
   const user = await requirePageAccess('/workspace/warehouse');

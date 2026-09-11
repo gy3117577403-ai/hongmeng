@@ -48,7 +48,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ ok: false, error: '样品任务版本已失效，请刷新后重试' }, { status: 400 });
     }
     const action = cleanSampleText(body.action, 30) || 'UPDATE';
-    if (!['UPDATE', 'START', 'COMPLETE', 'CANCEL', 'ARCHIVE', 'UNARCHIVE'].includes(action)) {
+    if (!['UPDATE', 'SCHEDULE', 'START', 'COMPLETE', 'CANCEL', 'ARCHIVE', 'UNARCHIVE'].includes(action)) {
       return NextResponse.json({ ok: false, error: '不支持的样品任务操作' }, { status: 400 });
     }
     const assigneeIds = ids(body.assigneeEmployeeIds);
@@ -138,7 +138,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         throw new Error('SAMPLE_TASK_CLOSED');
       }
       const metadataUpdate = action === 'UPDATE';
-      const dueDate = !metadataUpdate || body.dueDate === undefined ? existing.dueDate : parseOptionalSampleDate(body.dueDate);
+      const scheduleUpdate = metadataUpdate || action === 'SCHEDULE';
+      const dueDate = !scheduleUpdate || body.dueDate === undefined ? existing.dueDate : parseOptionalSampleDate(body.dueDate);
+      const issuedDate = !scheduleUpdate || body.issuedDate === undefined ? existing.issuedDate : parseOptionalSampleDate(body.issuedDate);
+      const warningDays = !scheduleUpdate || body.warningDays === undefined ? existing.warningDays : Number(body.warningDays);
+      if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) throw new Error('INVALID_WARNING_DAYS');
+      const dateKey = (date: Date | null) => date?.toISOString().slice(0, 10) || null;
+      const scheduleChanged = dateKey(dueDate) !== dateKey(existing.dueDate) || dateKey(issuedDate) !== dateKey(existing.issuedDate) || warningDays !== existing.warningDays;
+      if (scheduleChanged && dueDate && issuedDate && dueDate < issuedDate) throw new Error('INVALID_SCHEDULE_RANGE');
+      const scheduleReason = cleanSampleText(body.scheduleReason, 500);
+      if (scheduleChanged && !scheduleReason) throw new Error('SCHEDULE_REASON_REQUIRED');
+      const scheduleHistory = Array.isArray(existing.scheduleHistory) ? existing.scheduleHistory : [];
+      if (scheduleChanged) scheduleHistory.push({ at: now.toISOString(), actor: actor.name, reason: scheduleReason, fromDue: dateKey(existing.dueDate), toDue: dateKey(dueDate), fromIssued: dateKey(existing.issuedDate), toIssued: dateKey(issuedDate), fromWarning: existing.warningDays, toWarning: warningDays });
       const sampleQuantity = !metadataUpdate || body.sampleQuantity === undefined
         ? existing.sampleQuantity
         : parseOptionalNonNegativeInteger(body.sampleQuantity);
@@ -157,6 +168,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           customerLevelColor: metadataUpdate ? customerLevel!.color : existing.customerLevelColor,
           sampleQuantity,
           dueDate,
+          issuedDate,
+          warningDays,
+          scheduleHistory: scheduleHistory as Prisma.InputJsonValue,
           priority: metadataUpdate ? customerLevel!.priority : existing.priority,
           planRemark: !metadataUpdate || body.planRemark === undefined ? existing.planRemark : cleanSampleText(body.planRemark, 1000),
           updatedById: actor.id,
@@ -190,7 +204,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           action: action === 'UPDATE' ? 'update_sample_task' : `sample_task_${action.toLowerCase()}`,
           targetType: 'sample_task',
           targetId: existing.id,
-          detail: { fromStatus: existing.status, toStatus: status, expectedVersion, noDataCompletion },
+          detail: { fromStatus: existing.status, toStatus: status, expectedVersion, noDataCompletion, ...(scheduleChanged ? { scheduleChange: scheduleHistory[scheduleHistory.length - 1] } : {}) },
         },
       });
       return existing.id;
@@ -207,6 +221,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (error.message === 'SAMPLE_TASK_ARCHIVE_STATE_INVALID') return NextResponse.json({ ok: false, error: '只有已完成任务可以归档或取消归档' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_HAS_UNFINISHED_DATA') return NextResponse.json({ ok: false, error: '任务仍有草稿、待审核或退回修改内容，处理完成后才能结束任务' }, { status: 409 });
       if (error.message === 'SAMPLE_TASK_CONFIRM_NO_DATA_REQUIRED') return NextResponse.json({ ok: false, error: '任务没有任何采集记录，请明确确认“无采集数据完成”' }, { status: 409 });
+      if (error.message === 'SCHEDULE_REASON_REQUIRED') return NextResponse.json({ ok: false, error: '调整日期或预警必须填写原因' }, { status: 400 });
+      if (error.message === 'INVALID_SCHEDULE_RANGE') return NextResponse.json({ ok: false, error: '出货日期不能早于下达日期' }, { status: 400 });
+      if (error.message === 'INVALID_WARNING_DAYS') return NextResponse.json({ ok: false, error: '提前预警天数须为 0 至 30 的整数' }, { status: 400 });
       if (error.message === 'INVALID_SAMPLE_DATE') return NextResponse.json({ ok: false, error: '计划完成日期格式无效' }, { status: 400 });
       if (error.message === 'INVALID_SAMPLE_LEVEL') return NextResponse.json({ ok: false, error: '客户等级只能选择 A、B、C、D' }, { status: 400 });
       if (error.message === 'INVALID_SAMPLE_NUMBER') return NextResponse.json({ ok: false, error: '数量或优先级格式无效' }, { status: 400 });

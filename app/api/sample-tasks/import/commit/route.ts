@@ -27,6 +27,8 @@ type CommitRow = {
   customerLevelCode: string;
   sampleQuantity: number;
   dueDate: string;
+  issuedDate: string | null;
+  warningDays: number;
   libraryKey: string;
   matchStatus: string;
 };
@@ -50,7 +52,12 @@ function normalizeRow(value: unknown): { row: CommitRow | null; error: string } 
   const sampleQuantity = parsePositiveInteger(record.sampleQuantity);
   const dueDate = parseSamplePlanDate(record.dueDate);
   const libraryKey = cleanImportText(record.libraryKey, 240);
+  const issuedDate = record.issuedDate ? parseSamplePlanDate(record.issuedDate) : null;
+  const warningDays = record.warningDays === undefined ? 2 : Number(record.warningDays);
   const errors: string[] = [];
+  if (record.issuedDate && !issuedDate) errors.push('计划下达日期无效');
+  if (issuedDate && dueDate && issuedDate > dueDate) errors.push('出货日期不能早于下达日期');
+  if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) errors.push('提前预警天数须为 0 至 30 的整数');
   if (!Number.isInteger(rowNumber) || rowNumber < 1) errors.push('行号无效');
   if (!customerName) errors.push('客户名称不能为空');
   if (!productName) errors.push('产品名称不能为空');
@@ -72,6 +79,8 @@ function normalizeRow(value: unknown): { row: CommitRow | null; error: string } 
       customerLevelCode: level.code,
       sampleQuantity,
       dueDate,
+      issuedDate,
+      warningDays,
       libraryKey,
       matchStatus: cleanImportText(record.matchStatus, 20).toUpperCase(),
     },
@@ -188,6 +197,8 @@ export async function POST(req: NextRequest) {
             customerLevelColor: level.color,
             sampleQuantity: row.sampleQuantity,
             dueDate,
+            issuedDate: row.issuedDate ? new Date(`${row.issuedDate}T00:00:00Z`) : null,
+            warningDays: row.warningDays,
             priority: level.priority,
             createdById: actor.id,
             createdByName: actor.name,
