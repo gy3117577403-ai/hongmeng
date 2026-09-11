@@ -7,6 +7,7 @@ import {saveQuick,quickCommand,quickWarningsForOrders,quickDrawingOptions,quickD
 import {createWorkOrderTravelerPrints,loadWorkOrderTravelerPrints} from '../lib/work-order-qr-service';
 
 const skip=process.env.RUN_DB_INTEGRATION!=='1';
+if (!skip) process.env.SESSION_SECRET ||= 'drawing-quality-integration-test-secret-only';
 test('drawing warning without orders propagates to future orders, shares major print pipeline and preserves history',{skip},async()=>{
   const prefix='QD-'+randomUUID(),user=await prisma.user.create({data:{username:prefix,passwordHash:'integration-only',displayName:prefix,laborRole:'ADMIN'}});
   const product=await prisma.drawingLibraryItem.create({data:{customerName:prefix,productName:'接线束',specification:'DRAWING-V1',libraryKey:prefix}});
