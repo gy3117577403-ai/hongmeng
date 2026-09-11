@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
 import { quickUser, quickReader, quickError } from '@/lib/quality-quick-http';
-import { quickList, quickSummary, quickDetail, quickOrderOptions, quickWarningsForOrders, quickWarningsForProduct, quickInclude, quickEffective, quickCommand, saveQuick, QuickQualityError, type QuickUpload } from '@/lib/quality-quick';
+import { quickList, quickSummary, quickDetail, quickDrawingOptions, quickWarningsForOrders, quickWarningsForProduct, quickInclude, quickEffective, quickCommand, saveQuick, QuickQualityError, type QuickUpload } from '@/lib/quality-quick';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { getObjectStream, putObject, deleteObjectsBestEffort } from '@/lib/s3';
 import { qualityFileType } from '@/lib/quality-data-files';
@@ -45,7 +45,16 @@ export async function GET(req:NextRequest,{params}:Context) {
         if(!ticket) throw new QuickQualityError('工单二维码不存在或已失效',404);
         ids=[ticket.workOrderId];
       }
-      return NextResponse.json({ok:true,rows:await quickOrderOptions((p.get('q')||'').trim().slice(0,150),ids)});
+      let productId=p.get('productId')||undefined;
+      if(ids.length){
+        const orders=await prisma.workOrder.findMany({where:{id:{in:ids},deletedAt:null},select:{drawingLibraryItemId:true}});
+        const products=[...new Set(orders.map(o=>o.drawingLibraryItemId))];
+        if(orders.length!==ids.length||products.length!==1||!products[0]) throw new QuickQualityError('来源工单尚未关联同一份图纸，请选择图纸档案');
+        productId=products[0];
+      }
+      const rows=await quickDrawingOptions((p.get('q')||'').trim().slice(0,150),productId);
+      if(productId&&!rows.length) throw new QuickQualityError('关联图纸已删除或不存在，请选择有效图纸');
+      return NextResponse.json({ok:true,rows,sourceOrderIds:ids});
     }
     if(path[0]) return NextResponse.json({ok:true,record:await quickDetail(path[0],true)});
     return NextResponse.json({ok:true,...await quickList(p)});

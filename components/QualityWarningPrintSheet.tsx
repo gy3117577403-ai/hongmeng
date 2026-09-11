@@ -16,7 +16,7 @@ export function QualityWarningPrintSheet({ order, warning, qrImage, pageNumber, 
   const severity = ({ CRITICAL: '重大', HIGH: '高', MEDIUM: '中', LOW: '低' } as Record<string, string>)[warning.severity] || warning.severity;
   return <article className={`quality-warning-sheet quality-warning-v2${previewState === 'DRAFT' ? ' draft-preview' : ''}`} ref={sheetRef} data-warning-source={sourceKey}>
     {previewState === 'DRAFT' && <div className="quality-warning-preview-watermark" aria-hidden="true">草稿预览 · 不可用于生产</div>}
-    <header className="quality-v2-head"><div><ShieldAlert /><b>{quick ? '异常快处警示' : '异常问题与解决方案'}</b></div><strong>R{warning.revisionNumber} · {quick ? '现场提醒' : `${severity}风险`}</strong></header>
+    <header className="quality-v2-head"><div><ShieldAlert /><b>质量异常告知</b></div><strong>R{warning.revisionNumber} · {quick ? '普通异常' : 'A级异常'}</strong></header>
     <section className="quality-v2-meta"><h1>{warning.title}</h1><div><span><b>产品</b> {order.specification || order.productName}</span><span><b>工单</b> {order.businessWorkOrderCode || order.workOrderCode}</span></div><small>{warning.reportNo} · {previewState === 'DRAFT' ? '未归档' : `${quick ? '发布' : '归档'} ${warning.archivedAt.slice(0, 10)}`}{warning.applicableProcess ? ` · ${warning.applicableProcess}` : ''}</small></section>
     <div className="quality-v2-body">{content.blocks.map((block, index) => block.kind === 'text'
       ? <section key={index} className={`quality-v2-text${block.emphasis ? ' emphasis' : ''}`}><h2>{block.title}</h2><p>{block.lines.map((line, n) => <span key={n}>{line || '\u00a0'}</span>)}</p></section>

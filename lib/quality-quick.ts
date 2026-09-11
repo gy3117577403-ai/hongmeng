@@ -5,18 +5,15 @@ import { type QuickQualityDTO } from '@/lib/quality-quick-shared';
 
 export class QuickQualityError extends Error { constructor(message: string, public status = 400) { super(message); } }
 export type QuickActor = { id: string; name: string; admin: boolean; manage: boolean };
-export const quickProductInclude = { files: { where: { deletedAt: null, isCurrent: true }, select: { id: true, version: true, sha256: true, categoryId: true } } } satisfies Prisma.DrawingLibraryItemInclude;
-export const quickInclude = { orders: { include: { workOrder: { select: { id: true, code: true, businessCode: true, productName: true, specification: true, deletedAt: true, drawingLibraryItemId: true } } } }, product: { include: quickProductInclude }, photos: { orderBy: { createdAt: 'asc' as const } } } satisfies Prisma.QuickQualityRecordInclude;
+export const quickInclude = { orders: { include: { workOrder: { select: { id: true, code: true, businessCode: true, productName: true, specification: true, deletedAt: true, drawingLibraryItemId: true } } } }, product: true, photos: { orderBy: { createdAt: 'asc' as const } } } satisfies Prisma.QuickQualityRecordInclude;
 type QuickRecord = Prisma.QuickQualityRecordGetPayload<{ include: typeof quickInclude }>;
-export function quickSignature(product: { id: string; customerName: string; specification: string; files: Array<{ id: string; version: string; sha256: string | null; categoryId: string }> }) {
-  return createHash('sha256').update(JSON.stringify([product.id, product.customerName, product.specification, product.files.map(f => [f.id, f.version, f.sha256, f.categoryId]).sort((a,b) => String(a[0]).localeCompare(String(b[0])))])).digest('hex');
-}
-export function quickScopeChanged(r: QuickRecord) { return r.scope === 'PRODUCT' && (!r.product || !!r.product.deletedAt || quickSignature(r.product) !== r.productSignature); }
+export function quickScopeChanged(r: QuickRecord) { return r.scope === 'PRODUCT' && (!r.product || !!r.product.deletedAt); }
 export function quickEffective(r: QuickRecord, now = new Date()) { return !r.deletedAt && r.state === 'ACTIVE' && (!r.effectiveUntil || r.effectiveUntil >= now) && !quickScopeChanged(r); }
 export function quickDTO(r: QuickRecord): QuickQualityDTO {
   return { id:r.id, number:r.number, description:r.description, state:r.state as QuickQualityDTO['state'], scope:r.scope as QuickQualityDTO['scope'], version:r.version,
     createdAt:r.createdAt.toISOString(), updatedAt:r.updatedAt.toISOString(), occurredAt:r.occurredAt.toISOString(), author:r.createdByName, processName:r.processName,
     effectiveUntil:r.effectiveUntil?.toISOString() || null, deletedAt:r.deletedAt?.toISOString() || null, printPolicy:r.printPolicy, productId:r.productId,
+    drawing:r.product?{id:r.product.id,customerName:r.product.customerName,productName:r.product.productName||'',specification:r.product.specification}:null, needsAssociation:!r.productId,
     productName:r.product ? [r.product.customerName,r.product.productName,r.product.specification].filter(Boolean).join(' · ') : '', scopeChanged:quickScopeChanged(r), escalatedReportId:r.escalatedReportId,
     orders:r.orders.map(({workOrder:o}) => ({ id:o.id, code:o.businessCode || o.code, productName:o.productName, specification:o.specification || '' })),
     photos:r.photos.filter(f=>!f.deletedAt).map(f=>({id:f.id,name:f.displayName,url:'/api/quality-quick/photos/'+f.id, imageWidth:f.imageWidth,imageHeight:f.imageHeight,mimeType:f.mimeType})) };
@@ -32,7 +29,7 @@ export async function quickList(params:URLSearchParams) {
   const page=Math.max(1,Math.min(10000,Number(params.get('page'))||1)), size=25, q=(params.get('q')||'').trim().slice(0,200), state=params.get('state');
   const where:Prisma.QuickQualityRecordWhereInput={ deletedAt:params.get('trash')==='1'?{not:null}:null,
     ...(state && ['SAVED','ACTIVE','OFFLINE'].includes(state)?{state}:{}),
-    ...(q?{OR:[{description:{contains:q,mode:'insensitive'}},{number:{contains:q,mode:'insensitive'}},{createdByName:{contains:q,mode:'insensitive'}},{orders:{some:{workOrder:{OR:[{code:{contains:q,mode:'insensitive'}},{businessCode:{contains:q,mode:'insensitive'}},{productName:{contains:q,mode:'insensitive'}}]}}}}]}:{}) };
+    ...(q?{OR:[{description:{contains:q,mode:'insensitive'}},{number:{contains:q,mode:'insensitive'}},{createdByName:{contains:q,mode:'insensitive'}},{product:{is:{OR:[{customerName:{contains:q,mode:'insensitive'}},{productName:{contains:q,mode:'insensitive'}},{specification:{contains:q,mode:'insensitive'}}]}}},{orders:{some:{workOrder:{OR:[{code:{contains:q,mode:'insensitive'}},{businessCode:{contains:q,mode:'insensitive'}},{productName:{contains:q,mode:'insensitive'}}]}}}}]}:{}) };
   const from=params.get('from'),to=params.get('to');
   if(from||to) where.occurredAt={...(from?{gte:quickDate(from,'开始日期')}:{}),...(to?{lte:quickDate(to,'结束日期',true)}:{})};
   if(from && to && from>to) throw new QuickQualityError('开始日期不能晚于结束日期');
@@ -54,6 +51,10 @@ export function quickDate(value:unknown,label:string,end=false) {
 export async function quickOrderOptions(q:string, ids:string[] = []) {
   return prisma.workOrder.findMany({where:{deletedAt:null,...(ids.length?{id:{in:ids}}:q?{OR:[{code:{contains:q,mode:'insensitive'}},{businessCode:{contains:q,mode:'insensitive'}},{productName:{contains:q,mode:'insensitive'}},{specification:{contains:q,mode:'insensitive'}}]}:{})},
     select:{id:true,code:true,businessCode:true,productName:true,specification:true,drawingLibraryItemId:true},take:30,orderBy:{updatedAt:'desc'}});
+}
+export async function quickDrawingOptions(q:string, productId?:string) {
+  return prisma.drawingLibraryItem.findMany({where:{deletedAt:null,...(productId?{id:productId}:q?{OR:[{customerName:{contains:q,mode:'insensitive'}},{productName:{contains:q,mode:'insensitive'}},{specification:{contains:q,mode:'insensitive'}}]}:{})},
+    select:{id:true,customerName:true,productName:true,specification:true},take:30,orderBy:[{updatedAt:'desc'},{id:'asc'}]});
 }
 export async function quickWarningsForOrders(ids:string[]) {
   const result=new Map<string,QuickQualityDTO[]>();
@@ -88,8 +89,9 @@ export async function saveQuick(actor:QuickActor,input:Record<string,unknown>,ph
   const description=String(input.description||'').trim();
   if(!description || description.length>3000) throw new QuickQualityError('请填写问题与处理说明，最多 3000 字');
   const orderIds=[...new Set(Array.isArray(input.orderIds)?input.orderIds.map(String):[])];
-  if(!orderIds.length || orderIds.length>20) throw new QuickQualityError('请选择 1 至 20 个工单');
-  const scope=input.scope==='PRODUCT'?'PRODUCT':'WORK_ORDER';
+  if(orderIds.length>20) throw new QuickQualityError('来源工单最多 20 个');
+  const requestedProductId=String(input.productId||input.drawingLibraryItemId||'');
+  const scope='PRODUCT';
   const active=input.publish===true;
   const keepIds=Array.isArray(input.keepPhotoIds)?input.keepPhotoIds.map(String):[];
   if(keepIds.length+photos.length>12) throw new QuickQualityError('每条记录最多 12 张图片');
@@ -97,7 +99,7 @@ export async function saveQuick(actor:QuickActor,input:Record<string,unknown>,ph
   const effectiveUntil=input.effectiveUntil?quickDate(input.effectiveUntil,'到期日期',true):null;
   if(active && effectiveUntil && effectiveUntil<new Date()) throw new QuickQualityError('警示到期日期不能早于今天');
   const mutationKey=actor.id+':'+key;
-  const payloadHash=createHash('sha256').update(JSON.stringify([id,description,orderIds,scope,active,keepIds,input.occurredAt,input.effectiveUntil,input.processName,input.printPolicy,photos.map(p=>[p.sha256,p.displayName])])).digest('hex');
+  const payloadHash=createHash('sha256').update(JSON.stringify([id,description,requestedProductId,orderIds,scope,active,keepIds,input.occurredAt,input.effectiveUntil,input.processName,input.printPolicy,photos.map(p=>[p.sha256,p.displayName])])).digest('hex');
   return prisma.$transaction(async tx=>{
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${id||mutationKey}, 0))`;
     const prior=await tx.quickQualityActivity.findUnique({where:{mutationKey}});
@@ -111,15 +113,16 @@ export async function saveQuick(actor:QuickActor,input:Record<string,unknown>,ph
     if(old?.escalatedReportId) throw new QuickQualityError('已转入重大异常，请在关联异常中继续处理',409);
     if(old?.state==='ACTIVE' && !active) throw new QuickQualityError('请通过下线警示操作停止当前警示',409);
     if(keepIds.some(pid=>!old?.photos.some(p=>p.id===pid&&!p.deletedAt))) throw new QuickQualityError('图片不属于当前记录');
-    const orders=await tx.workOrder.findMany({where:{id:{in:orderIds},deletedAt:null},select:{id:true,drawingLibraryItemId:true}});
+    const orders=await tx.workOrder.findMany({where:{id:{in:orderIds},OR:[{deletedAt:null},{id:{in:old?.orders.map(o=>o.workOrderId)||[]}}]},select:{id:true,drawingLibraryItemId:true}});
     if(orders.length!==orderIds.length) throw new QuickQualityError('所选工单已失效，请重新选择');
     const productIds=[...new Set(orders.map(o=>o.drawingLibraryItemId))];
-    const productId=scope==='PRODUCT'&&productIds.length===1?productIds[0]:null;
-    const product=productId?await tx.drawingLibraryItem.findFirst({where:{id:productId,deletedAt:null},include:quickProductInclude}):null;
-    if(scope==='PRODUCT'&&!product) throw new QuickQualityError('产品持续警示需要工单关联同一份有效产品资料');
+    const productId=requestedProductId||(productIds.length===1?productIds[0]:null);
+    const product=productId?await tx.drawingLibraryItem.findFirst({where:{id:productId,deletedAt:null}}):null;
+    if(!product) throw new QuickQualityError('请选择一份有效图纸档案；原工单需关联同一份有效图纸');
+    if(!old&&orders.some(o=>o.drawingLibraryItemId!==productId)) throw new QuickQualityError('来源工单与所选图纸不一致，请重新选择');
     const newId=id||randomUUID(), version=old?old.version+1:1;
-    const data={description,scope,productId:scope==='PRODUCT'?productId:null,productSignature:product?quickSignature(product):null,state:active?'ACTIVE':old?.state==='OFFLINE'?'OFFLINE':'SAVED',
-      processName:String(input.processName||'').trim().slice(0,100),occurredAt,effectiveUntil,printPolicy:input.printPolicy==='OPTIONAL'?'OPTIONAL':'SYSTEM_ONLY',version,publishedAt:active?new Date():old?.publishedAt||null};
+    const data={description,scope,productId,productSignature:null,state:active?'ACTIVE':old?.state==='OFFLINE'?'OFFLINE':'SAVED',
+      processName:String(input.processName||'').trim().slice(0,100),occurredAt,effectiveUntil,printPolicy:input.printPolicy==='SYSTEM_ONLY'?'SYSTEM_ONLY':input.printPolicy==='OPTIONAL'?'OPTIONAL':'REQUIRED',version,publishedAt:active?new Date():old?.publishedAt||null};
     if(old) {
       await tx.quickQualityRecord.update({where:{id:newId},data});
       await tx.quickQualityWorkOrder.deleteMany({where:{recordId:newId}});
@@ -158,7 +161,7 @@ export async function quickCommand(actor:QuickActor,id:string,input:Record<strin
       const report=await tx.internalQualityRiskReport.create({data:{reportNo:'IQR-QUICK-'+randomUUID().slice(0,8).toUpperCase(),title:old.description.slice(0,180),defectPhenomenon:old.description,occurrenceDate:old.occurredAt,processName:old.processName,createdById:actor.id,updatedById:actor.id,workflowVersion:3}});
       escalatedReportId=report.id;
       await tx.internalQualityRiskWorkOrder.createMany({data:old.orders.map(o=>({reportId:report.id,workOrderId:o.workOrderId,source:'DIRECT'}))});
-      const products=[...new Set(old.orders.flatMap(o=>o.workOrder.drawingLibraryItemId?[o.workOrder.drawingLibraryItemId]:[]))];
+      const products=old.productId?[old.productId]:[...new Set(old.orders.flatMap(o=>o.workOrder.drawingLibraryItemId?[o.workOrder.drawingLibraryItemId]:[]))];
       if(products.length) await tx.internalQualityRiskProduct.createMany({data:products.map(drawingLibraryItemId=>({reportId:report.id,drawingLibraryItemId}))});
       if(old.photos.filter(p=>!p.deletedAt).length) await tx.internalQualityRiskAttachment.createMany({data:old.photos.filter(p=>!p.deletedAt).map(p=>({reportId:report.id,displayName:p.displayName,originalName:p.displayName,mimeType:p.mimeType,fileSize:p.size,objectKey:p.objectKey,sha256:p.sha256,category:'DEFECT',uploadedById:actor.id,imageWidth:p.imageWidth,imageHeight:p.imageHeight,imageOrientation:p.imageOrientation}))});
       await tx.internalQualityRiskActivity.create({data:{reportId:report.id,action:'QUICK_QUALITY_LINKED',actorId:actor.id,actorName:actor.name,content:'来自异常快处 '+old.number,detail:{quickQualityId:id}}});

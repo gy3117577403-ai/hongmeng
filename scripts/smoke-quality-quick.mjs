@@ -31,7 +31,7 @@ try {
   await request('employee','/api/quality-quick',form(input),403);
   await request('quality','/api/quality-quick',{...form(input),headers:{origin:'https://foreign.invalid'}},403);
   steps.push('Real logins, management permission, ordinary employee write denial and CSRF');
-  const opts=await request('quality','/api/quality-quick/options?code='+fixture.orders[0].publicCode);assert.equal(opts.rows[0].id,fixture.orders[0].id);
+  const opts=await request('quality','/api/quality-quick/options?code='+fixture.orders[0].publicCode);assert.equal(opts.rows[0].id,fixture.product.id);
   await request('quality','/api/quality-quick',form({...input,description:''},true),400);assert.equal((await warnings('employee')).length,0);
   let r=(await request('quality','/api/quality-quick',form(input,true))).record;savedId=r.id;
   assert.equal((await request('quality','/api/quality-quick',form(input,true))).record.id,r.id);
@@ -45,11 +45,11 @@ try {
   assert.deepEqual(pair.map(p=>p.status).sort(),[200,409]);
   r=(await request('quality','/api/quality-quick/'+r.id)).record;
   assert.equal((await warnings('employee')).length,1);
-  assert.equal((await request('employee','/api/quality-quick/warnings?workOrderId='+fixture.orders[1].id)).rows.length,0);
-  assert.equal((await request('quality','/api/quality-quick/warnings?productId='+fixture.product.id)).rows.length,0);
+  assert.equal((await request('employee','/api/quality-quick/warnings?workOrderId='+fixture.orders[1].id)).rows.length,1);
+  assert.equal((await request('quality','/api/quality-quick/warnings?productId='+fixture.product.id)).rows.length,1);
   const employeePhoto=await fetch(base+r.photos[0].url,{headers:{cookie:cookies.get('employee')}});assert.deepEqual(Buffer.from(await employeePhoto.arrayBuffer()),image);
   const alerts=await request('admin','/api/work-orders/'+fixture.orders[0].id+'/quality-alerts');assert.equal(alerts.quickWarningCount,1);assert.equal(alerts.alerts.length,0);
-  steps.push('Concurrent publish once, employee photo bytes, selected-order scope and unified alert count');
+  steps.push('Concurrent publish once, employee photo bytes, drawing scope and unified alert count');
   const deletion={action:'DELETE',version:r.version,reason:'重复录入',mutationKey:randomUUID()};
   r=(await request('quality','/api/quality-quick/'+r.id,json(deletion))).record;
   assert.equal((await warnings('employee')).length,0);await request('employee',r.photos[0].url,{},404);
@@ -61,10 +61,10 @@ try {
   assert.equal((await request('employee','/api/quality-quick/warnings?workOrderId='+fixture.orders[1].id)).rows.length,1);
   assert.equal((await request('quality','/api/quality-quick/warnings?productId='+fixture.product.id)).rows.length,1);
   await db.drawingLibraryItem.update({where:{id:fixture.product.id},data:{specification:fixture.product.specification+'-换版'}});
-  assert.equal((await warnings('employee')).length,0);
-  assert.equal((await request('quality','/api/quality-quick/'+r.id)).record.scopeChanged,true);
+  assert.equal((await warnings('employee')).length,1);
+  assert.equal((await request('quality','/api/quality-quick/'+r.id)).record.scopeChanged,false);
   await db.drawingLibraryItem.update({where:{id:fixture.product.id},data:{specification:fixture.product.specification}});
-  steps.push('Explicit product propagation and changed-version suppression');
+  steps.push('Explicit product propagation and stable drawing identity');
   r=(await request('quality','/api/quality-quick/'+r.id,json({action:'ESCALATE',version:r.version,mutationKey:randomUUID()}))).record;
   const risk=await db.internalQualityRiskReport.findUniqueOrThrow({where:{id:r.escalatedReportId},include:{attachments:true}});
   assert.equal(risk.attachments.length,1);assert.equal(risk.attachments[0].sha256,(await db.quickQualityAttachment.findUniqueOrThrow({where:{id:r.photos[0].id}})).sha256);

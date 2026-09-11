@@ -171,6 +171,7 @@ export async function GET(req: NextRequest) {
             },
             select: { revision: { select: { snapshot: true, currentFor: true } } },
           },
+          quickQualityRecords: { where:{deletedAt:null,state:'ACTIVE',scope:'PRODUCT'}, select:{effectiveUntil:true,printPolicy:true} },
         },
         orderBy: [{ customerName: 'asc' }, { specification: 'asc' }],
         take: 1200,
@@ -241,6 +242,7 @@ export async function GET(req: NextRequest) {
           ? [warning]
           : [];
       });
+      const quickWarnings=item.quickQualityRecords.filter(w=>!w.effectiveUntil||w.effectiveUntil>=now);
       const severityRank: Record<InternalQualityRiskSeverity, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
       let highestQualityWarningSeverity: InternalQualityRiskSeverity | null = null;
       for (const warning of qualityWarnings) {
@@ -263,9 +265,10 @@ export async function GET(req: NextRequest) {
         recommendedSalesperson: salespersonByCustomer.get(item.customerName) || null,
         publishedProductTimeVersion: profile?.version || null,
         unitMilliseconds: profile ? productTimeTotalMilliseconds(profile.entries) : null,
-        qualityWarningCount: qualityWarnings.length,
+        qualityWarningCount: qualityWarnings.length+quickWarnings.length,
+        qualityWarningGrade: qualityWarnings.length?'A':quickWarnings.length?'NORMAL':null,
         highestQualityWarningSeverity,
-        qualityWarningPrintRequired: qualityWarnings.some(warning => warning.printPolicy === 'REQUIRED'),
+        qualityWarningPrintRequired: [...qualityWarnings,...quickWarnings].some(warning => warning.printPolicy === 'REQUIRED'),
       };
     });
     const response = NextResponse.json({

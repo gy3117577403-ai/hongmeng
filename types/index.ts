@@ -1671,6 +1671,7 @@ export type ProductionPlanProductOptionDTO = {
   publishedProductTimeVersion?: number | null;
   unitMilliseconds?: number | null;
   qualityWarningCount?: number;
+  qualityWarningGrade?: 'A' | 'NORMAL' | null;
   highestQualityWarningSeverity?: InternalQualityRiskSeverity | null;
   qualityWarningPrintRequired?: boolean;
 };
@@ -1751,6 +1752,7 @@ export type ProductionPlanOrderDTO = {
   sopRemark?: string | null;
   sopMetadataUpdatedAt?: string | null;
   qualityWarningCount?: number;
+  qualityWarningGrade?: 'A' | 'NORMAL' | null;
   highestQualityWarningSeverity?: InternalQualityRiskSeverity | null;
   qualityWarningPrintRequired?: boolean;
   orderQuantity: number;

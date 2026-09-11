@@ -107,6 +107,7 @@ export async function getDrawingLibraryReferenceImpact(
           sampleTasks: { where: { deletedAt: null } }, productDataRecords: true,
           connectorBindings: true, eightDReportLinks: true,
           internalQualityRiskLinks: true, qualityRiskRevisionLinks: true,
+          quickQualityRecords: { where: { deletedAt: null } },
         } },
       },
     }),

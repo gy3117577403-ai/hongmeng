@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
 import { prisma } from '@/lib/prisma';
+import { quickWarningsForProduct } from '@/lib/quality-quick';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -52,6 +53,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       if ((warning.effectiveFrom && warning.effectiveFrom > now) || (warning.effectiveUntil && warning.effectiveUntil < now)) return [];
       return [{
         id: report.id,
+        source: 'MAJOR' as const, qualityGrade: 'A' as const,
         reportNo: report.reportNo,
         ...warning,
         revisionNumber: link.revision.revisionNumber,
@@ -70,10 +72,18 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         })),
       }];
     }).sort((left, right) => (severityRank[right.severity] || 0) - (severityRank[left.severity] || 0));
+    const quick = (await quickWarningsForProduct(params.id)).map(record => ({
+      id:'quick:'+record.id, sourceId:record.id, source:'QUICK', qualityGrade:'NORMAL',
+      reportNo:record.number, title:record.description.split('\n')[0].slice(0,180), severity:'LOW',
+      revisionNumber:record.version, archivedAt:record.updatedAt, warningSummary:record.description,
+      applicableProcess:record.processName, printPolicy:record.printPolicy, effectiveUntil:record.effectiveUntil,
+      author:record.author, detailUrl:'/workspace/quality/quick?id='+encodeURIComponent(record.id),
+      attachments:record.photos.map(photo=>({id:photo.id,category:'DEFECT',displayName:photo.name,mimeType:photo.mimeType||'image/jpeg',contentUrl:photo.url,imageWidth:photo.imageWidth,imageHeight:photo.imageHeight,createdAt:record.updatedAt,sha256:''})),
+    }));
     return NextResponse.json({
       ok: true,
-      warnings,
-    });
+      warnings:[...warnings,...quick],
+    },{headers:{'Cache-Control':'private, no-store'}});
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     console.error(error);

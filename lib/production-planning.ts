@@ -87,6 +87,7 @@ export const productionPlanOrderInclude = {
           },
         },
       },
+      quickQualityRecords: { where:{deletedAt:null,state:'ACTIVE',scope:'PRODUCT'}, select:{effectiveUntil:true,printPolicy:true} },
     },
   },
   batches: {
@@ -1452,6 +1453,7 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
       ? [warning]
       : [];
   });
+  const quickWarnings=(activeDrawingLibraryItem?.quickQualityRecords||[]).filter(w=>!w.effectiveUntil||w.effectiveUntil>=now);
   const severityRank: Record<InternalQualityRiskSeverity, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
   let highestQualityWarningSeverity: InternalQualityRiskSeverity | null = null;
   for (const warning of qualityWarnings) {
@@ -1473,9 +1475,10 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     sopDrawingStatus: resources.sopDrawingStatus,
     sopRemark: resources.sopRemark,
     sopMetadataUpdatedAt: resources.sopMetadataUpdatedAt,
-    qualityWarningCount: qualityWarnings.length,
+    qualityWarningCount: qualityWarnings.length+quickWarnings.length,
+    qualityWarningGrade: qualityWarnings.length?'A':quickWarnings.length?'NORMAL':null,
     highestQualityWarningSeverity,
-    qualityWarningPrintRequired: qualityWarnings.some(warning => warning.printPolicy === 'REQUIRED'),
+    qualityWarningPrintRequired: [...qualityWarnings,...quickWarnings].some(warning => warning.printPolicy === 'REQUIRED'),
     orderQuantity: order.orderQuantity,
     planningUnitMilliseconds: order.planningUnitMilliseconds,
     effectiveUnitMilliseconds,

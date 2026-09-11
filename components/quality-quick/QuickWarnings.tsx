@@ -22,7 +22,7 @@ export function QuickPhotoViewer({photos,index,onClose}:{photos:QuickQualityPhot
 export function QuickWarningCards({rows}:{rows:QuickQualityDTO[]}) {
   const [view,setView]=useState<{photos:QuickQualityPhoto[];index:number}|null>(null);
   return <div className="qq-warning-list">{rows.map(r=><details className="qq-warning" key={r.id}>
-    <summary><ShieldAlert size={18}/><div><b>{r.description.split('\n')[0]}</b><small>快速处理 · {r.scope==='PRODUCT'?'产品持续警示':'当前工单'}{r.processName?' · '+r.processName:''}</small></div><span>{r.photos.length} 图</span></summary>
+    <summary><ShieldAlert size={18}/><div><b>{r.description.split('\n')[0]}</b><small>普通异常 · {r.scope==='PRODUCT'?'关联图纸':'当前工单'}{r.processName?' · '+r.processName:''}</small></div><span>{r.photos.length} 图</span></summary>
     <div className="qq-warning-content"><p>{r.description}</p><div className="qq-photo-strip">{r.photos.map((p,i)=><button key={p.id} onClick={()=>setView({photos:r.photos,index:i})}><img src={p.url} alt={p.name}/></button>)}</div><small>{r.author} · {new Date(r.updatedAt).toLocaleString('zh-CN')}</small></div>
   </details>)}{view&&<QuickPhotoViewer {...view} onClose={()=>setView(null)}/>}</div>;
 }
@@ -36,6 +36,6 @@ export default function QuickWarnings({workOrderId,productId,manage=false}:{work
   useEffect(()=>{setRows([]);void load();const tick=()=>{if(document.visibilityState==='visible')void load();};const id=setInterval(tick,30000);window.addEventListener('focus',tick);window.addEventListener('quality-quick-changed',tick);return()=>{generation.current++;clearInterval(id);window.removeEventListener('focus',tick);window.removeEventListener('quality-quick-changed',tick);};},[load]);
   if(!rows.length&&!error&&!manage)return null;
   return <section className="qq-inline-warnings">{error?<button className="qq-inline-error" onClick={()=>void load()}>{error}</button>:<QuickWarningCards rows={rows}/>}
-    {manage&&workOrderId&&<a className="qq-inline-create" href={'/workspace/quality/quick?new=1&workOrderId='+encodeURIComponent(workOrderId)}>＋ 快速记录本单异常</a>}
+    {manage&&workOrderId&&<a className="qq-inline-create" href={'/workspace/quality/quick?new=1&workOrderId='+encodeURIComponent(workOrderId)}>＋ 快速记录图纸异常</a>}
   </section>;
 }

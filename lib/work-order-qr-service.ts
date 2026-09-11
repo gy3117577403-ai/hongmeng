@@ -666,11 +666,11 @@ async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<
   const severityRank: Record<string, number> = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
   const result = new Map<string, WorkOrderQualityWarningSnapshot[]>();
   const quickWarnings = await quickWarningsForOrders(workOrderIds);
-  for (const [orderId, warnings] of quickWarnings) result.set(orderId, warnings.filter(w=>w.printPolicy==='OPTIONAL').map(w=>({
+  for (const [orderId, warnings] of quickWarnings) result.set(orderId, warnings.filter(w=>w.printPolicy!=='SYSTEM_ONLY').map(w=>({
     alertId:'quick:'+w.id, reportId:w.id, reportNo:w.number, revisionId:'quick:'+w.id+':'+w.version, revisionNumber:w.version,
     severity:'LOW', title:'快速处理 · '+w.description.split('\n')[0].slice(0,48), warningSummary:w.description, defectPhenomenon:w.description, rootCause:null,
     requiredAction:null, inspectionMethod:null, inspectionFrequency:null, acceptanceCriteria:null, stopConditions:null, escalationContact:null,
-    applicableProcess:w.processName||null, effectiveFrom:null, effectiveUntil:w.effectiveUntil, printPolicy:'OPTIONAL' as const, archivedAt:w.updatedAt,
+    applicableProcess:w.processName||null, effectiveFrom:null, effectiveUntil:w.effectiveUntil, printPolicy:(w.printPolicy==='REQUIRED'?'REQUIRED':'OPTIONAL') as 'REQUIRED'|'OPTIONAL', archivedAt:w.updatedAt,
     employeePath:null, correctiveAction:null, finalConclusion:null, printLayoutVersion:'ASPECT_V1' as const,
     attachments:w.photos.map(p=>({id:p.id,displayName:p.name,mimeType:p.mimeType||'image/jpeg',caption:null,category:'DEFECT',imageWidth:p.imageWidth,imageHeight:p.imageHeight,printIncluded:true,contentUrl:p.url+'?revision='+w.version})),
   })));
@@ -714,7 +714,7 @@ async function loadQualityWarningSnapshots(workOrderIds: string[]): Promise<Map<
     };
     const current = result.get(alert.workOrderId) || [];
     current.push(warning);
-    current.sort((left, right) => (severityRank[right.severity] || 0) - (severityRank[left.severity] || 0));
+    current.sort((left, right) => Number(left.alertId.startsWith('quick:'))-Number(right.alertId.startsWith('quick:')) || (severityRank[right.severity] || 0) - (severityRank[left.severity] || 0));
     result.set(alert.workOrderId, current);
   }
   return result;
@@ -822,8 +822,7 @@ export async function createWorkOrderTravelerPrints(input: {
     throw new WorkOrderQrServiceError(`含生产资料的打印任务每次最多选择 ${MAX_SOP_PRINT_BATCH} 张工单`, 400, 'QR_RESOURCE_PRINT_BATCH_TOO_LARGE');
   }
   if (requiresQualityWarning) {
-    const withoutWarnings = orderedOrders.find(order => !(warningsByWorkOrder.get(order.id) || []).length);
-    if (withoutWarnings) throw new WorkOrderQrServiceError(`${withoutWarnings.businessCode || withoutWarnings.code} 当前没有可打印的异常警示`, 409, 'QR_QUALITY_WARNING_EMPTY');
+    if (!orderedOrders.some(order => (warningsByWorkOrder.get(order.id) || []).length)) throw new WorkOrderQrServiceError('所选工单当前没有可打印的异常警示', 409, 'QR_QUALITY_WARNING_EMPTY');
   }
   // Resolve dimensions before opening the print transaction. Issued snapshots are never upgraded on read.
   if (requiresQualityWarning) for (const order of orderedOrders) for (const warning of warningsByWorkOrder.get(order.id) || []) {
@@ -883,7 +882,7 @@ export async function createWorkOrderTravelerPrints(input: {
           createdById: input.userId,
         },
       });
-      const itemData = materials.map(material => ({
+      const itemData = materials.filter(material => material !== WorkOrderQrPrintMaterial.QUALITY_WARNING || snapshot.qualityWarnings.length > 0).map(material => ({
         material,
         copies: materialCopies[material],
         fileId: material === WorkOrderQrPrintMaterial.DRAWING
@@ -907,6 +906,7 @@ export async function createWorkOrderTravelerPrints(input: {
             ? snapshot.sopMimeType
             : null,
       }));
+      if (!itemData.length) continue;
       const print = await tx.workOrderQrPrint.create({
         data: {
           ticketId: ticket.id,

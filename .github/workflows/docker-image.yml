@@ -53,7 +53,7 @@ jobs:
       - name: Quality quick lifecycle PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test tests/quality-quick-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/quality-quick-integration.test.ts tests/quality-drawing-integration.test.ts
       - name: Production control pause and date PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

@@ -19,13 +19,13 @@ test('quick quality lifecycle, concurrency, product scope, revisions and escalat
       await assert.rejects(saveQuick({...actor,manage:false},input,[]),/权限/);
       await assert.rejects(saveQuick(actor,{...input,mutationKey:randomUUID(),keepPhotoIds:['foreign']},[]),/图片不属于/);
     });
-    await t.test('publication is per selected order, concurrent edits reject stale version',async()=>{
+    await t.test('drawing publication covers existing orders, concurrent edits reject stale version',async()=>{
       const update={...input,id:r.id,version:r.version,mutationKey:randomUUID(),publish:true};
       const updates=await Promise.allSettled([saveQuick(actor,update,[]),saveQuick(actor,{...update,mutationKey:randomUUID()},[])]);
       assert.equal(updates.filter(x=>x.status==='fulfilled').length,1);
       r=(updates.find(x=>x.status==='fulfilled') as PromiseFulfilledResult<Awaited<ReturnType<typeof saveQuick>>>).value.record;
-      const warnings=await quickWarningsForOrders(orders.map(o=>o.id));assert.equal(warnings.get(orders[0].id)?.length,1);assert.equal(warnings.has(orders[1].id),false);
-      assert.equal((await quickWarningsForProduct(product.id)).length,0);
+      const warnings=await quickWarningsForOrders(orders.map(o=>o.id));assert.equal(warnings.get(orders[0].id)?.length,1);assert.equal(warnings.get(orders[1].id)?.length,1);
+      assert.equal((await quickWarningsForProduct(product.id)).length,1);
     });
     await t.test('delete atomically unpublishes, admin restore stays offline with trace',async()=>{
       const command={action:'DELETE',reason:'重复录入',version:r.version,mutationKey:randomUUID()};
@@ -36,14 +36,14 @@ test('quick quality lifecycle, concurrency, product scope, revisions and escalat
       r=await quickCommand({...actor,admin:true},r.id,{action:'RESTORE',version:r.version,mutationKey:randomUUID()});
       assert.equal(r.state,'OFFLINE');assert.equal((await quickDetail(r.id,true)).activities?.length,4);
     });
-    await t.test('product publication includes future orders but stops on changed drawing identity',async()=>{
+    await t.test('drawing publication includes future orders and survives metadata edits',async()=>{
       r=(await saveQuick(actor,{...input,id:r.id,version:r.version,mutationKey:randomUUID(),scope:'PRODUCT',publish:true},[])).record;
       assert.equal((await quickWarningsForOrders([orders[1].id])).get(orders[1].id)?.length,1);
       const future=await prisma.workOrder.create({data:{code:key+'-future',stage:'frontend',productName:'后续订单',drawingLibraryItemId:product.id}});orders.push(future);
       assert.equal((await quickWarningsForOrders([future.id])).get(future.id)?.length,1);
       await prisma.drawingLibraryItem.update({where:{id:product.id},data:{specification:'V2'}});
-      assert.equal((await quickWarningsForOrders([future.id])).size,0);assert.equal((await quickWarningsForProduct(product.id)).length,0);
-      assert.equal((await quickDetail(r.id)).scopeChanged,true);
+      assert.equal((await quickWarningsForOrders([future.id])).get(future.id)?.length,1);assert.equal((await quickWarningsForProduct(product.id)).length,1);
+      assert.equal((await quickDetail(r.id)).scopeChanged,false);
       r=(await saveQuick(actor,{...input,id:r.id,version:r.version,mutationKey:randomUUID(),scope:'PRODUCT',publish:true},[])).record;
       assert.equal((await quickWarningsForOrders([future.id])).get(future.id)?.length,1);
       await assert.rejects(saveQuick(actor,{...input,mutationKey:randomUUID(),orderIds:[orders[2].id],scope:'PRODUCT'},[]),/同一份有效/);

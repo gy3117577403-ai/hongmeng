@@ -2239,6 +2239,14 @@
   background: #fff;
   color: #6a7788;
 }
+.hm-drawing-workbench .drawing-category-rail button.drawing-quality-warning-entry strong{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;word-break:keep-all;min-width:2em}
+.hm-drawing-workbench .drawing-quality-warning-workspace > header nav{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.hm-drawing-workbench .drawing-quality-warning-workspace > header nav button,.drawing-quick-actions button{display:inline-flex;align-items:center;gap:5px;min-height:40px;padding:8px 13px;border:1px solid #f1c29f;border-radius:9px;background:#fff8f0;color:#b8460a;cursor:pointer}
+.hm-drawing-workbench .drawing-quality-warning-body aside button.severity-a span{color:#b42318}
+.hm-drawing-workbench .drawing-quality-warning-body aside button.severity-normal span{color:#c6530b}
+.drawing-quick-actions{display:flex;gap:10px;flex-wrap:wrap;padding-top:12px}.drawing-quick-actions p{width:100%;color:#b42318}
+.hm-drawing-workbench .drawing-quality-warning-evidence button{min-width:0;border:1px solid #e0e5ec;background:white;border-radius:10px;overflow:hidden;cursor:pointer;padding:0;text-align:left}
+.hm-drawing-workbench .drawing-quality-warning-evidence button img{width:100%;height:180px;object-fit:contain;background:#f4f6f8}.hm-drawing-workbench .drawing-quality-warning-evidence button span{display:block;padding:8px;overflow-wrap:anywhere}
 
 .hm-drawing-workbench .drawing-category-rail button.drawing-quality-warning-entry.has-warning {
   border-color: #efb58f;
@@ -2395,7 +2403,7 @@
 .hm-drawing-workbench .drawing-quality-warning-detail > header span { color: #cf5710; font-size: 9px; font-weight: 850; }
 .hm-drawing-workbench .drawing-quality-warning-detail > header h2 { margin: 3px 0; color: #29364a; font-size: 16px; }
 .hm-drawing-workbench .drawing-quality-warning-detail > header p { margin: 0; color: #8591a0; font-size: 10px; }
-.hm-drawing-workbench .drawing-quality-warning-detail > header a { min-height: 32px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid #e0a77e; border-radius: 7px; color: #b94a09; background: #fff7f1; font-size: 10px; font-weight: 750; text-decoration: none; }
+.hm-drawing-workbench .drawing-quality-warning-detail > header a { min-height: 32px; display: inline-flex; align-items: center; flex-shrink: 0; white-space: nowrap; gap: 5px; padding: 0 9px; border: 1px solid #e0a77e; border-radius: 7px; color: #b94a09; background: #fff7f1; font-size: 10px; font-weight: 750; text-decoration: none; }
 
 .hm-drawing-workbench .drawing-quality-warning-summary { display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 8px; padding: 10px; border: 1px solid #f1b991; border-radius: 9px; color: #e46110; background: linear-gradient(135deg,#fff3e8,#fff); }
 .hm-drawing-workbench .drawing-quality-warning-summary strong { color: #415064; font-size: 11px; }.hm-drawing-workbench .drawing-quality-warning-summary p { margin: 4px 0 0; color: #677487; font-size: 10px; line-height: 1.65; white-space: pre-wrap; }
