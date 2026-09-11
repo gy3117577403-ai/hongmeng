@@ -22,6 +22,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { calculateStandardHourlyCapacity } from '@/lib/process-capacity';
 import { QualityWarningPrintSheet } from '@/components/QualityWarningPrintSheet';
 import { flattenQualityWarningPages, type QualityPrintPage } from '@/lib/quality-warning-print-layout';
+import { qualityWarningQrKey, qualityWarningQrPath } from '@/lib/quality-warning-qr';
 import { workOrderPrintReturnLabel } from '@/lib/work-order-print-navigation';
 import type { WorkOrderTravelerPrintRecord } from '@/lib/work-order-qr-service';
 import {
@@ -202,7 +203,7 @@ export default function WorkOrderTravelerPrint({
   const includesWarning = records.some(record => Boolean(printItem(record, 'QUALITY_WARNING')));
   const duplexTravelerSop = records.every(record => record.mode === 'TRAVELER_SOP_DUPLEX' || record.mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX');
   const qrReady = records.every(record => (!printItem(record, 'TRAVELER') || Boolean(qrImages[record.printId]))
-    && (!printItem(record, 'QUALITY_WARNING') || record.snapshot.qualityWarnings.every(warning => !warning.employeePath || Boolean(warningQrImages[warning.alertId]))));
+    && (!printItem(record, 'QUALITY_WARNING') || record.snapshot.qualityWarnings.every(warning => !qualityWarningQrPath(record.publicCode, warning) || Boolean(warningQrImages[qualityWarningQrKey(record.printId, warning.alertId)]))));
   const allConfirmed = records.every(record => record.items.every(item => confirmedItems.has(itemKey(record.printId, item.material))));
   const combinedTravelerWarning = !duplexTravelerSop && includesTraveler && includesWarning;
   const separateTargets = useMemo<PrintTarget[]>(() => (combinedTravelerWarning
@@ -251,10 +252,12 @@ export default function WorkOrderTravelerPrint({
       if (!cancelled) setQrImages(Object.fromEntries(entries));
     });
     const warningPromise = Promise.all(records.flatMap(record => record.snapshot.qualityWarnings.map(async warning => {
-      if (!warning.employeePath) return [warning.alertId, ''] as const;
-      const link = `${window.location.origin}${warning.employeePath}`;
-      const dataUrl = await QRCode.toDataURL(link, { errorCorrectionLevel: 'M', margin: 1, width: 420, color: { dark: '#111827', light: '#ffffff' } });
-      return [warning.alertId, dataUrl] as const;
+      const key = qualityWarningQrKey(record.printId, warning.alertId);
+      const path = qualityWarningQrPath(record.publicCode, warning);
+      if (!path) return [key, ''] as const;
+      const link = `${window.location.origin}${path}`;
+      const dataUrl = await QRCode.toDataURL(link, { errorCorrectionLevel: 'M', margin: 4, width: 420, color: { dark: '#111827', light: '#ffffff' } });
+      return [key, dataUrl] as const;
     }))).then(entries => {
       if (!cancelled) setWarningQrImages(Object.fromEntries(entries));
     });
@@ -553,7 +556,7 @@ export default function WorkOrderTravelerPrint({
         specification: snapshot.specification,
       }}
       warning={warning}
-      qrImage={warningQrImages[warning.alertId]}
+      qrImage={warningQrImages[qualityWarningQrKey(record.printId, warning.alertId)]}
       pageNumber={pageNumber}
       totalPages={flattenQualityWarningPages(snapshot.qualityWarnings).length}
     />;
