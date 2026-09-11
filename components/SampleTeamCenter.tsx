@@ -381,6 +381,7 @@ export default function SampleTeamCenter({
   const [context, setContext] = useState<ContextPayload>({ members: [], sampleMemberCount: 0, products: [], processes: [] });
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [editingTarget, setEditingTarget] = useState<{ id: string; version: number } | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importStep, setImportStep] = useState<SampleImportStep>('UPLOAD');
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -616,6 +617,7 @@ export default function SampleTeamCenter({
   }
 
   function openEdit(task: SampleTaskDTO) {
+    setEditingTarget({ id: task.id, version: task.version });
     const level = sampleCustomerLevelOrDefault(task.customerLevelCode);
     setForm({
       dataPurpose: task.dataPurpose,
@@ -654,11 +656,11 @@ export default function SampleTeamCenter({
     setSaving(true);
     setFormError('');
     try {
-      if (editOpen && selected) {
-        const response = await fetch(`/api/sample-tasks/${selected.id}`, {
+      if (editOpen && editingTarget) {
+        const response = await fetch(`/api/sample-tasks/${editingTarget.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...form, action: 'UPDATE', expectedVersion: selected.version }),
+          body: JSON.stringify({ ...form, action: 'UPDATE', expectedVersion: editingTarget.version }),
         });
         const body = await responseJson(response);
         if (!response.ok) throw new Error(body.error || '计划保存失败');
@@ -675,8 +677,17 @@ export default function SampleTeamCenter({
         if (!response.ok) throw new Error(body.error || '计划创建失败');
         setCreateOpen(false);
         setMessage('样品任务已创建');
+        clearFilters();
+        setDebouncedKeyword('');
         setRefreshToken(value => value + 1);
-        if (body.task?.id) setSelectedId(body.task.id);
+        if (body.task?.id) {
+          setFocusId(body.task.id); setSelectedId(body.task.id);
+          const url = new URL(window.location.href);
+          url.searchParams.set('taskId', body.task.id);
+          url.searchParams.set('sampleView', 'UNFINISHED');
+          url.searchParams.delete('sampleSearch');
+          window.history.replaceState(window.history.state, '', url);
+        }
       }
     } catch (reason) {
       setFormError(reason instanceof Error ? reason.message : '计划保存失败');
