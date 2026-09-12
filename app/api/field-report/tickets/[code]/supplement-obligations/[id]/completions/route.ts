@@ -65,6 +65,7 @@ export async function POST(
       defectQty: body.defectQty,
       reportedUnitQty: body.reportedUnitQty,
       reportedDefectUnitQty: body.reportedDefectUnitQty,
+      qualityReport: body.qualityReport,
       defectDisposition: body.defectDisposition,
       workDate: body.workDate,
       wipAllocationId: body.wipAllocationId,

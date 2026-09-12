@@ -58,6 +58,7 @@ export function reportingSubmissionFingerprint(command: CompleteProcessStepComma
   return crypto.createHash('sha256').update(JSON.stringify({
     routeId: parsed.routeId, stepId: parsed.stepId, processedQty: parsed.processedQty, defectQty: parsed.defectQty,
     reportedUnitQty: parsed.reportedUnitQty, reportedDefectUnitQty: parsed.reportedDefectUnitQty,
+    qualityReport: parsed.qualityReport,
     defectDisposition: parsed.defectDisposition, workDate: parsed.workDateKey,
     workStartedAt: parsed.workStartedAt, workEndedAt: parsed.workEndedAt,
     employeeIds: [...parsed.employeeIds].sort(), team: parsed.team, workstation: parsed.workstation, remark: parsed.remark,

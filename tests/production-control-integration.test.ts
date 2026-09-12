@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -153,11 +154,11 @@ test('production control PostgreSQL: facts, replay, pauses, branches, dates, per
     await prisma.productionPlanOrder.deleteMany({ where: { sourceOrderNo: prefix } });
     const branches = await prisma.workOrder.findMany({ where: { id: { in: ids }, parentWorkOrderId: { not: null } }, select: { id: true } });
     for (const branch of branches) {
-      await prisma.processCompletion.deleteMany({ where: { workOrderId: branch.id } });
+      await deleteTestCompletions({ where: { workOrderId: branch.id } });
       await prisma.workOrderProcessRoute.deleteMany({ where: { workOrderId: branch.id } });
       await prisma.workOrder.delete({ where: { id: branch.id } });
     }
-    await prisma.processCompletion.deleteMany({ where: { workOrderId: { in: ids } } });
+    await deleteTestCompletions({ where: { workOrderId: { in: ids } } });
     await prisma.workOrderProcessRoute.deleteMany({ where: { workOrderId: { in: ids } } });
     await prisma.workOrder.deleteMany({ where: { id: { in: ids } } });
     await prisma.productionTeam.delete({ where: { id: team.id } });

@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -1950,7 +1951,7 @@ test(
           .filter(order => order.parentWorkOrderId)
           .sort((left, right) => depthOf(right.id) - depthOf(left.id));
         for (const branchOrder of branchOrders) {
-          await prisma.processCompletion.deleteMany({
+          await deleteTestCompletions({
             where: { workOrderId: branchOrder.id },
           });
           await prisma.workOrderProcessRoute.deleteMany({
@@ -1965,7 +1966,7 @@ test(
           .filter(order => !order.parentWorkOrderId)
           .map(order => order.id);
         if (rootOrderIds.length) {
-          await prisma.processCompletion.deleteMany({
+          await deleteTestCompletions({
             where: { workOrderId: { in: rootOrderIds } },
           });
           await prisma.workOrderProcessRoute.deleteMany({

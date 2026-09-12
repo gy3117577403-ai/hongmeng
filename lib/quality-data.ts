@@ -1,9 +1,9 @@
 /** Shared form definitions. Standards are supplied by the shop, never invented. */
-export const QUALITY_DATA_TYPES = ['CRIMP', 'PULL', 'FINAL', 'FIRST', 'PATROL'] as const;
+export const QUALITY_DATA_TYPES = ['CRIMP', 'PULL', 'FINAL', 'CONTINUITY', 'FIRST', 'PATROL'] as const;
 export type QualityDataType = typeof QUALITY_DATA_TYPES[number];
 export type QualityResult = 'PENDING' | 'PASS' | 'FAIL';
 export const QUALITY_LABELS: Record<QualityDataType, string> = {
-  CRIMP: '端子压检', PULL: '拉力测试', FINAL: '成品检验', FIRST: '首检', PATROL: '巡检报表',
+  CONTINUITY: '导通检验', CRIMP: '端子压检', PULL: '拉力测试', FINAL: '成品检验', FIRST: '首检', PATROL: '巡检报表',
 };
 export const RESULT_LABELS: Record<QualityResult, string> = { PENDING: '待判定', PASS: '合格', FAIL: '不合格' };
 export const REVIEW_LABELS: Record<string, string> = { UNREVIEWED: '未复核', APPROVED: '已复核', RETURNED: '已退回' };
@@ -38,6 +38,9 @@ export type QualityRecord = {
   status: 'DRAFT' | 'SUBMITTED'; result: QualityResult; reviewStatus: string; version: number;
   templateVersion: number; data: QualityFormData; orderSnapshot: QualityOrder;
   createdById: string; createdByName: string; createdAt: string; updatedAt: string;
+  sourceCompletionId?: string | null;
+  reportSnapshot?: { completionId: string; routeId: string; stepId: string; position: number; processName: string; quantity: number; defectQty: number; goodQty: number; unit: string; quantityBasis: string; workDate: string; inspectedBy: string; issue: string; note: string } | null;
+  responsibilityStatus?: string; responsibility?: import('./process-quality-report').QualityResponsibility | null;
   sourceQrCode: string | null; supersedesId: string | null; submittedAt: string | null;
   reviewedAt: string | null; reviewedByName: string | null; reviewNote: string | null;
   deletedAt: string | null; deleteReason: string | null; attachments: QualityAttachment[];
@@ -131,10 +134,10 @@ export function assertQualitySubmission(data: QualityFormData, attachments: numb
 export function emptyQualityForm(type: QualityDataType, inspector = ''): QualityFormData {
   const context = Object.fromEntries(CONTEXT_FIELDS.map(([key]) => [key, key === 'inspectedBy' ? inspector : ''])) as QualityContext;
   const names: Record<QualityDataType, string[]> = {
-    CRIMP: ['压接高度'], PULL: ['端子拉力'],
-    FINAL: ['外观'], FIRST: ['首件外观'], PATROL: ['过程质量'],
+    CRIMP: ['压接外观'], PULL: ['端子拉力', '端子型号核对'], CONTINUITY: ['导通结果'],
+    FINAL: ['外观', '尺寸'], FIRST: ['首件外观'], PATROL: ['过程质量'],
   };
-  return { mode: 'FORM', context, summary: '', rows: names[type].map(item => ({ sample: '1', position: '', item, standard: '', lower: '', upper: '', value: '', unit: item.includes('高度') || item.includes('宽度') ? 'mm' : type === 'PULL' ? 'N' : '', result: 'PENDING', note: '' })) };
+  return { mode: 'FORM', context, summary: '', rows: names[type].map(item => ({ sample: '1', position: '', item, standard: '', lower: '', upper: '', value: '', unit: item.includes('高度') || item.includes('宽度') || item === '尺寸' ? 'mm' : item === '端子拉力' ? 'N' : '', result: 'PENDING', note: '' })) };
 }
 export function assertQualityEdit(actor: QualityActor, record: { createdById: string; status: string; deletedAt: Date | string | null }) {
   if (record.deletedAt) throw new QualityDataError('记录在回收站中，请先恢复', 409);

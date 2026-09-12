@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -322,7 +323,7 @@ test(
       await prisma.processCompletionParticipant.deleteMany({
         where: { completionId: { in: completionIds } },
       });
-      await prisma.processCompletion.deleteMany({ where: { routeId: order.processRoute.id } });
+      await deleteTestCompletions({ where: { routeId: order.processRoute.id } });
       await prisma.workOrderProgressLog.deleteMany({ where: { workOrderId: order.id } });
       await prisma.workOrderProcessStep.deleteMany({ where: { routeId: order.processRoute.id } });
       await prisma.workOrderProcessRoute.delete({ where: { id: order.processRoute.id } });
@@ -507,7 +508,7 @@ for (const standardScenario of ['still_missing', 'newer_standard', 'different_ac
       await prisma.processCompletionParticipant.deleteMany({
         where: { completionId: completionId || '__none__' },
       });
-      await prisma.processCompletion.deleteMany({ where: { routeId: order.processRoute.id } });
+      await deleteTestCompletions({ where: { routeId: order.processRoute.id } });
       await prisma.workOrderProgressLog.deleteMany({ where: { workOrderId: order.id } });
       await prisma.workOrderProcessStep.deleteMany({ where: { routeId: order.processRoute.id } });
       await prisma.workOrderProcessRoute.delete({ where: { id: order.processRoute.id } });

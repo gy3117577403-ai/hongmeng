@@ -1,0 +1,81 @@
+name: Quality reporting candidate
+on:
+  push:
+    branches: ['codex/quality-report-v134166']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quality-report-candidate
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: process_quality_candidate
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/process_quality_candidate?schema=public
+      SESSION_SECRET: disposable-quality-reporting-session-secret-20260912
+      APP_BASE_URL: http://127.0.0.1:3000
+      S3_ENDPOINT: http://127.0.0.1:19000
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:19000
+      S3_REGION: auto
+      S3_BUCKET: process-quality-candidate
+      S3_ACCESS_KEY_ID: qualityqa
+      S3_SECRET_ACCESS_KEY: DisposableQualityStorage2026
+      S3_FORCE_PATH_STYLE: 'true'
+      SMOKE_STORAGE_ALLOW: disposable-ci-storage
+      SEED_ADMIN_USERNAME: quality-bootstrap
+      SEED_ADMIN_PASSWORD: DisposableQualityBootstrap2026!
+      DAILY_PLAN_ENABLED: 'true'
+      PROCESS_QUALITY_QA_ALLOW: disposable-quality-reporting-runtime
+      PROCESS_QUALITY_QA_BASE: http://127.0.0.1:3000
+      PROCESS_QUALITY_QA_FIXTURE: artifacts/process-quality/fixture.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate && npx prisma migrate deploy && node prisma/seed.cjs
+      - name: Unit and transaction tests
+        run: |
+          npm run test:unit
+          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/process-quality-integration.test.ts tests/process-completion-batch-integration.test.ts tests/quality-data-integration.test.ts tests/process-completion-withdrawal-integration.test.ts
+      - name: Prepare S3 and application
+        run: |
+          docker run -d --name quality-candidate-storage -p 127.0.0.1:19000:9000 -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
+          node scripts/prepare-smoke-storage.mjs
+          mkdir -p artifacts/process-quality
+          node scripts/seed-process-quality-smoke.cjs > "$PROCESS_QUALITY_QA_FIXTURE"
+          npm run build
+          npm start > artifacts/process-quality/app.log 2>&1 &
+          for i in $(seq 1 90); do if curl -fsS "$APP_BASE_URL/api/ready" > artifacts/process-quality/ready.json; then break; fi; sleep 2; done
+          curl -fsS "$APP_BASE_URL/api/ready"
+      - name: HTTP quantities, ownership, image upload and Excel
+        run: node scripts/smoke-process-quality.mjs
+      - name: Tablet and phone browser acceptance
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          node scripts/smoke-process-quality-browser.mjs
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-quality-candidate-${{ github.sha }}
+          path: |
+            artifacts/process-quality/http.json
+            artifacts/process-quality/browser-runtime.txt
+            artifacts/process-quality/*.png
+            artifacts/process-quality/app.log
+            artifacts/process-quality/ready.json

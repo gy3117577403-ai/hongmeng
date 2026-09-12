@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -78,7 +79,7 @@ for (const mode of ['published-deployment','published-deployment-with-claims','h
       await prisma.processLaborPool.deleteMany({where:{workOrderId:order.id}});
       await prisma.processExecution.deleteMany({where:{step:{routeId:route.id}}});
       await prisma.processQuantityMovement.deleteMany({where:{workOrderId:order.id}});
-      await prisma.processCompletion.deleteMany({where:{routeId:route.id}});
+      await deleteTestCompletions({where:{routeId:route.id}});
       await prisma.productTimeDeploymentRoute.deleteMany({where:{routeId:route.id}});
       await prisma.workOrderProcessRoute.delete({where:{id:route.id}});
       await prisma.workOrder.delete({where:{id:order.id}});

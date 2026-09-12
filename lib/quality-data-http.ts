@@ -2,12 +2,13 @@ import { NextResponse } from 'next/server';
 import { ForbiddenError, requireCapability, UnauthorizedError } from '@/lib/auth';
 import { qualityActor, QualityDataError } from '@/lib/quality-data';
 import { ReportDateRangeError } from '@/lib/report-date-range';
+import { ProcessQualityError } from './process-quality-report';
 export async function qualitySession(action: 'READ' | 'CREATE' | 'UPDATE' | 'DELETE' = 'READ') {
   const user = await requireCapability('QUALITY_DATA', action);
   return { user, actor: qualityActor(user) };
 }
 export function qualityError(error: unknown) {
-  if (error instanceof QualityDataError) return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+  if (error instanceof QualityDataError || error instanceof ProcessQualityError) return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
   if (error instanceof UnauthorizedError) return NextResponse.json({ ok: false, error: '请登录后操作' }, { status: 401 });
   if (error instanceof ForbiddenError) return NextResponse.json({ ok: false, error: '没有质量数据访问权限' }, { status: 403 });
   if (error instanceof SyntaxError || error instanceof ReportDateRangeError) return NextResponse.json({ ok: false, error: '请求内容或日期范围不正确' }, { status: 400 });

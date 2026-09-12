@@ -1483,6 +1483,8 @@ function nextTaskStatus(step: WithdrawalState['route']['steps'][number], planned
   };
 }
 
+import { voidProcessQuality } from './process-quality-service';
+
 async function applyWithdrawal(
   tx: Prisma.TransactionClient,
   input: {
@@ -1549,6 +1551,7 @@ async function applyWithdrawal(
       'PROCESS_COMPLETION_WITHDRAWAL_CONFLICT',
     );
   }
+  await voidProcessQuality(tx, state.id, { id: input.userId, name: input.actor, canManage: true, canReview: false }, input.reason);
   await voidWipCreditsForCompletion(tx, state.id, now);
   if (state.reportQuantityBasis === 'action') {
     await voidProcessActionConsumptionsForCompletion(tx, {

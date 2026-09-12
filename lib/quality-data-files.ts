@@ -79,7 +79,7 @@ export async function deleteQualityFile(fileId: string, actor: QualityActor, bod
     const selected = current.attachments.find(item => item.id === fileId && !item.deletedAt);
     if (!selected) throw new QualityDataError('附件已移除', 409);
     if (current.status === 'SUBMITTED') {
-      try { assertQualitySubmission(current.data as unknown as QualityFormData, current.attachments.filter(item => !item.deletedAt).length - 1); }
+      try { if (!current.sourceCompletionId) assertQualitySubmission(current.data as unknown as QualityFormData, current.attachments.filter(item => !item.deletedAt).length - 1); }
       catch { throw new QualityDataError('记录须保留有效检验内容或至少一份附件', 409); }
     }
     await tx.qualityDataAttachment.update({ where: { id: fileId }, data: { deletedAt: new Date() } });

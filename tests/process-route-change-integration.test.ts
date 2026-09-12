@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -709,7 +710,7 @@ test(
         await prisma.processCompletionParticipant.deleteMany({
           where: { completion: { workOrderId } },
         });
-        await prisma.processCompletion.deleteMany({ where: { workOrderId } });
+        await deleteTestCompletions({ where: { workOrderId } });
         await prisma.processRouteActivity.deleteMany({ where: { routeId } });
         const changes = await prisma.processRouteChange.findMany({
           where: { workOrderId },
@@ -1187,7 +1188,7 @@ test(
         });
         await prisma.processQuantityMovement.deleteMany({ where: { workOrderId } });
         await prisma.processCompletionParticipant.deleteMany({ where: { completion: { workOrderId } } });
-        await prisma.processCompletion.deleteMany({ where: { workOrderId } });
+        await deleteTestCompletions({ where: { workOrderId } });
         await prisma.processRouteActivity.deleteMany({ where: { routeId } });
         const changes = await prisma.processRouteChange.findMany({
           where: { workOrderId },

@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -105,7 +106,7 @@ export async function fixture(indices = [0, 1, 3, 4], targetQty = 40) {
     await prisma.processLaborPool.deleteMany({ where: { workOrderId: order.id } });
     await prisma.processExecution.deleteMany({ where: { step: { routeId } } });
     await prisma.processQuantityMovement.deleteMany({ where: { workOrderId: order.id } });
-    await prisma.processCompletion.deleteMany({ where: { routeId } });
+    await deleteTestCompletions({ where: { routeId } });
     await prisma.processSupplementCoverage.deleteMany({ where: { routeId } });
     await prisma.processSupplementObligation.deleteMany({ where: { routeId } });
     await prisma.productTimeDeploymentRoute.deleteMany({ where: { routeId } });

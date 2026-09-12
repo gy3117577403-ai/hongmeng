@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -108,7 +109,7 @@ test('batch labor preserves each day and worker through early reporting, replay,
       await prisma.processCompletionCoverage.deleteMany({ where: { OR: [{ reportCompletionId: { in: completionIds } }, { triggerCompletionId: { in: completionIds } }] } });
       await prisma.processQuantityMovement.deleteMany({ where: { workOrderId: order.id } });
       await prisma.processCompletionParticipant.deleteMany({ where: { completionId: { in: completionIds } } });
-      await prisma.processCompletion.deleteMany({ where: { routeId: route.id } });
+      await deleteTestCompletions({ where: { routeId: route.id } });
       await prisma.workOrderProgressLog.deleteMany({ where: { workOrderId: order.id } });
       await prisma.workOrderProcessStep.deleteMany({ where: { routeId: route.id } });
       await prisma.workOrderProcessRoute.delete({ where: { id: route.id } });

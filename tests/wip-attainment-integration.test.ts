@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -254,7 +255,7 @@ test('08-24 batch executed as 08-31 carryover reaches 100 percent before its rem
     if (completionId) {
       await prisma.processLaborPool.deleteMany({ where: { completionId } });
       await prisma.processWipCredit.deleteMany({ where: { completionId } });
-      await prisma.processCompletion.deleteMany({ where: { id: completionId } });
+      await deleteTestCompletions({ where: { id: completionId } });
     }
     if (lotId) {
       await prisma.wipWeekAllocation.deleteMany({ where: { lotId } });

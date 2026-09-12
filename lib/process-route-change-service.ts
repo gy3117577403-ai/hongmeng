@@ -211,6 +211,7 @@ export type ActivateProcessRouteChangeCommand = MutationIdentity & {
 };
 
 export type CompleteProcessSupplementObligationCommand = MutationIdentity & {
+  qualityReport?: unknown;
   /** Internal recovery transaction only; never accept directly from a public request body. */
   recoverySubmissionId?: string;
   wipAllocationId?: unknown;
@@ -4017,6 +4018,9 @@ export async function completeProcessSupplementObligation(
   return serializable(tx => completeProcessSupplementObligationInTransaction(tx, command, backfill));
 }
 
+import { parseProcessQualityReport } from './process-quality-report';
+import { recordProcessQuality } from './process-quality-service';
+
 export async function completeProcessSupplementObligationInTransaction(
   tx: Prisma.TransactionClient,
   command: CompleteProcessSupplementObligationCommand,
@@ -4024,6 +4028,7 @@ export async function completeProcessSupplementObligationInTransaction(
   options?: { historicalWip?: HistoricalWipReportingAuthorization; recoverySources?: import('@/lib/wip-reporting').WipRecoverySources },
 ) {
   const identity = mutationIdentity(command);
+  const qualityReport = parseProcessQualityReport(command.qualityReport);
   const obligationId = clean(command.obligationId, 80);
   const routeId = clean(command.routeId, 80);
   const publicCode = clean(command.publicCode, 120);
@@ -4070,6 +4075,7 @@ export async function completeProcessSupplementObligationInTransaction(
       select: {
         id: true,
         supplementObligationId: true,
+        qualityReport: true,
         routeId: true,
         routeVersion: true,
         workDate: true,
@@ -4118,6 +4124,7 @@ export async function completeProcessSupplementObligationInTransaction(
         || duplicate.processedQty !== processedQty
         || duplicate.defectQty !== defectQty
         || duplicate.reportedUnitQty !== reportedUnitQty
+        || JSON.stringify(parseProcessQualityReport(duplicate.qualityReport)) !== JSON.stringify(qualityReport)
         || duplicate.reportedDefectUnitQty !== reportedDefectUnitQty
         || duplicate.workDate.getTime() !== workDate.getTime()
         || !sameEmployees
@@ -4345,6 +4352,7 @@ export async function completeProcessSupplementObligationInTransaction(
       : 0;
     const completion = await tx.processCompletion.create({
       data: {
+        qualityReport: qualityReport ? JSON.parse(JSON.stringify(qualityReport)) : Prisma.DbNull,
         workOrderId: obligation.workOrderId,
         routeId: obligation.routeId,
         stepId: obligation.displayStepId,
@@ -4392,6 +4400,7 @@ export async function completeProcessSupplementObligationInTransaction(
         },
       },
     });
+    await recordProcessQuality(tx, completion, obligation.displayStep, qualityReport, identity.actor);
     if (reportQuantityBasis === 'action') {
       try {
         await materializeProcessActionConsumptions(tx, obligation.displayStepId);

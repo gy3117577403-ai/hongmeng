@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -483,7 +484,7 @@ test('WIP entry, scheduling, reporting withdrawal and rescheduling preserve quan
     assert.equal(storedLot.allocations.find(item => item.id === rescheduled.id)?.quantity, 4);
   } finally {
     await prisma.processWipCredit.deleteMany({ where: { completionId: { in: completionIds } } });
-    await prisma.processCompletion.deleteMany({ where: { id: { in: completionIds } } });
+    await deleteTestCompletions({ where: { id: { in: completionIds } } });
     await prisma.wipWeekAllocationWorker.deleteMany({
       where: { allocation: { lot: { productionPlanBatchId: batch.id } } },
     });

@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test, { after } from 'node:test';
@@ -24,7 +25,7 @@ after(async () => {
     await prisma.processCompletionCoverage.deleteMany({ where: { reportCompletion: { workOrderId: f.workOrderId } } });
     await prisma.processQuantityMovement.deleteMany({ where: { workOrderId: f.workOrderId } });
     await prisma.processActionConsumption.deleteMany({ where: { step: { route: { workOrderId: f.workOrderId } } } });
-    await prisma.processCompletion.deleteMany({ where: { workOrderId: f.workOrderId } });
+    await deleteTestCompletions({ where: { workOrderId: f.workOrderId } });
     await prisma.wipWeekAllocationWorker.deleteMany({ where: { allocation: { lot: { workOrderId: f.workOrderId } } } });
     await prisma.wipWeekAllocation.deleteMany({ where: { lot: { workOrderId: f.workOrderId } } });
     await prisma.semiFinishedLot.deleteMany({ where: { workOrderId: f.workOrderId } });

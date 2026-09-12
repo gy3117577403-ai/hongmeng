@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { qualityResponsibilityLabel } from './process-quality-report';
 import { Readable } from 'node:stream';
 import { ZipFile } from 'yazl';
 import { prisma } from '@/lib/prisma';
@@ -12,11 +13,11 @@ export async function qualityWorkbook(records: QualityRecord[], filter: string) 
   const overview = book.addWorksheet('记录清单');
   overview.addRow(['质量数据导出', '北京时间', beijingInput().replace('T',' ')]);
   overview.addRow(['查询条件', filter]);
-  const headings = ['记录编号','检验类型','标题','检验时间','提交时间','订单号','订单行','生产批次','工单号','产品','规格','客户','检验结论','记录状态','复核状态','填写人','版本','作废原因','摘要', ...CONTEXT_FIELDS.map(([, label]) => label)];
+  const headings = ['记录编号','检验类型','标题','检验时间','提交时间','订单号','订单行','生产批次','工单号','产品','规格','客户','检验结论','记录状态','复核状态','填写人','版本','作废原因','摘要','来源','工序序号','报工单位','责任人','报工记录ID', ...CONTEXT_FIELDS.map(([, label]) => label)];
   overview.addRow(headings);
   for (const r of records) {
     const o = r.orderSnapshot;
-    overview.addRow([r.code,QUALITY_LABELS[r.type],r.title,beijingInput(r.inspectedAt).replace('T',' '),r.submittedAt ? beijingInput(r.submittedAt).replace('T',' ') : '',o.sourceOrderNo,o.sourceLineNo,o.batchNo,o.businessCode || o.code,o.productName,o.specification,o.customerName,RESULT_LABELS[r.result],r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交',REVIEW_LABELS[r.reviewStatus],r.createdByName,r.version,r.deleteReason,r.data.summary,...CONTEXT_FIELDS.map(([key]) => r.data.context[key])]);
+    overview.addRow([r.code,QUALITY_LABELS[r.type],r.title,beijingInput(r.inspectedAt).replace('T',' '),r.submittedAt ? beijingInput(r.submittedAt).replace('T',' ') : '',o.sourceOrderNo,o.sourceLineNo,o.batchNo,o.businessCode || o.code,o.productName,o.specification,o.customerName,RESULT_LABELS[r.result],r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交',REVIEW_LABELS[r.reviewStatus],r.createdByName,r.version,r.deleteReason,r.data.summary,r.sourceCompletionId ? '工序报工' : r.supersedesId ? '复检' : '独立检验',r.reportSnapshot?.position,r.reportSnapshot?.unit,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0)),r.sourceCompletionId,...CONTEXT_FIELDS.map(([key]) => r.data.context[key])]);
   }
   for (const type of QUALITY_DATA_TYPES) {
     const sheet = book.addWorksheet(QUALITY_LABELS[type]);

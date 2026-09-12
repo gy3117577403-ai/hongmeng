@@ -26,6 +26,8 @@ type ApiRule = {
 
 /** Specific routes must appear before their broader namespace. */
 export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
+  // The handler verifies reporting rights and photo ownership; quality readers only get personnel options.
+  { prefix: '/api/process-report-quality', anyOf: ['FIELD_REPORT', 'PROCESS', 'PRODUCTION', 'QUALITY_DATA'], action: 'READ' },
   { prefix: '/api/quality-quick/warnings', anyOf: ['QUALITY','QUALITY_DATA','FIELD_REPORT','PRODUCTION','ENGINEERING','PLANNING','BUSINESS','DRAWING_LIBRARY'], action: 'READ', allowedMethods: ['GET','HEAD'] },
   { prefix: '/api/quality-quick/photos', anyOf: ['QUALITY','QUALITY_DATA','FIELD_REPORT','PRODUCTION','ENGINEERING','PLANNING','BUSINESS','DRAWING_LIBRARY'], action: 'READ', allowedMethods: ['GET','HEAD'] },
   { prefix: '/api/quality-quick', anyOf: ['QUALITY'], actionsByMethod: { POST: 'UPDATE' } },

@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -153,7 +154,7 @@ test('withdrawn action reporting publishes one-set contract and repairs old mism
         await prisma.processCompletionCoverage.deleteMany({ where: { reportCompletion: { workOrderId } } });
         await prisma.processQuantityMovement.deleteMany({ where: { workOrderId } });
         await prisma.processActionConsumption.deleteMany({ where: { step: { route: { workOrderId } } } });
-        await prisma.processCompletion.deleteMany({ where: { workOrderId } });
+        await deleteTestCompletions({ where: { workOrderId } });
         await prisma.productTimeDeploymentRoute.deleteMany({ where: { workOrderId } });
         await prisma.workOrder.deleteMany({ where: { id: workOrderId } });
       }

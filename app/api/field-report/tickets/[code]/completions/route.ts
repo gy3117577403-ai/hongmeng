@@ -60,6 +60,7 @@ export async function POST(
     }
     const body = await req.json().catch(() => ({})) as {
       stepId?: unknown;
+      qualityReport?: unknown;
       processedQty?: unknown;
       defectQty?: unknown;
       reportedUnitQty?: unknown;
@@ -124,6 +125,7 @@ export async function POST(
           defectQty: body.defectQty,
           reportedUnitQty: body.reportedUnitQty,
           reportedDefectUnitQty: body.reportedDefectUnitQty,
+          qualityReport: body.qualityReport,
           defectDisposition: body.defectDisposition,
         });
     if ('pending' in data && data.pending) return NextResponse.json({ ok: true, pending: true, submission: data.submission }, { status: 202 });

@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -128,7 +129,7 @@ test('employee facts reconcile pending labor, rest days, historical eligibility,
     await prisma.abnormalTimeEvent.deleteMany({ where: { id: { in: eventIds } } });
     await prisma.processLaborClaim.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.processLaborPool.deleteMany({ where: { workOrderId: order.id } });
-    await prisma.processCompletion.deleteMany({ where: { workOrderId: order.id } });
+    await deleteTestCompletions({ where: { workOrderId: order.id } });
     await prisma.workOrder.delete({ where: { id: order.id } });
     await prisma.attendanceRecord.deleteMany({ where: { employeeId: { in: ids } } });
     await prisma.employee.deleteMany({ where: { id: { in: ids } } });

@@ -1,3 +1,5 @@
+import { parseProcessQualityReport } from './process-quality-report';
+import { resolveQualityResponsibility } from './process-quality-personnel';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
@@ -31,7 +33,7 @@ export function qualityOrder(order: OrderSource, parentBatch?: OrderSource['prod
     steps: order.processRoute?.steps.map(step => ({ id: step.id, name: step.processName })) || [],
   };
 }
-async function readOrder(tx: Prisma.TransactionClient, id: string, allowDeleted = false) {
+export async function readQualityOrder(tx: Prisma.TransactionClient, id: string, allowDeleted = false) {
   const order = await tx.workOrder.findFirst({ where: { id, ...(allowDeleted ? {} : { deletedAt: null }) }, include: orderInclude });
   if (!order) throw new QualityDataError('工单不存在或已删除', 404);
   const root = !order.productionPlanBatch && order.rootWorkOrderId
@@ -55,7 +57,7 @@ export async function qualityQrOrder(code: string) {
   const ticket = await prisma.workOrderQrTicket.findUnique({ where: { publicCode: code }, select: { workOrderId: true, status: true } });
   if (!ticket || ticket.status !== 'ACTIVE') throw new QualityDataError('二维码不存在或已经停用', 404);
   // Inspection is independent of production reporting's started/completed gate.
-  return readOrder(prisma, ticket.workOrderId);
+  return readQualityOrder(prisma, ticket.workOrderId);
 }
 export function serializeQuality(record: RecordSource): QualityRecord {
   const { searchText: _search, idempotencyKey: _key, requestHash: _hash, updatedById: _updated, deletedById: _deleted, ...rest } = record;
@@ -97,6 +99,11 @@ export function qualityWhere(params: URLSearchParams): Prisma.QualityDataRecordW
     if (params.get('timeField') === 'createdAt') where.createdAt = date;
     else where.inspectedAt = date;
   }
+  if (params.get('source') === 'report') where.sourceCompletionId = { not: null };
+  if (params.get('source') === 'manual') where.sourceCompletionId = null;
+  if (params.get('source') === 'retest') where.supersedesId = { not: null };
+  if (params.get('inspectionScope') === 'first') where.supersedesId = null;
+  if (params.get('responsibility') === 'PENDING') where.responsibilityStatus = 'PENDING';
   if (params.get('workOrderId')) where.workOrderId = qualityText(params.get('workOrderId'), 120);
   if (params.get('type')) where.type = qualityType(params.get('type'));
   if (params.get('status')) {
@@ -161,7 +168,7 @@ export async function createQualityRecord(actor: QualityActor, body: Record<stri
       if (previous.requestHash !== requestHash) throw new QualityDataError('同一提交标识的内容发生变化，请刷新记录后继续编辑', 409);
       return serializeQuality(previous);
     }
-    const orderSnapshot = await readOrder(tx, workOrderId);
+    const orderSnapshot = await readQualityOrder(tx, workOrderId);
     await bindQualityTeam(tx, data);
     if (sourceQrCode) {
       const ticket = await tx.workOrderQrTicket.findUnique({ where: { publicCode: sourceQrCode } });
@@ -191,9 +198,24 @@ export async function mutateQualityRecord(id: string, actor: QualityActor, body:
   return prisma.$transaction(async tx => {
     const current = await lockQuality(tx, id, body.version);
     const action = String(body.action || 'SAVE');
+    if (current.sourceCompletionId && ['DELETE', 'RESTORE', 'SAVE', 'SUBMIT'].includes(action)) throw new QualityDataError('此记录来自工序报工，数量更正或作废请从原报工处理；责任说明可单独补充', 409, 'QUALITY_SOURCE_REPORT_LOCKED');
     const reason = mutationReason(body, current.status === 'SUBMITTED' || ['DELETE','RESTORE','REVIEW','RETURN'].includes(action));
     let update: Prisma.QualityDataRecordUpdateInput = { version: { increment: 1 }, updatedById: actor.id };
-    if (action === 'DELETE') {
+    if (action === 'UPDATE_REPORT_DETAILS') {
+      assertQualityEdit(actor, current);
+      if (!current.sourceCompletionId) throw new QualityDataError('此操作仅用于报工检验记录');
+      const report = parseProcessQualityReport(body.qualityReport);
+      if (!report || report.evidenceIds.length) throw new QualityDataError('请填写责任与说明；照片请使用附件上传');
+      const data = current.data as unknown as QualityFormData;
+      const responsibility = await resolveQualityResponsibility(tx, report, Number(data.context.defectQty || 0));
+      const snapshot = current.reportSnapshot as Record<string, unknown>;
+      update = { ...update, responsibility: json(responsibility), responsibilityStatus: Number(data.context.defectQty || 0) > 0 ? responsibility.status : 'NONE',
+        data: json({ ...data, summary: [report.issue, report.note].filter(Boolean).join('；') }),
+        reportSnapshot: json({ ...snapshot, issue: report.issue, note: report.note }),
+        searchText: searchText(current.orderSnapshot as unknown as QualityOrder, data, current.title, current.createdByName) + ' ' + JSON.stringify(responsibility) + ' ' + report.issue + ' ' + report.note,
+        ...qualityRevisionReset(),
+      };
+    } else if (action === 'DELETE') {
       if (current.deletedAt) throw new QualityDataError('记录已经在回收站', 409);
       if (!actor.canManage && (current.createdById !== actor.id || current.status !== 'DRAFT')) throw new QualityDataError('已提交记录须由质量人员或管理员作废', 403);
       update = { ...update, deletedAt: new Date(), deleteReason: reason, deletedById: actor.id };

@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -228,7 +229,7 @@ test(
         await prisma.processQuantityMovement.deleteMany({ where: { completionId } });
         await prisma.processRouteActivity.deleteMany({ where: { routeId } });
         await prisma.processCompletionParticipant.deleteMany({ where: { completionId } });
-        await prisma.processCompletion.deleteMany({ where: { id: completionId } });
+        await deleteTestCompletions({ where: { id: completionId } });
       }
       if (orderId) {
         await prisma.workOrderProgressLog.deleteMany({ where: { workOrderId: orderId } });
@@ -373,7 +374,7 @@ test(
       if (routeId) await prisma.processRouteActivity.deleteMany({ where: { routeId } });
       if (completionId) {
         await prisma.processQuantityMovement.deleteMany({ where: { completionId } });
-        await prisma.processCompletion.deleteMany({ where: { id: completionId } });
+        await deleteTestCompletions({ where: { id: completionId } });
         await prisma.operationLog.deleteMany({ where: { targetId: completionId } });
       }
       if (orderId) await prisma.workOrder.deleteMany({ where: { id: orderId } });
@@ -560,7 +561,7 @@ async function cleanupWithdrawalRequestFixture(fixture: WithdrawalRequestFixture
   });
   await prisma.processQuantityMovement.deleteMany({ where: { workOrderId: fixture.orderId } });
   await prisma.processCompletionParticipant.deleteMany({ where: { completionId: fixture.completionId } });
-  await prisma.processCompletion.deleteMany({ where: { id: fixture.completionId } });
+  await deleteTestCompletions({ where: { id: fixture.completionId } });
   await prisma.workOrderProgressLog.deleteMany({ where: { workOrderId: fixture.orderId } });
   await prisma.workOrder.deleteMany({ where: { id: fixture.orderId } });
   await prisma.user.deleteMany({ where: { id: { in: [fixture.requesterUserId, fixture.reviewerUserId] } } });

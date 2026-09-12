@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -584,7 +585,7 @@ test(
         await prisma.processExecution.deleteMany({ where: { stepId: { in: stepIds } } });
         await prisma.processCompletionParticipant.deleteMany({ where: { completionId: { in: completionIds } } });
         await prisma.processQuantityMovement.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
-        await prisma.processCompletion.deleteMany({ where: { id: { in: completionIds } } });
+        await deleteTestCompletions({ where: { id: { in: completionIds } } });
         await prisma.processSupplementCoverage.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
         await prisma.processSupplementObligation.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
         await prisma.workOrderQrPrint.deleteMany({ where: { routeId: { in: routeIds } } });

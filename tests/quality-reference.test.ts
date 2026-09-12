@@ -5,7 +5,7 @@ import { emptyQualityForm, qualityForm, qualityResult, assertQualitySubmission }
 import { resolveAccessContext } from '../lib/department-access';
 import { canAccessApiRoute } from '../lib/api-route-access';
 test('minimal inspection accepts one measured row, leaves unused items optional and does not invent PASS',()=>{
-  const f=emptyQualityForm('CRIMP','检验人');f.rows[0].value='1.2';f.rows.push({...f.rows[0],item:'外观',value:''});
+  const f=emptyQualityForm('CRIMP','检验人');Object.assign(f.rows[0],{item:'压接高度',unit:'mm',value:'1.2'});f.rows.push({...f.rows[0],item:'外观',value:''});
   assert.doesNotThrow(()=>assertQualitySubmission(qualityForm(f),0));assert.equal(qualityResult(qualityForm(f)),'PENDING');
   f.rows[0].lower='1.1';f.rows[0].upper='1.3';assert.equal(qualityResult(qualityForm(f)),'PASS');
   f.rows[0].value='0';assert.equal(qualityResult(qualityForm(f)),'FAIL');

@@ -507,6 +507,7 @@ enum RecruitmentInterviewStatus {
 }
 
 model User {
+  processQualityEvidence ProcessQualityEvidence[]
   otherWorkRequests               OtherWorkTimeRequest[]                 @relation("OtherWorkCreator")
   otherWorkReviews                OtherWorkTimeReview[]
   otherWorkAttachments            OtherWorkTimeAttachment[]
@@ -942,6 +943,7 @@ model ProcessTemplateStep {
 }
 
 model WorkOrderProcessRoute {
+  processQualityEvidence ProcessQualityEvidence[]
   reportingSubmissions         ProcessReportSubmission[]
   id                           String                               @id @default(uuid())
   workOrderId                  String                               @unique @map("work_order_id")
@@ -983,6 +985,7 @@ model WorkOrderProcessRoute {
 }
 
 model WorkOrderProcessStep {
+  processQualityEvidence ProcessQualityEvidence[]
   reportingSubmissions         ProcessReportSubmission[]
   id                           String                               @id @default(uuid())
   routeId                      String                               @map("route_id")
@@ -2359,6 +2362,8 @@ model ProcessReportSubmission {
 }
 
 model ProcessCompletion {
+  qualityReport                Json?                                @map("quality_report")
+  qualityRecord                QualityDataRecord?
   recoverySubmission           ProcessReportSubmission?
   reportingWipAllocationId     String?                              @map("reporting_wip_allocation_id")
   id                           String                               @id @default(uuid())
@@ -5631,6 +5636,7 @@ model ConnectorParameterFile {
 }
 
 model QualityDataRecord {
+  processQualityEvidence ProcessQualityEvidence[]
   id              String                  @id @default(uuid())
   code            String                  @unique
   workOrderId     String                  @map("work_order_id")
@@ -5649,6 +5655,11 @@ model QualityDataRecord {
   createdByName   String                  @map("created_by_name")
   updatedById     String                  @map("updated_by_id")
   sourceQrCode    String?                 @map("source_qr_code")
+  sourceCompletionId String?              @unique @map("source_completion_id")
+  sourceCompletion ProcessCompletion?     @relation(fields: [sourceCompletionId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reportSnapshot  Json?                   @map("report_snapshot")
+  responsibilityStatus String             @default("NONE") @map("responsibility_status")
+  responsibility  Json?
   supersedesId    String?                 @map("supersedes_id")
   idempotencyKey  String                  @map("idempotency_key")
   requestHash     String                  @map("request_hash")
@@ -5672,7 +5683,33 @@ model QualityDataRecord {
   @@index([workOrderId, deletedAt, inspectedAt], map: "quality_data_order_idx")
   @@index([type, deletedAt, inspectedAt], map: "quality_data_type_idx")
   @@index([createdAt], map: "quality_data_created_idx")
+  @@index([responsibilityStatus, deletedAt, inspectedAt], map: "quality_data_responsibility_idx")
   @@map("quality_data_records")
+}
+
+model ProcessQualityEvidence {
+  route WorkOrderProcessRoute @relation(fields: [routeId], references: [id], onDelete: Restrict, map: "process_quality_evidence_route_fkey")
+  step WorkOrderProcessStep @relation(fields: [stepId], references: [id], onDelete: Restrict, map: "process_quality_evidence_step_fkey")
+  creator User @relation(fields: [createdById], references: [id], onDelete: Restrict, map: "process_quality_evidence_creator_fkey")
+  record QualityDataRecord? @relation(fields: [recordId], references: [id], onDelete: Restrict, map: "process_quality_evidence_record_fkey")
+  id             String   @id @default(uuid())
+  routeId        String   @map("route_id")
+  stepId         String   @map("step_id")
+  createdById    String   @map("created_by_id")
+  idempotencyKey String   @map("idempotency_key")
+  originalName   String   @map("original_name")
+  mimeType       String   @map("mime_type")
+  size           Int
+  sha256         String
+  objectKey      String   @unique @map("object_key")
+  recordId       String?  @map("record_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  @@unique([createdById, idempotencyKey])
+  @@index([routeId, stepId, createdById])
+  @@index([recordId, createdAt])
+  @@map("process_quality_evidence")
 }
 
 model QualityDataAttachment {

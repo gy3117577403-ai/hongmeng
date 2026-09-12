@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -226,7 +227,7 @@ test(
           await prisma.operationLog.deleteMany({
             where: { targetId: { in: completionIds } },
           });
-          await prisma.processCompletion.deleteMany({ where: { id: { in: completionIds } } });
+          await deleteTestCompletions({ where: { id: { in: completionIds } } });
         }
         await prisma.workOrderProcessRoute.deleteMany({ where: { workOrderId } });
         await prisma.workOrder.deleteMany({ where: { id: workOrderId } });

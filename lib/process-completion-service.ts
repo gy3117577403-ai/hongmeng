@@ -61,6 +61,9 @@ import { WipWarehouseError } from '@/lib/wip-warehouse';
 import { pendingProcessReportReservations } from '@/lib/process-report-reservations';
 import { loadReportingWipSources } from '@/lib/reporting-source-context';
 
+import { parseProcessQualityReport, ProcessQualityError, type ProcessQualityReport } from './process-quality-report';
+import { recordProcessQuality } from './process-quality-service';
+
 export class ProcessCompletionServiceError extends Error {
   readonly status: number;
   readonly code: string;
@@ -84,6 +87,7 @@ export type ProcessDefectDispositionInput = (typeof PROCESS_DEFECT_DISPOSITIONS)
 export type CompleteProcessStepCommand = {
   routeId: string;
   stepId: unknown;
+  qualityReport?: unknown;
   processedQty: unknown;
   defectQty: unknown;
   reportedUnitQty?: unknown;
@@ -128,9 +132,10 @@ export type ProcessCompletionResult = {
 };
 
 export type CompleteProcessStepsBatchCommand = Omit<CompleteProcessStepCommand,
-  'stepId' | 'processedQty' | 'defectQty' | 'reportedUnitQty' | 'reportedDefectUnitQty' | 'defectDisposition'> & {
+  'qualityReport' | 'stepId' | 'processedQty' | 'defectQty' | 'reportedUnitQty' | 'reportedDefectUnitQty' | 'defectDisposition'> & {
   items: Array<{
     stepId: unknown;
+    qualityReport?: unknown;
     processedQty: unknown;
     defectQty?: unknown;
     reportedUnitQty?: unknown;
@@ -340,6 +345,7 @@ export type ProcessCompletionContext = {
 };
 
 type ParsedCompletionCommand = {
+  qualityReport: ProcessQualityReport | null;
   routeId: string;
   stepId: string;
   processedQty: number;
@@ -1078,6 +1084,7 @@ export function parseProcessCompletionCommand(
     reportedDefectUnitQty,
     defectDisposition: disposition.input,
     databaseDefectDisposition: disposition.database,
+    qualityReport: (() => { try { return parseProcessQualityReport(command.qualityReport); } catch (e) { if (e instanceof ProcessQualityError) throw new ProcessCompletionServiceError(e.message, e.status, e.code); throw e; } })(),
     workDate: parsedWorkDate.value,
     workDateKey: parsedWorkDate.key,
     workStartedAt,
@@ -1323,6 +1330,7 @@ function assertIdempotentPayload(
   const matches = completion.routeId === input.routeId
     && completion.stepId === input.stepId
     && completion.processedQty === input.processedQty
+    && JSON.stringify(parseProcessQualityReport(completion.qualityReport)) === JSON.stringify(input.qualityReport)
     && completion.defectQty === input.defectQty
     && completion.reportedUnitQty === input.reportedUnitQty
     && completion.reportedDefectUnitQty === input.reportedDefectUnitQty
@@ -1349,6 +1357,7 @@ function assertIdempotentPayload(
 }
 
 function normalizeServiceError(error: unknown): ProcessCompletionServiceError {
+  if (error instanceof ProcessQualityError) return new ProcessCompletionServiceError(error.message, error.status, error.code);
   if (error instanceof ProductionControlError) return new ProcessCompletionServiceError(error.message, error.status, error.code);
   if (error instanceof WipWarehouseError) return new ProcessCompletionServiceError(error.message, error.status, error.code);
   if (isProductionSerializationConflict(error)) return new ProcessCompletionServiceError('生产状态或报工刚被更新，请刷新后重试', 409, 'PROCESS_ROUTE_VERSION_CONFLICT');
@@ -4105,6 +4114,7 @@ async function performProcessCompletion(
   const goodOutputBeforeCompletion = current.goodOutputQty;
   const completion = await tx.processCompletion.create({
     data: {
+      qualityReport: input.qualityReport ? JSON.parse(JSON.stringify(input.qualityReport)) : Prisma.DbNull,
       reportingWipAllocationId: input.wipAllocationId,
       workOrderId: route.workOrderId,
       routeId: route.id,
@@ -4162,6 +4172,7 @@ async function performProcessCompletion(
       } : {}),
     },
   });
+  await recordProcessQuality(tx, completion, current, input.qualityReport, input.actor);
   await creditWipCompletion(tx, {
     resolution: wipResolution,
     completionId: completion.id,
@@ -4544,6 +4555,7 @@ export async function completeProcessStepsBatch(
           reportedUnitQty: itemByStepId.get(step.id)!.reportedUnitQty,
           reportedDefectUnitQty: itemByStepId.get(step.id)!.reportedDefectUnitQty,
           defectDisposition: itemByStepId.get(step.id)!.defectDisposition,
+          qualityReport: itemByStepId.get(step.id)!.qualityReport,
           idempotencyKey: `${batchKey.slice(0, 88)}:${index + 1}:${step.id.slice(0, 8)}`,
           expectedRouteVersion: expectedRouteVersion + index,
         }),

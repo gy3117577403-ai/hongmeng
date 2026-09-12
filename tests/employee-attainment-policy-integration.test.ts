@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -120,7 +121,7 @@ test('sample to production updates dated facts atomically, preserves exceptions 
     await prisma.abnormalTimeEvent.deleteMany({ where: { id: { in: lossIds } } });
     await prisma.processLaborClaim.deleteMany({ where: { employeeId: employee.id } });
     await prisma.processLaborPool.deleteMany({ where: { workOrderId: order.id } });
-    await prisma.processCompletion.deleteMany({ where: { workOrderId: order.id } });
+    await deleteTestCompletions({ where: { workOrderId: order.id } });
     await prisma.workOrder.delete({ where: { id: order.id } });
     await prisma.attendanceRecord.deleteMany({ where: { employeeId: employee.id } });
     await prisma.employee.delete({ where: { id: employee.id } }); await prisma.user.delete({ where: { id: actor.id } });

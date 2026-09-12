@@ -1,3 +1,4 @@
+import { deleteTestCompletions } from './helpers/delete-test-completions';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
@@ -229,7 +230,7 @@ async function cleanup(prefix: string): Promise<void> {
     await prisma.processRouteActivity.deleteMany({ where: { routeId: { in: routeIds } } });
   }
   if (completionIds.length) {
-    await prisma.processCompletion.deleteMany({ where: { id: { in: completionIds } } });
+    await deleteTestCompletions({ where: { id: { in: completionIds } } });
   }
   if (planOrders.length) {
     await prisma.productionPlanOrder.deleteMany({ where: { id: { in: planOrders.map(item => item.id) } } });
