@@ -1,4 +1,7 @@
 ALTER TABLE "process_completions" ADD COLUMN "quality_report" JSONB;
+ALTER TABLE "quality_data_records" DROP CONSTRAINT "quality_data_records_type_check";
+ALTER TABLE "quality_data_records" ADD CONSTRAINT "quality_data_records_type_check"
+  CHECK ("type" IN ('CRIMP','PULL','FINAL','CONTINUITY','FIRST','PATROL'));
 ALTER TABLE "quality_data_records"
   ADD COLUMN "source_completion_id" TEXT,
   ADD COLUMN "report_snapshot" JSONB,
