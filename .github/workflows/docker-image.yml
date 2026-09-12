@@ -273,21 +273,12 @@ jobs:
             docker rm -f hongmeng-release-minio >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          minio_ready=0
-          for attempt in $(seq 1 30); do
-            if docker run --rm --network host minio/mc:latest \
-              alias set smoke http://127.0.0.1:19000 "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" >/dev/null 2>&1; then
-              minio_ready=1
-              break
-            fi
-            sleep 2
-          done
-          if [ "$minio_ready" != "1" ]; then
+          if ! SMOKE_STORAGE_ALLOW=disposable-ci-storage \
+            S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources \
+            node scripts/prepare-smoke-storage.mjs; then
             docker logs hongmeng-release-minio
             exit 1
           fi
-          docker run --rm --network host --entrypoint /bin/sh minio/mc:latest -c \
-            "mc alias set smoke http://127.0.0.1:19000 '$S3_ACCESS_KEY_ID' '$S3_SECRET_ACCESS_KEY' >/dev/null && mc mb -p smoke/workorder-resources"
           docker run -d --name hongmeng-release-smoke --network host \
             -e DATABASE_URL="$DATABASE_URL" \
             -e SESSION_SECRET="$SESSION_SECRET" \
@@ -639,21 +630,12 @@ jobs:
             exit 1
           fi
 
-          minio_ready=0
-          for attempt in $(seq 1 40); do
-            if docker run --rm --network "$network" minio/mc:latest \
-              alias set sample "http://${minio_name}:9000" "$S3_ACCESS_KEY_ID" "$S3_SECRET_ACCESS_KEY" >/dev/null 2>&1; then
-              minio_ready=1
-              break
-            fi
-            sleep 2
-          done
-          if [ "$minio_ready" != "1" ]; then
+          if ! SMOKE_STORAGE_ALLOW=disposable-ci-storage \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources \
+            node scripts/prepare-smoke-storage.mjs; then
             docker logs "$minio_name"
             exit 1
           fi
-          docker run --rm --network "$network" --entrypoint /bin/sh minio/mc:latest -c \
-            "mc alias set sample http://${minio_name}:9000 '$S3_ACCESS_KEY_ID' '$S3_SECRET_ACCESS_KEY' >/dev/null && mc mb -p sample/workorder-resources"
 
           docker run -d --name "$app_name" --network "$network" -p 127.0.0.1:3300:3000 \
             -e APP_BASE_URL=http://127.0.0.1:3300 \
