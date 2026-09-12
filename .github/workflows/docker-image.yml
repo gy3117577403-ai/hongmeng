@@ -30,6 +30,8 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hongmeng_ci?schema=public
       DAILY_PLAN_ENABLED: "true"
+      # Pin the official Quay image to avoid the observed Docker Hub pull denial.
+      CI_MINIO_IMAGE: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -265,7 +267,7 @@ jobs:
           docker run -d --name hongmeng-release-minio --network host \
             -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" \
             -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" \
-            minio/minio:latest server /data --address :19000 --console-address :19001
+            "$CI_MINIO_IMAGE" server /data --address :19000 --console-address :19001
           cleanup() {
             docker rm -f hongmeng-release-smoke >/dev/null 2>&1 || true
             docker rm -f hongmeng-release-minio >/dev/null 2>&1 || true
@@ -622,7 +624,7 @@ jobs:
             -p 127.0.0.1:29000:9000 \
             -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" \
             -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" \
-            minio/minio:latest server /data --address :9000 --console-address :9001 >/dev/null
+            "$CI_MINIO_IMAGE" server /data --address :9000 --console-address :9001 >/dev/null
 
           postgres_ready=0
           for attempt in $(seq 1 40); do
