@@ -3,6 +3,7 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createSopPdfBlob } from '@/components/sop/pdf';
 import { QUALITY_LABELS, CONTEXT_FIELDS, RESULT_LABELS, REVIEW_LABELS, beijingInput, type QualityRecord } from '@/lib/quality-data';
+import { qualityResponsibilityLabel } from '@/lib/process-quality-report';
 import { qualityRequest } from './client';
 function printTextParts(text: string) {
   const parts: string[] = []; let part = '', lines = 0;
@@ -21,9 +22,9 @@ export default function QualityDataPrint({ id, version }: { id: string; version?
     if(!record)return [];
     const r=record, o=r.orderSnapshot, attachmentVersion=version || (r.deletedAt ? String(r.version) : '');
     const result:ReactNode[]=[
-      <div key="order" className="qd-print-order"><h2>{r.title}</h2><p>{o.productName} / {o.specification || ''}</p><p>订单：{o.sourceOrderNo || '未关联'}　订单行：{o.sourceLineNo ?? '—'}　生产批次：{o.batchNo ?? '历史工单'}</p><p>工单：{o.businessCode || o.code}　客户：{o.customerName || '—'}</p><p>检验时间：{beijingInput(r.inspectedAt).replace('T',' ')}　填写人：{r.createdByName}</p><p>结论：{RESULT_LABELS[r.result]}　状态：{r.deletedAt?'已作废':r.status==='DRAFT'?'草稿':'已提交'}　{REVIEW_LABELS[r.reviewStatus]}</p>{r.deleteReason&&<p>作废原因：{r.deleteReason}</p>}</div>,
+      <div key="order" className="qd-print-order"><h2>{r.title}</h2><p>{o.productName} / {o.specification || ''}</p><p>订单：{o.sourceOrderNo || '未关联'}　订单行：{o.sourceLineNo ?? '—'}　生产批次：{o.batchNo ?? '历史工单'}</p><p>工单：{o.businessCode || o.code}　客户：{o.customerName || '—'}</p><p>检验时间：{beijingInput(r.inspectedAt).replace('T',' ')}　填写人：{r.createdByName}</p><p>结论：{r.sourceCompletionId && r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result]}　状态：{r.deletedAt?'已作废':r.status==='DRAFT'?'草稿':'已提交'}　{REVIEW_LABELS[r.reviewStatus]}</p>{r.deleteReason&&<p>作废原因：{r.deleteReason}</p>}</div>,
       ...CONTEXT_FIELDS.filter(([k])=>r.data.context[k]).map(([k,l])=><div key={k} className="qd-print-field"><b>{l}</b><span>{r.data.context[k]}</span></div>),
-      <h3 key="measure-heading">检查与测量明细</h3>,
+      ...(r.sourceCompletionId ? [<div key="report-source"><h3>工序报工检验</h3><p>第 {r.reportSnapshot?.position} 道 · {r.reportSnapshot?.processName}　计数单位：{r.reportSnapshot?.unit}</p><p>检验总数：{r.reportSnapshot?.quantity}　不良数量：{r.reportSnapshot?.defectQty}　良品数量：{r.reportSnapshot?.goodQty}</p><p>责任人：{qualityResponsibilityLabel(r.responsibility, Number(r.data.context.defectQty || 0))}</p><p>来源报工：{r.sourceCompletionId}</p></div>] : [<h3 key="measure-heading">检查与测量明细</h3>]),
       ...r.data.rows.map((row,i)=><div key={'row'+i} className="qd-print-measure"><header><b>{i+1}. {row.item}</b><strong>{RESULT_LABELS[row.result]}</strong></header><p>样本：{row.sample || '—'}　位置 / 线号：{row.position || '—'}</p><p>检验依据：{row.standard || '未填写'}{(row.lower||row.upper)&&'　标准范围：'+(row.lower||'不限')+' ～ '+(row.upper||'不限')+' '+row.unit}</p><p>实测 / 检查结果：<b>{row.value || '未填写'} {row.unit}</b></p>{row.note&&<p>备注：{row.note}</p>}</div>),
       ...printTextParts(r.data.summary).map((part,i)=><div key={'summary'+i}><h3>{i?'内容摘要（续）':'内容摘要 / 异常说明'}</h3><p className="qd-print-text">{part}</p></div>),
       <div key="review"><p>复核：{r.reviewedByName || '未复核'}　{r.reviewedAt?beijingInput(r.reviewedAt).replace('T',' '):''}</p><p>{r.reviewNote || ''}</p><p>系统提交：{r.submittedAt?beijingInput(r.submittedAt).replace('T',' '):'尚未提交'}　模板版本：{r.templateVersion}</p></div>,

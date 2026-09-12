@@ -100,7 +100,7 @@ export function qualityWhere(params: URLSearchParams): Prisma.QualityDataRecordW
     else where.inspectedAt = date;
   }
   if (params.get('source') === 'report') where.sourceCompletionId = { not: null };
-  if (params.get('source') === 'manual') where.sourceCompletionId = null;
+  if (params.get('source') === 'manual') { where.sourceCompletionId = null; where.supersedesId = null; }
   if (params.get('source') === 'retest') where.supersedesId = { not: null };
   if (params.get('inspectionScope') === 'first') where.supersedesId = null;
   if (params.get('responsibility') === 'PENDING') where.responsibilityStatus = 'PENDING';

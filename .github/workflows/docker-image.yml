@@ -52,6 +52,11 @@ jobs:
         run: npx prisma migrate deploy
       - name: Verify Prisma migration status
         run: npx prisma migrate status
+      - name: Process inspection reporting PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+          PROCESS_QUALITY_QA_ALLOW: disposable-quality-reporting-runtime
+        run: npx tsx --test --test-concurrency=1 tests/process-quality-integration.test.ts
       - name: Quality quick lifecycle PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -373,6 +378,15 @@ jobs:
             node scripts/smoke-production-board-browser.mjs
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk
+          mkdir -p artifacts/process-quality
+          docker exec -i -e PROCESS_QUALITY_QA_ALLOW=disposable-quality-reporting-runtime hongmeng-release-smoke node \
+            < scripts/seed-process-quality-smoke.cjs > artifacts/process-quality/fixture.json
+          PROCESS_QUALITY_QA_ALLOW=disposable-quality-reporting-runtime \
+            PROCESS_QUALITY_QA_FIXTURE=artifacts/process-quality/fixture.json \
+            PROCESS_QUALITY_QA_OUTPUT=artifacts/process-quality/release-http.json \
+            node scripts/smoke-process-quality.mjs
+          PROCESS_QUALITY_QA_FIXTURE=artifacts/process-quality/fixture.json \
+            node scripts/smoke-process-quality-browser.mjs
           mkdir -p artifacts/quality-workbench
           docker exec -i -e QUALITY_WORKBENCH_QA_ALLOW=disposable-quality-runtime hongmeng-release-smoke node \
             < scripts/seed-quality-workbench-smoke.cjs > artifacts/quality-workbench/release-fixture.json
@@ -565,12 +579,12 @@ jobs:
             echo "\`$CHINA_MIRROR_IMAGE\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Anonymous China mirror pull and clean sample runtime smoke
-        if: steps.china_mirror.outcome == 'success'
-        timeout-minutes: 20
+      - name: Anonymous Hangzhou image pull and independent clean runtime smoke
+        if: steps.push_release.outcome == 'success'
+        timeout-minutes: 30
         env:
-          CHINA_MIRROR_IMAGE: ghcr.dockerproxy.net/${{ github.repository }}:${{ github.ref_name }}
-          EXPECTED_IMAGE_DIGEST: ${{ steps.china_mirror.outputs.digest }}
+          CHINA_MIRROR_IMAGE: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:${{ github.ref_name }}
+          UPSTREAM_IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
           EXPECTED_APP_VERSION: ${{ github.ref_name }}
           SESSION_SECRET: ci-china-mirror-sample-session-secret-1234567890
           SEED_ADMIN_USERNAME: samplemirroradmin
@@ -594,7 +608,17 @@ jobs:
           trap cleanup EXIT
 
           export DOCKER_CONFIG="$anonymous_config"
-          docker pull "$CHINA_MIRROR_IMAGE"
+          EXPECTED_IMAGE_DIGEST="$(timeout 30s docker buildx imagetools inspect "$UPSTREAM_IMAGE" | awk '$1 == "Digest:" { print $2; exit }')"
+          [[ "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          # The authorized operator copies the verified immutable image to Hangzhou.
+          # Wait for that publication, then exercise an anonymous pull and a second database.
+          pulled=0
+          for attempt in $(seq 1 30); do
+            if timeout 180s docker pull "$CHINA_MIRROR_IMAGE"; then pulled=1; break; fi
+            echo "Waiting for Hangzhou publication ($attempt/30)"
+            sleep 20
+          done
+          test "$pulled" = "1"
           mirror_repository="${CHINA_MIRROR_IMAGE%:*}"
           mirror_digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$CHINA_MIRROR_IMAGE" | awk -F@ -v repository="$mirror_repository" '$1 == repository { print $2; exit }')"
           [[ "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -678,6 +702,14 @@ jobs:
           mkdir -p artifacts/quality-data-v1
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
             < scripts/seed-quality-data-smoke.cjs > artifacts/quality-data-v1/mirror-fixture.json
+          mkdir -p artifacts/process-quality
+          docker exec -i -e PROCESS_QUALITY_QA_ALLOW=disposable-quality-reporting-runtime "$app_name" node \
+            < scripts/seed-process-quality-smoke.cjs > artifacts/process-quality/hangzhou-fixture.json
+          PROCESS_QUALITY_QA_ALLOW=disposable-quality-reporting-runtime \
+            PROCESS_QUALITY_QA_BASE=http://127.0.0.1:3300 \
+            PROCESS_QUALITY_QA_FIXTURE=artifacts/process-quality/hangzhou-fixture.json \
+            PROCESS_QUALITY_QA_OUTPUT=artifacts/process-quality/hangzhou-http.json \
+            node scripts/smoke-process-quality.mjs
           QUALITY_DATA_QA_BASE=http://127.0.0.1:3300 \
             QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
             QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
@@ -782,3 +814,13 @@ jobs:
           name: quality-data-acceptance
           path: artifacts/quality-data-v1/*runtime.json
           if-no-files-found: ignore
+      - name: Upload process inspection acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-quality-${{ github.ref_name }}
+          path: |
+            artifacts/process-quality/*http.json
+            artifacts/process-quality/browser-runtime.txt
+            artifacts/process-quality/*.png
+          if-no-files-found: warn

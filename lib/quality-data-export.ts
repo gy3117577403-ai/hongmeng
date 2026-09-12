@@ -17,7 +17,7 @@ export async function qualityWorkbook(records: QualityRecord[], filter: string) 
   overview.addRow(headings);
   for (const r of records) {
     const o = r.orderSnapshot;
-    overview.addRow([r.code,QUALITY_LABELS[r.type],r.title,beijingInput(r.inspectedAt).replace('T',' '),r.submittedAt ? beijingInput(r.submittedAt).replace('T',' ') : '',o.sourceOrderNo,o.sourceLineNo,o.batchNo,o.businessCode || o.code,o.productName,o.specification,o.customerName,RESULT_LABELS[r.result],r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交',REVIEW_LABELS[r.reviewStatus],r.createdByName,r.version,r.deleteReason,r.data.summary,r.sourceCompletionId ? '工序报工' : r.supersedesId ? '复检' : '独立检验',r.reportSnapshot?.position,r.reportSnapshot?.unit,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0)),r.sourceCompletionId,...CONTEXT_FIELDS.map(([key]) => r.data.context[key])]);
+    overview.addRow([r.code,QUALITY_LABELS[r.type],r.title,beijingInput(r.inspectedAt).replace('T',' '),r.submittedAt ? beijingInput(r.submittedAt).replace('T',' ') : '',o.sourceOrderNo,o.sourceLineNo,o.batchNo,o.businessCode || o.code,o.productName,o.specification,o.customerName,r.sourceCompletionId && r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result],r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交',REVIEW_LABELS[r.reviewStatus],r.createdByName,r.version,r.deleteReason,r.data.summary,r.sourceCompletionId ? '工序报工' : r.supersedesId ? '复检' : '独立检验',r.reportSnapshot?.position,r.reportSnapshot?.unit,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0)),r.sourceCompletionId,...CONTEXT_FIELDS.map(([key]) => r.data.context[key])]);
   }
   for (const type of QUALITY_DATA_TYPES) {
     const sheet = book.addWorksheet(QUALITY_LABELS[type]);

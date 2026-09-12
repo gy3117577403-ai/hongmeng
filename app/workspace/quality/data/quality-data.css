@@ -77,3 +77,5 @@ main.qd-root.hm-workbench-root.hm-workbench-root{--hm-shell-header:0px;padding-t
 @supports not (backdrop-filter:blur(1px)){.qd-filter-bar,.qr-toolbar{background:#fff}.qd-editor{background:#fff}}
 .qr-parameter-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.qr-parameter-groups .qd-section-title{flex-wrap:wrap;align-items:flex-start}.qr-parameter-groups .qr-value-grid{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}.qd-upload-actions{display:flex;gap:8px;align-items:stretch}.qd-upload-actions>.qd-upload{flex:1}.qd-upload-actions>.qd-camera-button{display:flex;flex-direction:column;padding:12px;color:#a9591e;background:#fff6eb;border-color:#ecd7bd;font-size:12px;min-width:65px}
 @media(max-width:780px){.qr-parameter-groups{grid-template-columns:1fr;gap:0}}
+
+.qd-inspection-focus{margin:16px 0;padding:16px;border:1px solid #f4d9c2;border-radius:12px;background:#fffaf6}.qd-inspection-focus>b{display:block;margin-bottom:12px;color:#a55010;font-size:14px}
