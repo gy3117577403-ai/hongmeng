@@ -391,14 +391,14 @@ export default function FieldReportMobile({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !saving) setSheetOpen(false);
+      if (event.key === 'Escape' && !saving && !qualityUploading) setSheetOpen(false);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [saving, sheetOpen]);
+  }, [saving, qualityUploading, sheetOpen]);
 
   const routeSteps: ProcessCompletionContext['routeSteps'] = payload?.context?.routeSteps
     || payload?.ticket.route?.steps.map(step => ({
@@ -1124,7 +1124,7 @@ export default function FieldReportMobile({
 
     {sheetOpen && payload.context && form && <div className="field-report-sheet-backdrop" role="presentation">
       <section className="field-report-sheet" role="dialog" aria-modal="true" aria-labelledby="field-report-sheet-title">
-        <header><span><small>{reportMode === 'batch' ? '批量工序报工' : hasReportableQuantity && ticket.access.canReport ? payload.context.reportingPolicy === 'strict_sequence' ? '严格按流程报工' : '工序自由报工' : '报工记录与纠错'}</small><strong id="field-report-sheet-title">{reportMode === 'batch' ? `${batchItems.length} 道工序` : payload.context.step.processName}</strong><em>{reportMode === 'batch' ? '一次提交 · 分别记账' : `第 ${payload.context.step.position} 道`}</em></span><button type="button" disabled={saving} aria-label="关闭报工窗口" onClick={() => setSheetOpen(false)}><X size={22} /></button></header>
+        <header><span><small>{reportMode === 'batch' ? '批量工序报工' : hasReportableQuantity && ticket.access.canReport ? payload.context.reportingPolicy === 'strict_sequence' ? '严格按流程报工' : '工序自由报工' : '报工记录与纠错'}</small><strong id="field-report-sheet-title">{reportMode === 'batch' ? `${batchItems.length} 道工序` : payload.context.step.processName}</strong><em>{reportMode === 'batch' ? '一次提交 · 分别记账' : `第 ${payload.context.step.position} 道`}</em></span><button type="button" disabled={saving || qualityUploading} aria-label="关闭报工窗口" onClick={() => setSheetOpen(false)}><X size={22} /></button></header>
         <div className="field-report-sheet-scroll">
           {restoreDraft && <ProcessReportDraftNotice draft={restoreDraft} restore={() => { setForm(restoreDraft.value.form); setBatchItems(restoreDraft.value.batchItems); setReportMode(restoreDraft.value.reportMode); setIdempotencyKey(restoreDraft.idempotencyKey); setRestoreDraft(null); setFormError('已恢复本机内容，请核对实际日期、数量、人员和来源后提交。'); }} discard={() => { draftStore.clear(draftScope); setRestoreDraft(null); }} />}
           {awaitingUpload && <div className="process-report-recovery-notice" role="status"><div><strong>本机待上传，结果尚未确认</strong><p>这笔请求已冻结，继续操作会使用原数量和原编号。确认受理后才允许再建报工。</p></div><button type="button" disabled={draftStore.recovering} onClick={() => void draftStore.retryQueued()}>核对并续传</button></div>}

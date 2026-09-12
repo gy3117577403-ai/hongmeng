@@ -35,7 +35,7 @@ async function createFixture(db, counts = [36, 60]) {
     const today = new Date(new Date(Date.now() + 8 * 3600000).toISOString().slice(0,10) + 'T00:00:00Z');
     const monday = new Date(today); monday.setUTCDate(today.getUTCDate() - (today.getUTCDay() + 6) % 7);
     const sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate() + 6);
-    await db.productionPlanOrder.create({ data: { sourceOrderNo: `${marker}-${count}`, customerName: item.customerName, productName: item.productName, specification: item.specification,
+    await db.productionPlanOrder.create({ data: { sourceOrderNo: `${marker}-${count}`, sourceLineNo: 1, drawingLibraryItemId: item.id, customerName: item.customerName, productName: item.productName, specification: item.specification,
       orderQuantity: 200, orderDate: today, customerDueDate: sunday, batches: { create: { batchNo: 1, quantity: 200, weekStartDate: monday, weekEndDate: sunday, plannedCompletionDate: sunday, workOrderId: order.id, releaseState: 'active' } } } });
     orders.push({ id: order.id, routeId: order.processRoute.id, publicCode: order.qrTicket.publicCode, count, specification: order.specification,
       steps: order.processRoute.steps.map(step => ({ id: step.id, position: step.position, name: step.processName })) });
