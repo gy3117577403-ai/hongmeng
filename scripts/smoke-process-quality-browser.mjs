@@ -40,6 +40,7 @@ try {
     check(await sheet.locator('.pquality').count()===0,'ordinary process has no quality panel');await snap('phone-ordinary');
     await sheet.getByRole('button',{name:'关闭报工窗口',exact:true}).click();await page.locator('.process-current-card>button').click();await picker.getByRole('textbox',{name:'搜索工序'}).fill('导通');await picker.locator('.process-picker-row').filter({hasText:'导通（B端）'}).click();
     await sheet.getByRole('button',{name:'恢复并核对'}).click();check(await sheet.locator('.field-report-quantity-card input').first().inputValue()==='12','draft restored by exact step ID');
+    await sheet.locator('.pquality-more>summary').click();
     check(await sheet.getByRole('textbox',{name:'质量问题说明'}).inputValue()==='B端导通不良，已定位','quality draft retained with route step');
     const submit=sheet.locator('footer button').filter({hasText:'报工'}).last();await submit.click();await page.locator('.field-report-success').waitFor();await snap('phone-report-receipt');
     await page.locator('.field-report-success button').last().click();
@@ -53,7 +54,7 @@ try {
     await routePicker.getByRole('textbox',{name:'搜索工序'}).fill('检验');await routePicker.locator('.process-picker-row').first().click();await page.locator('.process-completion-dialog .pquality').waitFor();await snap('desktop-final-inspection');
     await page.setViewportSize({width:1024,height:768});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'short desktop has no horizontal page overflow');await snap('desktop-compact');
     await page.goto(base+'/workspace/quality/data');await page.setViewportSize({width:1366,height:1024});await page.getByRole('button',{name:'更多筛选'}).click();await page.getByRole('combobox',{name:'数据来源'}).selectOption('report');await snap('quality-ledger-report-source');
-    await page.getByRole('button',{name:'导通检验',exact:true}).click();await page.locator('.qd-record-card').first().click();await page.locator('.qd-report-source').waitFor();await snap('quality-report-detail');
+    await page.getByRole('button',{name:'导通检验',exact:true}).click();await page.locator('.qd-record-card').filter({hasText:'导通检验'}).first().click();await page.locator('.qd-report-source').waitFor();await snap('quality-report-detail');
     check(errors.length===0,'no browser runtime errors: '+errors.join(';'));return {passed:true,checks};
     } catch(error) {await snap('failure');throw Error(error.message+'; completed checks: '+checks.join(', '));}
   }`);

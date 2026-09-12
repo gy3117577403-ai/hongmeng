@@ -1204,7 +1204,6 @@ export default function FieldReportMobile({
           {reportMode === 'single' && ticket.access.canReport && hasReportableQuantity && !selectedSupplement && defectQty > 0 && <fieldset className="field-report-defect"><legend>整套不良品处理方式</legend>{([
             ['rework', '返工', '从当前工序重新处理'],
             ...(!ticket.workOrder.parentWorkOrderId ? [['scrap_replenish', '报废补产', '创建补产分支工单'] as const] : []),
-            ['quality_pending', '质量待判', '暂停并等待质量确认'],
           ] as const).map(option => <label className={form.defectDisposition === option[0] ? 'selected' : ''} key={option[0]}><input type="radio" name="field-defect" checked={form.defectDisposition === option[0]} disabled={saving || qualityUploading || awaitingUpload || Boolean(restoreDraft)} onChange={() => setForm({ ...form, defectDisposition: option[0] })} /><span><strong>{option[1]}</strong><small>{option[2]}</small></span></label>)}</fieldset>}
 
           {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-workers">
