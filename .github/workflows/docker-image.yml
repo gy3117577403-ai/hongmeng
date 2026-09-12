@@ -56,7 +56,11 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
           PROCESS_QUALITY_QA_ALLOW: disposable-quality-reporting-runtime
-        run: npx tsx --test --test-concurrency=1 tests/process-quality-integration.test.ts
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_process_quality_ci?schema=public
+        run: |
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_process_quality_ci'
+          npx prisma migrate deploy
+          npx tsx --test --test-concurrency=1 tests/process-quality-integration.test.ts
       - name: Quality quick lifecycle PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

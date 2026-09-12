@@ -2,6 +2,7 @@ name: Quality reporting candidate
 on:
   push:
     branches: ['codex/quality-report-v134166']
+    paths-ignore: ['.github/workflows/docker-image.yml', '.github/workflows/quality-report-validation.yml', 'docs/**']
   workflow_dispatch:
 permissions:
   contents: read
