@@ -13,7 +13,7 @@ test('inspection reporting is atomic, idempotent, step-specific, and withdrawn w
   const f = await createFixture(prisma, [36]), order = f.orders[0], actor = { id: f.users.admin.id, name: f.users.admin.name, canManage: true, canReview: true };
   const step = (position: number) => order.steps.find((s: { position: number }) => s.position === position);
   const command = (position: number, version: number, bad = 0) => ({ routeId: order.routeId, stepId: step(position).id, processedQty: 10, defectQty: bad,
-    defectDisposition: bad ? 'quality_pending' : undefined, workDate: f.workDate, employeeIds: [f.users.operator.employeeId], requireParticipants: true, autoAssignLabor: true,
+    defectDisposition: bad ? 'rework' : undefined, workDate: f.workDate, employeeIds: [f.users.operator.employeeId], requireParticipants: true, autoAssignLabor: true,
     allowAdvanceReporting: true, idempotencyKey: randomUUID(), expectedRouteVersion: version, userId: actor.id, actor: actor.name });
   const request = { ...command(16, 0, 3), qualityReport: { ...emptyProcessQualityReport(), responsibility: { status: 'ASSIGNED', allocations: [
     { employeeId: f.users.other.employeeId, quantity: 2 }, { employeeId: f.users.operator.employeeId, quantity: 1 },
@@ -36,7 +36,7 @@ test('inspection reporting is atomic, idempotent, step-specific, and withdrawn w
   assert.equal(await prisma.qualityDataRecord.count({ where: { sourceCompletionId: ordinary.completionId } }), 0);
   const badBatch = { ...command(8, ordinary.routeVersion), items: [
     { stepId: step(8).id, processedQty: 5, defectQty: 0, qualityReport: emptyProcessQualityReport() },
-    { stepId: step(24).id, processedQty: 5, defectQty: 2, defectDisposition: 'quality_pending', qualityReport: request.qualityReport },
+    { stepId: step(24).id, processedQty: 5, defectQty: 2, defectDisposition: 'rework', qualityReport: request.qualityReport },
   ] };
   await assert.rejects(() => completeProcessStepsBatch(badBatch), /合计/);
   assert.equal(await prisma.processCompletion.count({ where: { routeId: order.routeId, stepId: step(8).id } }), 0, 'invalid second batch item rolls back first');

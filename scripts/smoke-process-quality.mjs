@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
+import ExcelJS from 'exceljs';
 const base = process.env.PROCESS_QUALITY_QA_BASE || 'http://127.0.0.1:3000';
 assert.equal(process.env.PROCESS_QUALITY_QA_ALLOW, 'disposable-quality-reporting-runtime');
 assert.ok(['127.0.0.1','localhost'].includes(new URL(base).hostname));
@@ -25,7 +26,7 @@ const employees = (await call('operator', '/api/process-report-quality?employees
 assert.ok(employees.some(p => p.id === fixture.users.other.employeeId)); assert.ok(!('department' in employees[0]));
 const step = n => order.steps.find(s => s.position === n), endpoint = `/api/field-report/tickets/${order.publicCode}/completions`;
 let context = (await call('operator',`/api/field-report/tickets/${order.publicCode}?stepId=${step(16).id}`)).body.data.context;
-const command = { stepId: step(16).id, processedQty: 20, defectQty: 3, defectDisposition: 'quality_pending', workDate: fixture.workDate,
+const command = { stepId: step(16).id, processedQty: 20, defectQty: 3, defectDisposition: 'rework', workDate: fixture.workDate,
   employeeIds: [fixture.users.operator.employeeId], expectedUserId: fixture.users.operator.id, expectedRouteVersion: context.routeVersion, idempotencyKey: randomUUID() };
 const photo = await sharp({ create: { width: 48, height: 36, channels: 3, background: '#e87727' } }).png().toBuffer();
 const form = new FormData(); form.set('file',new Blob([photo],{type:'image/png'}),'现场验收.png'); form.set('routeId',order.routeId);form.set('stepId',step(16).id);form.set('idempotencyKey',randomUUID());
@@ -56,7 +57,7 @@ assert.equal(batch.completionCount,2);
 records=(await call('admin',`/api/quality-data/records?period=all&workOrderId=${order.id}&source=report`)).body.data;
 assert.equal(records.total,3);assert.equal(new Set(records.items.map(r=>r.reportSnapshot.stepId)).size,3);
 const exportResponse=await fetch(base+`/api/quality-data/export?period=all&workOrderId=${order.id}&format=xlsx`,{headers:{Cookie:cookies.admin}});
-assert.equal(exportResponse.status,200);assert.ok((await exportResponse.arrayBuffer()).byteLength>2000);checks.push({action:'source quantities and responsibility Excel download',status:200});
+assert.equal(exportResponse.status,200);const excelBytes=await exportResponse.arrayBuffer();assert.ok(excelBytes.byteLength>2000);const book=new ExcelJS.Workbook();await book.xlsx.load(excelBytes);assert.ok(book.getWorksheet('导通检验').rowCount>=3,'continuity tab includes reporting quantities');checks.push({action:'source quantities and responsibility Excel download',status:200});
 const output=process.env.PROCESS_QUALITY_QA_OUTPUT||'artifacts/process-quality/http.json';
 await fs.mkdir(output.slice(0,output.lastIndexOf('/')),{recursive:true});await fs.writeFile(output,JSON.stringify({passed:true,checks,recordId:record.id,completionId:result.completionId},null,2));
 console.log(`Quality reporting HTTP acceptance passed: ${checks.length} checks`);

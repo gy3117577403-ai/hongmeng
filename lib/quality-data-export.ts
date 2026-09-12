@@ -21,9 +21,14 @@ export async function qualityWorkbook(records: QualityRecord[], filter: string) 
   }
   for (const type of QUALITY_DATA_TYPES) {
     const sheet = book.addWorksheet(QUALITY_LABELS[type]);
-    sheet.addRow(['记录编号','工单号','订单号','生产批次','检验时间','样本编号','位置 / 线号','检验项目','标准 / 依据','下限','上限','实测 / 检查结果','单位','判定','备注']);
-    for (const r of records.filter(item => item.type === type)) for (const row of r.data.rows) {
+    sheet.addRow(['记录编号','工单号','订单号','生产批次','检验时间','样本编号','位置 / 线号','检验项目','标准 / 依据','下限','上限','实测 / 检查结果','单位','判定','备注','来源','检验总数','不良数量','责任人']);
+    for (const r of records.filter(item => item.type === type)) {
+      if (r.sourceCompletionId) {
+        sheet.addRow([r.code,r.orderSnapshot.businessCode || r.orderSnapshot.code,r.orderSnapshot.sourceOrderNo,r.orderSnapshot.batchNo,beijingInput(r.inspectedAt).replace('T',' '),'',`第 ${r.reportSnapshot?.position} 道`,r.reportSnapshot?.processName,'','','','',r.reportSnapshot?.unit,r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result],r.data.summary,'工序报工',r.reportSnapshot?.quantity,r.reportSnapshot?.defectQty,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0))]);
+      }
+      for (const row of r.data.rows) {
       sheet.addRow([r.code,r.orderSnapshot.businessCode || r.orderSnapshot.code,r.orderSnapshot.sourceOrderNo,r.orderSnapshot.batchNo,beijingInput(r.inspectedAt).replace('T',' '),row.sample,row.position,row.item,row.standard,row.lower,row.upper,row.value,row.unit,RESULT_LABELS[row.result],row.note]);
+      }
     }
   }
   const attachments = book.addWorksheet('附件清单');
