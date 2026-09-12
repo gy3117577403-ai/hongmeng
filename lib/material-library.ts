@@ -298,7 +298,12 @@ export function serializeMaterialPhoto(photo: MaterialPhotoRecord): MaterialLibr
     deletedAt: photo.deletedAt?.toISOString() || null,
     createdAt: photo.createdAt.toISOString(),
     updatedAt: photo.updatedAt.toISOString(),
-    contentUrl: `/api/material-library/photos/${photo.id}/content?v=${photo.updatedAt.getTime()}`,
+    contentUrl: `/api/material-library/photos/${photo.id}/content?v=${photo.sha256}`,
+    thumbnailUrl: `/api/material-library/photos/${photo.id}/content?kind=thumbnail&v=${photo.sha256}-${photo.mediaStatus}`,
+    previewUrl: `/api/material-library/photos/${photo.id}/content?kind=preview&v=${photo.sha256}-${photo.mediaStatus}`,
+    mediaStatus: photo.mediaStatus,
+    deletedByName: photo.deletedByName,
+    deletedReason: photo.deletedReason,
   };
 }
 

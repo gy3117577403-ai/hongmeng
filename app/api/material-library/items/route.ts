@@ -28,6 +28,9 @@ export async function GET(request: NextRequest) {
     const categoryId = String(search.get('categoryId') || '').trim();
     const warning = String(search.get('warning') || '').trim();
     const state = String(search.get('state') || 'active').trim();
+    const compact = search.get('compact') === '1';
+    const page = Math.max(1, Math.floor(Number(search.get('page')) || 1));
+    const pageSize = 40;
     const where: Prisma.MaterialLibraryItemWhereInput = {
       ...(state === 'deleted' ? { deletedAt: { not: null } } : state === 'all' ? {} : { deletedAt: null }),
       ...(categoryId ? { categoryId } : {}),
@@ -54,22 +57,31 @@ export async function GET(request: NextRequest) {
       } : {}),
     };
 
-    const [items, active, incomplete, warnings, recycled] = await Promise.all([
+    const listInclude = compact ? {
+      ...materialLibraryItemInclude,
+      photos: { ...materialLibraryItemInclude.photos, take: 1 },
+      captureSessions: { ...materialLibraryItemInclude.captureSessions, take: 0 },
+      _count: { select: { photos: { where: { deletedAt: null } } } },
+    } : { ...materialLibraryItemInclude, _count: { select: { photos: { where: { deletedAt: null } } } } };
+    const [items, active, incomplete, warnings, recycled, total] = await Promise.all([
       prisma.materialLibraryItem.findMany({
         where,
-        include: materialLibraryItemInclude,
+        include: listInclude,
         orderBy: [{ updatedAt: 'desc' }, { code: 'asc' }],
-        take: limitedNumber(search.get('limit')),
+        take: compact ? pageSize : limitedNumber(search.get('limit')),
+        ...(compact ? { skip: (page - 1) * pageSize } : {}),
       }),
       prisma.materialLibraryItem.count({ where: { deletedAt: null } }),
       prisma.materialLibraryItem.count({ where: { deletedAt: null, photos: { none: { deletedAt: null } } } }),
       prisma.materialLibraryItem.count({ where: { deletedAt: null, warningState: { not: MaterialLibraryWarningState.NONE } } }),
       prisma.materialLibraryItem.count({ where: { deletedAt: { not: null } } }),
+      prisma.materialLibraryItem.count({ where }),
     ]);
 
     return NextResponse.json({
       ok: true,
-      items: items.map(serializeMaterialItem),
+      items: items.map(item => ({ ...serializeMaterialItem(item), photoCount: item._count.photos })),
+      pagination: { page, pageSize: compact ? pageSize : limitedNumber(search.get('limit')), total },
       summary: { active, incomplete, warnings, recycled },
       permissions: {
         create: user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:CREATE'),

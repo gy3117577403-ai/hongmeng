@@ -105,7 +105,7 @@ test('version 3 UI includes both QR modes, immediate photo upload, preview and a
   assert.match(desktop, /capture-preview.*is-fullscreen/);
   assert.match(desktop, /退出全屏/);
   assert.doesNotMatch(desktop, /requestFullscreen/);
-  assert.match(desktop, /MaterialEvidenceViewer/);
+  assert.match(desktop, /MaterialPhotoManager/);
   assert.match(evidenceViewer, /ResizeObserver/);
   assert.match(evidenceViewer, /naturalWidth/);
   assert.match(evidenceViewer, /initialRotation: activePhoto\?\.rotation/);
@@ -115,10 +115,11 @@ test('version 3 UI includes both QR modes, immediate photo upload, preview and a
   assert.match(desktop, /供应商规格书/);
   assert.match(desktop, /MaterialCodePlate/);
   assert.match(desktop, /来料记录/);
-  assert.match(mobile, /capture="environment"/);
-  assert.match(mobile, /照片会立即上传/);
-  assert.match(mobile, /从相册选择/);
-  assert.match(mobile, /原图直接写入 S3 兼容对象存储/);
+  const uploadQueue = readFileSync(resolve(repositoryRoot, 'components/MaterialPhotoUploadQueue.tsx'), 'utf8');
+  assert.match(mobile, /MaterialPhotoUploadQueue/);
+  assert.match(uploadQueue, /capture="environment"/);
+  assert.match(uploadQueue, /type="file" multiple/);
+  assert.match(uploadQueue, /相册多选/);
   assert.match(mobile, /历史风险警示/);
   assert.match(mobile, /2_400/);
   assert.doesNotMatch(`${desktop}\n${mobile}`, /AI识别|AI 识别结果|自动识别型号/);

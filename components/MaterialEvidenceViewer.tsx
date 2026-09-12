@@ -12,6 +12,7 @@ import {
   Plus,
   RotateCcw,
   RotateCw,
+  Trash2,
 } from 'lucide-react';
 import Image from 'next/image';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -29,21 +30,28 @@ export default function MaterialEvidenceViewer({
   activePhotoId,
   onActivePhotoChange,
   onRotate,
+  onDelete,
 }: {
   photos: MaterialLibraryPhotoDTO[];
   activePhotoId: string;
   onActivePhotoChange: (id: string) => void;
   onRotate?: (photo: MaterialLibraryPhotoDTO, rotation: number) => void | Promise<void>;
+  onDelete?: (photo: MaterialLibraryPhotoDTO) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
   const activeIndex = useMemo(() => Math.max(0, photos.findIndex(photo => photo.id === activePhotoId)), [activePhotoId, photos]);
   const activePhoto = photos[activeIndex] || photos[0] || null;
+  const hasPhoto = Boolean(activePhoto);
   const [viewportSize, setViewportSize] = useState<Size>(EMPTY_SIZE);
   const [naturalSize, setNaturalSize] = useState<Size>(EMPTY_SIZE);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [original, setOriginal] = useState(false), [retry, setRetry] = useState(0);
+  const source = activePhoto ? (original ? activePhoto.contentUrl : activePhoto.previewUrl || activePhoto.contentUrl) : '';
+  const imageSource = source + (retry ? `&retry=${retry}` : '');
   const gestures = usePreviewGestures({
     stageRef,
     contentSize: naturalSize,
@@ -71,13 +79,25 @@ export default function MaterialEvidenceViewer({
       window.cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, []);
+  }, [hasPhoto, fullscreen]);
 
   useEffect(() => {
     setNaturalSize(EMPTY_SIZE);
     setLoading(Boolean(activePhoto?.id));
     setLoadError(false);
-  }, [activePhoto?.contentUrl, activePhoto?.id]);
+    const img = imageRef.current;
+    if (img?.complete && img.naturalWidth > 0) {
+      setNaturalSize({ width: img.naturalWidth, height: img.naturalHeight });
+      setLoading(false);
+    }
+  }, [imageSource, activePhoto?.id]);
+  useEffect(() => { setOriginal(false); setRetry(0); }, [activePhoto?.id]);
+  useEffect(() => {
+    const next = photos[activeIndex + 1];
+    if (!next?.previewUrl) return;
+    const prefetch = new window.Image(); prefetch.src = next.previewUrl;
+    return () => { prefetch.src = ''; };
+  }, [activeIndex, photos]);
 
   useEffect(() => {
     if (!fullscreen) return undefined;
@@ -124,7 +144,7 @@ export default function MaterialEvidenceViewer({
       else if (event.key === '-') gestures.zoomBy(1 / 1.15);
       else if (event.key.toLowerCase() === 'r') rotate(90);
       else if (event.key.toLowerCase() === 'f' || event.key === '0') gestures.setFitMode('fit-window');
-      else if (event.key === '1') gestures.setFitMode('actual-size');
+      else if (event.key === '1') { setOriginal(true); gestures.setFitMode('actual-size'); }
       else if (event.key === 'Escape' && fullscreen) setFullscreen(false);
     }}
   >
@@ -137,6 +157,7 @@ export default function MaterialEvidenceViewer({
       onPointerCancel={gestures.onPointerCancel}
       onDoubleClick={event => { if (!isControlTarget(event)) gestures.onDoubleClick(event); }}
     >
+      {loading && activePhoto.thumbnailUrl && <Image unoptimized className="material-evidence-loading-thumb" src={activePhoto.thumbnailUrl} width={384} height={384} alt="" />}
       <div
         className={`material-evidence-positioner${gestures.isGestureActive ? ' active' : ''}`}
         style={{
@@ -153,8 +174,9 @@ export default function MaterialEvidenceViewer({
           {/* The browser-decoded natural size is required for EXIF-aware fitting. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            key={activePhoto.contentUrl}
-            src={activePhoto.contentUrl}
+            ref={imageRef}
+            key={imageSource}
+            src={imageSource}
             alt={activePhoto.caption || activePhoto.originalName}
             draggable={false}
             decoding="async"
@@ -176,7 +198,8 @@ export default function MaterialEvidenceViewer({
       {(loading || loadError) && <div className={`material-evidence-status${loadError ? ' error' : ''}`} role="status" aria-live="polite">
         <span><ImageIcon size={25} /></span>
         <strong>{loadError ? '照片读取失败' : '正在适配照片'}</strong>
-        <small>{loadError ? '可以下载原图检查，或刷新页面后重试。' : '正在读取真实像素和手机拍摄方向…'}</small>
+        <small>{loadError ? '请重试当前照片，或打开原图查看。' : '正在加载清晰预览…'}</small>
+        {loadError && <button type="button" onClick={() => setRetry(value => value + 1)}>重试加载</button>}
       </div>}
 
       {gestures.zoomHint && <div className="material-evidence-hint" aria-live="polite">{gestures.zoomHint}</div>}
@@ -190,7 +213,7 @@ export default function MaterialEvidenceViewer({
         <span className="material-evidence-zoom" aria-live="polite">{zoomLabel}</span>
         <ThreeDIconButton label="放大" disabled={loading || loadError} onClick={() => gestures.zoomBy(1.15)}><Plus size={16} /></ThreeDIconButton>
         <ThreeDIconButton label="自适应" active={gestures.fitMode === 'fit-window'} disabled={loading || loadError} onClick={() => gestures.setFitMode('fit-window')}><Focus size={16} /></ThreeDIconButton>
-        <button className={`material-evidence-one${gestures.fitMode === 'actual-size' ? ' active' : ''}`} type="button" disabled={loading || loadError} onClick={() => gestures.setFitMode('actual-size')}>1:1</button>
+        <button className={`material-evidence-one${gestures.fitMode === 'actual-size' ? ' active' : ''}`} type="button" onClick={() => { setOriginal(true); gestures.setFitMode('actual-size'); }}>1:1 原图</button>
         <ThreeDIconButton label="向左旋转" disabled={loading || loadError} onClick={() => rotate(-90)}><RotateCcw size={16} /></ThreeDIconButton>
         <ThreeDIconButton label="向右旋转" disabled={loading || loadError} onClick={() => rotate(90)}><RotateCw size={16} /></ThreeDIconButton>
         <i />
@@ -198,6 +221,7 @@ export default function MaterialEvidenceViewer({
           {fullscreen ? <Minimize2 size={16} /> : <Expand size={16} />}
         </ThreeDIconButton>
         <a className="osui-3d-icon" href={activePhoto.contentUrl} download={activePhoto.originalName} aria-label="下载原图" title="下载原图"><Download size={16} /></a>
+        {onDelete && <ThreeDIconButton label="删除当前照片" onClick={() => onDelete(activePhoto)}><Trash2 size={16} /></ThreeDIconButton>}
       </div>
     </div>
     <div className="material-evidence-filmstrip" aria-label="来料照片胶片条">
@@ -207,7 +231,7 @@ export default function MaterialEvidenceViewer({
         key={photo.id}
         onClick={() => onActivePhotoChange(photo.id)}
       >
-        <Image unoptimized src={photo.contentUrl} width={photo.width || 220} height={photo.height || 160} alt={photo.caption || photo.originalName} style={{ transform: `rotate(${photo.rotation}deg)` }} />
+        <Image unoptimized src={photo.thumbnailUrl || photo.contentUrl} width={220} height={160} alt={photo.caption || photo.originalName} style={{ transform: `rotate(${photo.rotation}deg)` }} />
         <span><b>{index + 1}</b><small>{new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(photo.createdAt))}</small></span>
         {photo.isCover && <em>封面</em>}
       </button>)}

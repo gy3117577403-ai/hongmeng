@@ -170,6 +170,10 @@ server_pid=$!
       quality_notification_outbox \
       /api/internal/quality-risk-outbox; then
       maintenance_failed_step=quality_notification_outbox
+    elif ! run_maintenance_step \
+      material_photo_media \
+      /api/internal/material-photo-media; then
+      maintenance_failed_step=material_photo_media
     fi
 
     maintenance_cycle_duration_seconds=$(($(date +%s) - maintenance_cycle_started_at))

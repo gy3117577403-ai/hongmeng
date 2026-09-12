@@ -45,7 +45,10 @@ import {
 import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import MaterialEvidenceViewer from '@/components/MaterialEvidenceViewer';
+import MaterialPhotoManager from '@/components/MaterialPhotoManager';
+import MaterialPhotoUploadDialog from '@/components/MaterialPhotoUploadDialog';
+import MaterialPhotoUploadQueue from '@/components/MaterialPhotoUploadQueue';
+import '@/app/material-photo-controls.css';
 import {
   ComboboxField,
   FileUploadField,
@@ -147,14 +150,14 @@ async function jsonBody(response: Response): Promise<Record<string, any>> {
   return response.json().catch(() => ({})) as Promise<Record<string, any>>;
 }
 
-function MaterialImage({ photo, className = '', priority = false }: { photo: MaterialLibraryPhotoDTO; className?: string; priority?: boolean }) {
+function MaterialImage({ photo, className = '', priority = false, preview = false }: { photo: MaterialLibraryPhotoDTO; className?: string; priority?: boolean; preview?: boolean }) {
   return <Image
     unoptimized
     priority={priority}
     className={className}
     width={photo.width || 960}
     height={photo.height || 720}
-    src={photo.contentUrl}
+    src={(preview ? photo.previewUrl : photo.thumbnailUrl) || photo.contentUrl}
     alt={photo.caption || photo.originalName}
     style={{ transform: `rotate(${photo.rotation}deg)` }}
   />;
@@ -185,6 +188,7 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
   const [qrMode, setQrMode] = useState<MaterialLibraryUploadModeDTO>('TEMPORARY');
   const [qrMinutes, setQrMinutes] = useState(30);
   const [qrLink, setQrLink] = useState<MaterialLibraryUploadLinkDTO | null>(null);
+  const qrInitial = useRef<{ sessionId: string | null; lastScannedAt: string | null }>({ sessionId: null, lastScannedAt: null });
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [qrUrl, setQrUrl] = useState('');
   const [generatingQr, setGeneratingQr] = useState(false);
@@ -203,9 +207,14 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
   const [variantSpecificationFile, setVariantSpecificationFile] = useState<File | null>(null);
   const [savingVariant, setSavingVariant] = useState(false);
   const [capturePreviewFullscreen, setCapturePreviewFullscreen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [page, setPage] = useState(1), [total, setTotal] = useState(0);
+  const [itemDetail, setItemDetail] = useState<MaterialLibraryItemDTO | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState<MaterialLibraryItemDTO | null>(null);
+  const [queueBusy, setQueueBusy] = useState(false);
+  const detailRequest = useRef<AbortController | null>(null), listRequest = useRef<AbortController | null>(null);
 
-  const selectedItem = useMemo(() => items.find(item => item.id === selectedId) || items[0] || null, [items, selectedId]);
+  const selectedItem = useMemo(() => itemDetail?.id === selectedId ? itemDetail : items.find(item => item.id === selectedId) || null, [itemDetail, items, selectedId]);
   const activePhoto = useMemo(() => {
     if (!session) return null;
     return session.photos.find(photo => photo.id === activePhotoId) || session.photos[0] || null;
@@ -221,27 +230,56 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
   }, []);
 
   const loadItems = useCallback(async (quiet = false) => {
+    listRequest.current?.abort();
+    const controller = new AbortController(); listRequest.current = controller;
     if (!quiet) setLoading(true);
     setError('');
     try {
-      const query = new URLSearchParams({ state: stateFilter });
+      const query = new URLSearchParams({ state: stateFilter, compact: '1', page: String(page) });
       if (keyword) query.set('keyword', keyword);
       if (categoryId) query.set('categoryId', categoryId);
       if (warningFilter) query.set('warning', warningFilter);
-      const response = await fetch(`/api/material-library/items?${query}`, { cache: 'no-store' });
+      const response = await fetch(`/api/material-library/items?${query}`, { cache: 'no-store', signal: controller.signal });
       const body = await jsonBody(response);
+      if (controller.signal.aborted) return;
       if (!response.ok) throw new Error(body.error || '物料库加载失败');
       const nextItems = Array.isArray(body.items) ? body.items as MaterialLibraryItemDTO[] : [];
       setItems(nextItems);
+      setTotal(body.pagination?.total || 0);
+      if (!nextItems.length && page > 1) setPage(current => current - 1);
       setSummary(body.summary || emptySummary);
       setPermissions(body.permissions || emptyPermissions);
       setSelectedId(current => nextItems.some(item => item.id === current) ? current : nextItems[0]?.id || '');
     } catch (reason) {
+      if (controller.signal.aborted) return;
       setError(reason instanceof Error ? reason.message : '物料库加载失败');
     } finally {
-      if (!quiet) setLoading(false);
+      if (!controller.signal.aborted) setLoading(false);
     }
-  }, [categoryId, keyword, stateFilter, warningFilter]);
+  }, [categoryId, keyword, stateFilter, warningFilter, page]);
+
+  const loadDetail = useCallback(async (id: string, quiet = false) => {
+    detailRequest.current?.abort();
+    if (!id) { setItemDetail(null); return; }
+    const controller = new AbortController(); detailRequest.current = controller;
+    if (!quiet) setDetailLoading(true);
+    try {
+      const response = await fetch(`/api/material-library/items/${id}`, { cache: 'no-store', signal: controller.signal });
+      const body = await jsonBody(response);
+      if (controller.signal.aborted) return;
+      if (!response.ok) throw new Error(body.error || '物料详细资料加载失败');
+      setItemDetail(body.item);
+    } catch (reason) { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '物料详细资料加载失败'); }
+    finally { if (!controller.signal.aborted) setDetailLoading(false); }
+  }, []);
+  useEffect(() => { setPage(1); }, [categoryId, keyword, stateFilter, warningFilter]);
+  useEffect(() => { void loadDetail(selectedId); }, [loadDetail, selectedId, items]);
+  useEffect(() => {
+    if (!selectedId || session) return;
+    const timer = window.setInterval(() => { if (!document.hidden) void loadDetail(selectedId, true); }, 8000);
+    return () => window.clearInterval(timer);
+  }, [loadDetail, selectedId, session]);
+  useEffect(() => () => { detailRequest.current?.abort(); listRequest.current?.abort(); }, []);
 
   const loadSession = useCallback(async (id: string, quiet = false) => {
     try {
@@ -311,7 +349,7 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
       if (!response.ok) return;
       const next = body.link as MaterialLibraryUploadLinkDTO;
       setQrLink(next);
-      if (next.latestSession?.status === 'ACTIVE') {
+      if (next.latestSession?.status === 'ACTIVE' && (next.latestSession.id !== qrInitial.current.sessionId || next.lastScannedAt !== qrInitial.current.lastScannedAt)) {
         setQrOpen(false);
         setSessionDirty(false);
         setSession(next.latestSession);
@@ -337,6 +375,19 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
     setItemForm(formFromItem(selectedItem));
     setSpecificationFile(null);
     setFormOpen(true);
+  }
+
+  async function openCurrentCapture() {
+    if (!selectedItem) return;
+    try {
+      const response = await fetch(`/api/material-library/items/${selectedItem.id}/capture`);
+      const body = await jsonBody(response);
+      if (!response.ok) throw new Error(body.error || '本批来料记录读取失败');
+      if (body.session) {
+        setSessionDirty(false); await loadSession(body.session.id);
+        window.history.replaceState(null, '', `/workspace/material-library?sessionId=${encodeURIComponent(body.session.id)}`);
+      } else openQr();
+    } catch (reason) { setMessage(reason instanceof Error ? reason.message : '本批来料记录读取失败'); }
   }
 
   async function saveItem() {
@@ -521,6 +572,7 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
       const body = await jsonBody(response);
       if (!response.ok) throw new Error(body.error || '二维码生成失败');
       const link = body.link as MaterialLibraryUploadLinkDTO;
+      qrInitial.current = { sessionId: link.latestSession?.id || null, lastScannedAt: link.lastScannedAt };
       const absolute = `${window.location.origin}${link.capturePath}`;
       setQrLink(link);
       setQrUrl(absolute);
@@ -597,10 +649,10 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
   }
 
   async function completeSession() {
-    if (!session || !permissions.execute) return;
+    if (!session || !permissions.execute || queueBusy) return;
     const saved = await saveSessionDraft(false);
     if (!saved) return;
-    if (!window.confirm(`确认归档 ${saved.photos.length} 张照片和本次录入数据？归档后品质人员不可删除照片。`)) return;
+    if (!window.confirm(`确认归档 ${saved.photos.length} 张照片和本次录入数据？归档后可由有权限的人员在照片管理中更正。`)) return;
     setSavingSession(true);
     try {
       const response = await fetch(`/api/material-library/sessions/${saved.id}/complete`, {
@@ -620,32 +672,12 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
 
   async function closeSession() {
     if (!session) return;
+    if (queueBusy && !window.confirm('还有照片未上传完成，确定离开本次上传？')) return;
     if (session.status === 'ACTIVE' && !window.confirm('退出实时会话？手机仍可继续上传，稍后可从二维码状态重新进入。')) return;
     setSession(null);
     setSessionDirty(false);
     window.history.replaceState(null, '', '/workspace/material-library');
       await Promise.all([loadItems(true), loadCategories()]);
-  }
-
-  async function uploadDesktopPhoto(file: File) {
-    if (!session) return;
-    setPhotoBusy(true);
-    try {
-      const data = new FormData();
-      data.set('file', file);
-      data.set('captureSource', 'DESKTOP_UPLOAD');
-      const response = await fetch(`/api/material-library/sessions/${session.id}/photos`, { method: 'POST', body: data });
-      const body = await jsonBody(response);
-      if (!response.ok) throw new Error(body.error || '照片上传失败');
-      setSession(body.session as MaterialLibraryCaptureSessionDTO);
-      setActivePhotoId(body.session.photos.at(-1)?.id || '');
-      setMessage('照片已上传到对象存储');
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : '照片上传失败');
-    } finally {
-      setPhotoBusy(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
   }
 
   async function updatePhoto(photo: MaterialLibraryPhotoDTO, patch: Record<string, unknown>) {
@@ -733,14 +765,14 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
         </aside>
 
         <section className="material-capture-media">
-          <header><div><span>实时照片</span><strong>{session.photos.length} 张</strong></div><div><input ref={fileInputRef} type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (file) void uploadDesktopPhoto(file); }} />{session.status === 'ACTIVE' && <button type="button" onClick={() => fileInputRef.current?.click()}><Upload size={15} />电脑补传</button>}</div></header>
+          <header><div><span>实时照片</span><strong>{session.photos.length} 张</strong></div></header>{session.status === 'ACTIVE' && <MaterialPhotoUploadQueue key={session.id} sessionId={session.id} supplierVariantId={session.supplierVariantId} batchNumber={session.draftBatchNumber} disabled={sessionForm.supplierVariantId !== (session.supplierVariantId || '') || sessionForm.batchNumber !== (session.draftBatchNumber || '')} onBusyChange={setQueueBusy} onComplete={async () => { await loadSession(session.id, true); }} />}
           <div className="capture-photo-grid">
             {session.photos.slice(0, 4).map((photo, index) => <button type="button" className={activePhoto?.id === photo.id ? 'active' : ''} key={photo.id} onClick={() => setActivePhotoId(photo.id)}><MaterialImage photo={photo} priority={index === 0} /><span>{photo.isCover ? '封面' : `照片 ${index + 1}`}</span><small>{formatTime(photo.createdAt)}</small></button>)}
             {Array.from({ length: Math.max(0, 4 - session.photos.length) }, (_, index) => <div className="capture-photo-placeholder" key={`placeholder-${index}`}><Camera size={20} /><span>等待照片</span></div>)}
           </div>
           <div className={`capture-preview${capturePreviewFullscreen ? ' is-fullscreen' : ''}`}>
             {activePhoto ? <>
-              <MaterialImage photo={activePhoto} />
+              <MaterialImage photo={activePhoto} preview />
               <div className="capture-preview-toolbar">
                 <button type="button" disabled={photoBusy} title="顺时针旋转" onClick={() => void updatePhoto(activePhoto, { rotation: (activePhoto.rotation + 90) % 360 })}><RotateCw size={16} /></button>
                 <button type="button" title={capturePreviewFullscreen ? '退出全屏' : '全屏预览'} onClick={() => setCapturePreviewFullscreen(value => !value)}>{capturePreviewFullscreen ? <Minimize2 size={16} /> : <Expand size={16} />}</button>
@@ -758,9 +790,9 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
           <div className="capture-form-scroll">
             <label><span>物料分类</span><select disabled value={sessionForm.categoryId}>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
             <div className="capture-form-two"><label><span>物料编码</span><input value={sessionForm.code} disabled /></label><label><span>物料名称</span><input value={sessionForm.name} disabled /></label></div>
-            <label><span>供应商型号</span><select disabled={session.status !== 'ACTIVE' || session.item.supplierVariants.length < 2} value={sessionForm.supplierVariantId} onChange={event => selectSessionVariant(event.target.value)}><option value="">未关联固定型号</option>{session.item.supplierVariants.map(variant => <option key={variant.id} value={variant.id}>{variant.supplierName || '未登记供应商'} ｜ {variant.manufacturerModel || variant.supplierPartNumber || '未登记型号'}</option>)}</select></label>
+            <label><span>供应商型号</span><select disabled={queueBusy || session.status !== 'ACTIVE' || session.item.supplierVariants.length < 2} value={sessionForm.supplierVariantId} onChange={event => selectSessionVariant(event.target.value)}><option value="">未关联固定型号</option>{session.item.supplierVariants.map(variant => <option key={variant.id} value={variant.id}>{variant.supplierName || '未登记供应商'} ｜ {variant.manufacturerModel || variant.supplierPartNumber || '未登记型号'}</option>)}</select></label>
             <div className="capture-stable-snapshot"><ShieldAlert size={15} /><span><strong>固定资料由主档带入</strong><small>{sessionForm.supplierName || '未登记供应商'} · {sessionForm.manufacturerModel || sessionForm.supplierPartNumber || '未登记型号'} · {sessionForm.specification || '未登记规格'}</small></span></div>
-            <label><span>来料批次</span><input disabled={session.status !== 'ACTIVE'} value={sessionForm.batchNumber} onChange={event => updateSessionForm('batchNumber', event.target.value)} placeholder="选填，用于追溯本次来料" /></label>
+            <label><span>来料批次</span><input disabled={queueBusy || session.status !== 'ACTIVE'} value={sessionForm.batchNumber} onChange={event => updateSessionForm('batchNumber', event.target.value)} placeholder="选填，用于追溯本次来料" /></label>
             <fieldset><legend>质量状态</legend><div className="capture-warning-options">{(['NONE', 'ATTENTION', 'DEFECT'] as MaterialLibraryWarningStateDTO[]).map(value => <button className={`${value.toLowerCase()} ${sessionForm.warningState === value ? 'active' : ''}`} type="button" disabled={session.status !== 'ACTIVE'} key={value} onClick={() => updateSessionForm('warningState', value)}><i />{warningLabel(value)}</button>)}</div></fieldset>
             {sessionForm.warningState !== 'NONE' && <label className="warning-note"><span>警示说明 <b>必填</b></span><textarea disabled={session.status !== 'ACTIVE'} value={sessionForm.warningNote} onChange={event => updateSessionForm('warningNote', event.target.value)} placeholder="说明不良表现、差异和使用风险" /></label>}
             <label><span>检验备注</span><textarea disabled={session.status !== 'ACTIVE'} value={sessionForm.notes} onChange={event => updateSessionForm('notes', event.target.value)} placeholder="补充测量数据、包装状态或核对结论" /></label>
@@ -780,7 +812,7 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
             <button className={stateFilter === 'deleted' ? 'active' : ''} type="button" onClick={() => setStateFilter(current => current === 'deleted' ? 'active' : 'deleted')}><span><Trash2 size={16} />回收站</span><b>{summary.recycled}</b></button>
           </section>
           <section className="material-browser-list">
-            <header><span>{stateFilter === 'deleted' ? '回收站' : '最近查看'}</span><small>{items.length} 条</small></header>
+            <header><span>{stateFilter === 'deleted' ? '回收站' : '最近查看'}</span><small>{total} 条</small></header>
             <div className="material-list-scroll">
               {items.map((item, index) => <button type="button" className={`${selectedItem?.id === item.id ? 'active' : ''} warning-${item.warningState.toLowerCase()}`} key={item.id} onClick={() => setSelectedId(item.id)}>
                 <span className="material-card-photo">{item.coverPhoto ? <MaterialImage photo={item.coverPhoto} priority={index < 2} /> : <ImageIcon size={22} />}</span>
@@ -790,7 +822,7 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
               {!loading && !items.length && <div className="material-list-empty"><PackageOpen size={30} /><strong>{stateFilter === 'deleted' ? '回收站为空' : '当前条件下没有物料'}</strong><span>新建主档后即可生成二维码，用手机拍照留库。</span>{permissions.create && stateFilter !== 'deleted' && <ThreeDButton tone="orange" compact type="button" onClick={openCreate}><Plus size={15} />新建物料</ThreeDButton>}</div>}
               {loading && <div className="material-list-loading"><Loader2 className="spin" /><span>正在加载物料档案…</span></div>}
             </div>
-            <footer><ShieldAlert size={13} />同名物料须以照片、型号与批次共同核对</footer>
+            <div className="material-list-pages"><button type="button" aria-label="物料上一页" disabled={page <= 1 || loading} onClick={() => setPage(value => value - 1)}><ChevronLeft size={16} /></button><span>{page} / {Math.max(1, Math.ceil(total / 40))}</span><button type="button" aria-label="物料下一页" disabled={page * 40 >= total || loading} onClick={() => setPage(value => value + 1)}><ChevronRight size={16} /></button></div><footer><ShieldAlert size={13} />同名物料须以照片、型号与批次共同核对</footer>
           </section>
         </aside>
 
@@ -817,7 +849,7 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
             </nav>
             <div className={`material-detail-layout${contextOpen ? '' : ' context-closed'}`}>
               <div className="material-detail-main">
-                {detailTab === 'photos' && <MaterialEvidenceViewer photos={selectedItem.photos} activePhotoId={archivePhoto?.id || ''} onActivePhotoChange={setArchivePhotoId} onRotate={rotateArchivePhoto} />}
+                {detailTab === 'photos' && (detailLoading && itemDetail?.id !== selectedId ? <div className="material-evidence-empty"><Loader2 className="spin" /><strong>正在加载照片资料…</strong></div> : <MaterialPhotoManager key={selectedItem.id} itemId={selectedItem.id} photos={selectedItem.photos} activeId={archivePhoto?.id || ''} onActiveChange={setArchivePhotoId} onRotate={rotateArchivePhoto} onUpload={() => setUploadTarget(selectedItem)} onRefresh={async () => { await loadItems(true); await loadDetail(selectedItem.id, true); }} canDelete={permissions.delete} readOnly={Boolean(selectedItem.deletedAt)} />)}
                 {detailTab === 'standard' && <section className="material-tab-panel material-standard-panel">
                   <header><div><span><BookOpen size={17} /></span><div><strong>标准资料</strong><small>主档只保存稳定资料，来料差异进入批次记录</small></div></div>{permissions.update && <ThreeDButton compact onClick={openEdit}><Pencil size={14} />编辑主档</ThreeDButton>}</header>
                   <dl><div><dt>规格 / 关键尺寸</dt><dd>{selectedItem.specification || '—'}</dd></div><div><dt>材料 / 基材</dt><dd>{selectedItem.materialComposition || '—'}</dd></div><div><dt>厂家型号</dt><dd>{selectedItem.manufacturerModel || '—'}</dd></div><div><dt>供应商料号</dt><dd>{selectedItem.supplierPartNumber || '—'}</dd></div></dl>
@@ -837,7 +869,7 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
                 <section><h3>供应商规格书</h3>{selectedItem.primarySupplierVariant?.currentSpecificationFile ? <article className="material-context-document"><FileText size={18} /><span><strong>{selectedItem.primarySupplierVariant.currentSpecificationFile.originalName}</strong><small>Rev.{selectedItem.primarySupplierVariant.currentSpecificationFile.revision} · {Math.max(1, Math.round(selectedItem.primarySupplierVariant.currentSpecificationFile.size / 1024))} KB</small></span><a href={selectedItem.primarySupplierVariant.currentSpecificationFile.contentUrl} target="_blank" rel="noreferrer" aria-label="预览供应商规格书"><Eye size={15} /></a><a href={selectedItem.primarySupplierVariant.currentSpecificationFile.contentUrl} download aria-label="下载供应商规格书"><Download size={15} /></a></article> : <p className="material-context-missing">暂无规格书，可在编辑主档时上传</p>}</section>
                 <section><h3>本地来料</h3><dl><div><dt>最近批次</dt><dd>{selectedItem.batchNumber || '—'}</dd></div><div><dt>到货时间</dt><dd>{formatTime(selectedItem.lastCapturedAt, true)}</dd></div><div><dt>实拍证据</dt><dd>{selectedItem.photoCount} 张</dd></div></dl></section>
                 {selectedItem.warningState !== 'NONE' && <div className={`material-context-warning ${selectedItem.warningState.toLowerCase()}`}><AlertTriangle size={17} /><span><strong>{warningLabel(selectedItem.warningState)}</strong><small>{selectedItem.warningNote}</small></span></div>}
-                <footer>{stateFilter === 'active' ? <><ThreeDButton tone="orange" type="button" onClick={openQr}>进入本批检验记录<ChevronRight size={16} /></ThreeDButton>{permissions.delete && <HoldToDeleteButton onConfirm={() => void deleteItem()}>移入回收站</HoldToDeleteButton>}</> : <ThreeDButton tone="orange" type="button" onClick={() => void restoreItem()}><Undo2 size={15} />恢复物料档案</ThreeDButton>}</footer>
+                <footer>{stateFilter === 'active' ? <><ThreeDButton tone="orange" type="button" onClick={() => void openCurrentCapture()}>进入本批检验记录<ChevronRight size={16} /></ThreeDButton>{permissions.delete && <HoldToDeleteButton onConfirm={() => void deleteItem()}>移入回收站</HoldToDeleteButton>}</> : <ThreeDButton tone="orange" type="button" onClick={() => void restoreItem()}><Undo2 size={15} />恢复物料档案</ThreeDButton>}</footer>
               </aside>}
             </div>
           </> : <div className="material-preview-empty"><PackageOpen size={38} /><strong>选择一条物料档案</strong><span>右侧将显示来料照片、型号规格、供应商与不良品警示。</span></div>}
@@ -861,6 +893,7 @@ export default function MaterialLibraryWorkbench({ user, initialSessionId }: { u
       <footer><ThreeDButton type="button" onClick={() => setFormOpen(false)}>取消</ThreeDButton><ThreeDButton tone="orange" type="button" disabled={savingItem || !itemForm.categoryId || !itemForm.name.trim() || Boolean(specificationFile && !itemForm.supplierName.trim() && !itemForm.manufacturerModel.trim() && !itemForm.supplierPartNumber.trim())} onClick={() => void saveItem()}>{savingItem ? <Loader2 className="spin" size={16} /> : <Save size={16} />}{formMode === 'create' ? '建立档案' : '保存修改'}</ThreeDButton></footer>
     </section></div>}
 
+    {uploadTarget && <MaterialPhotoUploadDialog key={uploadTarget.id} item={uploadTarget} onClose={() => setUploadTarget(null)} onRefresh={async () => { await loadItems(true); await loadDetail(uploadTarget.id, true); }} />}
     {variantOpen && selectedItem && <div className="material-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setVariantOpen(false); }}><section className="material-modal material-variant-modal" role="dialog" aria-modal="true" aria-label="新增供应商型号">
       <header><div><span><Boxes size={18} /></span><div><strong>新增供应商型号</strong><small>{selectedItem.code} · {selectedItem.name}</small></div></div><ThreeDIconButton label="关闭" onClick={() => setVariantOpen(false)}><X size={18} /></ThreeDIconButton></header>
       <div className="material-modal-form">

@@ -34,6 +34,13 @@ export type MaterialLibraryPhotoDTO = {
   createdAt: string;
   updatedAt: string;
   contentUrl: string;
+  thumbnailUrl?: string;
+  previewUrl?: string;
+  mediaStatus?: string;
+  deletedByName?: string | null;
+  deletedReason?: string | null;
+  sessionNo?: string;
+  batchNumber?: string | null;
 };
 
 export type MaterialLibrarySpecificationDocumentDTO = {

@@ -6553,9 +6553,25 @@ model MaterialLibraryPhoto {
   session        MaterialLibraryCaptureSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
   materialItem   MaterialLibraryItem           @relation(fields: [materialItemId], references: [id], onDelete: Restrict)
 
+  deletedByName    String?   @map("deleted_by_name")
+  deletedReason    String?   @map("deleted_reason")
+  clientMutationId String?   @map("client_mutation_id")
+  thumbnailKey     String?   @map("thumbnail_key")
+  thumbnailSize    Int?      @map("thumbnail_size")
+  previewKey       String?   @map("preview_key")
+  previewSize      Int?      @map("preview_size")
+  mediaStatus      String    @default("PENDING") @map("media_status")
+  mediaAttempts    Int       @default(0) @map("media_attempts")
+  mediaNextAt      DateTime  @default(now()) @map("media_next_at")
+  mediaLease       String?   @map("media_lease")
+  mediaLeaseUntil  DateTime? @map("media_lease_until")
+  mediaError       String?   @map("media_error")
+
   @@index([sessionId, deletedAt, sortOrder, createdAt])
   @@index([materialItemId, deletedAt, isCover, createdAt])
   @@index([sha256, materialItemId])
+  @@unique([sessionId, clientMutationId])
+  @@index([mediaStatus, mediaNextAt])
   @@map("material_library_photos")
 }
 
