@@ -15,3 +15,5 @@
 .material-photo-manager .material-evidence-one{width:60px;min-width:60px;height:38px;white-space:nowrap;font-size:11px;flex-shrink:0}.material-photo-manager .material-evidence-dock .osui-3d-icon{width:36px;height:36px;min-height:36px;flex:0 0 36px}.material-list-pages{flex-shrink:0}
 
 .material-upload-grid{max-height:360px;overflow:auto;overscroll-behavior:contain}.material-mobile-photo-more{display:block;width:calc(100% - 28px);margin:0 14px 16px;min-height:42px;border:1px solid #e1e7ef;background:#fff;border-radius:10px;color:#687b91;font:inherit;font-size:13px}
+
+.material-photo-manager .material-evidence-stage{overflow:clip}
