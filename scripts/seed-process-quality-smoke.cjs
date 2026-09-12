@@ -43,7 +43,7 @@ async function createFixture(db, counts = [36, 60]) {
   return { marker, password, users, orders, workDate: new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10) };
 }
 module.exports = { createFixture };
-if (require.main === module) {
+if (require.main === module || module.id === '[stdin]') {
   const db = new PrismaClient();
   createFixture(db).then(data => console.log(JSON.stringify(data))).catch(e => { console.error(e.message); process.exitCode = 1; }).finally(() => db.$disconnect());
 }

@@ -21,6 +21,7 @@ try {
     const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label)}, snap=async name=>page.screenshot({path:dir+'/'+name+'.png'});
     const login=async actor=>{const r=await page.request.post(base+'/api/auth/login',{headers:{Origin:base},data:{username:f.users[actor].username,password:f.password}});check(r.status()===200,'login '+actor)};
     const order=f.orders[1]||f.orders[0];
+    try {
     await login('operator');await page.setViewportSize({width:390,height:844});await page.goto(base+'/field-report/'+order.publicCode);
     await page.locator('.process-current-card').waitFor();check(await page.locator('.field-report-step-list').count()===0,'60 processes do not occupy a long page');await snap('phone-current');
     await page.locator('.process-current-card>button').click();const picker=page.locator('.process-picker.mobile');await picker.waitFor();
@@ -30,7 +31,7 @@ try {
     check(await sheet.locator('.pquality').count()===1,'continuity quality fields only on selected inspection');
     check(await sheet.getByText('不良责任人',{exact:true}).count()===0,'zero defects have no responsibility field');
     const qty=sheet.locator('.field-report-quantity-card input');await qty.nth(0).fill('12');await qty.nth(1).fill('2');
-    await sheet.getByRole('button',{name:'选择责任人',exact:true}).click();await sheet.getByRole('textbox',{name:'搜索责任人'}).fill(f.users.other.name);
+    await sheet.getByRole('button',{name:'选择责任人',exact:true}).click();await sheet.getByRole('textbox',{name:'搜索责任人'}).fill(f.users.other.username);
     await sheet.locator('.pquality-people button').filter({hasText:f.users.other.name}).click();await sheet.getByRole('button',{name:'完成选择',exact:true}).click();
     await sheet.locator('.pquality-more>summary').click();await sheet.getByRole('textbox',{name:'质量问题说明'}).fill('B端导通不良，已定位');await snap('phone-continuity-responsibility');
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'phone no horizontal overflow');
@@ -54,6 +55,7 @@ try {
     await page.goto(base+'/workspace/quality/data');await page.setViewportSize({width:1366,height:1024});await page.getByRole('button',{name:'更多筛选'}).click();await page.getByRole('combobox',{name:'数据来源'}).selectOption('report');await snap('quality-ledger-report-source');
     await page.getByRole('button',{name:'导通检验',exact:true}).click();await page.locator('.qd-record-card').first().click();await page.locator('.qd-report-source').waitFor();await snap('quality-report-detail');
     check(errors.length===0,'no browser runtime errors: '+errors.join(';'));return {passed:true,checks};
+    } catch(error) {await snap('failure');throw Error(error.message+'; completed checks: '+checks.join(', '));}
   }`);
   const result=cli(['run-code','--filename',codeFile]);if(!/"passed"\s*:\s*true/.test(result))throw Error(result);console.log('Quality reporting browser acceptance passed');
 } finally { try { cli(['close']); } catch {} if (codeFile.startsWith(dir+'/')) rmSync(codeFile,{force:true}); }

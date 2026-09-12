@@ -4172,7 +4172,9 @@ async function performProcessCompletion(
       } : {}),
     },
   });
-  await recordProcessQuality(tx, completion, current, input.qualityReport, input.actor);
+  // Submission recovery also calls this transaction directly; keep validation errors definite.
+  try { await recordProcessQuality(tx, completion, current, input.qualityReport, input.actor); }
+  catch (error) { throw normalizeServiceError(error); }
   await creditWipCompletion(tx, {
     resolution: wipResolution,
     completionId: completion.id,

@@ -4018,7 +4018,7 @@ export async function completeProcessSupplementObligation(
   return serializable(tx => completeProcessSupplementObligationInTransaction(tx, command, backfill));
 }
 
-import { parseProcessQualityReport } from './process-quality-report';
+import { parseProcessQualityReport, ProcessQualityError } from './process-quality-report';
 import { recordProcessQuality } from './process-quality-service';
 
 export async function completeProcessSupplementObligationInTransaction(
@@ -4028,7 +4028,8 @@ export async function completeProcessSupplementObligationInTransaction(
   options?: { historicalWip?: HistoricalWipReportingAuthorization; recoverySources?: import('@/lib/wip-reporting').WipRecoverySources },
 ) {
   const identity = mutationIdentity(command);
-  const qualityReport = parseProcessQualityReport(command.qualityReport);
+  const qualityReport = (() => { try { return parseProcessQualityReport(command.qualityReport); }
+    catch (error) { if (error instanceof ProcessQualityError) throw new ProcessRouteChangeServiceError(error.message, error.status, error.code); throw error; } })();
   const obligationId = clean(command.obligationId, 80);
   const routeId = clean(command.routeId, 80);
   const publicCode = clean(command.publicCode, 120);
@@ -4400,7 +4401,8 @@ export async function completeProcessSupplementObligationInTransaction(
         },
       },
     });
-    await recordProcessQuality(tx, completion, obligation.displayStep, qualityReport, identity.actor);
+    try { await recordProcessQuality(tx, completion, obligation.displayStep, qualityReport, identity.actor); }
+    catch (error) { if (error instanceof ProcessQualityError) throw new ProcessRouteChangeServiceError(error.message, error.status, error.code); throw error; }
     if (reportQuantityBasis === 'action') {
       try {
         await materializeProcessActionConsumptions(tx, obligation.displayStepId);

@@ -4636,7 +4636,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       </header>
 
       <div className={activeSteps.length > 10 ? "process-completion-long-shell" : "process-completion-simple-shell"}>
-      {activeSteps.length > 10 && <aside className="process-completion-route-sidebar"><ProcessStepPicker desktop steps={activeSteps.map(step => ({ ...step, ...(context?.routeSteps.find(row => row.id === step.id) || {}), reportableQty: context?.routeSteps.find(row => row.id === step.id)?.reportableQty ?? Math.max(0, (dispatchTargetQuantity(order)) - (step.processedQty || 0)) }))} currentId={selectedStepId} disabled={saving || qualityUploading || loading || locked} onSelect={selectStep} /></aside>}
+      {activeSteps.length > 10 && <aside className="process-completion-route-sidebar"><ProcessStepPicker desktop strictSequence={context?.reportingPolicy === 'strict_sequence'} steps={activeSteps.map(step => ({ ...step, ...(context?.routeSteps.find(row => row.id === step.id) || {}), reportableQty: context?.routeSteps.find(row => row.id === step.id)?.reportableQty ?? Math.max(0, (dispatchTargetQuantity(order)) - (step.processedQty || 0)) }))} currentId={selectedStepId} disabled={saving || qualityUploading || loading || locked} onSelect={selectStep} /></aside>}
       <div className="process-completion-scroll">
       {recoveryNotice}
       {order.wipContinuation && <section className="process-report-recovery-notice"><div><strong>报工来源：半成品 {order.wipContinuation.lotNo}</strong><p>计划周 {order.wipContinuation.targetWeekStartDate} 至 {order.wipContinuation.targetWeekEndDate} · 本次实际生产日期 {value?.workDate || '正在读取'}{pendingSource ? '。本次日期不在原计划周，将提交待确认续作申报，数量与工时暂不计入正式报工。' : '。按所选批次剩余数量核销。'}</p></div></section>}
