@@ -36,7 +36,11 @@ try {
     await page.getByRole('button',{name:'建立异常工单',exact:true}).click();
     const form=page.locator('.qd-intake'); await form.waitFor();
     await form.getByRole('textbox',{name:/^发现了什么问题/}).fill('首件记录与参考参数不一致，核对实测与指导书。');
+    check(await form.locator('.qd-product-picker .qd-picker-results label').count()===60,'large product picker shows a bounded first 60 rows');
+    check(await form.locator('.qd-product-picker .qd-picker-results label').filter({hasText:f.product.specification}).count()===0,'target product is beyond the initial 60 rows');
+    await form.getByRole('textbox',{name:'搜索关联产品',exact:true}).fill(f.product.specification);
     await form.locator('.qd-product-picker .qd-picker-results label').filter({hasText:f.product.specification}).locator('input').check();
+    check(await form.locator('.qd-product-tags').textContent().then(value=>value.includes(f.product.specification)),'search selects a product beyond the initial 60 rows');
     await form.getByRole('button',{name:'添加责任人',exact:true}).click();
     for(const kind of ['lead','worker']){await form.getByLabel('搜索责任人',{exact:true}).fill(f.users[kind].username);await form.locator('.qd-people > .qd-picker .qd-picker-results label').filter({hasText:f.users[kind].name}).locator('input').check();}
     await form.getByRole('button',{name:'完成选择',exact:true}).click();

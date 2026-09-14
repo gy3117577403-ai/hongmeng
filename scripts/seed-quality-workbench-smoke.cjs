@@ -13,6 +13,12 @@ async function main() {
     const user = await db.user.create({ data: { username: marker + '-' + kind, displayName: name, employeeId: kind === 'admin' ? null : employee.id, passwordHash: await bcrypt.hash(password, 10), laborRole: kind === 'admin' ? 'ADMIN' : 'EMPLOYEE', mustChangePassword: false, isActive: true, accountStatus: 'ACTIVE', accessGrants: { create: { profile, scopeKey: departmentId || 'GLOBAL', departmentId } } } });
     users[kind] = { id: user.id, username: user.username, name };
   }
+  // Keep the target beyond the initially displayed 60 rows in every runtime.
+  // Browser acceptance must use the same product search a real operator uses.
+  await db.drawingLibraryItem.createMany({ data: Array.from({ length: 65 }, (_, index) => ({
+    customerName: '000-' + marker, productName: '检索范围验收',
+    specification: marker + '-SEARCH-' + String(index).padStart(3, '0'), libraryKey: marker + '-search-' + index,
+  })) });
   const product = await db.drawingLibraryItem.create({ data: { customerName: '隔离验收客户', productName: '连接线束', specification: marker + '-HL2609', libraryKey: marker } });
   const order = await db.workOrder.create({ data: { code: marker + '-WO', productName: product.productName, specification: product.specification, customerName: product.customerName, drawingLibraryItemId: product.id, stage: 'frontend', qrTicket: { create: { publicCode: randomUUID().replaceAll('-', '') } } }, include: { qrTicket: true } });
   const operator = await db.employee.create({ data: { employeeNo: marker + '-operator', name: '现场作业验收', department: '生产部', team: '装配' } });

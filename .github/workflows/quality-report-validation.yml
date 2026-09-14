@@ -1,7 +1,7 @@
 name: Quality direct review candidate
 on:
   push:
-    branches: ['codex/quality-direct-review-v134168']
+    branches: ['codex/quality-direct-review-v134169']
   workflow_dispatch:
 permissions:
   contents: read
