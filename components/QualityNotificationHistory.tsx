@@ -9,7 +9,7 @@ export default function QualityNotificationHistory({ report, canRetry, busy, onR
 }) {
   const [checkingId, setCheckingId] = useState('');
   const rows = report.notifications || [];
-  const states: Record<string, string> = { PENDING: '待发送／合并中', SENDING: '发送中', WAITING_CONFIG: '等待配置',
+  const states: Record<string, string> = { PENDING: '待发送', SENDING: '发送中', WAITING_CONFIG: '等待配置',
     FAILED: '发送失败', SENT: '企微接口已接收', SKIPPED: '过期提醒已取消', UNCERTAIN: '回执未确认' };
   return <details className="qv3-card qv3-notification-log"><summary>通知与处理记录 <span>· {rows.length} 条</span></summary>
     <p>接口接收不代表群内已 @ 或员工已接单。人员处理状态以任务为准。</p>
@@ -19,9 +19,9 @@ export default function QualityNotificationHistory({ report, canRetry, busy, onR
       const task = report.tasks.find(task => task.id === item.taskId);
       return <article className="qv3-notification" key={item.id}>
         <div><strong>{item.title}</strong><span className={'qv4-phase phase-' + (item.state === 'SENT' ? 'ARCHIVED' : 'ACCEPT')}>{states[item.state] || item.state}</span></div>
-        {snapshot ? <p>接收人：{snapshot.employeeName} · {snapshot.employeeNo}<br />账号：{snapshot.accountName} · {snapshot.method === 'USER_ID' ? '企业微信成员' : '手机号'} {snapshot.maskedTarget}</p> : <small>历史消息尚无发送身份快照；重新投递时会记录当前接收人。</small>}
+        {snapshot ? <p>接收人：{snapshot.employeeName} · {snapshot.employeeNo}<br />账号：{snapshot.accountName} · {snapshot.method === 'USER_ID' ? '企业微信成员' : '手机号'} {snapshot.maskedTarget}</p> : <small>{!item.lastAttemptAt && ['PENDING', 'WAITING_CONFIG', 'SKIPPED'].includes(item.state) ? '尚未发送；发送时会记录接收账号与员工。' : '此消息未保留发送身份记录，无法核实当时的提醒目标。'}</small>}
         {item.lastAttemptAt && <small>最近发送：{new Date(item.lastAttemptAt).toLocaleString('zh-CN')}{item.deliveryCount && item.deliveryCount > 1 ? ` · 同人 ${item.deliveryCount} 项合并提醒` : ''}</small>}
-        {task && <small>业务任务：{({ TODO: '待接单', IN_PROGRESS: '处理中', COMPLETED: '已提交', CANCELLED: '已取消' } as Record<string, string>)[task.status] || task.status}</small>}
+        {task && <small>业务任务：{({ TODO: '待接单', IN_PROGRESS: '处理中', COMPLETED: '已提交', VERIFIED: '品质已确认', CANCELLED: '已取消' } as Record<string, string>)[task.status] || task.status}</small>}
         {item.lastError && <small>{item.lastError}</small>}
         {item.deliveryContent && <details><summary>查看发送内容</summary><pre>{item.deliveryContent}</pre></details>}
         {!report.deletedAt && canRetry && ['FAILED', 'WAITING_CONFIG', 'UNCERTAIN'].includes(item.state) && (
