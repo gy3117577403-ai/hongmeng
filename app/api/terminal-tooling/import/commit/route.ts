@@ -9,7 +9,7 @@ import {
   type TerminalToolingImportEntity,
   type TerminalToolingImportRow,
 } from '@/lib/terminal-tooling';
-import { replaceBladeSuppliers, replaceTerminalSuppliers } from '@/lib/terminal-tooling-service';
+import { replaceBladeSuppliers, replaceBladePositionSpecs, replaceTerminalSuppliers } from '@/lib/terminal-tooling-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -70,6 +70,8 @@ export async function POST(req: NextRequest) {
                 manufacturer: input.manufacturer,
                 normalizedKey: input.normalizedKey,
                 compatiblePositions: input.compatiblePositions,
+                isDraft: input.isDraft,
+                isActive: input.isActive,
                 specification: input.specification,
                 dimensionA: input.dimensionA,
                 dimensionB: input.dimensionB,
@@ -83,6 +85,7 @@ export async function POST(req: NextRequest) {
               select: { id: true },
             });
             await replaceBladeSuppliers(tx, item.id, input.supplierLinks);
+            await replaceBladePositionSpecs(tx, item.id, input.positionSpecs);
           });
         }
         created += 1;

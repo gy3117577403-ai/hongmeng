@@ -178,7 +178,7 @@ jobs:
       - name: Terminal tooling PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/terminal-tooling-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/terminal-tooling-integration.test.ts tests/terminal-tooling-four-specs-integration.test.ts
       - name: Sample team PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -402,6 +402,19 @@ jobs:
           QUALITY_WORKBENCH_QA_BASE=http://127.0.0.1:3000 \
             QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/release-fixture.json \
             node scripts/smoke-quality-workbench-browser.mjs
+          mkdir -p artifacts/terminal-tooling
+          docker exec -i -e TOOLING_QA_ALLOW=disposable-tooling-runtime hongmeng-release-smoke node \
+            < scripts/seed-terminal-tooling-smoke.cjs > artifacts/terminal-tooling/release-fixture.json
+          TOOLING_QA_ALLOW=disposable-tooling-runtime \
+            TOOLING_QA_BASE=http://127.0.0.1:3000 \
+            TOOLING_QA_FIXTURE=artifacts/terminal-tooling/release-fixture.json \
+            TOOLING_QA_OUTPUT=artifacts/terminal-tooling/release-http.json \
+            node scripts/smoke-terminal-tooling.mjs
+          TOOLING_QA_ALLOW=disposable-tooling-runtime \
+            TOOLING_QA_BASE=http://127.0.0.1:3000 \
+            TOOLING_QA_FIXTURE=artifacts/terminal-tooling/release-fixture.json \
+            TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/release-browser \
+            node scripts/smoke-terminal-tooling-browser.mjs
           mkdir -p artifacts/reporting-recovery
           docker exec -i -e REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime hongmeng-release-smoke node \
             < scripts/seed-reporting-recovery-smoke.cjs > artifacts/reporting-recovery/release-fixture.json
@@ -742,6 +755,19 @@ jobs:
             QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/mirror-fixture.json \
             QUALITY_WORKBENCH_QA_BROWSER_OUTPUT=artifacts/quality-workbench/hangzhou \
             node scripts/smoke-quality-workbench-browser.mjs
+          mkdir -p artifacts/terminal-tooling
+          docker exec -i -e TOOLING_QA_ALLOW=disposable-tooling-runtime "$app_name" node \
+            < scripts/seed-terminal-tooling-smoke.cjs > artifacts/terminal-tooling/hangzhou-fixture.json
+          TOOLING_QA_ALLOW=disposable-tooling-runtime \
+            TOOLING_QA_BASE=http://127.0.0.1:3300 \
+            TOOLING_QA_FIXTURE=artifacts/terminal-tooling/hangzhou-fixture.json \
+            TOOLING_QA_OUTPUT=artifacts/terminal-tooling/hangzhou-http.json \
+            node scripts/smoke-terminal-tooling.mjs
+          TOOLING_QA_ALLOW=disposable-tooling-runtime \
+            TOOLING_QA_BASE=http://127.0.0.1:3300 \
+            TOOLING_QA_FIXTURE=artifacts/terminal-tooling/hangzhou-fixture.json \
+            TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/hangzhou-browser \
+            node scripts/smoke-terminal-tooling-browser.mjs
           mkdir -p artifacts/reporting-recovery
           docker exec -i -e REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime "$app_name" node \
             < scripts/seed-reporting-recovery-smoke.cjs > artifacts/reporting-recovery/mirror-fixture.json
@@ -832,4 +858,16 @@ jobs:
             artifacts/process-quality/*http.json
             artifacts/process-quality/browser-runtime.txt
             artifacts/process-quality/*.png
+          if-no-files-found: warn
+
+      - name: Upload four-position blade acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-blade-acceptance
+          path: |
+            artifacts/terminal-tooling/*http.json
+            artifacts/terminal-tooling/**/*runtime.txt
+            artifacts/terminal-tooling/**/*.png
+            artifacts/terminal-tooling/**/*.csv
           if-no-files-found: warn

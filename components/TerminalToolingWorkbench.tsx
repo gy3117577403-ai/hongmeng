@@ -18,6 +18,8 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { TerminalBladeEditor, bladeSpec, bladeSpecification, type TerminalBladeForm } from '@/components/TerminalBladeEditor';
+import '@/app/workspace/terminal-tooling/terminal-blade-editor.css';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { useToastBridge } from '@/components/ToastProvider';
 import type {
@@ -67,22 +69,6 @@ type TerminalForm = {
   lockVersion?: number;
   supplierLinks: SupplyForm[];
 };
-type BladeForm = {
-  id?: string;
-  model: string;
-  manufacturer: string;
-  compatiblePositions: TerminalToolingBladePositionDTO[];
-  specification: string;
-  dimensionA: string;
-  dimensionB: string;
-  dimensionUnit: string;
-  material: string;
-  hardness: string;
-  remark: string;
-  isActive: boolean;
-  lockVersion?: number;
-  supplierLinks: SupplyForm[];
-};
 type ImportPreview = {
   entity: 'terminals' | 'blades';
   fileName: string;
@@ -123,27 +109,6 @@ function terminalForm(item?: TerminalToolingTerminalDTO): TerminalForm {
     supplierLinks: item.supplierLinks.length ? item.supplierLinks.map(supplyForm) : [emptySupply()],
   } : {
     specification: '', manufacturer: '', aliases: '', wireRange: '', material: '', plating: '', remark: '', isActive: true, supplierLinks: [emptySupply()],
-  };
-}
-
-function bladeForm(item?: TerminalToolingBladeDTO): BladeForm {
-  return item ? {
-    id: item.id,
-    model: item.model,
-    manufacturer: item.manufacturer || '',
-    compatiblePositions: item.compatiblePositions,
-    specification: item.specification || '',
-    dimensionA: item.dimensionA || '',
-    dimensionB: item.dimensionB || '',
-    dimensionUnit: item.dimensionUnit || 'mm',
-    material: item.material || '',
-    hardness: item.hardness || '',
-    remark: item.remark || '',
-    isActive: item.isActive,
-    lockVersion: item.lockVersion,
-    supplierLinks: item.supplierLinks.length ? item.supplierLinks.map(supplyForm) : [emptySupply()],
-  } : {
-    model: '', manufacturer: '', compatiblePositions: [], specification: '', dimensionA: '', dimensionB: '', dimensionUnit: 'mm', material: '', hardness: '', remark: '', isActive: true, supplierLinks: [emptySupply()],
   };
 }
 
@@ -228,7 +193,8 @@ export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
   const [selectedSetupId, setSelectedSetupId] = useState('');
   const [draft, setDraft] = useState<SetupDraft | null>(null);
   const [terminalModal, setTerminalModal] = useState<TerminalForm | null>(null);
-  const [bladeModal, setBladeModal] = useState<BladeForm | null>(null);
+  const [bladeError, setBladeError] = useState('');
+  const [bladeModal, setBladeModal] = useState<TerminalToolingBladeDTO | 'new' | null>(null);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importEntity, setImportEntity] = useState<'terminals' | 'blades'>('terminals');
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -275,7 +241,7 @@ export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
   const visibleBlades = useMemo(() => {
     const keyword = bladeSearch.trim().toLocaleLowerCase('zh-CN');
     if (!keyword) return blades;
-    return blades.filter(item => [item.model, item.manufacturer, item.specification, item.material, ...item.supplierLinks.map(link => link.supplierName)].some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(keyword)));
+    return blades.filter(item => [item.model, item.manufacturer, ...item.positionSpecs.flatMap(spec => [spec.specification, spec.material, spec.hardness, ...spec.supplierLinks.map(link => link.supplierName)])].some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(keyword)));
   }, [bladeSearch, blades]);
   const terminalVersions = useMemo(() => setups.filter(item => item.terminalId === selectedTerminalId).sort((a, b) => b.version - a.version), [selectedTerminalId, setups]);
   const selectedSetup = useMemo(() => setups.find(item => item.id === selectedSetupId) || null, [selectedSetupId, setups]);
@@ -408,19 +374,21 @@ export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
     } finally { setSaving(false); }
   }
 
-  async function saveBlade() {
-    if (!bladeModal || saving) return;
+  async function saveBlade(form: TerminalBladeForm) {
+    if (saving) return;
     setSaving(true);
+    setBladeError('');
     try {
-      const response = await fetch(bladeModal.id ? `/api/terminal-tooling/blades/${bladeModal.id}` : '/api/terminal-tooling/blades', {
-        method: bladeModal.id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bladeModal),
+      const response = await fetch(form.id ? `/api/terminal-tooling/blades/${form.id}` : '/api/terminal-tooling/blades', {
+        method: form.id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form),
       });
       const data = await responseJson(response);
-      if (!response.ok) { setMessage(String(data.error || '刀片保存失败')); return; }
-      setMessage(bladeModal.id ? '刀片资料已更新' : '刀片已加入刀片库');
+      if (!response.ok) { setBladeError(String(data.error || '刀片保存失败')); return; }
+      setMessage(form.isDraft ? '刀片草稿已保存，可继续完善各刀位规格' : '四个刀位的规格已分别保存');
       setBladeModal(null);
       await loadAll();
-    } finally { setSaving(false); }
+    } catch { setBladeError('连接中断，填写内容已保留，请重试保存'); }
+    finally { setSaving(false); }
   }
 
   async function toggleTerminal(item: TerminalToolingTerminalDTO) {
@@ -434,7 +402,7 @@ export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
 
   async function toggleBlade(item: TerminalToolingBladeDTO) {
     const response = await fetch(`/api/terminal-tooling/blades/${item.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...bladeForm(item), isActive: !item.isActive }),
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lockVersion: item.lockVersion, isActive: !item.isActive }),
     });
     const data = await responseJson(response);
     if (!response.ok) setMessage(String(data.error || '刀片状态更新失败'));
@@ -485,7 +453,7 @@ export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
   }
 
   function bladeOptions(position: TerminalToolingBladePositionDTO, selectedId: string) {
-    return blades.filter(blade => blade.compatiblePositions.includes(position) && (blade.isActive || blade.id === selectedId));
+    return blades.filter(blade => blade.id === selectedId || (blade.isActive && !blade.isDraft && blade.compatiblePositions.includes(position) && !!bladeSpec(blade, position)?.specification && !bladeSpec(blade, position)?.needsReview));
   }
 
   return (
@@ -555,9 +523,9 @@ export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
                     <div><span>{POSITION_LABELS[position]}</span>{selectedBlade ? <CheckCircle2 /> : <Wrench />}</div>
                     <select disabled={setupReadOnly} value={draft.positions[position]} onChange={event => setDraft({ ...draft, positions: { ...draft.positions, [position]: event.target.value } })}>
                       <option value="">选择刀片型号</option>
-                      {bladeOptions(position, draft.positions[position]).map(blade => <option key={blade.id} value={blade.id}>{blade.model} · {blade.specification || '规格未设置'}{blade.manufacturer ? ` · ${blade.manufacturer}` : ''}</option>)}
+                      {bladeOptions(position, draft.positions[position]).map(blade => <option key={blade.id} value={blade.id}>{blade.model} · {bladeSpecification(blade, position)}{blade.manufacturer ? ` · ${blade.manufacturer}` : ''}</option>)}
                     </select>
-                    {selectedBlade ? <p><strong>{selectedBlade.model}</strong><span>{selectedBlade.specification || [selectedBlade.dimensionA, selectedBlade.dimensionB].filter(Boolean).join('×') || '规格未设置'}</span><small>{selectedBlade.supplierLinks[0]?.supplierName || '供应商未设置'}</small></p> : <p className="missing"><span>尚未配置</span><small>只能选择兼容此刀位的有效刀片</small></p>}
+                    {selectedBlade ? <p><strong>{selectedBlade.model}</strong><span>{bladeSpecification(selectedBlade, position)}{bladeSpec(selectedBlade, position)?.needsReview ? ' · 待核对' : ''}</span><small>{bladeSpec(selectedBlade, position)?.supplierLinks[0]?.supplierName || '供应商未设置'}</small></p> : <p className="missing"><span>尚未配置</span><small>只能选择兼容此刀位的有效刀片</small></p>}
                   </article>;
                 })}
               </div>
@@ -600,17 +568,23 @@ export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
 
       {tab === 'blades' && (
         <section className="tooling-library-panel">
-          <header><div><h1>刀片库</h1><p>保存刀片型号、原始规格、适用刀位和采购来源。</p></div><div className="tooling-library-actions"><a href="/api/terminal-tooling/export.csv?entity=blades"><Download />导出 CSV</a>{canCreate && <button type="button" onClick={() => openImport('blades')}><FileUp />导入</button>}{canCreate && <button type="button" className="primary" onClick={() => setBladeModal(bladeForm())}><Plus />新增刀片</button>}</div></header>
+          <header><div><h1>刀片库</h1><p>一个型号，四个刀位分别显示规格与采购来源。</p></div><div className="tooling-library-actions"><a href="/api/terminal-tooling/export.csv?entity=blades"><Download />导出 CSV</a><a href="/api/terminal-tooling/export.csv?entity=blades&template=true"><Download />导入模板</a>{canCreate && <button type="button" onClick={() => openImport('blades')}><FileUp />导入</button>}{canCreate && <button type="button" className="primary" onClick={() => { setBladeError(''); setBladeModal('new'); }}><Plus />新增刀片型号</button>}</div></header>
           <label className="tooling-library-search"><Search /><input value={bladeSearch} onChange={event => setBladeSearch(event.target.value)} placeholder="搜索刀片型号、规格、材质或供应商" /><span>{visibleBlades.length} 条</span></label>
-          <div className="tooling-table-wrap"><table><thead><tr><th>刀片型号</th><th>适用刀位</th><th>规格 / 尺寸</th><th>供应商</th><th>引用</th><th>状态</th><th>操作</th></tr></thead><tbody>
-            {visibleBlades.map(item => <tr key={item.id} className={!item.isActive ? 'inactive' : ''}><td><strong>{item.model}</strong><small>{item.manufacturer || '制造商未设置'}</small></td><td><div className="tooling-position-tags">{item.compatiblePositions.map(position => <span key={position}>{POSITION_LABELS[position]}</span>)}</div></td><td>{item.specification || [item.dimensionA, item.dimensionB].filter(Boolean).join('×') || '-'}<small>{item.material || '-'} · {item.hardness || '-'}</small></td><td>{item.supplierLinks[0] ? <span>{item.supplierLinks[0].supplierName}{item.supplierLinks[0].productUrl && <a href={item.supplierLinks[0].productUrl} target="_blank" rel="noreferrer"><ExternalLink /></a>}<small>{item.supplierLinks[0].supplierSku || '货号未设置'}</small></span> : '-'}</td><td>{item.usageCount} 套方案</td><td><em className={item.isActive ? 'active' : 'disabled'}>{item.isActive ? '正常' : '停用'}</em></td><td><div className="tooling-row-actions"><button type="button" onClick={() => setBladeModal(bladeForm(item))}>{canUpdate ? '编辑' : '查看'}</button>{canUpdate && <button type="button" onClick={() => toggleBlade(item)}>{item.isActive ? '停用' : '启用'}</button>}</div></td></tr>)}
+          <div className="tooling-table-wrap tooling-blade-table"><table><thead><tr><th>刀片型号</th>{POSITIONS.map(position => <th key={position}>{POSITION_LABELS[position]}</th>)}<th>引用 / 资料状态</th><th>操作</th></tr></thead><tbody>
+            {visibleBlades.map(item => <tr key={item.id} className={!item.isActive ? 'inactive' : ''}>
+              <td><strong>{item.model}</strong><small>{item.manufacturer || '制造商未设置'}</small>{!item.isActive && <small>已停用</small>}</td>
+              {POSITIONS.map(position => { const spec = bladeSpec(item, position); return <td key={position}><strong>{bladeSpecification(item, position)}</strong><small>{[spec?.material, spec?.hardness].filter(Boolean).join(' · ') || '—'}</small>{spec?.needsReview && <small className="blade-cell-review">旧规格待核对</small>}{spec?.supplierLinks[0] && <small>{spec.supplierLinks[0].supplierName} {spec.supplierLinks[0].productUrl && <a href={spec.supplierLinks[0].productUrl} target="_blank" rel="noreferrer" aria-label={POSITION_LABELS[position] + '采购链接'}><ExternalLink /></a>}</small>}</td>; })}
+              <td>{item.usageCount} 个刀位引用<small>{item.isDraft ? '草稿' : item.positionSpecs.some(spec => spec.needsReview) ? '待核对' : item.positionSpecs.filter(spec => spec.specification).length === 4 ? '四刀位已完善' : '待补充刀位'}</small></td>
+              <td><div className="tooling-row-actions"><button type="button" onClick={() => { setBladeError(''); setBladeModal(item); }}>{canUpdate ? '编辑' : '查看'}</button>{canUpdate && <button type="button" onClick={() => toggleBlade(item)}>{item.isActive ? '停用' : '启用'}</button>}</div></td>
+            </tr>)}
+            {!visibleBlades.length && <tr><td colSpan={7}>暂无匹配的刀片型号，可新增或调整搜索条件。</td></tr>}
           </tbody></table></div>
         </section>
       )}
 
       {terminalModal && <div className="tooling-modal-backdrop" role="presentation"><section className="tooling-modal" role="dialog" aria-modal="true" aria-label={terminalModal.id ? '编辑端子' : '新增端子'}><header><div><h2>{terminalModal.id ? '编辑端子' : '新增端子'}</h2><p>端子规格与制造商组合不可重复</p></div><button type="button" onClick={() => setTerminalModal(null)}><X /></button></header><div className="tooling-modal-body"><div className="tooling-form-grid"><label><span>端子规格 *</span><input disabled={!canUpdate && !!terminalModal.id} value={terminalModal.specification} onChange={event => setTerminalModal({ ...terminalModal, specification: event.target.value })} placeholder="例如：10075" /></label><label><span>制造商 / 品牌</span><input disabled={!canUpdate && !!terminalModal.id} value={terminalModal.manufacturer} onChange={event => setTerminalModal({ ...terminalModal, manufacturer: event.target.value })} /></label><label><span>适用线径</span><input disabled={!canUpdate && !!terminalModal.id} value={terminalModal.wireRange} onChange={event => setTerminalModal({ ...terminalModal, wireRange: event.target.value })} placeholder="例如：0.5–0.75 mm²" /></label><label><span>别名</span><input disabled={!canUpdate && !!terminalModal.id} value={terminalModal.aliases} onChange={event => setTerminalModal({ ...terminalModal, aliases: event.target.value })} placeholder="用分号分隔" /></label><label><span>材质</span><input disabled={!canUpdate && !!terminalModal.id} value={terminalModal.material} onChange={event => setTerminalModal({ ...terminalModal, material: event.target.value })} /></label><label><span>镀层</span><input disabled={!canUpdate && !!terminalModal.id} value={terminalModal.plating} onChange={event => setTerminalModal({ ...terminalModal, plating: event.target.value })} /></label></div><SupplyEditor value={terminalModal.supplierLinks} disabled={!canUpdate && !!terminalModal.id} onChange={supplierLinks => setTerminalModal({ ...terminalModal, supplierLinks })} /><label className="tooling-wide-field"><span>备注</span><textarea disabled={!canUpdate && !!terminalModal.id} value={terminalModal.remark} onChange={event => setTerminalModal({ ...terminalModal, remark: event.target.value })} /></label></div><footer><button type="button" onClick={() => setTerminalModal(null)}>取消</button>{(terminalModal.id ? canUpdate : canCreate) && <button type="button" className="primary" disabled={saving || !terminalModal.specification.trim()} onClick={saveTerminal}><Save />保存端子</button>}</footer></section></div>}
 
-      {bladeModal && <div className="tooling-modal-backdrop" role="presentation"><section className="tooling-modal" role="dialog" aria-modal="true" aria-label={bladeModal.id ? '编辑刀片' : '新增刀片'}><header><div><h2>{bladeModal.id ? '编辑刀片' : '新增刀片'}</h2><p>规格原文与结构化尺寸同时保留</p></div><button type="button" onClick={() => setBladeModal(null)}><X /></button></header><div className="tooling-modal-body"><div className="tooling-form-grid"><label><span>刀片型号 *</span><input disabled={!canUpdate && !!bladeModal.id} value={bladeModal.model} onChange={event => setBladeModal({ ...bladeModal, model: event.target.value })} /></label><label><span>制造商 / 品牌</span><input disabled={!canUpdate && !!bladeModal.id} value={bladeModal.manufacturer} onChange={event => setBladeModal({ ...bladeModal, manufacturer: event.target.value })} /></label><label className="full"><span>适用刀位 *</span><div className="tooling-position-checks">{POSITIONS.map(position => <button type="button" disabled={!canUpdate && !!bladeModal.id} className={bladeModal.compatiblePositions.includes(position) ? 'active' : ''} key={position} onClick={() => setBladeModal({ ...bladeModal, compatiblePositions: bladeModal.compatiblePositions.includes(position) ? bladeModal.compatiblePositions.filter(value => value !== position) : [...bladeModal.compatiblePositions, position] })}>{POSITION_LABELS[position]}</button>)}</div></label><label><span>规格原文</span><input disabled={!canUpdate && !!bladeModal.id} value={bladeModal.specification} onChange={event => setBladeModal({ ...bladeModal, specification: event.target.value })} placeholder="例如：2.4×1.5" /></label><label><span>尺寸A / 尺寸B</span><div className="tooling-dimension-fields"><input disabled={!canUpdate && !!bladeModal.id} value={bladeModal.dimensionA} onChange={event => setBladeModal({ ...bladeModal, dimensionA: event.target.value })} placeholder="2.4" /><b>×</b><input disabled={!canUpdate && !!bladeModal.id} value={bladeModal.dimensionB} onChange={event => setBladeModal({ ...bladeModal, dimensionB: event.target.value })} placeholder="1.5" /><input disabled={!canUpdate && !!bladeModal.id} value={bladeModal.dimensionUnit} onChange={event => setBladeModal({ ...bladeModal, dimensionUnit: event.target.value })} placeholder="mm" /></div></label><label><span>材质</span><input disabled={!canUpdate && !!bladeModal.id} value={bladeModal.material} onChange={event => setBladeModal({ ...bladeModal, material: event.target.value })} /></label><label><span>硬度</span><input disabled={!canUpdate && !!bladeModal.id} value={bladeModal.hardness} onChange={event => setBladeModal({ ...bladeModal, hardness: event.target.value })} /></label></div><SupplyEditor value={bladeModal.supplierLinks} disabled={!canUpdate && !!bladeModal.id} onChange={supplierLinks => setBladeModal({ ...bladeModal, supplierLinks })} /><label className="tooling-wide-field"><span>备注</span><textarea disabled={!canUpdate && !!bladeModal.id} value={bladeModal.remark} onChange={event => setBladeModal({ ...bladeModal, remark: event.target.value })} /></label></div><footer><button type="button" onClick={() => setBladeModal(null)}>取消</button>{(bladeModal.id ? canUpdate : canCreate) && <button type="button" className="primary" disabled={saving || !bladeModal.model.trim() || !bladeModal.compatiblePositions.length} onClick={saveBlade}><Save />保存刀片</button>}</footer></section></div>}
+      {bladeModal && <TerminalBladeEditor item={bladeModal === 'new' ? undefined : bladeModal} readOnly={bladeModal === 'new' ? !canCreate : !canUpdate} saving={saving} error={bladeError} onClose={() => setBladeModal(null)} onSave={saveBlade} />}
 
       {importPreview && <div className="tooling-modal-backdrop" role="presentation"><section className="tooling-modal tooling-import-modal" role="dialog" aria-modal="true"><header><div><h2>确认导入{importPreview.entity === 'terminals' ? '端子库' : '刀片库'}</h2><p>{importPreview.fileName}</p></div><button type="button" onClick={() => setImportPreview(null)}><X /></button></header><div className="tooling-import-summary"><span>总行数 <strong>{importPreview.summary.total}</strong></span><span>可导入 <strong>{importPreview.summary.ready}</strong></span><span>重复 <strong>{importPreview.summary.duplicate}</strong></span><span>无效 <strong>{importPreview.summary.invalid}</strong></span></div><div className="tooling-import-list">{importPreview.rows.slice(0, 50).map(row => <div key={row.index}><span>第 {row.index} 行</span><strong>{importPreview.entity === 'terminals' ? (row.specification || '-') : (row.model || '-')}</strong><em className={row.status}>{row.status === 'ready' ? '可导入' : row.status === 'duplicate' ? '重复' : row.status === 'invalid' ? '无效' : '跳过'}</em><small>{row.reason || '校验通过'}</small></div>)}</div><footer><button type="button" onClick={() => setImportPreview(null)}>取消</button><button type="button" className="primary" disabled={saving || !importPreview.summary.ready} onClick={confirmImport}><FileUp />导入 {importPreview.summary.ready} 条</button></footer></section></div>}
 

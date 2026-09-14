@@ -41,6 +41,7 @@ test('publishing a new setup archives the prior version without losing it', {
         normalizedKey: `b-${index + 1}-${suffix}`,
         compatiblePositions: [position],
         specification: `${2.4 + index * 0.1}*1.5`,
+        positionSpecs: { create: { position, specification: `${2.4 + index * 0.1}*1.5` } },
         createdBy: actor,
         updatedBy: actor,
       },

@@ -62,6 +62,21 @@ export type ParsedTerminalToolingBlade = {
   isActive: boolean;
   lockVersion: number | null;
   supplierLinks: ParsedTerminalToolingSupply[];
+  isDraft: boolean;
+  positionSpecs: ParsedTerminalToolingBladeSpec[];
+};
+
+export type ParsedTerminalToolingBladeSpec = {
+  position: TerminalToolingPosition;
+  specification: string | null;
+  dimensionA: string | null;
+  dimensionB: string | null;
+  dimensionUnit: string | null;
+  material: string | null;
+  hardness: string | null;
+  remark: string | null;
+  needsReview: boolean;
+  supplierLinks: ParsedTerminalToolingSupply[];
 };
 
 export type ParsedTerminalToolingSetupPosition = {
@@ -98,6 +113,10 @@ export const terminalToolingTerminalInclude = {
 } satisfies Prisma.TerminalToolingTerminalInclude;
 
 export const terminalToolingBladeInclude = {
+  positionSpecs: {
+    include: { supplierLinks: { include: { supplier: true }, orderBy: { createdAt: 'asc' as const } } },
+    orderBy: { position: 'asc' as const },
+  },
   supplierLinks: {
     include: { supplier: true },
     orderBy: { createdAt: 'asc' as const },
@@ -282,7 +301,7 @@ export function parseTerminalToolingTerminal(input: unknown): ParseResult<Parsed
   return { data: errors.length ? null : data, errors };
 }
 
-export function parseTerminalToolingBlade(input: unknown): ParseResult<ParsedTerminalToolingBlade> {
+export function parseTerminalToolingBlade(input: unknown, options: { validateComplete?: boolean } = {}): ParseResult<ParsedTerminalToolingBlade> {
   const source = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   const errors: string[] = [];
   const model = text(source.model, 120);
@@ -290,7 +309,9 @@ export function parseTerminalToolingBlade(input: unknown): ParseResult<ParsedTer
   if (!model) errors.push('刀片型号不能为空');
   const compatiblePositions = stringList(source.compatiblePositions, 4)
     .filter(position => POSITION_SET.has(position)) as TerminalToolingPosition[];
-  if (!compatiblePositions.length) errors.push('至少选择一个适用刀位');
+  const hasSpecs = hasOwn(source, 'positionSpecs');
+  if (!hasSpecs && !compatiblePositions.length) errors.push('至少选择一个适用刀位');
+  if (hasSpecs && !Array.isArray(source.positionSpecs)) errors.push('刀位规格应为四个刀位的明细');
   const supplyResult = parseTerminalToolingSupplies(source.supplierLinks);
   errors.push(...supplyResult.errors);
   const data: ParsedTerminalToolingBlade = {
@@ -308,7 +329,52 @@ export function parseTerminalToolingBlade(input: unknown): ParseResult<ParsedTer
     isActive: booleanValue(source.isActive, true),
     lockVersion: hasOwn(source, 'lockVersion') ? lockVersion(source.lockVersion) : null,
     supplierLinks: supplyResult.data || [],
+    isDraft: booleanValue(source.isDraft, false),
+    positionSpecs: [],
   };
+  if (hasSpecs) {
+    const rows = Array.isArray(source.positionSpecs) ? source.positionSpecs : [];
+    const seen = new Set<string>();
+    if (rows.length > 4) errors.push('一个型号最多包含四个刀位');
+    for (const raw of rows.slice(0, 5)) {
+      const row = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+      const position = text(row.position, 40) as TerminalToolingPosition;
+      if (!POSITION_SET.has(position) || seen.has(position)) {
+        errors.push('刀位无效或重复，请按上外、上内、下外、下内分别填写');
+        continue;
+      }
+      seen.add(position);
+      const label = TERMINAL_TOOLING_POSITION_LABELS[position];
+      const links = parseTerminalToolingSupplies(row.supplierLinks);
+      errors.push(...links.errors.map(error => `${label}：${error}`));
+      data.positionSpecs.push({
+        position,
+        specification: nullable(row.specification, 160),
+        dimensionA: decimalValue(row.dimensionA, `${label}尺寸A`, errors),
+        dimensionB: decimalValue(row.dimensionB, `${label}尺寸B`, errors),
+        dimensionUnit: nullable(row.dimensionUnit, 20) || 'mm',
+        material: nullable(row.material, 120),
+        hardness: nullable(row.hardness, 120),
+        remark: nullable(longText(row.remark, 2000), 2000),
+        needsReview: booleanValue(row.needsReview, false),
+        supplierLinks: links.data || [],
+      });
+    }
+    // New complete sets must identify each blade. Partial and legacy records can
+    // be saved as drafts, never manufactured into four confirmed specifications.
+    if (!data.isDraft && options.validateComplete !== false) for (const position of TERMINAL_TOOLING_POSITIONS) {
+      const spec = data.positionSpecs.find(item => item.position === position);
+      if (!spec?.specification || spec.needsReview) errors.push(`${TERMINAL_TOOLING_POSITION_LABELS[position]}规格尚未填写或核对，可先保存草稿`);
+    }
+    data.compatiblePositions = data.positionSpecs.filter(spec => spec.specification && !spec.needsReview).map(spec => spec.position);
+  } else {
+    // Backward-compatible imports retain a review marker for ambiguous shared data.
+    data.positionSpecs = compatiblePositions.map(position => ({
+      position, specification: data.specification, dimensionA: data.dimensionA, dimensionB: data.dimensionB,
+      dimensionUnit: data.dimensionUnit, material: data.material, hardness: data.hardness, remark: null,
+      needsReview: compatiblePositions.length > 1 || !data.specification, supplierLinks: data.supplierLinks,
+    }));
+  }
   if (hasOwn(source, 'lockVersion') && data.lockVersion === null) errors.push('刀片数据版本无效，请刷新后重试');
   return { data: errors.length ? null : data, errors };
 }
@@ -364,7 +430,7 @@ export function validateTerminalToolingPublish(input: {
   terminalActive: boolean;
   positions: Array<{
     position: string;
-    blade: { isActive: boolean; compatiblePositions: readonly string[] };
+    blade: { isActive: boolean; compatiblePositions: readonly string[]; isDraft?: boolean; positionSpecs?: Array<{ position: string; specification: string | null; needsReview: boolean }> };
   }>;
 }): string[] {
   const errors: string[] = [];
@@ -379,6 +445,10 @@ export function validateTerminalToolingPublish(input: {
     if (!entry.blade.isActive) errors.push(`${TERMINAL_TOOLING_POSITION_LABELS[position]}所选刀片已停用`);
     if (!entry.blade.compatiblePositions.includes(position)) {
       errors.push(`${TERMINAL_TOOLING_POSITION_LABELS[position]}所选刀片不兼容该刀位`);
+    }
+    const spec = entry.blade.positionSpecs?.find(item => item.position === position);
+    if (entry.blade.isDraft || (entry.blade.positionSpecs && (!spec?.specification || spec.needsReview))) {
+      errors.push(`${TERMINAL_TOOLING_POSITION_LABELS[position]}规格未确认，请在刀片库完善后发布`);
     }
   }
   return errors;
@@ -430,6 +500,19 @@ export function serializeTerminalToolingBlade(item: TerminalToolingBladeRecord) 
     model: item.model,
     manufacturer: item.manufacturer,
     compatiblePositions: item.compatiblePositions,
+    isDraft: item.isDraft,
+    positionSpecs: item.positionSpecs.map(spec => ({
+      position: spec.position,
+      specification: spec.specification,
+      dimensionA: spec.dimensionA?.toString() || null,
+      dimensionB: spec.dimensionB?.toString() || null,
+      dimensionUnit: spec.dimensionUnit,
+      material: spec.material,
+      hardness: spec.hardness,
+      remark: spec.remark,
+      needsReview: spec.needsReview,
+      supplierLinks: spec.supplierLinks.map(serializeSupply),
+    })),
     specification: item.specification,
     dimensionA: item.dimensionA?.toString() || null,
     dimensionB: item.dimensionB?.toString() || null,
@@ -522,7 +605,20 @@ const BLADE_HEADERS: Record<string, string> = {
   '供应商货号': 'supplierSku',
   '供应商链接': 'productUrl',
   '备注': 'remark',
+  '状态': 'isActive',
+  '资料状态': 'recordStatus',
 };
+
+const BLADE_SPEC_COLUMNS: Record<string, string> = {
+  '规格': 'specification', '尺寸A': 'dimensionA', '尺寸B': 'dimensionB', '单位': 'dimensionUnit',
+  '材质': 'material', '硬度': 'hardness', '备注': 'remark', '待核对': 'needsReview',
+  '供应商': 'supplierName', '供应商货号': 'supplierSku', '采购链接': 'productUrl', '采购来源JSON': 'suppliesJson',
+};
+for (const position of TERMINAL_TOOLING_POSITIONS) {
+  for (const [label, key] of Object.entries(BLADE_SPEC_COLUMNS)) {
+    BLADE_HEADERS[`${TERMINAL_TOOLING_POSITION_LABELS[position]}${label}`] = `${position}_${key}`;
+  }
+}
 
 const POSITION_IMPORT_MAP: Record<string, TerminalToolingPosition> = {
   '上外刀': 'UPPER_OUTER',
@@ -540,6 +636,23 @@ function importInput(entity: TerminalToolingImportEntity, row: Record<string, st
     ? [{ supplierName: row.supplierName, supplierSku: row.supplierSku, productUrl: row.productUrl }]
     : [];
   if (entity === 'terminals') return { ...row, supplierLinks };
+  if (TERMINAL_TOOLING_POSITIONS.some(position => `${position}_specification` in row)) {
+    const positionSpecs = TERMINAL_TOOLING_POSITIONS.map(position => {
+      const spec: Record<string, unknown> = { position };
+      for (const key of Object.values(BLADE_SPEC_COLUMNS)) spec[key] = row[`${position}_${key}`] || '';
+      let supplies: unknown;
+      if (spec.suppliesJson) {
+        try {
+          supplies = JSON.parse(String(spec.suppliesJson));
+          if (!Array.isArray(supplies)) throw new Error('invalid');
+        } catch { throw new Error(`${TERMINAL_TOOLING_POSITION_LABELS[position]}采购来源JSON格式无效`); }
+      } else supplies = [{ supplierName: spec.supplierName, supplierSku: spec.supplierSku, productUrl: spec.productUrl }];
+      return { ...spec, position, specification: spec.specification, needsReview: spec.needsReview, supplierLinks: supplies };
+    });
+    const incomplete = positionSpecs.some(spec => !spec.specification || booleanValue(spec.needsReview, false));
+    const isDraft = row.recordStatus ? row.recordStatus === '草稿' : incomplete;
+    return { ...row, positionSpecs, isDraft, supplierLinks: [] };
+  }
   const compatiblePositions = String(row.compatiblePositions || '')
     .split(/[，,;；/|\s]+/)
     .map(value => POSITION_IMPORT_MAP[value.trim()])
@@ -561,12 +674,15 @@ export function buildTerminalToolingImportPreview(options: {
   const preview = rows.slice(1).map((cells, rowIndex) => {
     const raw: Record<string, string> = {};
     headers.forEach((key, index) => {
-      if (key) raw[key] = text(cells[index], 1000);
+      if (key) raw[key] = (key.endsWith('_suppliesJson') ? String(cells[index] || '').trim() : longText(cells[index], 3000));
     });
     const empty = !Object.values(raw).some(Boolean);
-    const parsed = options.entity === 'terminals'
-      ? parseTerminalToolingTerminal(importInput(options.entity, raw))
-      : parseTerminalToolingBlade(importInput(options.entity, raw));
+    let parsed: ParseResult<ParsedTerminalToolingTerminal | ParsedTerminalToolingBlade>;
+    try {
+      parsed = options.entity === 'terminals'
+        ? parseTerminalToolingTerminal(importInput(options.entity, raw))
+        : parseTerminalToolingBlade(importInput(options.entity, raw));
+    } catch (error) { parsed = { data: null, errors: [error instanceof Error ? error.message : '行数据无效'] }; }
     const key = parsed.data?.normalizedKey || '';
     let status: TerminalToolingImportRow['status'] = 'ready';
     let reason = '';
@@ -611,12 +727,23 @@ export function terminalToolingCsv(entity: TerminalToolingImportEntity, items: A
       }),
     ]);
   }
+  const specHeaders = TERMINAL_TOOLING_POSITIONS.flatMap(position => Object.keys(BLADE_SPEC_COLUMNS).map(label => `${TERMINAL_TOOLING_POSITION_LABELS[position]}${label}`));
   return csv([
-    ['刀片型号', '制造商', '适用刀位', '规格', '尺寸A', '尺寸B', '单位', '材质', '硬度', '供应商', '供应商货号', '供应商链接', '备注', '状态'],
+    ['刀片型号', '制造商', ...specHeaders, '备注', '状态', '资料状态'],
     ...items.map(item => {
-      const supplies = Array.isArray(item.supplierLinks) ? item.supplierLinks as Array<Record<string, unknown>> : [];
-      const positions = Array.isArray(item.compatiblePositions) ? item.compatiblePositions as string[] : [];
-      return [item.model, item.manufacturer, positions.map(position => TERMINAL_TOOLING_POSITION_LABELS[position as TerminalToolingPosition] || position).join('；'), item.specification, item.dimensionA, item.dimensionB, item.dimensionUnit, item.material, item.hardness, supplierColumn(supplies, 'supplierName'), supplierColumn(supplies, 'supplierSku'), supplierColumn(supplies, 'productUrl'), item.remark, item.isActive ? '正常' : '停用'];
+      const specs = Array.isArray(item.positionSpecs) ? item.positionSpecs as Array<Record<string, unknown>> : [];
+      const cells = TERMINAL_TOOLING_POSITIONS.flatMap(position => {
+        const spec = specs.find(spec => spec.position === position) || {};
+        const supplies = Array.isArray(spec.supplierLinks) ? spec.supplierLinks as Array<Record<string, unknown>> : [];
+        return Object.values(BLADE_SPEC_COLUMNS).map(key => {
+          if (key === 'suppliesJson') return JSON.stringify(supplies.map(({ supplierName, supplierSku, productUrl, remark }) => ({ supplierName, supplierSku, productUrl, remark })));
+          if (key === 'needsReview') return spec.needsReview ? '是' : '否';
+          if (['supplierName', 'supplierSku', 'productUrl'].includes(key)) return supplies[0]?.[key] || '';
+          return spec[key];
+        });
+      });
+      const incomplete = TERMINAL_TOOLING_POSITIONS.some(position => !specs.some(spec => spec.position === position && spec.specification && !spec.needsReview));
+      return [item.model, item.manufacturer, ...cells, item.remark, item.isActive ? '正常' : '停用', item.isDraft || incomplete ? '草稿' : '已完善'];
     }),
   ]);
 }

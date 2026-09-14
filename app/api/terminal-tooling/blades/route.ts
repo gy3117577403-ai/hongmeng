@@ -8,7 +8,7 @@ import {
   serializeTerminalToolingBlade,
   terminalToolingBladeInclude,
 } from '@/lib/terminal-tooling';
-import { replaceBladeSuppliers } from '@/lib/terminal-tooling-service';
+import { replaceBladeSuppliers, replaceBladePositionSpecs } from '@/lib/terminal-tooling-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +28,11 @@ export async function GET(req: NextRequest) {
           { manufacturer: { contains: keyword, mode: 'insensitive' } },
           { specification: { contains: keyword, mode: 'insensitive' } },
           { material: { contains: keyword, mode: 'insensitive' } },
+          { positionSpecs: { some: { OR: [
+            { specification: { contains: keyword, mode: 'insensitive' } },
+            { material: { contains: keyword, mode: 'insensitive' } },
+            { supplierLinks: { some: { supplier: { name: { contains: keyword, mode: 'insensitive' } } } } },
+          ] } } },
           { supplierLinks: { some: { supplier: { name: { contains: keyword, mode: 'insensitive' } } } } },
         ],
       } : {}),
@@ -68,12 +73,14 @@ export async function POST(req: NextRequest) {
           hardness: input.hardness,
           remark: input.remark,
           isActive: input.isActive,
+          isDraft: input.isDraft,
           createdBy: actor,
           updatedBy: actor,
         },
         select: { id: true },
       });
       await replaceBladeSuppliers(tx, item.id, input.supplierLinks);
+      await replaceBladePositionSpecs(tx, item.id, input.positionSpecs);
       return item.id;
     });
     const item = await prisma.terminalToolingBlade.findUniqueOrThrow({

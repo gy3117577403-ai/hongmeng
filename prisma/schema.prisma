@@ -5886,12 +5886,52 @@ model TerminalToolingBlade {
   updatedAt           DateTime                       @updatedAt @map("updated_at")
   supplierLinks       TerminalToolingBladeSupply[]
   setupPositions      TerminalToolingSetupPosition[]
+  isDraft             Boolean                        @default(false) @map("is_draft")
+  positionSpecs       TerminalToolingBladeSpec[]
 
   @@index([model])
   @@index([manufacturer])
   @@index([isActive])
   @@index([updatedAt])
   @@map("terminal_tooling_blades")
+}
+
+model TerminalToolingBladeSpec {
+  id            String                       @id @default(cuid())
+  bladeId       String                       @map("blade_id")
+  position      TerminalToolingBladePosition
+  specification String?
+  dimensionA    Decimal?                     @map("dimension_a") @db.Decimal(10, 3)
+  dimensionB    Decimal?                     @map("dimension_b") @db.Decimal(10, 3)
+  dimensionUnit String?                      @default("mm") @map("dimension_unit")
+  material      String?
+  hardness      String?
+  remark        String?
+  needsReview   Boolean                      @default(false) @map("needs_review")
+  createdAt     DateTime                     @default(now()) @map("created_at")
+  updatedAt     DateTime                     @updatedAt @map("updated_at")
+  blade         TerminalToolingBlade         @relation(fields: [bladeId], references: [id], onDelete: Cascade)
+  supplierLinks TerminalToolingBladeSpecSupply[]
+
+  @@unique([bladeId, position])
+  @@index([specification])
+  @@map("terminal_tooling_blade_specs")
+}
+
+model TerminalToolingBladeSpecSupply {
+  id          String                  @id @default(cuid())
+  specId      String                  @map("spec_id")
+  supplierId  String                  @map("supplier_id")
+  supplierSku String?                 @map("supplier_sku")
+  productUrl  String?                 @map("product_url")
+  remark      String?
+  createdAt   DateTime                @default(now()) @map("created_at")
+  spec        TerminalToolingBladeSpec @relation(fields: [specId], references: [id], onDelete: Cascade)
+  supplier    TerminalToolingSupplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([specId])
+  @@index([supplierId])
+  @@map("terminal_tooling_blade_spec_supplies")
 }
 
 model TerminalToolingSupplier {
@@ -5907,6 +5947,7 @@ model TerminalToolingSupplier {
   updatedAt      DateTime                        @updatedAt @map("updated_at")
   terminalLinks  TerminalToolingTerminalSupply[]
   bladeLinks     TerminalToolingBladeSupply[]
+  bladeSpecLinks TerminalToolingBladeSpecSupply[]
 
   @@index([name])
   @@index([isActive])

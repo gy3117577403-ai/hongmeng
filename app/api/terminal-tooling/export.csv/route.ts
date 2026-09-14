@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
     const entity = req.nextUrl.searchParams.get('entity') === 'blades' ? 'blades' : 'terminals';
+    if (req.nextUrl.searchParams.get('template') === 'true') return csvResponse(entity === 'blades' ? '四刀位规格导入模板.csv' : '端子导入模板.csv', terminalToolingCsv(entity, []));
     const serialized = entity === 'terminals'
       ? (await prisma.terminalToolingTerminal.findMany({ include: terminalToolingTerminalInclude, orderBy: { specification: 'asc' } })).map(serializeTerminalToolingTerminal)
       : (await prisma.terminalToolingBlade.findMany({ include: terminalToolingBladeInclude, orderBy: { model: 'asc' } })).map(serializeTerminalToolingBlade);

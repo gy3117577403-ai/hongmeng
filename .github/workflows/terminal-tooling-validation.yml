@@ -1,0 +1,85 @@
+name: Four-position blade candidate
+on:
+  push:
+    branches: ['codex/terminal-blade-four-specs-v134171']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: terminal-blade-candidate
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: terminal_blade_candidate
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/terminal_blade_candidate?schema=public
+      SESSION_SECRET: disposable-terminal-blade-session-secret-20260914
+      APP_BASE_URL: http://127.0.0.1:3000
+      S3_ENDPOINT: http://127.0.0.1:19000
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:19000
+      S3_REGION: auto
+      S3_BUCKET: terminal-blade-candidate
+      S3_ACCESS_KEY_ID: toolingqa
+      S3_SECRET_ACCESS_KEY: DisposableToolingStorage2026
+      S3_FORCE_PATH_STYLE: 'true'
+      SMOKE_STORAGE_ALLOW: disposable-ci-storage
+      SEED_ADMIN_USERNAME: tooling-bootstrap
+      SEED_ADMIN_PASSWORD: DisposableBladeSeed2026!Z
+      TOOLING_QA_ALLOW: disposable-tooling-runtime
+      TOOLING_QA_BASE: http://127.0.0.1:3000
+      TOOLING_QA_FIXTURE: artifacts/terminal-tooling/fixture.json
+      TOOLING_QA_OUTPUT: artifacts/terminal-tooling/candidate-http.json
+      TOOLING_QA_BROWSER_OUTPUT: artifacts/terminal-tooling/candidate-browser
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate && npx prisma generate && npx prisma migrate deploy
+      - name: Four-position schema and transaction integration
+        run: |
+          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/terminal-tooling.test.ts tests/terminal-tooling-four-specs.test.ts tests/terminal-tooling-integration.test.ts tests/terminal-tooling-four-specs-integration.test.ts
+          npm run lint
+      - name: Build and start application
+        run: |
+          docker run -d --name tooling-candidate-storage -p 127.0.0.1:19000:9000 -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
+          node scripts/prepare-smoke-storage.mjs
+          node prisma/seed.cjs
+          mkdir -p artifacts/terminal-tooling
+          node scripts/seed-terminal-tooling-smoke.cjs > "$TOOLING_QA_FIXTURE"
+          npm run build
+          npm start > artifacts/terminal-tooling/app.log 2>&1 &
+          for i in $(seq 1 90); do if curl -fsS "$APP_BASE_URL/api/ready" > artifacts/terminal-tooling/ready.json; then break; fi; sleep 2; done
+          curl -fsS "$APP_BASE_URL/api/ready"
+      - name: HTTP persistence, import export and setup selection
+        run: node scripts/smoke-terminal-tooling.mjs
+      - name: Tablet and phone browser acceptance
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          node scripts/smoke-terminal-tooling-browser.mjs
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-blade-candidate-${{ github.sha }}
+          path: |
+            artifacts/terminal-tooling/*http.json
+            artifacts/terminal-tooling/ready.json
+            artifacts/terminal-tooling/app.log
+            artifacts/terminal-tooling/**/*runtime.txt
+            artifacts/terminal-tooling/**/*.png
+            artifacts/terminal-tooling/**/*.csv
+          if-no-files-found: warn

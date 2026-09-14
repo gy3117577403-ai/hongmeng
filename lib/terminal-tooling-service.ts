@@ -5,10 +5,39 @@ import {
   validateTerminalToolingPublish,
   type ParsedTerminalToolingSetupPosition,
   type ParsedTerminalToolingSupply,
+  type ParsedTerminalToolingBladeSpec,
 } from '@/lib/terminal-tooling';
 import { prisma } from '@/lib/prisma';
 
 type ToolingTransaction = Prisma.TransactionClient;
+
+export async function replaceBladePositionSpecs(tx: ToolingTransaction, bladeId: string, specs: ParsedTerminalToolingBladeSpec[]) {
+  const existing = await tx.terminalToolingBladeSpec.findMany({ where: { bladeId }, include: { supplierLinks: { include: { supplier: true }, orderBy: { createdAt: 'asc' } } } });
+  await tx.terminalToolingBladeSpec.deleteMany({ where: { bladeId, position: { notIn: specs.map(spec => spec.position) } } });
+  for (const { supplierLinks, ...spec } of specs) {
+    const previous = existing.find(row => row.position === spec.position);
+    if (previous) {
+      const sameFields = (['specification', 'dimensionUnit', 'material', 'hardness', 'remark', 'needsReview'] as const).every(key => previous[key] === spec[key])
+        && (['dimensionA', 'dimensionB'] as const).every(key => previous[key] === null ? spec[key] === null : spec[key] !== null && Number(previous[key]) === Number(spec[key]));
+      const sameSupplies = supplierLinks.length === previous.supplierLinks.length && supplierLinks.every((link, i) => {
+        const old = previous.supplierLinks[i];
+        return old.supplier.name === link.supplierName && old.supplierSku === link.supplierSku && old.productUrl === link.productUrl && old.remark === link.remark;
+      });
+      if (sameFields && sameSupplies) continue;
+    }
+    const record = await tx.terminalToolingBladeSpec.upsert({
+      where: { bladeId_position: { bladeId, position: spec.position } },
+      create: { bladeId, ...spec }, update: spec, select: { id: true },
+    });
+    await tx.terminalToolingBladeSpecSupply.deleteMany({ where: { specId: record.id } });
+    for (const link of supplierLinks) {
+      await tx.terminalToolingBladeSpecSupply.create({ data: {
+        specId: record.id, supplierId: await supplierId(tx, link), supplierSku: link.supplierSku,
+        productUrl: link.productUrl, remark: link.remark,
+      } });
+    }
+  }
+}
 
 async function supplierId(
   tx: ToolingTransaction,

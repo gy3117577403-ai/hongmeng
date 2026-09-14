@@ -3778,6 +3778,8 @@ export type TerminalToolingBladeDTO = {
   model: string;
   manufacturer?: string | null;
   compatiblePositions: TerminalToolingBladePositionDTO[];
+  isDraft: boolean;
+  positionSpecs: TerminalToolingBladeSpecDTO[];
   specification?: string | null;
   dimensionA?: string | null;
   dimensionB?: string | null;
@@ -3793,6 +3795,19 @@ export type TerminalToolingBladeDTO = {
   updatedBy?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type TerminalToolingBladeSpecDTO = {
+  position: TerminalToolingBladePositionDTO;
+  specification: string | null;
+  dimensionA: string | null;
+  dimensionB: string | null;
+  dimensionUnit: string | null;
+  material: string | null;
+  hardness: string | null;
+  remark: string | null;
+  needsReview: boolean;
+  supplierLinks: TerminalToolingSupplyDTO[];
 };
 
 export type TerminalToolingSetupPositionDTO = {

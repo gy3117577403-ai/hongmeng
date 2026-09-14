@@ -7,7 +7,7 @@ import {
   serializeTerminalToolingBlade,
   terminalToolingBladeInclude,
 } from '@/lib/terminal-tooling';
-import { replaceBladeSuppliers } from '@/lib/terminal-tooling-service';
+import { replaceBladePositionSpecs } from '@/lib/terminal-tooling-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,7 +21,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       include: terminalToolingBladeInclude,
     });
     if (!existing) return NextResponse.json({ ok: false, error: '刀片不存在' }, { status: 404 });
+    const editingSpecs = Object.prototype.hasOwnProperty.call(body, 'positionSpecs');
+    if (!editingSpecs && ['specification', 'dimensionA', 'dimensionB', 'dimensionUnit', 'material', 'hardness', 'supplierLinks', 'compatiblePositions'].some(key => key in body)) {
+      return NextResponse.json({ ok: false, error: '刀片已改为按刀位维护规格，请刷新页面后编辑' }, { status: 409 });
+    }
     const parsed = parseTerminalToolingBlade({
+      positionSpecs: serializeTerminalToolingBlade(existing).positionSpecs,
+      isDraft: existing.isDraft,
       model: existing.model,
       manufacturer: existing.manufacturer,
       compatiblePositions: existing.compatiblePositions,
@@ -40,7 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         remark: link.remark,
       })),
       ...body,
-    });
+    }, { validateComplete: editingSpecs || body.isDraft === false });
     if (!parsed.data) return NextResponse.json({ ok: false, error: parsed.errors.join('；') }, { status: 400 });
     if (parsed.data.lockVersion === null) return NextResponse.json({ ok: false, error: '缺少刀片数据版本，请刷新后重试' }, { status: 409 });
     const input = parsed.data;
@@ -52,7 +58,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           model: input.model,
           manufacturer: input.manufacturer,
           normalizedKey: input.normalizedKey,
-          compatiblePositions: input.compatiblePositions,
+          compatiblePositions: editingSpecs ? input.compatiblePositions : existing.compatiblePositions,
           specification: input.specification,
           dimensionA: input.dimensionA,
           dimensionB: input.dimensionB,
@@ -61,12 +67,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           hardness: input.hardness,
           remark: input.remark,
           isActive: input.isActive,
+          isDraft: input.isDraft,
           lockVersion: { increment: 1 },
           updatedBy: actor,
         },
       });
       if (result.count !== 1) return false;
-      await replaceBladeSuppliers(tx, params.id, input.supplierLinks);
+      if (editingSpecs) await replaceBladePositionSpecs(tx, params.id, input.positionSpecs);
       return true;
     });
     if (!updated) return NextResponse.json({ ok: false, error: '刀片已被其他人修改，请刷新后重试' }, { status: 409 });

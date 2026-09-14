@@ -22,7 +22,7 @@ async function referenceErrors(tx: Prisma.TransactionClient, positions: ParsedTe
   if (!positions.length) return [];
   const blades = await tx.terminalToolingBlade.findMany({
     where: { id: { in: positions.map(position => position.bladeId) } },
-    select: { id: true, isActive: true, compatiblePositions: true },
+    select: { id: true, isActive: true, isDraft: true, compatiblePositions: true, positionSpecs: true },
   });
   const map = new Map(blades.map(blade => [blade.id, blade]));
   const errors: string[] = [];
@@ -31,6 +31,7 @@ async function referenceErrors(tx: Prisma.TransactionClient, positions: ParsedTe
     if (!blade) errors.push('调模方案包含不存在的刀片');
     else if (!blade.isActive) errors.push('调模方案不能选择已停用刀片');
     else if (!blade.compatiblePositions.includes(position.position)) errors.push('所选刀片与刀位不兼容');
+    else if (blade.isDraft || !blade.positionSpecs.some(spec => spec.position === position.position && spec.specification && !spec.needsReview)) errors.push('所选刀位规格尚未填写或核对，请先完善刀片资料');
   }
   return [...new Set(errors)];
 }
