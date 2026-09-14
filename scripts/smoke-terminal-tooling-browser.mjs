@@ -55,6 +55,7 @@ try {
       await extra.getByRole('button',{name:'关闭补充参数'}).click();
       await form.locator('.blade-editor-scroll').evaluate(el=>el.scrollTop=0);
       check(await form.evaluate(el=>{const bottom=el.querySelector('.blade-editor-footer').getBoundingClientRect().top;return [...el.querySelectorAll('.blade-spec-card')].every(card=>card.getBoundingClientRect().bottom<=bottom+1)}),'all four cards visible above tablet save controls');
+      check(await form.evaluate(el=>el.querySelector('.blade-group-remark').getBoundingClientRect().bottom<=el.querySelector('.blade-editor-footer').getBoundingClientRect().top+1),'group remark is visible above tablet footer');
       await page.screenshot({path:dir+'/tablet-four-position-editor.png'});
       await page.setViewportSize({width:390,height:844});
       check(await form.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&el.scrollWidth<=el.clientWidth+1}),'phone editor fits viewport');
@@ -63,6 +64,8 @@ try {
       await form.getByRole('button',{name:'下内刀',exact:true}).click();
       await form.locator('.blade-editor-scroll').evaluate(el=>el.scrollTop=el.scrollHeight);
       await page.screenshot({path:dir+'/phone-lower-positions.png'});
+      await page.setViewportSize({width:1024,height:768});
+      check(await form.locator('.blade-editor-footer').evaluate(el=>el.getBoundingClientRect().bottom<=innerHeight),'compact tablet keeps save controls visible');
       await page.setViewportSize({width:1366,height:1024});
       await form.getByRole('button',{name:'保存整组刀片',exact:true}).click();await form.waitFor({state:'hidden'});
       await page.getByPlaceholder('搜索刀片型号、规格、材质或供应商').fill(f.marker+'-UI');

@@ -91,6 +91,7 @@ export function TerminalBladeEditor({ item, readOnly, saving, error, onClose, on
     setExtra(null);
   }
   function updateSupply(index: number, key: keyof Supply, value: string) {
+    setExtraError('');
     setExtra(current => current && ({ ...current, supplierLinks: current.supplierLinks.map((link, i) => i === index ? { ...link, [key]: value } : link) }));
   }
   return <>

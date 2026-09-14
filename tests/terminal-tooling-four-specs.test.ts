@@ -47,6 +47,10 @@ test('four-position CSV round trip preserves all suppliers, units, remarks and s
   assert.deepEqual(imported.positionSpecs, original.positionSpecs);
   assert.equal(imported.remark, original.remark);
   assert.equal(imported.isDraft, false);
+  preview.rows[0].UPPER_OUTER_supplierSku = '修订货号';
+  const revised = parseTerminalToolingBlade(terminalToolingImportRowInput('blades', preview.rows[0])).data!;
+  assert.equal(revised.positionSpecs[0].supplierLinks[0].supplierSku, '修订货号');
+  assert.deepEqual(revised.positionSpecs[0].supplierLinks[1], original.positionSpecs[0].supplierLinks[1]);
   assert.equal(buildTerminalToolingImportPreview({ entity: 'blades', text, existingKeys: new Set([original.normalizedKey]) }).rows[0].status, 'duplicate');
 });
 

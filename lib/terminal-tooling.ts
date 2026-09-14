@@ -248,6 +248,8 @@ export function isSafeSupplierUrl(value: unknown): boolean {
 
 export function parseTerminalToolingSupplies(value: unknown): ParseResult<ParsedTerminalToolingSupply[]> {
   const errors: string[] = [];
+  if (value != null && !Array.isArray(value)) errors.push('采购来源必须为列表');
+  if (Array.isArray(value) && value.length > 20) errors.push('采购来源不能超过 20 条');
   const rows = Array.isArray(value) ? value.slice(0, 20) : [];
   const supplies: ParsedTerminalToolingSupply[] = [];
   const seen = new Set<string>();
@@ -645,6 +647,16 @@ function importInput(entity: TerminalToolingImportEntity, row: Record<string, st
         try {
           supplies = JSON.parse(String(spec.suppliesJson));
           if (!Array.isArray(supplies)) throw new Error('invalid');
+          // Human-readable primary-source columns remain editable after export;
+          // the JSON column preserves the remaining sources and their remarks.
+          const primaryKeys = ['supplierName', 'supplierSku', 'productUrl'];
+          if (primaryKeys.every(key => `${position}_${key}` in row)) {
+            const links = supplies as Array<Record<string, unknown>>;
+            if (primaryKeys.some(key => spec[key])) {
+              const first = { ...(links[0] || {}), supplierName: spec.supplierName, supplierSku: spec.supplierSku, productUrl: spec.productUrl };
+              supplies = [first, ...links.slice(1)];
+            } else supplies = links.slice(1);
+          }
         } catch { throw new Error(`${TERMINAL_TOOLING_POSITION_LABELS[position]}采购来源JSON格式无效`); }
       } else supplies = [{ supplierName: spec.supplierName, supplierSku: spec.supplierSku, productUrl: spec.productUrl }];
       return { ...spec, position, specification: spec.specification, needsReview: spec.needsReview, supplierLinks: supplies };
