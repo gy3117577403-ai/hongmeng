@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { resolveQualityOperators, resolveQualityOperatorAssignments } from './quality-operators';
-import { qualityTaskCauses, type QualityOperatorAssignments } from './quality-direct-shared';
+import { qualityTaskCauses, qualityTaskSupplement, QUALITY_TASK_SUPPLEMENT_FIELDS, type QualityOperatorAssignments } from './quality-direct-shared';
 import { submitReadyQualityReview } from './quality-direct-review';
 import { prisma } from '@/lib/prisma';
 import { eligibleUserIdsForCapability } from '@/lib/system-notifications';
@@ -120,7 +120,8 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
       const actionTaken = payload.actionTaken === undefined ? task.actionTaken : text(payload.actionTaken);
       if (action === 'COMPLETE_TASK') requireCondition(result && actionTaken, '请填写实际采取的措施和处理结果', 400);
       const previousAnalysis = qualityTaskCauses(task, report);
-      const analysis = direct ? { occurrenceCause: payload.occurrenceCause === undefined ? previousAnalysis.occurrenceCause : text(payload.occurrenceCause) || '', rootCause: payload.rootCause === undefined ? previousAnalysis.rootCause : text(payload.rootCause) || '' } : undefined;
+      const supplement = qualityTaskSupplement(task);
+      const analysis = direct ? { ...Object.fromEntries(QUALITY_TASK_SUPPLEMENT_FIELDS.map(([key]) => [key, payload[key] === undefined ? supplement[key] : text(payload[key]) || ''])), occurrenceCause: payload.occurrenceCause === undefined ? previousAnalysis.occurrenceCause : text(payload.occurrenceCause) || '', rootCause: payload.rootCause === undefined ? previousAnalysis.rootCause : text(payload.rootCause) || '' } : undefined;
       if (direct && action === 'COMPLETE_TASK') requireCondition(analysis?.occurrenceCause.trim() && analysis.rootCause.trim(), '请填写发生原因和根本原因', 400);
       const operators = direct && payload.operatorIds !== undefined ? await resolveQualityOperators(tx, payload.operatorIds, task.operators) : undefined;
       const nextStatus = action === 'COMPLETE_TASK' ? 'COMPLETED' : 'IN_PROGRESS';
@@ -246,6 +247,7 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
   }
   if (direct && report.workflowVersion < 4) {
     data.workflowVersion = 4; data.owner = { disconnect: true };
+    await tx.systemNotificationRecipient.updateMany({ where: { completedAt: null, notification: { sourceType: 'internal_quality_risk', sourceId: reportId, eventType: 'QUALITY_CONSOLIDATE' } }, data: { completedAt: new Date(), completionKind: 'SOURCE_RESOLVED', completionReason: '异常流程已移除牵头汇总' } });
     for (const task of report.tasks.filter(item => !item.analysis)) await tx.internalQualityRiskTask.update({ where: { id: task.id }, data: { analysis: { legacy: true, legacyOccurrenceCause: report.occurrenceCause || '', legacyRootCause: report.rootCause || '' } } });
   }
   await tx.internalQualityRiskReport.update({ where: { id: reportId }, data: { ...data, updatedBy: { connect: { id: actor.id } }, version: { increment: 1 } } });

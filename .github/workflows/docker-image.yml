@@ -738,6 +738,10 @@ jobs:
             QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/mirror-fixture.json \
             QUALITY_WORKBENCH_QA_OUTPUT=artifacts/quality-workbench/mirror-http.json \
             node scripts/smoke-quality-workbench.mjs
+          QUALITY_WORKBENCH_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/mirror-fixture.json \
+            QUALITY_WORKBENCH_QA_BROWSER_OUTPUT=artifacts/quality-workbench/hangzhou \
+            node scripts/smoke-quality-workbench-browser.mjs
           mkdir -p artifacts/reporting-recovery
           docker exec -i -e REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime "$app_name" node \
             < scripts/seed-reporting-recovery-smoke.cjs > artifacts/reporting-recovery/mirror-fixture.json
@@ -792,7 +796,8 @@ jobs:
           path: |
             artifacts/quality-workbench/*http.json
             artifacts/quality-workbench/browser-runtime.txt
-            artifacts/quality-workbench/*.png
+            artifacts/quality-workbench/**/*.png
+            artifacts/quality-workbench/hangzhou/browser-runtime.txt
           if-no-files-found: warn
       - name: Upload production collaboration acceptance evidence
         if: always()

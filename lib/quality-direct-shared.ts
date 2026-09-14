@@ -10,3 +10,9 @@ export function qualityTaskCauses(task: { analysis?: unknown }, report: { occurr
 export function qualityOperators(value: unknown): QualityOperator[] {
   return Array.isArray(value) ? value.filter((item): item is QualityOperator => Boolean(item && typeof item === 'object' && typeof item.id === 'string' && typeof item.name === 'string')) : [];
 }
+
+export const QUALITY_TASK_SUPPLEMENT_FIELDS = [['escapeCause', '流出原因'], ['containmentAction', '临时遏制措施'], ['preventiveAction', '预防再发措施'], ['requiredAction', '本批作业要求']] as const;
+export function qualityTaskSupplement(task: { analysis?: unknown }) {
+  const analysis = task.analysis && typeof task.analysis === 'object' ? task.analysis as Record<string, unknown> : {};
+  return Object.fromEntries(QUALITY_TASK_SUPPLEMENT_FIELDS.map(([key]) => [key, typeof analysis[key] === 'string' ? analysis[key] : ''])) as Record<typeof QUALITY_TASK_SUPPLEMENT_FIELDS[number][0], string>;
+}

@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from './prisma';
 import { internalQualityRiskInclude, serializeInternalQualityRisk } from './internal-quality-risks';
-import { qualityTaskCauses } from './quality-direct-shared';
+import { qualityTaskCauses, qualityTaskSupplement, QUALITY_TASK_SUPPLEMENT_FIELDS } from './quality-direct-shared';
 import { eligibleUserIdsForCapability } from './system-notifications';
 import { canIssuePasswordSession, hasPureFieldReporterAccess } from './login-security';
 import { enqueueQualityNotification } from './quality-risk-notifications';
@@ -14,7 +14,7 @@ export async function submitReadyQualityReview(tx: Prisma.TransactionClient, rep
   if (!tasks.length || tasks.some(task => !['COMPLETED', 'VERIFIED'].includes(task.status))) return;
   const incomplete = tasks.filter(task => { const causes = qualityTaskCauses(task, report); return !causes.occurrenceCause.trim() || !causes.rootCause.trim() || !task.actionTaken?.trim() || !task.result?.trim(); });
   if (incomplete.length) {
-    await tx.internalQualityRiskTask.updateMany({ where: { id: { in: incomplete.map(task => task.id) } }, data: { status: 'IN_PROGRESS', reviewNote: '请补齐发生原因、根本原因、处理措施和结果。原有内容已保留。', version: { increment: 1 } } });
+    await tx.internalQualityRiskTask.updateMany({ where: { id: { in: incomplete.map(task => task.id) } }, data: { status: 'IN_PROGRESS', verifiedAt: null, verifiedById: null, reviewNote: '请补齐发生原因、根本原因、处理措施和结果。原有内容已保留。', version: { increment: 1 } } });
     await tx.internalQualityRiskReport.update({ where: { id: reportId }, data: { status: 'COLLABORATING', version: { increment: 1 } } });
     return;
   }
@@ -27,7 +27,7 @@ export async function submitReadyQualityReview(tx: Prisma.TransactionClient, rep
     return;
   }
   const joined = (get: (task: typeof tasks[number]) => string) => tasks.map(task => `【${task.ownerName || '责任人'}】\n${get(task)}`).join('\n\n');
-  const fields = { occurrenceCause: joined(task => qualityTaskCauses(task, report).occurrenceCause), rootCause: joined(task => qualityTaskCauses(task, report).rootCause),
+  const fields = { ...Object.fromEntries(QUALITY_TASK_SUPPLEMENT_FIELDS.map(([key]) => { const filled = tasks.filter(task => qualityTaskSupplement(task)[key].trim()); return [key, filled.length ? filled.map(task => `【${task.ownerName || '责任人'}】\n${qualityTaskSupplement(task)[key]}`).join('\n\n') : report[key]]; })), occurrenceCause: joined(task => qualityTaskCauses(task, report).occurrenceCause), rootCause: joined(task => qualityTaskCauses(task, report).rootCause),
     correctiveAction: joined(task => task.actionTaken!), finalConclusion: joined(task => task.result!) };
   const dto = serializeInternalQualityRisk(report);
   const round = report.reviewRound + 1;

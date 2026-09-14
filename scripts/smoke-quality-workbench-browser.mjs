@@ -57,6 +57,9 @@ try {
     await snap('tablet-intake');
     await page.setViewportSize({width:390,height:844}); await snap('phone-intake');
     check(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+2),'phone intake no horizontal overflow');
+    check(await form.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=window.innerWidth+1}),'phone form fits viewport');
+    await page.setViewportSize({width:1024,height:768});await snap('compact-tablet-intake');
+    check(await form.locator(':scope > footer').evaluate(el=>el.getBoundingClientRect().bottom<=window.innerHeight+1),'compact tablet submit stays visible');
     await page.setViewportSize({width:1366,height:1024});
     let failUpload=true;
     await page.route('**/api/quality/internal-risks/*/attachments', async route=>{if(failUpload&&route.request().method()==='POST'){failUpload=false;return route.fulfill({status:503,json:{ok:false,error:'隔离验收：模拟上传失败'}})}return route.continue()});

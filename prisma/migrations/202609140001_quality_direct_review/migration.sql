@@ -29,3 +29,11 @@ UPDATE "quality_risk_notifications" n SET "state" = 'SKIPPED', "lease_token" = N
   "last_error" = '流程已移除牵头汇总，保留历史通知记录'
 FROM "quality_risk_reports" r WHERE n."report_id" = r."id" AND r."workflow_version" = 4
 AND n."event_type" = 'CONSOLIDATE' AND n."state" <> 'SENT';
+
+-- Retire the obsolete in-app consolidation todo without deleting its audit history.
+UPDATE "system_notification_recipients" recipient SET "completed_at" = now(),
+  "completion_kind" = 'SOURCE_RESOLVED', "completion_reason" = '异常流程已移除牵头汇总'
+FROM "system_notifications" n, "quality_risk_reports" r
+WHERE recipient."notification_id" = n."id" AND n."source_id" = r."id"
+AND n."source_type" = 'internal_quality_risk' AND n."event_type" = 'QUALITY_CONSOLIDATE'
+AND r."workflow_version" = 4 AND recipient."completed_at" IS NULL;

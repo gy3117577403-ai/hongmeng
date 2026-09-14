@@ -81,7 +81,7 @@ export default function QualityRiskInitiateDialog({ options, onClose, onSaved, i
     } catch (reason) { setError(reason instanceof Error ? reason.message : '保存失败，内容已保留'); }
     finally { setBusy(false); setUploadProgress(''); }
   }
-  return <div className="risk-modal-backdrop"><form ref={dialogRef} className="quality-initiate-dialog qd-intake" role="dialog" aria-modal="true" aria-labelledby="quality-initiate-title" onSubmit={event => void save(event)}>
+  return <div className="risk-modal-backdrop"><form ref={dialogRef} className="quality-initiate-dialog qd-intake" role="dialog" aria-modal="true" aria-labelledby="quality-initiate-title" onKeyDown={event => { if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.type !== 'file') event.preventDefault(); }} onSubmit={event => void save(event)}>
     <header><span className="qd-heading-icon"><ShieldAlert /></span><div><small>质量管理 · 内部重大异常</small><h2 id="quality-initiate-title">{initialReport ? '编辑异常工单' : '建立异常工单'}</h2></div><button type="button" aria-label="关闭发起窗口" disabled={busy} onClick={() => { if (textDraft.dirty || files.length) setClosePrompt(true); else onClose(); }}><X /></button></header>
     <div className="qd-flow-hint"><span>记录问题</span><i>›</i><span>责任人处理</span><i>›</i><span>品质确认</span></div>
     <div className="quality-initiate-body"><fieldset disabled={busy || !textDraft.ready || sourceLoading} className="qd-intake-fields">

@@ -16,7 +16,7 @@ test('direct review: concurrent completion, HR-only operators, immutable rounds,
   const actor = (id: string) => ({ id, name: users.find(u => u.id === id)!.displayName, canCreate: id === q.id || id === backup.id, canManage: id === q.id || id === backup.id, canVerify: id === q.id || id === backup.id });
   const product = await prisma.drawingLibraryItem.create({ data: { libraryKey: marker, customerName: marker, productName: '验收线束', specification: marker } });
   const input = { workflowVersion: 4, title: '压接首件异常', problemCategory: 'PROCESS', defectPhenomenon: '压接高度偏差', productIds: [product.id], responsibleUserIds: [a.id,b.id], reviewerUserId: q.id, operatorAssignments: { [a.id]: [{ id: operator.id, name: '不可采信的客户端姓名' }] } };
-  const answers = { occurrenceCause: '首件参数偏移', rootCause: '换模复核不足', actionTaken: '重新调机并复测', result: '首件三件合格' };
+  const answers = { occurrenceCause: '首件参数偏移', rootCause: '换模复核不足', actionTaken: '重新调机并复测', result: '首件三件合格', escapeCause: '检验遗漏', requiredAction: '更换后需复测首件' };
   try {
     let r = await prisma.$transaction(tx => createInternalQualityRiskRecord(tx, parseInternalQualityRiskInput(input), actor(q.id))); reportIds.push(r.id);
     const act = async (action: string, payload: Record<string, unknown> = {}, userId = q.id) => { r = await prisma.$transaction(tx => actOnQualityWorkflow(tx, r.id, r.version, action, payload, actor(userId))); return r; };
@@ -41,7 +41,7 @@ test('direct review: concurrent completion, HR-only operators, immutable rounds,
     assert.equal(r.reviews.length, 0); assert.equal(qualityWorkflowView(r).phase, 'COLLABORATING');
     const last = r.tasks.find(t => t.status === 'IN_PROGRESS')!;
     await act('COMPLETE_TASK', { taskId: last.id, ...answers, result: '最后一人刚提交的结果' }, last.ownerUserId!);
-    assert.equal(r.status, 'VERIFYING'); assert.equal(r.reviews.length, 1); assert.match(JSON.stringify(r.reviews[0].snapshot), /最后一人刚提交的结果/);
+    assert.equal(r.status, 'VERIFYING'); assert.match(r.requiredAction || '', /更换后需复测首件/); assert.equal(r.reviews.length, 1); assert.match(JSON.stringify(r.reviews[0].snapshot), /最后一人刚提交的结果/);
     assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: r.id, eventType: 'CONSOLIDATE' } }), 0);
     assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: r.id, eventType: 'REVIEW' } }), 1);
     await Promise.all([resumeReadyQualityReviews(), resumeReadyQualityReviews()]); assert.equal(await prisma.qualityRiskReview.count({ where: { reportId: r.id } }), 1);
