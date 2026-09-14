@@ -1,7 +1,7 @@
 name: Quality direct review candidate
 on:
   push:
-    branches: ['codex/quality-direct-review-v134167']
+    branches: ['codex/quality-direct-review-v134168']
   workflow_dispatch:
 permissions:
   contents: read
@@ -35,6 +35,7 @@ jobs:
       SMOKE_STORAGE_ALLOW: disposable-ci-storage
       SEED_ADMIN_USERNAME: quality-bootstrap
       SEED_ADMIN_PASSWORD: DisposableQualityBootstrap2026!
+      PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN: disposable-quality-direct-worker-token-20260914
       DAILY_PLAN_ENABLED: 'true'
       PROCESS_QUALITY_QA_ALLOW: disposable-quality-reporting-runtime
       PROCESS_QUALITY_QA_BASE: http://127.0.0.1:3000
@@ -62,6 +63,11 @@ jobs:
           npm start > artifacts/process-quality/app.log 2>&1 &
           for i in $(seq 1 90); do if curl -fsS "$APP_BASE_URL/api/ready" > artifacts/process-quality/ready.json; then break; fi; sleep 2; done
           curl -fsS "$APP_BASE_URL/api/ready"
+      - name: Direct review notification protocol
+        env:
+          WECOM_QA_BASE: http://127.0.0.1:3000
+          WECOM_QA_EVIDENCE: artifacts/quality-workbench/notification-http.json
+        run: node scripts/smoke-wecom-quality-only.mjs
       - name: HTTP quantities, ownership, image upload and Excel
         run: node scripts/smoke-process-quality.mjs
       - name: Tablet and phone browser acceptance

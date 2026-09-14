@@ -10,7 +10,7 @@ const base = process.env.WECOM_QA_BASE || 'http://127.0.0.1:3495';
 const database = new URL(process.env.DATABASE_URL || '');
 assert.ok(['localhost', '127.0.0.1'].includes(new URL(base).hostname));
 assert.ok(['localhost', '127.0.0.1'].includes(database.hostname));
-assert.match(database.pathname, /^\/(wecom71_(qa|release_[ab])|hongmeng_ci)$/);
+assert.match(database.pathname, /^\/(wecom71_(qa|release_[ab])|hongmeng_ci|process_quality_candidate)$/);
 const token = process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN;
 assert.ok(token?.length >= 32);
 const accepted = process.env.WECOM_QA_EXPECT_ACCEPTED === '1';
@@ -73,22 +73,22 @@ try {
   const product = await prisma.drawingLibraryItem.create({ data: { libraryKey: prefix, customerName: prefix, customerCode: prefix, productName: '质量工艺问题隔离样例', specification: prefix } });
   report = (await request('create and assign quality process problem', 'admin', '/api/quality/internal-risks', 'POST', {
     title: `${prefix} 工艺质量异常`, defectPhenomenon: '隔离验收：质量管理内的工艺问题仍应通知', problemCategory: 'PROCESS',
-    productIds: [product.id], ownerUserId: accounts.owner.id, responsibleUserIds: [accounts.owner.id], reviewerUserId: accounts.quality.id, submit: true,
+    productIds: [product.id], responsibleUserIds: [accounts.owner.id], reviewerUserId: accounts.quality.id, submit: true,
   }, 201)).data.report;
   await delivery('ASSIGNED');
   const taskId = report.tasks[0].id;
-  const result = { taskId, actionTaken: '隔离验收措施', result: '隔离验收结果' };
-  const analysis = { occurrenceCause: '样例发生原因', rootCause: '样例根本原因', finalConclusion: '样例结论', correctiveAction: '样例解决方案' };
+  const result = { taskId, occurrenceCause: '样例发生原因', rootCause: '样例根本原因', actionTaken: '隔离验收措施', result: '隔离验收结果' };
+  assert.equal(report.workflowVersion, 4); assert.equal(report.ownerUserId, null);
   await stage('START_TASK', 'owner', { taskId });
   await stage('COMPLETE_TASK', 'owner', result);
-  await delivery('CONSOLIDATE');
-  await stage('SUBMIT_REVIEW', 'owner', analysis);
+  assert.equal(report.status, 'VERIFYING');
+  assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: report.id, eventType: 'CONSOLIDATE' } }), 0);
   await delivery('REVIEW');
   await stage('RETURN', 'quality', { taskIds: [taskId], reason: '隔离验收：补充处理结果' });
   await delivery('RETURNED');
   await stage('COMPLETE_TASK', 'owner', result);
-  await delivery('CONSOLIDATE');
-  await stage('SUBMIT_REVIEW', 'owner', analysis);
+  assert.equal(report.status, 'VERIFYING');
+  assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: report.id, eventType: 'CONSOLIDATE' } }), 0);
   await delivery('REVIEW');
   await stage('APPROVE', 'quality', { result: '隔离验收：独立复核通过' });
   await delivery('APPROVED');
