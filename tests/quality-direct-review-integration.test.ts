@@ -1,0 +1,86 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { prisma } from '../lib/prisma';
+import { actOnQualityWorkflow } from '../lib/quality-workflow-v3';
+import { resumeReadyQualityReviews } from '../lib/quality-direct-review';
+import { createInternalQualityRiskRecord, parseInternalQualityRiskInput, internalQualityRiskInclude, archiveInternalQualityRisk, startInternalQualityRiskRevision } from '../lib/internal-quality-risks';
+import { qualityWorkflowView } from '../lib/quality-workbench';
+
+test('direct review: concurrent completion, HR-only operators, immutable rounds, reviewer recovery and legacy migration', { skip: process.env.RUN_DB_INTEGRATION !== '1' }, async () => {
+  const marker = 'direct-' + randomUUID(), reportIds: string[] = [];
+  const employees = await Promise.all(['a','b','quality','backup','operator'].map(name => prisma.employee.create({ data: { employeeNo: marker + name, name: '验收' + name, department: '生产部', team: '装配' } })));
+  const users = await Promise.all(employees.slice(0, 4).map((e, i) => prisma.user.create({ data: { username: marker + i, displayName: e.name, employeeId: e.id, passwordHash: 'disposable-test-only', mustChangePassword: false, accessGrants: { create: { profile: i >= 2 ? 'QUALITY_REVIEWER' : 'PROCESS_SPECIALIST', scopeKey: 'GLOBAL' } } } })));
+  const [a,b,q,backup] = users, operator = employees[4];
+  const actor = (id: string) => ({ id, name: users.find(u => u.id === id)!.displayName, canCreate: id === q.id || id === backup.id, canManage: id === q.id || id === backup.id, canVerify: id === q.id || id === backup.id });
+  const product = await prisma.drawingLibraryItem.create({ data: { libraryKey: marker, customerName: marker, productName: '验收线束', specification: marker } });
+  const input = { workflowVersion: 4, title: '压接首件异常', problemCategory: 'PROCESS', defectPhenomenon: '压接高度偏差', productIds: [product.id], responsibleUserIds: [a.id,b.id], reviewerUserId: q.id, operatorAssignments: { [a.id]: [{ id: operator.id, name: '不可采信的客户端姓名' }] } };
+  const answers = { occurrenceCause: '首件参数偏移', rootCause: '换模复核不足', actionTaken: '重新调机并复测', result: '首件三件合格' };
+  try {
+    let r = await prisma.$transaction(tx => createInternalQualityRiskRecord(tx, parseInternalQualityRiskInput(input), actor(q.id))); reportIds.push(r.id);
+    const act = async (action: string, payload: Record<string, unknown> = {}, userId = q.id) => { r = await prisma.$transaction(tx => actOnQualityWorkflow(tx, r.id, r.version, action, payload, actor(userId))); return r; };
+    assert.equal(r.ownerUserId, null);
+    await assert.rejects(prisma.$transaction(tx => actOnQualityWorkflow(tx, r.id, r.version, 'CONFIGURE', { ...input, responsibleUserIds: [] }, actor(q.id))), /主要责任人/);
+    await assert.rejects(prisma.$transaction(tx => actOnQualityWorkflow(tx, r.id, r.version, 'CONFIGURE', { ...input, reviewerUserId: a.id }, actor(q.id))), /品质确认/);
+    await assert.rejects(prisma.$transaction(tx => actOnQualityWorkflow(tx, r.id, r.version, 'CONFIGURE', { ...input, operatorAssignments: { [a.id]: ['missing-employee'] } }, actor(q.id))), /作业人员/);
+    await act('CONFIGURE', input); await act('SUBMIT');
+    assert.equal(r.tasks.length, 2); assert.equal(await prisma.user.count({ where: { employeeId: operator.id } }), 0);
+    const at = r.tasks.find(t => t.ownerUserId === a.id)!, bt = r.tasks.find(t => t.ownerUserId === b.id)!;
+    assert.equal((at.operators as any[])[0].name, operator.name, 'identity must come from HR');
+    assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: r.id, eventType: 'ASSIGNED' } }), 2, 'operators get no responsibility task');
+    await act('START_TASK', { taskId: at.id }, a.id); await act('START_TASK', { taskId: bt.id }, b.id);
+    await assert.rejects(prisma.$transaction(tx => actOnQualityWorkflow(tx, r.id, r.version, 'COMPLETE_TASK', { taskId: at.id, actionTaken: '措施', result: '结果' }, actor(a.id))), /原因/);
+    await prisma.employee.update({ where: { id: operator.id }, data: { isActive: false } });
+    await act('SAVE_TASK', { taskId: at.id, ...answers, operatorIds: [operator.id] }, a.id);
+    assert.equal((r.tasks.find(t => t.id === at.id)!.operators as any[])[0].name, operator.name, 'inactive historical identity is retained');
+    const version = r.version;
+    const attempts = await Promise.allSettled([[a,at],[b,bt]].map(([user,task]) => prisma.$transaction(tx => actOnQualityWorkflow(tx, r.id, version, 'COMPLETE_TASK', { taskId: task.id, ...answers }, actor(user.id)))));
+    assert.equal(attempts.filter(x => x.status === 'fulfilled').length, 1, 'shared optimistic version serializes concurrent writes');
+    r = await prisma.internalQualityRiskReport.findUniqueOrThrow({ where: { id: r.id }, include: internalQualityRiskInclude });
+    assert.equal(r.reviews.length, 0); assert.equal(qualityWorkflowView(r).phase, 'COLLABORATING');
+    const last = r.tasks.find(t => t.status === 'IN_PROGRESS')!;
+    await act('COMPLETE_TASK', { taskId: last.id, ...answers, result: '最后一人刚提交的结果' }, last.ownerUserId!);
+    assert.equal(r.status, 'VERIFYING'); assert.equal(r.reviews.length, 1); assert.match(JSON.stringify(r.reviews[0].snapshot), /最后一人刚提交的结果/);
+    assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: r.id, eventType: 'CONSOLIDATE' } }), 0);
+    assert.equal(await prisma.qualityRiskNotification.count({ where: { reportId: r.id, eventType: 'REVIEW' } }), 1);
+    await Promise.all([resumeReadyQualityReviews(), resumeReadyQualityReviews()]); assert.equal(await prisma.qualityRiskReview.count({ where: { reportId: r.id } }), 1);
+    const first = JSON.stringify(r.reviews[0].snapshot);
+    await act('RETURN', { reason: '补充装配复测', taskIds: [bt.id] });
+    assert.equal(r.tasks.find(t => t.id === at.id)!.status, 'COMPLETED'); assert.equal(JSON.stringify(r.reviews[0].snapshot), first);
+    await prisma.user.update({ where: { id: q.id }, data: { isActive: false } });
+    await act('COMPLETE_TASK', { taskId: bt.id, ...answers, result: '补充复测完成' }, b.id);
+    assert.equal(r.status, 'COLLABORATING'); assert.ok(r.reviewBlockReason); assert.equal(r.reviews.length, 1);
+    assert.equal(r.tasks.find(t => t.id === bt.id)!.result, '补充复测完成');
+    await act('CHANGE_REVIEWER', { reviewerUserId: backup.id, reason: '确认人轮班' }, backup.id);
+    assert.equal(r.status, 'VERIFYING'); assert.equal(r.reviewRound, 2); assert.equal(r.reviewBlockReason, null); assert.equal(JSON.stringify(r.reviews[1].snapshot), first);
+    await act('APPROVE', { result: '独立复测三件合格' }, backup.id);
+    r = await prisma.$transaction(tx => archiveInternalQualityRisk(tx, r.id, r.version, actor(backup.id)));
+    assert.equal(r.status, 'ARCHIVED'); assert.match(JSON.stringify(r.revisions[0].snapshot), new RegExp(operator.name));
+    const archived = JSON.stringify(r.revisions[0].snapshot);
+    r = await prisma.$transaction(tx => startInternalQualityRiskRevision(tx, r.id, r.version, actor(backup.id)));
+    assert.equal(r.workflowVersion, 4); assert.ok(r.tasks.every(t => t.status === 'IN_PROGRESS')); assert.equal(JSON.stringify(r.revisions[0].snapshot), archived);
+    await resumeReadyQualityReviews(); assert.equal(await prisma.qualityRiskReview.count({ where: { reportId: r.id } }), 2, 'starting a revision does not auto-submit unchanged content');
+
+    // Exercise the exact data migration against representative v3 rows in this disposable database.
+    const legacy = async (status: string, causes: boolean) => { const row = await prisma.internalQualityRiskReport.create({ data: { workflowVersion: 3, reportNo: marker + status + causes, title: '旧异常', status, createdById: backup.id, ownerUserId: a.id, reviewerUserId: backup.id, occurrenceCause: causes ? '历史发生原因' : null, rootCause: causes ? '历史根本原因' : null, tasks: { create: { title: '旧任务', department: '生产部', ownerUserId: a.id, ownerName: a.displayName, status: 'COMPLETED', actionTaken: '旧措施保留', result: '旧结果保留' } } }, include: { tasks: true } }); reportIds.push(row.id); return row; };
+    const ready = await legacy('COLLABORATING', true), missing = await legacy('SUBMITTED', false), historical = await legacy('ARCHIVED', true), pending = await legacy('VERIFYING', true);
+    const migration = readFileSync('prisma/migrations/202609140001_quality_direct_review/migration.sql','utf8').replace(/--[^\n]*/g,'');
+    const dml = migration.slice(migration.indexOf('UPDATE "quality_risk_tasks"'));
+    await prisma.$transaction(async tx => { for (const sql of dml.split(';').map(x => x.trim()).filter(Boolean)) await tx.$executeRawUnsafe(sql); });
+    const migratedMissing = await prisma.internalQualityRiskReport.findUniqueOrThrow({ where: { id: missing.id }, include: { tasks: true } });
+    assert.equal(migratedMissing.workflowVersion, 4); assert.equal(migratedMissing.ownerUserId, null); assert.equal(migratedMissing.tasks[0].status, 'IN_PROGRESS'); assert.equal(migratedMissing.tasks[0].result, '旧结果保留');
+    await resumeReadyQualityReviews();
+    const resumed = await prisma.internalQualityRiskReport.findUniqueOrThrow({ where: { id: ready.id }, include: { reviews: true } });
+    assert.equal(resumed.status, 'VERIFYING'); assert.equal(resumed.reviews.length, 1); assert.match(JSON.stringify(resumed.reviews[0].snapshot), /历史根本原因/);
+    assert.equal((await prisma.internalQualityRiskReport.findUniqueOrThrow({ where: { id: historical.id } })).workflowVersion, 3);
+    assert.equal((await prisma.internalQualityRiskReport.findUniqueOrThrow({ where: { id: pending.id } })).status, 'VERIFYING');
+  } finally {
+    await prisma.internalQualityRiskReport.deleteMany({ where: { id: { in: reportIds } } });
+    await prisma.drawingLibraryItem.delete({ where: { id: product.id } });
+    await prisma.systemNotification.deleteMany({ where: { actorId: { in: users.map(u => u.id) } } });
+    await prisma.user.deleteMany({ where: { id: { in: users.map(u => u.id) } } });
+    await prisma.employee.deleteMany({ where: { id: { in: employees.map(e => e.id) } } });
+    await prisma.$disconnect();
+  }
+});

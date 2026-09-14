@@ -4568,7 +4568,9 @@ model InternalQualityRiskReport {
   processName           String?                           @map("process_name")
   responsibleDepartment String?                           @map("responsible_department")
   ownerUserId           String?                           @map("owner_user_id")
-  workflowVersion       Int                               @default(3) @map("workflow_version")
+  workflowVersion       Int                               @default(4) @map("workflow_version")
+  operatorAssignments   Json?                             @map("operator_assignments")
+  reviewBlockReason     String?                           @map("review_block_reason")
   problemCategory       String?                           @map("problem_category")
   responsibleUserIds    String[]                          @default([]) @map("responsible_user_ids")
   reviewerUserId        String?                           @map("reviewer_user_id")
@@ -4650,6 +4652,8 @@ model InternalQualityRiskReport {
 }
 
 model InternalQualityRiskTask {
+  analysis     Json?
+  operators    Json?
   id           String                          @id @default(uuid())
   reportId     String                          @map("report_id")
   taskType     String                          @default("COLLABORATION") @map("task_type")

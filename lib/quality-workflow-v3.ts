@@ -1,4 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { resolveQualityOperators, resolveQualityOperatorAssignments } from './quality-operators';
+import { qualityTaskCauses, type QualityOperatorAssignments } from './quality-direct-shared';
+import { submitReadyQualityReview } from './quality-direct-review';
 import { prisma } from '@/lib/prisma';
 import { eligibleUserIdsForCapability } from '@/lib/system-notifications';
 import { enqueueQualityNotification } from '@/lib/quality-risk-notifications';
@@ -46,11 +49,13 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
   requireCondition(report && !report.deletedAt, '异常不存在或已移入回收站', 404);
   requireCondition(report.version === expectedVersion, '内容已被其他人员更新，请刷新后重试');
   requireCondition(report.status !== 'ARCHIVED', '已归档版本不可覆盖，请先启动修订');
-  const isLead = report.ownerUserId === actor.id;
+  const direct = report.workflowVersion >= 4 || payload.workflowVersion === 4 || action === 'RETURN';
+  const isLead = !direct && report.ownerUserId === actor.id;
   const isReviewer = report.reviewerUserId === actor.id && actor.canVerify;
   const canInitiate = actor.canManage || actor.canCreate && report.createdById === actor.id;
   const handling = ['SUBMITTED', 'CONTAINMENT', 'COLLABORATING', 'REVISING'].includes(report.status);
-  let data: Prisma.InternalQualityRiskReportUpdateInput = {};
+  const canCoordinate = canInitiate || isLead;
+  let data: Prisma.InternalQualityRiskReportUpdateInput = direct && report.workflowVersion < 4 ? { workflowVersion: 4, owner: { disconnect: true } } : {};
   let detail: Prisma.InputJsonObject = { action };
   let description = '';
   const notify = (event: Parameters<typeof enqueueQualityNotification>[1]['event'], recipientId: string, title: string, extra: { taskId?: string; round?: number; summary?: string } = {}) =>
@@ -63,26 +68,27 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
     const content = text(payload.content, 3000); requireCondition(content, '请填写说明内容', 400);
     description = '协同说明：' + content;
   } else if (action === 'CONFIGURE') {
-    requireCondition(canInitiate || isLead, '只有发起质量或牵头人可以配置责任分工', 403);
+    requireCondition(canInitiate || isLead, '只有发起品质或质量管理人员可以配置责任分工', 403);
     requireCondition(report.status === 'DRAFT' || report.workflowVersion < 3 || report.status === 'REVISING', '提交后如需改派，请在对应任务内交接');
     const category = QUALITY_PROBLEM_CATEGORIES.find(item => item.id === payload.problemCategory);
     requireCondition(category, '请选择问题归属', 400);
     const ids = normalizeQualityRiskRelationIds(payload.responsibleUserIds, 30);
     const lead = String(payload.ownerUserId || ids[0] || '');
     const reviewer = String(payload.reviewerUserId || '');
-    requireCondition(ids.length && ids.includes(lead), '至少选择一名责任人，并从中指定牵头人', 400);
+    requireCondition(ids.length && (direct || ids.includes(lead)), '至少选择一名主要责任人', 400);
+    const operators = direct ? await resolveQualityOperatorAssignments(tx, payload.operatorAssignments || {}, ids, report.operatorAssignments) : undefined;
     for (const id of ids) await requireWorkflowAssignee(tx, id);
     await requireWorkflowAssignee(tx, reviewer);
     requireCondition((await eligibleUserIdsForCapability(tx, 'QUALITY', 'EXECUTE_WORKFLOW')).includes(reviewer), '请选择具备品质确认权限的有效账号', 400);
     requireCondition(!ids.includes(reviewer) && !report.tasks.some(task => task.ownerUserId === reviewer && task.status !== 'CANCELLED'), '品质确认人不能同时担任本事件处理人', 400);
-    data = { workflowVersion: 3, problemCategory: category.id, responsibleDepartment: category.department,
-      responsibleUserIds: ids, owner: { connect: { id: lead } }, reviewer: { connect: { id: reviewer } },
+    data = { workflowVersion: direct ? 4 : 3, ...(direct ? { operatorAssignments: operators as unknown as Prisma.InputJsonObject } : {}), problemCategory: category.id, responsibleDepartment: category.department,
+      responsibleUserIds: ids, owner: direct ? { disconnect: true } : { connect: { id: lead } }, reviewer: { connect: { id: reviewer } },
       ...(report.status !== 'DRAFT' ? { status: 'COLLABORATING', verifiedAt: null, verifiedById: null, verificationResult: null } : {}) };
     if (report.status !== 'DRAFT') {
       for (const id of ids) {
         if (report.tasks.some(task => task.ownerUserId === id && task.status !== 'CANCELLED')) continue;
         const owner = await requireWorkflowAssignee(tx, id);
-        const task = await tx.internalQualityRiskTask.create({ data: { reportId, isPrimary: true, title: `${category.label}处理`, department: category.department, ownerUserId: id, ownerName: owner.displayName || owner.username, requirement: report.defectPhenomenon } });
+        const task = await tx.internalQualityRiskTask.create({ data: { reportId, isPrimary: true, title: `${category.label}处理`, department: category.department, ownerUserId: id, ownerName: owner.displayName || owner.username, requirement: report.defectPhenomenon, ...(direct ? { analysis: {}, operators: ((operators || {}) as QualityOperatorAssignments)[id] || [] } : {}) } });
         await notify('ASSIGNED', id, '质量异常待处理', { taskId: task.id });
       }
     }
@@ -93,14 +99,14 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
     if (action === 'SUBMIT') {
       requireCondition(report.status === 'DRAFT' && canInitiate, '只有发起质量可以提交草稿', 403);
       requireCondition(QUALITY_PROBLEM_CATEGORIES.some(item => item.id === report.problemCategory) && report.defectPhenomenon?.trim() && report.products.some(link => !link.product.deletedAt), '请补齐问题归属、实际问题和关联产品', 400);
-      requireCondition(report.responsibleUserIds.length && report.ownerUserId && report.responsibleUserIds.includes(report.ownerUserId) && report.reviewerUserId, '请先配置责任人与品质确认人', 400);
+      requireCondition(report.responsibleUserIds.length && (direct || report.ownerUserId && report.responsibleUserIds.includes(report.ownerUserId)) && report.reviewerUserId, '请先配置责任人与品质确认人', 400);
       requireCondition(!report.responsibleUserIds.includes(report.reviewerUserId), '品质确认人与处理人必须分开', 400);
       requireCondition((await eligibleUserIdsForCapability(tx, 'QUALITY', 'EXECUTE_WORKFLOW')).includes(report.reviewerUserId), '品质确认人权限已变化，请重新指定');
       await requireWorkflowAssignee(tx, report.reviewerUserId);
       const taskDueAt = qualityTaskDeadline(payload.taskDueAt);
       for (const ownerId of report.responsibleUserIds) {
         const owner = await requireWorkflowAssignee(tx, ownerId);
-        const task = await tx.internalQualityRiskTask.create({ data: { reportId, dueAt: taskDueAt, isPrimary: true, title: `${report.title}处理`, department: report.responsibleDepartment || '待确定', ownerUserId: ownerId, ownerName: owner.displayName || owner.username, requirement: report.defectPhenomenon } });
+        const task = await tx.internalQualityRiskTask.create({ data: { reportId, dueAt: taskDueAt, isPrimary: true, ...(direct ? { analysis: {}, operators: ((report.operatorAssignments || {}) as QualityOperatorAssignments)[ownerId] || [] } : {}), title: `${report.title}处理`, department: report.responsibleDepartment || '待确定', ownerUserId: ownerId, ownerName: owner.displayName || owner.username, requirement: report.defectPhenomenon } });
         await notify('ASSIGNED', ownerId, '质量异常待接单', { taskId: task.id });
       }
       data.status = 'SUBMITTED'; description = '质量发起异常并分别生成责任任务';
@@ -113,17 +119,22 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
       const result = payload.result === undefined ? task.result : text(payload.result);
       const actionTaken = payload.actionTaken === undefined ? task.actionTaken : text(payload.actionTaken);
       if (action === 'COMPLETE_TASK') requireCondition(result && actionTaken, '请填写实际采取的措施和处理结果', 400);
+      const previousAnalysis = qualityTaskCauses(task, report);
+      const analysis = direct ? { occurrenceCause: payload.occurrenceCause === undefined ? previousAnalysis.occurrenceCause : text(payload.occurrenceCause) || '', rootCause: payload.rootCause === undefined ? previousAnalysis.rootCause : text(payload.rootCause) || '' } : undefined;
+      if (direct && action === 'COMPLETE_TASK') requireCondition(analysis?.occurrenceCause.trim() && analysis.rootCause.trim(), '请填写发生原因和根本原因', 400);
+      const operators = direct && payload.operatorIds !== undefined ? await resolveQualityOperators(tx, payload.operatorIds, task.operators) : undefined;
       const nextStatus = action === 'COMPLETE_TASK' ? 'COMPLETED' : 'IN_PROGRESS';
-      await tx.internalQualityRiskTask.update({ where: { id: task.id }, data: { status: nextStatus, actionTaken, result,
+      await tx.internalQualityRiskTask.update({ where: { id: task.id }, data: { status: nextStatus, actionTaken, result, ...(analysis && action !== 'START_TASK' ? { analysis } : {}), ...(operators ? { operators: operators as unknown as Prisma.InputJsonArray } : {}),
         completedAt: action === 'COMPLETE_TASK' ? new Date() : null, version: { increment: 1 } } });
       data.status = 'COLLABORATING';
       description = `${task.ownerName}：${action === 'START_TASK' ? '接单' : action === 'SAVE_TASK' ? '保存处理草稿' : '完成个人任务'}`;
-      detail = { ...detail, taskId: task.id, previousResult: task.result, previousAction: task.actionTaken, result, actionTaken };
-      if (action === 'COMPLETE_TASK' && report.ownerUserId && report.tasks.filter(item => item.id !== task.id).every(item => ['COMPLETED', 'VERIFIED', 'CANCELLED'].includes(item.status))) {
+      detail = { ...detail, taskId: task.id, previousResult: task.result, previousAction: task.actionTaken, result, actionTaken, ...(direct ? { previousAnalysis: task.analysis, analysis, previousOperators: task.operators, operators: operators || task.operators } : {}) } as Prisma.InputJsonObject;
+      if (!direct && action === 'COMPLETE_TASK' && report.ownerUserId && report.tasks.filter(item => item.id !== task.id).every(item => ['COMPLETED', 'VERIFIED', 'CANCELLED'].includes(item.status))) {
         await notify('CONSOLIDATE', report.ownerUserId, '责任任务已完成，请汇总提交品质确认');
       }
     } else if (action === 'SAVE_ANALYSIS' || action === 'SUBMIT_REVIEW') {
-      requireCondition(handling && isLead, '只有牵头人可在处理阶段汇总原因与方案', 403);
+      requireCondition(!direct, '当前流程由主要责任人提交任务后自动送品质确认', 403);
+      requireCondition(handling && isLead, '仅牵头人可在处理阶段填写原因与方案', 403);
       const fields = Object.fromEntries(QUALITY_ANALYSIS_FIELDS.filter(([key]) => key in payload).map(([key]) => [key, text(payload[key])]));
       if (action === 'SUBMIT_REVIEW') {
         const issues = qualityAnalysisIssues({ ...report, ...fields });
@@ -173,7 +184,7 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
       } else { description = `保存第${review.round}轮验证草稿`; }
       detail = { ...detail, round: review.round, result, reason, returnedTaskIds: returnedIds };
     } else if (action === 'ADD_TASK') {
-      requireCondition(handling && (isLead || actor.canManage), '只有牵头人或质量管理人员可增补协同任务', 403);
+      requireCondition(handling && canCoordinate, '只有发起品质或质量管理人员可增补责任任务', 403);
       const owner = await requireWorkflowAssignee(tx, String(payload.ownerUserId || ''));
       const requirement = text(payload.requirement, 4000);
       requireCondition(requirement && owner.id !== report.reviewerUserId, '请填写任务要求，处理人与品质确认人必须分开', 400);
@@ -184,7 +195,7 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
       detail = { ...detail, taskId: task.id, owner: owner.id, requirement };
       description = `增补协同任务：${owner.displayName || owner.username}`;
     } else if (action === 'SET_TASK_DEADLINE') {
-      requireCondition(handling && (isLead || actor.canManage), '只有牵头人或质量管理人员可调整任务期限', 403);
+      requireCondition(handling && canCoordinate, '只有发起品质或质量管理人员可调整任务期限', 403);
       const task = report.tasks.find(item => item.id === payload.taskId && ['TODO', 'IN_PROGRESS'].includes(item.status));
       const reason = text(payload.reason, 1000);
       requireCondition(task && reason, '请选择待处理任务并填写调整原因', 400);
@@ -219,7 +230,7 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
       detail = { ...detail, notificationId: item.id, previousAttempts: item.attempts };
       description = '管理员重新排队通知；发送前仍会检查任务时效及接收人';
     } else if (action === 'REASSIGN') {
-      requireCondition(handling && (isLead || actor.canManage), '只有牵头人/质量管理人员可在处理阶段交接任务', 403);
+      requireCondition(handling && canCoordinate, '只有发起品质或质量管理人员可在处理阶段交接任务', 403);
       const task = report.tasks.find(item => item.id === payload.taskId);
       const reason = text(payload.reason, 1000);
       const owner = await requireWorkflowAssignee(tx, String(payload.ownerUserId || ''));
@@ -233,7 +244,12 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
       description = `任务交接：${task.ownerName} → ${owner.displayName || owner.username}（原始结果保留）`;
     } else throw new InternalQualityRiskError('未知的阶段操作', 400);
   }
+  if (direct && report.workflowVersion < 4) {
+    data.workflowVersion = 4; data.owner = { disconnect: true };
+    for (const task of report.tasks.filter(item => !item.analysis)) await tx.internalQualityRiskTask.update({ where: { id: task.id }, data: { analysis: { legacy: true, legacyOccurrenceCause: report.occurrenceCause || '', legacyRootCause: report.rootCause || '' } } });
+  }
   await tx.internalQualityRiskReport.update({ where: { id: reportId }, data: { ...data, updatedBy: { connect: { id: actor.id } }, version: { increment: 1 } } });
   await tx.internalQualityRiskActivity.create({ data: { reportId, actorId: actor.id, actorName: actor.name, action: `STAGE_${action}`, content: description, detail } });
+  if (direct && ['COMPLETE_TASK', 'CHANGE_REVIEWER', 'CONFIGURE'].includes(action)) await submitReadyQualityReview(tx, reportId, actor);
   return tx.internalQualityRiskReport.findUniqueOrThrow({ where: { id: reportId }, include: internalQualityRiskInclude });
 }

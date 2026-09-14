@@ -94,7 +94,7 @@ test('v3 PostgreSQL: multiple independent tasks, frozen rounds, targeted return,
     assert.equal(report.tasks.find(task => task.id === aTask)!.result, '首件复测正常');
     assert.equal(JSON.stringify(report.reviews[0].snapshot), r1);
     await act('COMPLETE_TASK', { taskId: aTask, actionTaken: '补充换模复核并复测', result: '第二轮三件合格，证据齐全' });
-    await act('SUBMIT_REVIEW', analysis);
+    assert.equal(report.workflowVersion, 4);
     assert.equal(report.reviewRound, 2); assert.equal(report.reviews[0].result, null);
     assert.equal(report.reviews[1].result, '第一轮复核，需补充换模照片');
     await act('SAVE_REVIEW', { result: '原品质人员草稿' }, q.id);

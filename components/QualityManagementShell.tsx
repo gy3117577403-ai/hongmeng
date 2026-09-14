@@ -56,7 +56,7 @@ export default function QualityManagementShell({ user }: { user: CurrentUserDTO 
       />
       <QualityModuleTabs canViewQuick={user.access.capabilities.includes('QUALITY:READ')} active="overview" riskCount={risk.total} eightDCount={eightD.total} canViewData={user.access.capabilities.includes('QUALITY_DATA:READ')} />
       {error && <div className="quality-home-error"><AlertTriangle size={16} />{error}</div>}
-      <nav className="quality-entry-shortcuts"><Link href="/workspace/quality-tasks">我的责任任务</Link><Link href="/workspace/quality-confirmation">品质确认 · {phases.VERIFYING || 0} 份待确认</Link><Link href="/workspace/approvals">重大事项审批</Link><span>待接单 {phases.SUBMITTED || 0} · 处理中 {phases.COLLABORATING || 0} · 待汇总 {phases.SUMMARIZING || 0} · 待归档 {phases.PENDING_CLOSE || 0}</span></nav>
+      <nav className="quality-entry-shortcuts"><Link href="/workspace/quality-tasks">我的责任任务</Link><Link href="/workspace/quality-confirmation">品质确认 · {phases.VERIFYING || 0} 份待确认</Link><Link href="/workspace/approvals">重大事项审批</Link><span>待接单 {phases.SUBMITTED || 0} · 处理中 {phases.COLLABORATING || 0} · 待归档 {phases.PENDING_CLOSE || 0}</span></nav>
       <section className="quality-home-kpis" aria-label="质量管理关键指标">
         <article className="danger"><span>活动工单预警</span><strong>{risk.activeAlerts}</strong><small>来自已归档异常版本</small></article>
         <article><span>待完善草稿</span><strong>{risk.draft}</strong><small>{risk.unlinked} 份关联不完整</small></article>

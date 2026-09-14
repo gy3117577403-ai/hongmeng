@@ -1,13 +1,12 @@
-name: Quality reporting candidate
+name: Quality direct review candidate
 on:
   push:
-    branches: ['codex/quality-report-v134166']
-    paths-ignore: ['.github/workflows/docker-image.yml', '.github/workflows/quality-report-validation.yml', 'docs/**']
+    branches: ['codex/quality-direct-review-v134167']
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: quality-report-candidate
+  group: quality-direct-candidate
   cancel-in-progress: true
 jobs:
   acceptance:
@@ -50,7 +49,8 @@ jobs:
       - run: npx prisma generate && npx prisma migrate deploy && node prisma/seed.cjs
       - name: Unit and transaction tests
         run: |
-          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/process-quality-integration.test.ts tests/process-completion-batch-integration.test.ts tests/quality-data-integration.test.ts tests/process-completion-withdrawal-integration.test.ts
+          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/quality-direct-review-integration.test.ts tests/quality-workflow-v3-integration.test.ts tests/quality-workbench-integration.test.ts tests/internal-quality-risks-integration.test.ts tests/quality-workflow-v2-integration.test.ts
+          npm run lint
           npm run test:unit
       - name: Prepare S3 and application
         run: |
@@ -69,12 +69,26 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
           npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
           node scripts/smoke-process-quality-browser.mjs
+      - name: Direct workflow HTTP and browser acceptance
+        env:
+          QUALITY_WORKBENCH_QA_ALLOW: disposable-quality-runtime
+          QUALITY_WORKBENCH_QA_BASE: http://127.0.0.1:3000
+          QUALITY_WORKBENCH_QA_FIXTURE: artifacts/quality-workbench/fixture.json
+          QUALITY_WORKBENCH_QA_OUTPUT: artifacts/quality-workbench/candidate-http.json
+        run: |
+          mkdir -p artifacts/quality-workbench
+          node scripts/seed-quality-workbench-smoke.cjs > "$QUALITY_WORKBENCH_QA_FIXTURE"
+          node scripts/smoke-quality-workbench.mjs
+          node scripts/smoke-quality-workbench-browser.mjs
       - name: Upload acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: process-quality-candidate-${{ github.sha }}
+          name: quality-direct-candidate-${{ github.sha }}
           path: |
+            artifacts/quality-workbench/*http.json
+            artifacts/quality-workbench/browser-runtime.txt
+            artifacts/quality-workbench/*.png
             artifacts/process-quality/http.json
             artifacts/process-quality/browser-runtime.txt
             artifacts/process-quality/*.png

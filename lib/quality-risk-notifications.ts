@@ -10,7 +10,7 @@ import { isQualityWeComEvent, WECOM_POLICY_BLOCK_REASON, type QualityWeComEvent 
 export async function enqueueQualityNotification(tx: Prisma.TransactionClient, input: {
   reportId: string; reportNo: string; recipientId: string; taskId?: string; round?: number;
   event: QualityWeComEvent;
-  title: string; summary: string; actorId: string; key: string;
+  title: string; summary: string; actorId?: string; key: string;
 }) {
   const targetRoute = qualityTaskPath(input.reportId, input.taskId, ['REVIEW', 'APPROVED'].includes(input.event));
   const dedupeKey = `quality-v3:${input.reportId}:${input.event}:${input.key}:${input.recipientId}`;
@@ -63,7 +63,7 @@ export async function dispatchQualityNotifications(options: { fetchImpl?: typeof
     const obsolete = !report || report.deletedAt ||
       (['ASSIGNED', 'RETURNED'].includes(item.eventType) && (!task || task.ownerUserId !== item.recipientId || !['TODO', 'IN_PROGRESS'].includes(task.status))) ||
       (item.eventType === 'REVIEW' && (report.status !== 'VERIFYING' || report.reviewRound !== item.reviewRound || report.reviewerUserId !== item.recipientId)) ||
-      (item.eventType === 'CONSOLIDATE' && (report.ownerUserId !== item.recipientId || !['COLLABORATING', 'REVISING'].includes(report.status))) ||
+      (item.eventType === 'CONSOLIDATE' && (report.workflowVersion >= 4 || report.ownerUserId !== item.recipientId || !['COLLABORATING', 'REVISING'].includes(report.status))) ||
       (item.eventType === 'APPROVED' && report.status !== 'PENDING_CLOSE');
     if (obsolete) { await tx.qualityRiskNotification.update({ where: { id: item.id }, data: { state: 'SKIPPED', lastError: '任务或流程已变化，无需发送过期提醒' } }); return null; }
     const user = await tx.user.findUnique({ where: { id: item.recipientId }, include: { employee: true, accessGrants: true } });

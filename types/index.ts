@@ -1007,6 +1007,8 @@ export type InternalQualityRiskActivityDTO = {
 };
 
 export type InternalQualityRiskTaskDTO = {
+  analysis?: import("@/lib/quality-direct-shared").QualityTaskAnalysis | null;
+  operators?: import("@/lib/quality-direct-shared").QualityOperator[];
   actionTaken?: string | null;
   ownerUserId?: string | null;
   isPrimary?: boolean;
@@ -1053,6 +1055,8 @@ export type InternalQualityRiskAttachmentDTO = {
 };
 
 export type InternalQualityRiskDTO = {
+  operatorAssignments?: import("@/lib/quality-direct-shared").QualityOperatorAssignments;
+  reviewBlockReason?: string | null;
   qualitySource?: { id: string; code: string; version: number; title: string; workOrderId: string; description: string; capturedAt: string } | null;
   workflow?: ReturnType<typeof import('@/lib/quality-workbench').qualityWorkflowView>;
   workflowVersion?: number;
@@ -1164,6 +1168,7 @@ export type InternalQualityRiskOptionEightDDTO = {
 };
 
 export type InternalQualityRiskOptionsDTO = {
+  employees?: import("@/lib/quality-direct-shared").QualityOperator[];
   assignees?: Array<{ id: string; displayName: string; username: string; department?: string; canReview?: boolean; notificationHint?: string }>;
   products: EightDReportProductDTO[];
   issues: InternalQualityRiskOptionIssueDTO[];

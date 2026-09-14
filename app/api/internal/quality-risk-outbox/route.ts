@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { resumeReadyQualityReviews } from '@/lib/quality-direct-review';
 import { NextResponse } from 'next/server';
 import { backgroundMaintenanceGate } from '@/lib/maintenance-single-flight';
 import { dispatchQualityNotifications } from '@/lib/quality-risk-notifications';
@@ -12,7 +13,7 @@ export async function POST(req: Request) {
   const flight = await backgroundMaintenanceGate.run({
     requestId,
     phase: 'quality_notification_outbox',
-  }, () => dispatchQualityNotifications());
+  }, async () => { await resumeReadyQualityReviews(); return dispatchQualityNotifications(); });
   if (!flight.started) {
     const response = NextResponse.json({
       ok: false,

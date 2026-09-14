@@ -23,7 +23,7 @@ test('PostgreSQL filters agree with display stages and zero active tasks cannot 
     const mine = await prisma.internalQualityRiskReport.findMany({ where: { AND: [{ id: { in: ids } }, qualityWorkViewWhere('MINE', user.id)] }, select: { id: true } });
     assert.deepEqual(mine.map(r => r.id).sort(), rows.filter(r => qualityMyPending(r, user.id)).map(r => r.id).sort());
     const empty = rows.find(r => r.status === 'COLLABORATING' && !r.tasks.length)!;
-    await assert.rejects(prisma.$transaction(tx => actOnQualityWorkflow(tx, empty.id, empty.version, 'SUBMIT_REVIEW', { occurrenceCause: '原因', rootCause: '根因', finalConclusion: '结论', correctiveAction: '措施' }, { id: user.id, name: user.displayName })), /所有责任任务/);
+    await assert.rejects(prisma.$transaction(tx => actOnQualityWorkflow(tx, empty.id, empty.version, 'SUBMIT_REVIEW', { occurrenceCause: '原因', rootCause: '根因', finalConclusion: '结论', correctiveAction: '措施' }, { id: user.id, name: user.displayName })), /自动送品质确认/);
   } finally {
     await prisma.internalQualityRiskReport.deleteMany({ where: { id: { in: ids } } });
     await prisma.user.delete({ where: { id: user.id } });

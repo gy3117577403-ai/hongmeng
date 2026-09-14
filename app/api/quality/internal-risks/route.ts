@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
     assertSameOriginMutationRequest(req);
     const user = await requireCapability('QUALITY', 'CREATE');
     const body = await req.json() as Record<string, unknown>;
-    const input = parseInternalQualityRiskInput({ ...body, workflowVersion: 3 });
+    const input = parseInternalQualityRiskInput({ ...body, workflowVersion: 4 });
     const sourceId = typeof body.sourceQualityRecordId === 'string' ? body.sourceQualityRecordId : '';
     if (sourceId) await requireCapability('QUALITY_DATA', 'READ');
     const report = await prisma.$transaction(async tx => {

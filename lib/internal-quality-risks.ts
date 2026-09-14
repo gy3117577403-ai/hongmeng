@@ -1,3 +1,4 @@
+import { resolveQualityOperatorAssignments } from './quality-operators';
 import { qualityWorkflowView, QUALITY_PHASE_LABELS } from './quality-workbench';
 import { handoffQuickWarnings } from '@/lib/quality-quick';
 import { qualityPhaseWhere, qualityWorkViewWhere } from './quality-workbench-query';
@@ -72,6 +73,7 @@ export class InternalQualityRiskError extends Error {
 
 export type InternalQualityRiskInput = {
   workflowVersion: number;
+  operatorAssignments: unknown;
   problemCategory: string | null;
   responsibleUserIds: string[];
   reviewerUserId: string | null;
@@ -187,7 +189,8 @@ export function parseInternalQualityRiskInput(input: Record<string, unknown>): I
     throw new InternalQualityRiskError('工单打印策略不正确');
   }
   return {
-    workflowVersion: input.workflowVersion === 3 ? 3 : 2,
+    workflowVersion: input.workflowVersion === 4 ? 4 : input.workflowVersion === 3 ? 3 : 2,
+    operatorAssignments: input.operatorAssignments || {},
     problemCategory: cleanText(input.problemCategory, 30),
     responsibleUserIds: normalizeQualityRiskRelationIds(input.responsibleUserIds, 30),
     reviewerUserId: cleanText(input.reviewerUserId, 100),
@@ -434,6 +437,8 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
     qualitySource: report.qualitySource as { id: string; code: string; version: number; title: string; workOrderId: string; description: string; capturedAt: string } | null,
     workflow: qualityWorkflowView({ ...report, ownerName: actorLabel(report.owner), reviewerName: actorLabel(report.reviewer) }),
     workflowVersion: report.workflowVersion,
+    operatorAssignments: (report.operatorAssignments || {}) as import("@/lib/quality-direct-shared").QualityOperatorAssignments,
+    reviewBlockReason: report.reviewBlockReason,
     problemCategory: report.problemCategory,
     responsibleUserIds: report.responsibleUserIds,
     reviewerUserId: report.reviewerUserId,
@@ -569,6 +574,8 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
       requirement: task.requirement,
       result: task.result,
       actionTaken: task.actionTaken,
+      analysis: task.analysis as import("@/lib/quality-direct-shared").QualityTaskAnalysis | null,
+      operators: (task.operators || []) as import("@/lib/quality-direct-shared").QualityOperator[],
       status: task.status,
       dueAt: task.dueAt?.toISOString() || null,
       completedAt: task.completedAt?.toISOString() || null,
@@ -632,8 +639,9 @@ async function activeRiskForMutation(tx: Prisma.TransactionClient, reportId: str
   return report;
 }
 
-async function assertQualityRiskRelations(tx: Prisma.TransactionClient, input: InternalQualityRiskInput): Promise<void> {
-  if (input.ownerUserId) await requireActiveQualityRiskAssignee(tx, input.ownerUserId);
+async function assertQualityRiskRelations(tx: Prisma.TransactionClient, input: InternalQualityRiskInput, previousOperators: unknown = {}): Promise<void> {
+  if (input.workflowVersion < 4 && input.ownerUserId) await requireActiveQualityRiskAssignee(tx, input.ownerUserId);
+  if (input.workflowVersion >= 4) input.operatorAssignments = await resolveQualityOperatorAssignments(tx, input.operatorAssignments, input.responsibleUserIds, previousOperators);
   const [issueCount, workOrderCount, productCount, eightDCount] = await Promise.all([
     input.issueIds.length ? tx.issue.count({ where: { id: { in: input.issueIds }, deletedAt: null } }) : 0,
     input.workOrderIds.length ? tx.workOrder.count({ where: { id: { in: input.workOrderIds }, deletedAt: null } }) : 0,
@@ -659,7 +667,8 @@ function reportData(input: InternalQualityRiskInput) {
     workshopArea: input.workshopArea,
     processName: input.processName,
     responsibleDepartment: input.responsibleDepartment,
-    ownerUserId: input.ownerUserId,
+    ownerUserId: input.workflowVersion >= 4 ? null : input.ownerUserId,
+    operatorAssignments: input.operatorAssignments as Prisma.InputJsonObject,
     printPhotoLayout: input.printPhotoLayout,
     defectPhenomenon: input.defectPhenomenon,
     occurrenceCause: input.occurrenceCause,
@@ -755,13 +764,13 @@ export async function updateInternalQualityRiskRecord(
   await lockRiskReport(tx, reportId);
   const report = await activeRiskForMutation(tx, reportId);
   assertExpectedVersion(report.version, expectedVersion);
-  if (report.workflowVersion >= 3 && (report.status !== 'DRAFT' || input.workflowVersion !== 3)) {
+  if (report.workflowVersion >= 3 && (report.status !== 'DRAFT' || input.workflowVersion < 3)) {
     throw new InternalQualityRiskError('请在当前流程阶段完成操作；已提交内容不能通过全局编辑覆盖', 409, 'QUALITY_STAGE_REQUIRED');
   }
   if (report.status === 'ARCHIVED') {
     throw new InternalQualityRiskError('已归档版本不可直接覆盖，请先启动修订', 409, 'QUALITY_RISK_ARCHIVED_IMMUTABLE');
   }
-  await assertQualityRiskRelations(tx, input);
+  await assertQualityRiskRelations(tx, input, report.operatorAssignments);
   await replaceRelations(tx, reportId, input);
   if (report.ownerUserId !== input.ownerUserId && report.status !== 'DRAFT') {
     if (!input.ownerUserId || !input.changeReason) throw new InternalQualityRiskError('更换主负责人必须选择有效账号并填写交接原因');
@@ -956,6 +965,10 @@ function snapshotFor(report: InternalQualityRiskRecord, revisionNumber: number):
       ownerName: task.ownerName,
       requirement: task.requirement,
       result: task.result,
+      actionTaken: task.actionTaken,
+      analysis: task.analysis,
+      operators: task.operators,
+      ownerUserId: task.ownerUserId,
       status: task.status,
       dueAt: task.dueAt?.toISOString() || null,
       completedAt: task.completedAt?.toISOString() || null,
@@ -1333,8 +1346,11 @@ export async function startInternalQualityRiskRevision(
   if (report.status !== 'ARCHIVED') throw new InternalQualityRiskError('只有已归档异常才能启动修订', 409, 'QUALITY_RISK_REVISION_INVALID');
   await tx.internalQualityRiskReport.update({
     where: { id: reportId },
-    data: { status: 'REVISING', updatedById: actor.id, verifiedAt: null, verifiedById: null, version: { increment: 1 } },
+    data: { status: 'REVISING', ...(report.workflowVersion >= 3 ? { workflowVersion: 4, ownerUserId: null, reviewBlockReason: null } : {}), updatedById: actor.id, verifiedAt: null, verifiedById: null, version: { increment: 1 } },
   });
+  if (report.workflowVersion >= 3) {
+    for (const task of await tx.internalQualityRiskTask.findMany({ where: { reportId, status: { not: 'CANCELLED' } } })) await tx.internalQualityRiskTask.update({ where: { id: task.id }, data: { status: 'IN_PROGRESS', verifiedAt: null, verifiedById: null, reviewNote: '修订中：请更新本次处理内容后重新提交。', version: { increment: 1 }, ...(!task.analysis ? { analysis: { legacy: true, legacyOccurrenceCause: report.occurrenceCause || '', legacyRootCause: report.rootCause || '' } } : {}) } });
+  }
   await tx.internalQualityRiskActivity.create({
     data: activityData(reportId, actor, 'REVISION_STARTED', '启动新修订；上一归档版本的工单预警继续有效，直至新版本归档'),
   });
