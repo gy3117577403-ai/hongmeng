@@ -12,10 +12,10 @@ import {
 
 const orderInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
   productionPlanBatch: { include: { planOrder: true } },
-  processRoute: { select: { steps: { where: { retiredAt: null }, select: { id: true, processName: true }, orderBy: { position: 'asc' } } } },
+  processRoute: { select: { steps: { where: { retiredAt: null }, select: { id: true, processName: true, position: true, routeId: true }, orderBy: { position: 'asc' } } } },
 });
 type OrderSource = Prisma.WorkOrderGetPayload<{ include: typeof orderInclude }>;
-const attachmentsInclude = { orderBy: { createdAt: 'asc' as const } };
+const attachmentsInclude = { orderBy: [{ sortOrder: 'asc' as const }, { createdAt: 'asc' as const }, { id: 'asc' as const }] };
 export const qualityInclude = { attachments: attachmentsInclude };
 type RecordSource = Prisma.QualityDataRecordGetPayload<{ include: typeof qualityInclude }>;
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -30,7 +30,7 @@ export function qualityOrder(order: OrderSource, parentBatch?: OrderSource['prod
     quantity: order.productionTargetQty ?? batch?.quantity ?? null,
     planOrderId: batch?.planOrderId || null, batchId: batch?.id || null, batchNo: batch?.batchNo ?? null,
     sourceLineNo: batch?.planOrder.sourceLineNo ?? null, rootWorkOrderId: order.rootWorkOrderId, parentWorkOrderId: order.parentWorkOrderId,
-    steps: order.processRoute?.steps.map(step => ({ id: step.id, name: step.processName })) || [],
+    steps: order.processRoute?.steps.map(step => ({ id: step.id, name: step.processName, position: step.position, routeId: step.routeId })) || [],
   };
 }
 export async function readQualityOrder(tx: Prisma.TransactionClient, id: string, allowDeleted = false) {
@@ -105,7 +105,11 @@ export function qualityWhere(params: URLSearchParams): Prisma.QualityDataRecordW
   if (params.get('inspectionScope') === 'first') where.supersedesId = null;
   if (params.get('responsibility') === 'PENDING') where.responsibilityStatus = 'PENDING';
   if (params.get('workOrderId')) where.workOrderId = qualityText(params.get('workOrderId'), 120);
+  if (params.get('inspectionStepId')) where.inspectionStepId = qualityText(params.get('inspectionStepId'), 120);
+  if (params.get('unassignedStep') === '1') where.inspectionStepId = null;
+  if (params.get('scan') === '1') where.type = { not: 'PATROL' };
   if (params.get('type')) where.type = qualityType(params.get('type'));
+  if (params.get('scan') === '1' && params.get('type') === 'PATROL') throw new QualityDataError('巡检报表请在质量数据中按日期上传');
   if (params.get('status')) {
     if (!['DRAFT','SUBMITTED'].includes(params.get('status')!)) throw new QualityDataError('记录状态无效');
     where.status = params.get('status')!;
@@ -134,6 +138,46 @@ export async function listQualityRecords(params: URLSearchParams) {
 function searchText(order: QualityOrder, data: QualityFormData, title: string, actor: string, files: string[] = []) {
   return [title, actor, JSON.stringify(order), JSON.stringify(data), ...files].join(' ');
 }
+export async function qualityFirstOverview(workOrderId: string) {
+  const order = await readQualityOrder(prisma, workOrderId);
+  const where = { workOrderId, type: 'FIRST', deletedAt: null };
+  const [latest, counts, identities] = await Promise.all([
+    prisma.qualityDataRecord.findMany({ where: { ...where, status: 'SUBMITTED' }, distinct: ['inspectionStepId'], orderBy: [{ inspectedAt: 'desc' }, { createdAt: 'desc' }], select: { inspectionStepId: true, inspectionStepSnapshot: true, result: true } }),
+    prisma.qualityDataRecord.groupBy({ by: ['inspectionStepId'], where, _count: true }),
+    prisma.qualityDataRecord.findMany({ where, distinct: ['inspectionStepId'], orderBy: { createdAt: 'desc' }, select: { inspectionStepId: true, inspectionStepSnapshot: true } }),
+  ]);
+  const current = new Set(order.steps.map(step => step.id));
+  const historical = identities.filter(record => record.inspectionStepId && !current.has(record.inspectionStepId) && record.inspectionStepSnapshot)
+    .map(record => ({ ...(record.inspectionStepSnapshot as { id: string; name: string; position: number; routeId: string }), retired: true }));
+  const steps = [...order.steps.map(step => ({ ...step, retired: false })), ...historical].map(step => ({ ...step, result: latest.find(record => record.inspectionStepId === step.id)?.result || null, count: counts.find(record => record.inspectionStepId === step.id)?._count || 0 }));
+  return { order, steps, unassignedCount: counts.find(record => record.inspectionStepId === null)?._count || 0 };
+}
+function patrolContext(): QualityOrder {
+  return { id: '', code: '', businessCode: null, sourceOrderNo: null, customerName: null, productName: '巡检报表', specification: null,
+    orderDate: null, stage: 'archive', quantity: null, planOrderId: null, batchId: null, batchNo: null, sourceLineNo: null,
+    rootWorkOrderId: null, parentWorkOrderId: null, steps: [] };
+}
+async function resolveInspectionStep(tx: Prisma.TransactionClient, workOrderId: string, stepId: string) {
+  if (!stepId) throw new QualityDataError('请选择本次首件检验的具体工序');
+  const step = await tx.workOrderProcessStep.findFirst({ where: { id: stepId, retiredAt: null, route: { workOrderId } }, select: { id: true, processName: true, position: true, routeId: true } });
+  if (!step) throw new QualityDataError('所选工序不属于当前工单，或已退役，请刷新后重新选择', 409);
+  return { id: step.id, name: step.processName, position: step.position, routeId: step.routeId };
+}
+function assertPaperResult(type: string, data: QualityFormData) {
+  if (type === 'FIRST' && data.paper && !data.paper.result) throw new QualityDataError('请选择本次首件检验结果');
+}
+/** Aggregate all matching records in SQL; dates are Shanghai inspection dates, not upload dates. */
+export async function qualityArchiveDays(params: URLSearchParams) {
+  const range = reportRangeQuery(params);
+  const q = qualityText(params.get('q'), 160), deleted = params.get('deleted') === '1';
+  return prisma.$queryRaw<Array<{ date: string; count: number }>>`
+    SELECT to_char((inspected_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai', 'YYYY-MM-DD') AS date, count(*)::int AS count
+    FROM quality_data_records
+    WHERE type = 'PATROL' AND inspected_at >= ${range.start} AND inspected_at < ${range.end}
+      AND (CASE WHEN ${deleted} THEN deleted_at IS NOT NULL ELSE deleted_at IS NULL END)
+      AND (${q} = '' OR position(lower(${q}) in lower(search_text)) > 0)
+    GROUP BY 1 ORDER BY 1 DESC`;
+}
 export async function snapshotQuality(tx: Prisma.TransactionClient, id: string, actor: QualityActor, action: string, reason: string) {
   const record = await tx.qualityDataRecord.findUniqueOrThrow({ where: { id }, include: qualityInclude });
   await tx.qualityDataRevision.create({ data: {
@@ -154,13 +198,17 @@ export async function createQualityRecord(actor: QualityActor, body: Record<stri
   const type = qualityType(body.type), data = qualityForm(body.data), inspectedAt = qualityDate(body.inspectedAt);
   const title = qualityText(body.title, 160);
   if (!title) throw new QualityDataError('请填写记录标题');
-  const workOrderId = qualityText(body.workOrderId, 120), sourceQrCode = qualityText(body.sourceQrCode, 120) || null;
+  const workOrderId = qualityText(body.workOrderId, 120) || null, sourceQrCode = qualityText(body.sourceQrCode, 120) || null;
+  const inspectionStepId = qualityText(body.inspectionStepId, 120) || null;
+  if (type === 'PATROL' && (sourceQrCode || workOrderId)) throw new QualityDataError('巡检报表按日期归档，请从质量数据入口上传，无需关联单一工单');
+  if (type !== 'FIRST' && inspectionStepId) throw new QualityDataError('首件检验工序关联不适用于此类型');
+  if (type !== 'PATROL' && !workOrderId) throw new QualityDataError('请选择本次检验工单');
   const supersedesId = qualityText(body.supersedesId, 120) || null;
   const idempotencyKey = qualityText(body.idempotencyKey, 100);
   if (!/^[a-zA-Z0-9_-]{16,100}$/.test(idempotencyKey)) throw new QualityDataError('提交标识无效，请重新打开表单');
   const status = body.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT';
-  if (status === 'SUBMITTED') assertQualitySubmission(data, 0);
-  const requestHash = createHash('sha256').update(JSON.stringify({ type, data, inspectedAt, title, workOrderId, sourceQrCode, supersedesId, status })).digest('hex');
+  if (status === 'SUBMITTED') { assertPaperResult(type, data); assertQualitySubmission(data, 0); }
+  const requestHash = createHash('sha256').update(JSON.stringify({ type, data, inspectedAt, title, workOrderId, inspectionStepId, sourceQrCode, supersedesId, status })).digest('hex');
   return prisma.$transaction(async tx => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'quality-data-create:' + actor.id + ':' + idempotencyKey}))`;
     const previous = await tx.qualityDataRecord.findUnique({ where: { createdById_idempotencyKey: { createdById: actor.id, idempotencyKey } }, include: qualityInclude });
@@ -168,7 +216,9 @@ export async function createQualityRecord(actor: QualityActor, body: Record<stri
       if (previous.requestHash !== requestHash) throw new QualityDataError('同一提交标识的内容发生变化，请刷新记录后继续编辑', 409);
       return serializeQuality(previous);
     }
-    const orderSnapshot = await readQualityOrder(tx, workOrderId);
+    const orderSnapshot = workOrderId ? await readQualityOrder(tx, workOrderId) : patrolContext();
+    const inspectionStepSnapshot = type === 'FIRST' ? await resolveInspectionStep(tx, workOrderId!, inspectionStepId || '') : null;
+    if (inspectionStepSnapshot) data.context.processName = inspectionStepSnapshot.name;
     await bindQualityTeam(tx, data);
     if (sourceQrCode) {
       const ticket = await tx.workOrderQrTicket.findUnique({ where: { publicCode: sourceQrCode } });
@@ -177,11 +227,12 @@ export async function createQualityRecord(actor: QualityActor, body: Record<stri
     if (supersedesId) {
       const original = await tx.qualityDataRecord.findFirst({ where: { id: supersedesId, workOrderId, type, status: 'SUBMITTED', deletedAt: null } });
       if (!original) throw new QualityDataError('复检必须关联同一工单、同一类型的有效已提交记录', 409);
+      if (type === 'FIRST' && original.inspectionStepId !== inspectionStepId) throw new QualityDataError('首件复检须关联同一工序', 409);
     }
     const id = randomUUID();
     const record = await tx.qualityDataRecord.create({ data: {
       id, code: 'QD-' + beijingInput().slice(0,10).replaceAll('-', '') + '-' + id.slice(0,8).toUpperCase(),
-      workOrderId, type, data: json(data), orderSnapshot: json(orderSnapshot), title, inspectedAt, status,
+      workOrderId, inspectionStepId, ...(inspectionStepSnapshot ? { inspectionStepSnapshot: json(inspectionStepSnapshot) } : {}), type, data: json(data), orderSnapshot: json(orderSnapshot), title, inspectedAt, status,
       result: qualityResult(data), searchText: searchText(orderSnapshot, data, title, actor.name),
       createdById: actor.id, createdByName: actor.name, updatedById: actor.id,
       sourceQrCode, supersedesId, idempotencyKey, requestHash, submittedAt: status === 'SUBMITTED' ? new Date() : null,
@@ -227,13 +278,28 @@ export async function mutateQualityRecord(id: string, actor: QualityActor, body:
       if (!actor.canReview) throw new QualityDataError('当前账号没有质量复核权限', 403);
       if (current.deletedAt || current.status !== 'SUBMITTED') throw new QualityDataError('只能复核有效的已提交记录', 409);
       update = { ...update, reviewStatus: action === 'REVIEW' ? 'APPROVED' : 'RETURNED', reviewedAt: new Date(), reviewedByName: actor.name, reviewNote: reason };
+    } else if (action === 'REORDER_ATTACHMENTS') {
+      assertQualityEdit(actor, current);
+      const ids = body.attachmentIds;
+      const active = current.attachments.filter(file => !file.deletedAt);
+      if (!Array.isArray(ids) || ids.length !== active.length || new Set(ids).size !== ids.length || ids.some(id => !active.some(file => file.id === id))) throw new QualityDataError('附件顺序已变化，请刷新后重试', 409);
+      for (const [sortOrder, fileId] of ids.entries()) await tx.qualityDataAttachment.update({ where: { id: String(fileId) }, data: { sortOrder } });
     } else if (action === 'SAVE' || action === 'SUBMIT') {
       assertQualityEdit(actor, current);
       const data = qualityForm(body.data), inspectedAt = qualityDate(body.inspectedAt), title = qualityText(body.title, 160);
       await bindQualityTeam(tx, data, current.data as unknown as QualityFormData);
       if (!title) throw new QualityDataError('请填写记录标题');
       const status = action === 'SUBMIT' || current.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT';
-      if (status === 'SUBMITTED') assertQualitySubmission(data, current.attachments.filter(file => !file.deletedAt).length);
+      if (current.type === 'FIRST') {
+        const requestedStep = qualityText(body.inspectionStepId, 120);
+        if (requestedStep && requestedStep !== current.inspectionStepId) {
+          if (current.inspectionStepId) throw new QualityDataError('已登记的工序不能更换，请另建检验记录', 409);
+          if (!actor.canManage || !reason) throw new QualityDataError('历史首件记录须由质量管理人员注明原因后补充工序', 403);
+          const step = await resolveInspectionStep(tx, current.workOrderId!, requestedStep);
+          update.inspectionStepId = step.id; update.inspectionStepSnapshot = json(step); data.context.processName = step.name;
+        } else if (current.inspectionStepSnapshot) data.context.processName = (current.inspectionStepSnapshot as { name: string }).name;
+      }
+      if (status === 'SUBMITTED') { assertPaperResult(current.type, data); assertQualitySubmission(data, current.attachments.filter(file => !file.deletedAt).length); }
       update = { ...update, data: json(data), inspectedAt, title, status, result: qualityResult(data),
         reviewStatus: 'UNREVIEWED', reviewedAt: null, reviewedByName: null, reviewNote: null,
         submittedAt: current.submittedAt || (status === 'SUBMITTED' ? new Date() : null),

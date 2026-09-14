@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
       if (sourceId) {
         const source = await tx.qualityDataRecord.findFirst({ where: { id: sourceId, deletedAt: null, status: 'SUBMITTED' } });
         if (!source) throw new InternalQualityRiskError('来源质量记录不存在、尚未提交或已作废', 400);
+        if (!source.workOrderId) throw new InternalQualityRiskError('巡检报表按日期归档，请先确认具体异常产品后建立异常工单', 400);
         if (!input.workOrderIds.includes(source.workOrderId)) throw new InternalQualityRiskError('必须保留来源检验记录所属工单，其他影响对象可另行关联', 400);
         const data = source.data as { summary?: string };
         draft = await tx.internalQualityRiskReport.update({ where: { id: draft.id }, data: { qualitySource: { id: source.id, code: source.code, version: source.version, title: source.title, workOrderId: source.workOrderId, description: data.summary || source.title, capturedAt: new Date().toISOString() } }, include: internalQualityRiskInclude });

@@ -39,6 +39,14 @@ async function main() {
     const plan=await prisma.productionPlanOrder.create({data:{sourceOrderNo:order.sourceOrderNo,sourceLineNo:1,customerName:order.customerName,productName:order.productName,specification:order.specification,orderQuantity:200,orderDate:new Date(),customerDueDate:new Date(Date.now()+86400000),batches:{create:{batchNo:index,quantity:200,weekStartDate:new Date(),weekEndDate:new Date(Date.now()+6*86400000),plannedCompletionDate:new Date(Date.now()+86400000),workOrderId:order.id,releaseState:'active'}}}});
     orders.push({id:order.id,code,publicCode,planOrderId:plan.id});
   }
-  return {marker,password,users,orders,team:{id:team.id,name:team.name},terminal:{id:terminal.id,specification:terminal.specification,manufacturer:terminal.manufacturer}};
+  const paperOrder = await prisma.workOrder.create({ data: {
+    code: marker + '-FIRST-36', businessCode: marker + '-首件验收工单', productName: '连接线束（软件验收）', specification: 'QA-首件检验-36工序', customerName: '软件验收样例', stage: 'frontend',
+    qrTicket: { create: { publicCode: randomUUID().replaceAll('-', '') } },
+    processRoute: { create: { templateName: '首件检验验收工艺', templateVersion: 1, status: 'in_progress', steps: { create: Array.from({ length: 36 }, (_, index) => ({
+      position: index + 1, sequenceGroup: index + 1, processCode: 'QP-' + index, processName: [4, 15, 30].includes(index) ? '首件检验' : ['裁线', '剥皮', '压接', '装配', '导通', '包装'][index % 6],
+      stageGroup: 'frontend', standardSource: 'integration_test', timeBasis: 'per_unit', unitLabel: '套', standardMillisecondsPerUnit: 1000, inputQty: 100, status: index ? 'pending' : 'current',
+    })) } } },
+  }, include: { qrTicket: true, processRoute: { include: { steps: { orderBy: { position: 'asc' } } } } } });
+  return {marker,password,users,orders,paperOrder:{id:paperOrder.id,code:paperOrder.code,publicCode:paperOrder.qrTicket.publicCode,steps:paperOrder.processRoute.steps.map(s=>({id:s.id,name:s.processName,position:s.position}))},team:{id:team.id,name:team.name},terminal:{id:terminal.id,specification:terminal.specification,manufacturer:terminal.manufacturer}};
 }
 main().then(data=>console.log(JSON.stringify(data))).finally(()=>prisma.$disconnect());

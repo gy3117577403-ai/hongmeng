@@ -58,7 +58,7 @@ export async function uploadQualityFile(recordId: string, actor: QualityActor, f
       // A re-upload of a removed file restores the original bytes; immutable revisions keep the old membership.
       const prior = await tx.qualityDataAttachment.findUnique({ where: { recordId_sha256_originalName: { recordId, sha256, originalName } } });
       if (prior) await tx.qualityDataAttachment.update({ where: { id: prior.id }, data: { deletedAt: null } });
-      else await tx.qualityDataAttachment.create({ data: { recordId, originalName, mimeType, size: bytes.length, objectKey: key, sha256, createdById: actor.id } });
+      else await tx.qualityDataAttachment.create({ data: { recordId, originalName, mimeType, size: bytes.length, objectKey: key, sha256, createdById: actor.id, sortOrder: Math.max(-1, ...current.attachments.map(file => file.sortOrder)) + 1 } });
       await tx.qualityDataRecord.update({ where: { id: recordId }, data: { version: { increment: 1 }, updatedById: actor.id, searchText: current.searchText + ' ' + originalName, ...qualityRevisionReset() } });
       return { record: await snapshotQuality(tx, recordId, actor, 'ATTACH', reason || '上传附件：' + originalName), keptNewObject: !prior };
     });

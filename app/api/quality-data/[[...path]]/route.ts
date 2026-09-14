@@ -2,7 +2,9 @@ import { Readable } from 'node:stream';
 import { NextRequest, NextResponse } from 'next/server';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { qualitySession, qualityError, qualityBody } from '@/lib/quality-data-http';
-import { createQualityRecord, listQualityRecords, loadQualityRecord, mutateQualityRecord, qualityExportRecords, qualityOrderOptions, qualityQrOrder, qualityHistory, qualityHistoricalRecord, positivePage } from '@/lib/quality-data-service';
+import { createQualityRecord, listQualityRecords, loadQualityRecord, mutateQualityRecord, qualityExportRecords, qualityOrderOptions, qualityQrOrder, qualityHistory, qualityHistoricalRecord, positivePage, qualityArchiveDays, readQualityOrder, qualityFirstOverview } from '@/lib/quality-data-service';
+import { prisma } from '@/lib/prisma';
+import { documentDisplaySettings } from '@/lib/document-orientation.server';
 import { uploadQualityFile, deleteQualityFile, qualityFileContent } from '@/lib/quality-data-files';
 import { qualityWorkbook, qualityZip } from '@/lib/quality-data-export';
 import { QualityDataError } from '@/lib/quality-data';
@@ -18,6 +20,7 @@ export async function GET(req: NextRequest, { params }: Context) {
   try {
     const { actor } = await qualitySession();
     const p = params.path || [], query = req.nextUrl.searchParams;
+    if (p.length === 3 && p[0] === 'attachments' && p[2] === 'display-settings') return documentDisplaySettings(req, 'quality', p[1]);
     let data: unknown;
     if (p.length === 1 && p[0] === 'options') data = await qualityOptions(query.get('q'));
     else if (p.length === 1 && p[0] === 'references') data = await listReferences(query,actor.id);
@@ -30,6 +33,9 @@ export async function GET(req: NextRequest, { params }: Context) {
     else if (p.length === 3 && p[0] === 'references' && p[2] === 'revisions') data = await referenceHistory(p[1],positivePage(query.get('page')));
     else if (p.length === 4 && p[0] === 'references' && p[2] === 'revisions') data = await referenceVersion(p[1],positivePage(p[3]));
     else if (p.length === 1 && p[0] === 'orders') data = await qualityOrderOptions(query);
+    else if (p.length === 2 && p[0] === 'orders') data = await readQualityOrder(prisma, p[1]);
+    else if (p.length === 2 && p[0] === 'first-steps') data = await qualityFirstOverview(p[1]);
+    else if (p.length === 1 && p[0] === 'archive-days') data = await qualityArchiveDays(query);
     else if (p.length === 2 && p[0] === 'qr') data = await qualityQrOrder(p[1]);
     else if (p.length === 1 && p[0] === 'records') data = await listQualityRecords(query);
     else if (p.length === 2 && p[0] === 'records') data = await loadQualityRecord(p[1]);
@@ -76,6 +82,7 @@ export async function PATCH(req: NextRequest, { params }: Context) {
   try {
     assertSameOriginMutationRequest(req);
     const { actor } = await qualitySession('UPDATE'), p = params.path || [];
+    if (p.length === 3 && p[0] === 'attachments' && p[2] === 'display-settings') return documentDisplaySettings(req, 'quality', p[1]);
     if (p.length !== 2 || !['records','references'].includes(p[0])) throw new QualityDataError('接口不存在', 404);
     const body=await qualityBody(req);
     const data=p[0]==='records'?await mutateQualityRecord(p[1],actor,body):body.action==='FAVORITE'?await favoriteReference(p[1],actor.id,body.favorite):await mutateReference(p[1],actor,body);

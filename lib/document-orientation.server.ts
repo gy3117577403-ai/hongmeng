@@ -11,12 +11,17 @@ import { normalizePreviewRotation } from '@/lib/preview-gestures';
 import { fileType } from '@/lib/validation';
 import { canAccessApiRoute } from '@/lib/api-route-access';
 
-type Kind = 'drawing' | 'resource' | 'sample';
+type Kind = 'drawing' | 'resource' | 'sample' | 'quality';
 class DisplaySettingsError extends Error {
   constructor(message: string, readonly status = 400, readonly code = 'DOCUMENT_ORIENTATION_INVALID') { super(message); }
 }
 
 async function sourceFile(kind: Kind, id: string) {
+  if (kind === 'quality') {
+    const file = await prisma.qualityDataAttachment.findFirst({ where: { id, deletedAt: null, record: { deletedAt: null } }, include: { record: { select: { createdById: true } } } });
+    if (!file) throw new DisplaySettingsError('质量照片不存在或已移除', 404);
+    return { ...file, ownerId: file.record.createdById, fileType: fileType(file.originalName, file.mimeType), drawingOwned: false, fileName: file.originalName };
+  }
   if (kind === 'drawing') {
     const file = await prisma.drawingLibraryFile.findFirst({ where: { id, deletedAt: null, libraryItem: { deletedAt: null } } });
     if (!file) throw new DisplaySettingsError('文件不存在或已删除', 404);
@@ -55,9 +60,12 @@ export async function exportOrientedDocument(bytes: Uint8Array, mimeType: string
 export async function documentDisplaySettings(req: NextRequest, kind: Kind, id: string) {
   try {
     const user = await requireUser();
+    if (kind === 'quality' && canAccessApiRoute(user.access, req.nextUrl.pathname, 'GET') !== true) throw new DisplaySettingsError('没有质量数据访问权限', 403);
     const file = await sourceFile(kind, id);
     if (file.fileType !== 'pdf' && !file.mimeType.startsWith('image/')) throw new DisplaySettingsError('此文件不支持方向设置');
-    const canSave = canAccessApiRoute(user.access, req.nextUrl.pathname, 'PATCH') === true && canSaveDocumentOrientation(user.access, file.drawingOwned);
+    const canSave = canAccessApiRoute(user.access, req.nextUrl.pathname, 'PATCH') === true && (kind === 'quality'
+      ? user.access.capabilities.includes('QUALITY_DATA:MANAGE') || ('ownerId' in file && file.ownerId === user.id)
+      : canSaveDocumentOrientation(user.access, file.drawingOwned));
     const current = await prisma.documentDisplaySetting.findUnique({ where: { objectKey: file.objectKey } });
     if (req.method === 'GET') {
       if (req.nextUrl.searchParams.get('download') === '1') {
@@ -82,7 +90,9 @@ export async function documentDisplaySettings(req: NextRequest, kind: Kind, id: 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`document-display:${file.objectKey}`}))`;
       const previous = await tx.documentDisplaySetting.findUnique({ where: { objectKey: file.objectKey } });
       if ((previous?.revision || 0) !== input.revision) throw new DisplaySettingsError('方向已被其他人修改，请先恢复服务器已保存方向再重新调整', 409, 'DOCUMENT_ORIENTATION_CONFLICT');
-      const active = kind === 'drawing'
+      const active = kind === 'quality'
+        ? await tx.qualityDataAttachment.findFirst({ where: { id, objectKey: file.objectKey, deletedAt: null, record: { deletedAt: null } }, select: { id: true } })
+        : kind === 'drawing'
         ? await tx.drawingLibraryFile.findFirst({ where: { id, objectKey: file.objectKey, deletedAt: null, libraryItem: { deletedAt: null } }, select: { id: true } })
         : kind === 'sample'
           ? await tx.samplePhoto.findFirst({ where: { id, objectKey: file.objectKey, deletedAt: null, task: { deletedAt: null } }, select: { id: true } })
@@ -90,7 +100,7 @@ export async function documentDisplaySettings(req: NextRequest, kind: Kind, id: 
       if (!active) throw new DisplaySettingsError('文件已变更或删除，请刷新后重试', 409);
       const data = { pageCount: count, pageRotations: rotations, revision: (previous?.revision || 0) + 1, updatedById: user.id };
       const setting = await tx.documentDisplaySetting.upsert({ where: { objectKey: file.objectKey }, create: { objectKey: file.objectKey, ...data }, update: data });
-      await tx.operationLog.create({ data: { userId: user.id, action: 'save_document_orientation', targetType: kind === 'drawing' ? 'drawing_library_file' : kind === 'sample' ? 'sample_photo' : 'resource_file', targetId: id, detail: { before: previous?.pageRotations || {}, after: rotations, revision: setting.revision, pageCount: count } } });
+      await tx.operationLog.create({ data: { userId: user.id, action: 'save_document_orientation', targetType: kind === 'quality' ? 'quality_data_attachment' : kind === 'drawing' ? 'drawing_library_file' : kind === 'sample' ? 'sample_photo' : 'resource_file', targetId: id, detail: { before: previous?.pageRotations || {}, after: rotations, revision: setting.revision, pageCount: count } } });
       return setting;
     });
     return NextResponse.json({ ok: true, revision: saved.revision, pageRotations: saved.pageRotations, updatedAt: saved.updatedAt, canSave });

@@ -1,3 +1,38 @@
+# First inspection and patrol archive design QA — v1.34.172
+
+Scope: implement the approved first-inspection workbench and mobile flow, and the date-based paper patrol archive. This is a functional redesign using synthetic records in a dedicated PostgreSQL/MinIO environment. No production records were modified.
+
+## Visual evidence
+
+Source: `output/previews/quality-paper-archive-20260914/screenshots/first-inspection-20260915/01-workbench.png`, `02-register.png`, `06-mobile-screen.png`, and `output/previews/quality-paper-archive-20260914/screenshots/01-patrol-desktop.png`.
+
+Implementation: `output/quality-paper-v172/screenshots/first-tablet.png`, `first-editor.png`, `patrol-tablet.png`, `first-mobile.png`, `process-picker.png`, `ordinary-process.png`. Desktop comparisons use 1366×1024 screenshots; mobile uses 390×844. Source and implementation were viewed together in the same comparison input. The demo ribbon is intentionally absent from the actual product; model names, dates, counts and sample personnel differ because the database fixture includes 36 real process rows.
+
+- Preserved the narrow platform navigation, product/date list, process/report list and fixed reading panel. Existing platform navigation and authenticated APIs replace prototype navigation.
+- Preserved orange actions, white cards, pale gray surfaces, restrained status colors, shared Lucide icons and the system Chinese font stack.
+- Kept real date/search/export/recycle controls for record retrieval. The shared file reader adds saved public orientation and original-download controls; it does not overwrite the evidence image.
+- The prototype's paper specimens remain clearly marked demonstration material and were uploaded only to the isolated test environment.
+
+## Findings and resolution
+
+1. Resolved: native date edits could revert after another field changed. Date input handlers now update state for both native input and change events. A patrol record was edited from September 15 to September 14, then another field was changed; the saved record and date-group counts correctly moved to September 14.
+2. Resolved: shared image controls overlaid the paper. The toolbar now reserves its own top row; desktop rotation controls share a compact line while narrow screens wrap. Zoom, fullscreen, rotation/save and restored-file reading were exercised.
+3. Resolved: native confirmation dialogs were unreliable inside the embedded browser. Form discard and whole-record delete/restore now use in-page controls. Continue retains typed text; discard closes the editor; delete/restore requires a reason.
+4. Resolved: switching ordinary/first processes could lose an unsaved first form. Visited forms retain their own state; a 36-process fixture was searched by sequence, switched to ordinary cutting and back, and the first-inspection note was preserved. The ordinary process has no first-inspection fields.
+5. Resolved: the recent first-record entry must open that record, and refreshing its photo order must not collapse the detail. Mobile receives the selected record directly and preserves the active detail when refreshing its list.
+6. Resolved: recycled records must display a deleted badge even when their prior status was submitted. The list now prioritizes the deletion state.
+
+## Functional acceptance
+
+Real browser flow: login, desktop first-photo upload and result save into process 05, separate untouched same-name processes 16/31, batch upload of two patrol photos, date correction, preview/zoom/fullscreen, saved orientation, record recycle and restore with both originals retained, edit/close protection, mobile search/switch/draft retention, and absence of patrol from the QR type list. Browser console errors were empty on the final checked tab.
+
+Backend evidence: `output/quality-paper-v172/integration.log` (4 integration tests), `unit.log` (1189 passing unit tests, no failures; database-gated cases run separately), `http-base.json` (108 quality HTTP checks), `http-paper.json` (34 paper-inspection HTTP checks), `release-contract.log` (4 version/release checks). New HTTP checks cover scope, access, idempotency, result/evidence validation, real object uploads, rotation revision conflicts, original SHA, export contents, ordering and restore. The release workflow repeats HTTP acceptance for source and anonymously pulled Hangzhou images with separate clean databases.
+
+Physical camera permissions, real WeChat devices and mobile keyboard behavior were not tested on physical hardware. Camera uses the existing browser file capture mechanism; album multi-selection was exercised in the browser.
+
+final result: passed
+
+---
 # HR directory design QA — v1.34.139
 
 Source visual truth: `C:/Windows/TEMP/codex-clipboard-2af17768-79f8-4a2b-8d32-c8bd6c3763e2.png` plus the accepted compact HR proposal in `C:/Users/31175/.codex/visualizations/2026/09/08/01a07e69-5cde-7d82-a8cd-a143c81eb134/hr-directory-plan.html`.

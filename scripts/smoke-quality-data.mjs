@@ -43,14 +43,15 @@ function form(type,value='80'){
   return {mode:'FORM',context:{processName:type==='FINAL'?'成品检验':'端子压接',inspectedBy:'现场验收员',team:'质量验收班组',standardRef:'验收样例标准 V1'},summary:'验收样例：检查线束端子，保留原始测量结果。',rows:[{sample:'01',position:'P1 / 红线',item:type==='PULL'?'拉力':'检验项目',standard:'仅用于软件验收的样例标准',lower:'70',upper:'90',value,unit:type==='PULL'?'N':'mm',result:'PASS',note:'验收记录'}]};
 }
 const records=[];
+const firstStep = (await request('quality',api+'qr/'+fixture.orders[0].publicCode)).body.data.steps[0];
 for(const [index,type] of ['CRIMP','PULL','FINAL','FIRST','PATROL'].entries()){
   const actor=index%2?'tooling':'quality', order=fixture.orders[type==='FINAL'?1:0];
-  const input={workOrderId:order.id,sourceQrCode:order.publicCode,type,title:type+' 验收记录',inspectedAt:new Date(Date.now()-60000).toISOString(),data:form(type,index===0?'60':'80'),status:'SUBMITTED',idempotencyKey:randomUUID()};
+  const input={...(type==='PATROL'?{}:{workOrderId:order.id,sourceQrCode:order.publicCode}),...(type==='FIRST'?{inspectionStepId:firstStep.id}:{}),type,title:fixture.marker+' '+type+' 验收记录',inspectedAt:new Date(Date.now()-60000).toISOString(),data:form(type,index===0?'60':'80'),status:'SUBMITTED',idempotencyKey:randomUUID()};
   const {body}=await request(actor,api+'records','POST',input);
   assert.equal(body.data.result,index===0?'FAIL':'PASS');records.push(body.data);
   const duplicate=await request(actor,api+'records','POST',input);assert.equal(duplicate.body.data.id,body.data.id);
 }
-await request('quality',api+'records','POST',{workOrderId:fixture.orders[1].id,sourceQrCode:fixture.orders[0].publicCode,type:'FIRST',title:'错单检查',inspectedAt:new Date().toISOString(),data:form('FIRST'),idempotencyKey:randomUUID()},409);
+await request('quality',api+'records','POST',{workOrderId:fixture.orders[1].id,sourceQrCode:fixture.orders[0].publicCode,type:'FIRST',inspectionStepId:firstStep.id,title:'错单检查',inspectedAt:new Date().toISOString(),data:form('FIRST'),idempotencyKey:randomUUID()},409);
 let editable=records[0],data=editable.data;
 await request('leader',api+'records/'+editable.id,'PATCH',{version:editable.version,action:'SAVE',title:'越权修改',inspectedAt:editable.inspectedAt,data,reason:'测试'},403);
 editable=(await request('quality',api+'records/'+editable.id,'PATCH',{version:editable.version,action:'REVIEW',reason:'确认本次不合格记录'})).body.data;
@@ -60,7 +61,7 @@ editable=(await request('quality',api+'records/'+editable.id,'PATCH',{version:ed
 assert.equal(editable.reviewStatus,'UNREVIEWED');
 const history=await request('quality',api+'records/'+editable.id+'/revisions/1');
 assert.equal(history.body.data.data.summary,data.summary);assert.equal(history.body.data.result,'FAIL');
-let fileRecord=(await request('leader',api+'records','POST',{workOrderId:fixture.orders[0].id,type:'PATROL',title:'纸质巡检表归档',inspectedAt:new Date().toISOString(),data:{mode:'FILE',context:{processName:'巡检',inspectedBy:'现场验收员'},rows:[],summary:'纸质巡检表照片验收'},idempotencyKey:randomUUID()})).body.data;
+let fileRecord=(await request('leader',api+'records','POST',{type:'PATROL',title:fixture.marker+' 纸质巡检表归档',inspectedAt:new Date().toISOString(),data:{mode:'FILE',context:{processName:'巡检',inspectedBy:'现场验收员'},rows:[],summary:'纸质巡检表照片验收'},idempotencyKey:randomUUID()})).body.data;
 await request('leader',api+'records/'+fileRecord.id,'PATCH',{version:fileRecord.version,action:'SUBMIT',title:fileRecord.title,inspectedAt:fileRecord.inspectedAt,data:fileRecord.data},400);
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=','base64');
 const upload=new FormData();upload.set('file',new File([png],'巡检证据.png',{type:'image/png'}));upload.set('version',String(fileRecord.version));

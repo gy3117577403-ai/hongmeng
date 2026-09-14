@@ -1,4 +1,6 @@
 'use client';
+import Link from 'next/link';
+import { isFirstInspectionProcess } from '@/lib/quality-data';
 import ProcessQualityFields from '@/components/ProcessQualityFields';
 import ProcessStepPicker from '@/components/ProcessStepPicker';
 import { processQualityType, qualityReportForQuantity, type ProcessQualityReport } from '@/lib/process-quality-report';
@@ -14,6 +16,7 @@ import {
   CalendarDays,
   Check,
   CheckCircle2,
+  ClipboardCheck,
   ChevronDown,
   CircleDot,
   Clock3,
@@ -57,6 +60,7 @@ export type FieldReportIdentityDTO = {
   id: string;
   displayName: string;
   employeeId: string | null;
+  access?: { capabilities: readonly string[] };
 };
 
 function personalHoursReceipt(data?: Record<string, unknown>): string {
@@ -1199,6 +1203,7 @@ export default function FieldReportMobile({
             </>}
           </section> : <section className="field-report-history-only"><CheckCircle2 size={22} /><span><strong>该工序当前没有剩余可报数量</strong><small>仍可查看上方记录并发起纠错；撤回成功后数量会重新开放。</small></span></section>}
 
+          {reportMode === 'single' && user.access?.capabilities.includes('QUALITY_DATA:READ') && isFirstInspectionProcess(payload.context.step.processName) && <Link className="field-report-history-only" href={'/quality-capture/' + encodeURIComponent(code) + '?type=FIRST&stepId=' + encodeURIComponent(payload.context.step.id)}><ClipboardCheck size={20}/><span><strong>首件检验</strong><small>登记本工序检验结果、拍照上传凭证</small></span><ArrowRight size={18}/></Link>}
           {reportMode === 'single' && ticket.access.canReport && hasReportableQuantity && processQualityType(payload.context.step.processName) && <ProcessQualityFields key={payload.context.step.id} type={processQualityType(payload.context.step.processName)!} value={form.qualityReport} defectQty={actionReporting ? reportedDefectUnitQty : defectQty} unit={actionReporting ? payload.context.step.reportUnitLabel : ticket.workOrder.unitLabel} routeId={payload.context.routeId} stepId={payload.context.step.id} disabled={saving || qualityUploading || awaitingUpload || Boolean(restoreDraft)} onBusy={setQualityUploading} onChange={qualityReport => setForm({ ...form, qualityReport })} />}
 
           {reportMode === 'single' && ticket.access.canReport && hasReportableQuantity && !selectedSupplement && defectQty > 0 && <fieldset className="field-report-defect"><legend>整套不良品处理方式</legend>{([

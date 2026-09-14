@@ -37,7 +37,8 @@ export function samePageRotations(left: PageRotations, right: PageRotations): bo
 
 export function documentDisplaySettingsUrl(source: string): string | null {
   const path = source.split('?')[0];
-  return /^\/api\/(?:resource-files\/[^/]+|drawing-library\/files\/[^/]+|sample-photos\/[^/]+)\/content$/.test(path)
+  if (new URLSearchParams(source.split('?')[1] || '').has('historyVersion')) return null;
+  return /^\/api\/(?:resource-files\/[^/]+|drawing-library\/files\/[^/]+|sample-photos\/[^/]+|quality-data\/attachments\/[^/]+)\/content$/.test(path)
     ? path.replace(/\/content$/, '/display-settings') : null;
 }
 

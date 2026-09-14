@@ -17,7 +17,7 @@ export async function qualityWorkbook(records: QualityRecord[], filter: string) 
   overview.addRow(headings);
   for (const r of records) {
     const o = r.orderSnapshot;
-    overview.addRow([r.code,QUALITY_LABELS[r.type],r.title,beijingInput(r.inspectedAt).replace('T',' '),r.submittedAt ? beijingInput(r.submittedAt).replace('T',' ') : '',o.sourceOrderNo,o.sourceLineNo,o.batchNo,o.businessCode || o.code,o.productName,o.specification,o.customerName,r.sourceCompletionId && r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result],r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交',REVIEW_LABELS[r.reviewStatus],r.createdByName,r.version,r.deleteReason,r.data.summary,r.sourceCompletionId ? '工序报工' : r.supersedesId ? '复检' : '独立检验',r.reportSnapshot?.position,r.reportSnapshot?.unit,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0)),r.sourceCompletionId,...CONTEXT_FIELDS.map(([key]) => r.data.context[key])]);
+    overview.addRow([r.code,QUALITY_LABELS[r.type],r.title,beijingInput(r.inspectedAt).replace('T',' '),r.submittedAt ? beijingInput(r.submittedAt).replace('T',' ') : '',o.sourceOrderNo,o.sourceLineNo,o.batchNo,o.businessCode || o.code,o.productName,o.specification,o.customerName,r.type === 'PATROL' && r.data.mode === 'FILE' ? '纸质报表归档' : r.sourceCompletionId && r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result],r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交',REVIEW_LABELS[r.reviewStatus],r.createdByName,r.version,r.deleteReason,r.data.summary,r.sourceCompletionId ? '工序报工' : r.supersedesId ? '复检' : '独立检验',r.inspectionStepSnapshot?.position || r.reportSnapshot?.position,r.reportSnapshot?.unit,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0)),r.sourceCompletionId,...CONTEXT_FIELDS.map(([key]) => r.data.context[key])]);
   }
   for (const type of QUALITY_DATA_TYPES) {
     const sheet = book.addWorksheet(QUALITY_LABELS[type]);
@@ -25,6 +25,9 @@ export async function qualityWorkbook(records: QualityRecord[], filter: string) 
     for (const r of records.filter(item => item.type === type)) {
       if (r.sourceCompletionId) {
         sheet.addRow([r.code,r.orderSnapshot.businessCode || r.orderSnapshot.code,r.orderSnapshot.sourceOrderNo,r.orderSnapshot.batchNo,beijingInput(r.inspectedAt).replace('T',' '),'',`第 ${r.reportSnapshot?.position} 道`,r.reportSnapshot?.processName,'','','','',r.reportSnapshot?.unit,r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result],r.data.summary,'工序报工',r.reportSnapshot?.quantity,r.reportSnapshot?.defectQty,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0))]);
+      }
+      if (r.data.mode === 'FILE' && !r.data.rows.length) {
+        sheet.addRow([r.code,r.orderSnapshot.businessCode || r.orderSnapshot.code,r.orderSnapshot.sourceOrderNo,r.orderSnapshot.batchNo,beijingInput(r.inspectedAt).replace('T',' '),'',r.inspectionStepSnapshot ? '第 ' + r.inspectionStepSnapshot.position + ' 道' : r.data.paper?.area || '',r.inspectionStepSnapshot?.name || r.title,'','','',r.attachments.filter(f => !f.deletedAt).length + ' 份照片 / 文件','',r.type === 'PATROL' ? '纸质报表归档' : RESULT_LABELS[r.result],r.data.summary,'纸质凭证']);
       }
       for (const row of r.data.rows) {
       sheet.addRow([r.code,r.orderSnapshot.businessCode || r.orderSnapshot.code,r.orderSnapshot.sourceOrderNo,r.orderSnapshot.batchNo,beijingInput(r.inspectedAt).replace('T',' '),row.sample,row.position,row.item,row.standard,row.lower,row.upper,row.value,row.unit,RESULT_LABELS[row.result],row.note]);
@@ -57,8 +60,8 @@ export async function qualityZip(records: QualityRecord[], filter: string) {
   const byId = new Map(records.map(record => [record.id, record]));
   for (const file of files) {
     const record = byId.get(file.recordId)!;
-    const folder = safeFilename(record.orderSnapshot.sourceOrderNo || record.orderSnapshot.code) + '/' + record.code;
-    zip.addReadStreamLazy(folder + '/' + file.id.slice(0,8) + '-' + safeFilename(file.originalName), { size: file.size, compress: false }, callback => {
+    const folder = safeFilename(record.type === 'PATROL' ? '巡检报表-' + beijingInput(record.inspectedAt).slice(0,10) : record.orderSnapshot.sourceOrderNo || record.orderSnapshot.code) + '/' + record.code;
+    zip.addReadStreamLazy(folder + '/' + String(record.attachments.filter(f => !f.deletedAt).findIndex(f => f.id === file.id) + 1).padStart(2,'0') + '-' + file.id.slice(0,8) + '-' + safeFilename(file.originalName), { size: file.size, compress: false }, callback => {
       getObjectStream(file.objectKey).then(stream => callback(null, stream)).catch(error => { output.destroy(error); callback(error, Readable.from([])); });
     });
   }

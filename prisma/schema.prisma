@@ -5653,7 +5653,10 @@ model QualityDataRecord {
   processQualityEvidence ProcessQualityEvidence[]
   id              String                  @id @default(uuid())
   code            String                  @unique
-  workOrderId     String                  @map("work_order_id")
+  workOrderId     String?                 @map("work_order_id")
+  // Immutable source identity: historical evidence survives route replacement.
+  inspectionStepId String?                @map("inspection_step_id")
+  inspectionStepSnapshot Json?            @map("inspection_step_snapshot")
   type            String
   title           String
   inspectedAt     DateTime                @map("inspected_at")
@@ -5686,7 +5689,7 @@ model QualityDataRecord {
   deletedById     String?                 @map("deleted_by_id")
   createdAt       DateTime                @default(now()) @map("created_at")
   updatedAt       DateTime                @updatedAt @map("updated_at")
-  workOrder       WorkOrder               @relation(fields: [workOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  workOrder       WorkOrder?              @relation(fields: [workOrderId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   supersedes      QualityDataRecord?      @relation("QualityDataRetest", fields: [supersedesId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   retests         QualityDataRecord[]     @relation("QualityDataRetest")
   attachments     QualityDataAttachment[]
@@ -5696,6 +5699,7 @@ model QualityDataRecord {
   @@index([deletedAt, inspectedAt], map: "quality_data_date_idx")
   @@index([workOrderId, deletedAt, inspectedAt], map: "quality_data_order_idx")
   @@index([type, deletedAt, inspectedAt], map: "quality_data_type_idx")
+  @@index([workOrderId, inspectionStepId, deletedAt, inspectedAt], map: "quality_data_step_idx")
   @@index([createdAt], map: "quality_data_created_idx")
   @@index([responsibilityStatus, deletedAt, inspectedAt], map: "quality_data_responsibility_idx")
   @@map("quality_data_records")
@@ -5737,6 +5741,7 @@ model QualityDataAttachment {
   createdById  String            @map("created_by_id")
   createdAt    DateTime          @default(now()) @map("created_at")
   deletedAt    DateTime?         @map("deleted_at")
+  sortOrder    Int              @default(0) @map("sort_order")
   record       QualityDataRecord @relation(fields: [recordId], references: [id], onDelete: Restrict, onUpdate: NoAction)
 
   @@unique([recordId, sha256, originalName])

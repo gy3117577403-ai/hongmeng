@@ -1,9 +1,10 @@
 /** Shared form definitions. Standards are supplied by the shop, never invented. */
 export const QUALITY_DATA_TYPES = ['CRIMP', 'PULL', 'FINAL', 'CONTINUITY', 'FIRST', 'PATROL'] as const;
+export const QUALITY_SCAN_TYPES = ['CRIMP', 'PULL', 'FINAL', 'CONTINUITY', 'FIRST'] as const;
 export type QualityDataType = typeof QUALITY_DATA_TYPES[number];
 export type QualityResult = 'PENDING' | 'PASS' | 'FAIL';
 export const QUALITY_LABELS: Record<QualityDataType, string> = {
-  CONTINUITY: '导通检验', CRIMP: '端子压检', PULL: '拉力测试', FINAL: '成品检验', FIRST: '首检', PATROL: '巡检报表',
+  CONTINUITY: '导通检验', CRIMP: '端子压检', PULL: '拉力测试', FINAL: '成品检验', FIRST: '首件检验', PATROL: '巡检报表',
 };
 export const RESULT_LABELS: Record<QualityResult, string> = { PENDING: '待判定', PASS: '合格', FAIL: '不合格' };
 export const REVIEW_LABELS: Record<string, string> = { UNREVIEWED: '未复核', APPROVED: '已复核', RETURNED: '已退回' };
@@ -23,18 +24,22 @@ export type QualityMeasurement = {
 };
 export type QualityFormData = {
   mode: 'FORM' | 'FILE'; context: QualityContext; rows: QualityMeasurement[]; summary: string; teamId?: string;
+  paper?: { result: QualityResult | null; area: string };
 };
+export type QualityInspectionStep = { id: string; name: string; position?: number; routeId?: string };
+export const isFirstInspectionProcess = (name: string) => /首件|首检/.test(name);
 export type QualityOrder = {
   id: string; code: string; businessCode: string | null; sourceOrderNo: string | null;
   customerName: string | null; productName: string; specification: string | null;
   orderDate: string | null; stage: string; deletedAt?: string | null; quantity: number | null;
   planOrderId: string | null; batchId: string | null; batchNo: number | null; sourceLineNo: number | null;
   rootWorkOrderId: string | null; parentWorkOrderId: string | null;
-  steps: Array<{ id: string; name: string }>;
+  steps: QualityInspectionStep[];
 };
-export type QualityAttachment = { id: string; originalName: string; mimeType: string; size: number; sha256: string; createdAt: string; deletedAt: string | null };
+export type QualityAttachment = { id: string; originalName: string; mimeType: string; size: number; sha256: string; createdAt: string; deletedAt: string | null; sortOrder?: number };
 export type QualityRecord = {
-  id: string; code: string; workOrderId: string; type: QualityDataType; title: string; inspectedAt: string;
+  id: string; code: string; workOrderId: string | null; type: QualityDataType; title: string; inspectedAt: string;
+  inspectionStepId?: string | null; inspectionStepSnapshot?: QualityInspectionStep | null;
   status: 'DRAFT' | 'SUBMITTED'; result: QualityResult; reviewStatus: string; version: number;
   templateVersion: number; data: QualityFormData; orderSnapshot: QualityOrder;
   createdById: string; createdByName: string; createdAt: string; updatedAt: string;
@@ -115,10 +120,18 @@ export function qualityForm(value: unknown): QualityFormData {
     return row;
   });
   if (input.mode !== 'FORM' && input.mode !== 'FILE') throw new QualityDataError('填报方式无效');
-  return { mode: input.mode, context, rows, summary: qualityText(input.summary, 4000), teamId: qualityText(input.teamId, 120) };
+  let paper: QualityFormData['paper'];
+  if (input.paper !== undefined) {
+    if (!input.paper || typeof input.paper !== 'object' || Array.isArray(input.paper)) throw new QualityDataError('纸质检验信息格式不正确');
+    const p = input.paper as Record<string, unknown>;
+    if (p.result !== null && !['PENDING', 'PASS', 'FAIL'].includes(String(p.result))) throw new QualityDataError('检验结果无效');
+    paper = { result: p.result as QualityResult | null, area: qualityText(p.area, 160) };
+    if (input.mode !== 'FILE') throw new QualityDataError('照片归档须使用文件模式');
+  }
+  return { mode: input.mode, context, rows, summary: qualityText(input.summary, 4000), teamId: qualityText(input.teamId, 120), ...(paper ? { paper } : {}) };
 }
 export function qualityResult(data: QualityFormData): QualityResult {
-  if (data.mode === 'FILE') return Number(data.context.defectQty || 0) > 0 ? 'FAIL' : 'PENDING';
+  if (data.mode === 'FILE') return Number(data.context.defectQty || 0) > 0 ? 'FAIL' : data.paper?.result || 'PENDING';
   if (data.rows.some(row => row.result === 'FAIL') || Number(data.context.defectQty || 0) > 0) return 'FAIL';
   const measured = data.rows.filter(row => row.value);
   return measured.length && measured.every(row => row.result === 'PASS') ? 'PASS' : 'PENDING';
