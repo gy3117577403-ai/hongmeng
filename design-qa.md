@@ -1,4 +1,4 @@
-# First inspection and patrol archive design QA — v1.34.172
+# First inspection and patrol archive design QA — v1.34.173
 
 Scope: implement the approved first-inspection workbench and mobile flow, and the date-based paper patrol archive. This is a functional redesign using synthetic records in a dedicated PostgreSQL/MinIO environment. No production records were modified.
 
@@ -21,6 +21,10 @@ Implementation: `output/quality-paper-v172/screenshots/first-tablet.png`, `first
 4. Resolved: switching ordinary/first processes could lose an unsaved first form. Visited forms retain their own state; a 36-process fixture was searched by sequence, switched to ordinary cutting and back, and the first-inspection note was preserved. The ordinary process has no first-inspection fields.
 5. Resolved: the recent first-record entry must open that record, and refreshing its photo order must not collapse the detail. Mobile receives the selected record directly and preserves the active detail when refreshing its list.
 6. Resolved: recycled records must display a deleted badge even when their prior status was submitted. The list now prioritizes the deletion state.
+
+## Release regression correction
+
+The v1.34.172 candidate was not published: the pre-existing major-quality workflow smoke created FIRST without a process. Its isolated seed now creates an actual first-inspection route step, and the smoke submits and asserts that identity before continuing. The complete 37-check first-record to major-quality workflow passed locally. v1.34.173 repeats the full release pipeline; the application validation was not relaxed.
 
 ## Functional acceptance
 
