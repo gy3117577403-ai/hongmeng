@@ -76,7 +76,7 @@ test('employee serialization keeps position and team as separate profile fields'
     team: '前端一组',
     hireDate: new Date('2020-05-06T00:00:00.000Z'),
     mobile: '13800138000',
-    wecomUserId: null,
+    wecomUserId: null, wecomUserIdVerifiedAt: null, wecomMentionCheck: null,
     notificationEnabled: true,
     isActive: true,
     attendanceEnabled: true,

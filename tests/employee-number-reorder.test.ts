@@ -19,7 +19,7 @@ function employee(id: string, employeeNo: string, name: string, active = true): 
     team: '装配',
     hireDate: null,
     mobile: null,
-    wecomUserId: null,
+    wecomUserId: null, wecomUserIdVerifiedAt: null, wecomMentionCheck: null,
     notificationEnabled: true,
     isActive: active,
     attendanceEnabled: true,

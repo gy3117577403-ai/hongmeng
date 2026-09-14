@@ -16442,3 +16442,11 @@ body:has(.qr-dialog) .modal-backdrop {
   .traveler-print-form-row.with-paper,
   .traveler-print-form-row.with-paper.custom-mode { grid-template-columns: 1fr; }
 }
+.settings-wecom-identity { margin: 16px; padding: 20px; border: 1px solid #fed7aa; border-radius: 16px; background: #fffaf5; display: grid; gap: 12px; }
+.settings-wecom-identity header, .settings-wecom-identity-actions { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
+.settings-wecom-identity h4, .settings-wecom-identity p { margin: 0; }
+.settings-wecom-identity label:not(.settings-wecom-confirm) { display: grid; gap: 8px; }
+.settings-wecom-identity input:not([type=checkbox]) { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #dbe3ed; border-radius: 10px; background: white; }
+.settings-wecom-identity button { min-height: 44px; padding: 8px 16px; background: white; color: #bd4b0b; border: 1px solid #fed7aa; border-radius: 10px; }
+.settings-wecom-identity button:disabled { opacity: .5; }
+.settings-wecom-person small { white-space: normal; overflow-wrap: anywhere; }

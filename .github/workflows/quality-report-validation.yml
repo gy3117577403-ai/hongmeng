@@ -1,7 +1,7 @@
-name: Quality direct review candidate
+name: Quality notification and route candidate
 on:
   push:
-    branches: ['codex/quality-direct-review-v134169']
+    branches: ['codex/quality-notifications-route-fix-v134170']
   workflow_dispatch:
 permissions:
   contents: read
@@ -51,6 +51,7 @@ jobs:
       - name: Unit and transaction tests
         run: |
           RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/quality-direct-review-integration.test.ts tests/quality-workflow-v3-integration.test.ts tests/quality-workbench-integration.test.ts tests/internal-quality-risks-integration.test.ts tests/quality-workflow-v2-integration.test.ts
+          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/quality-notification-delivery-integration.test.ts tests/product-time-supplement-anchor-integration.test.ts
           npm run lint
           npm run test:unit
       - name: Prepare S3 and application
@@ -84,6 +85,7 @@ jobs:
         run: |
           mkdir -p artifacts/quality-workbench
           node scripts/seed-quality-workbench-smoke.cjs > "$QUALITY_WORKBENCH_QA_FIXTURE"
+          node scripts/smoke-quality-notification-settings.mjs
           node scripts/smoke-quality-workbench.mjs
           node scripts/smoke-quality-workbench-browser.mjs
       - name: Upload acceptance evidence

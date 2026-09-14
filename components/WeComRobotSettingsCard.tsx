@@ -13,8 +13,9 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { WECOM_NOTIFICATION_POLICY } from '@/lib/wecom-notification-policy';
+import WeComIdentityEditor, { type WeComIdentityRecipient } from '@/components/WeComIdentityEditor';
 
-type Recipient = {
+type Recipient = WeComIdentityRecipient & {
   id: string;
   employeeNo: string;
   name: string;
@@ -65,6 +66,7 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [keyword, setKeyword] = useState('');
+  const [editingId, setEditingId] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [confirmed, setConfirmed] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
@@ -148,6 +150,7 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
       });
       const body = await response.json().catch(() => ({})) as { error?: string; message?: string };
       if (!response.ok) throw new Error(body.error || '企业微信试发失败');
+      await loadStatus();
       setFeedback({ tone: 'success', text: body.message || '企业微信已接收测试消息，请到群内确认' });
       setConfirmed(false);
       setStatus(current => current ? { ...current, lastSuccessAt: new Date().toISOString() } : current);
@@ -200,7 +203,7 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
         </div>
       )}
 
-      <div className="settings-wecom-setup" role="status"><MessageSquareText size={21} aria-hidden="true" /><div><strong>质量任务自动通知</strong><p>正式 HTTPS 回跳地址：{status?.quality?.originReady ? '已配置' : '请配置 APP_BASE_URL'}；后台通知队列：{status?.quality?.workerConfigured ? '已配置（投递状态以事件内记录为准）' : '请通过发布镜像的默认入口启动'}。</p><p>责任账号必须绑定人事员工。派单、退回和品质确认通知按员工手机号精确提醒；群机器人不提供自动登录。</p></div></div>
+      <div className="settings-wecom-setup" role="status"><MessageSquareText size={21} aria-hidden="true" /><div><strong>质量任务自动通知</strong><p>处理入口：{status?.quality?.originReady ? '已配置' : '待配置 APP_BASE_URL'}；后台通知队列：{status?.quality?.workerConfigured ? '已配置' : '等待启动'}。</p><p>责任账号绑定员工后，优先使用已核对的企业微信成员身份，未配置时使用手机号。同一人的集中派单合并提醒。</p></div></div>
       <div className="settings-wecom-stats" aria-label="企业微信可通知员工统计">
         <div><span><UsersRound size={17} /></span><small>可试发员工</small><strong>{status?.counts.eligible ?? '—'}</strong><em>人</em></div>
         <div><small>已录手机号</small><strong>{status?.counts.activeWithMobile ?? '—'}</strong><em>人</em></div>
@@ -218,6 +221,7 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
           {allVisibleSelected ? '取消当前结果' : '选择当前结果'}
         </button>
         <span>已选 <b>{selectedIds.length}</b> / {maxRecipients} 人</span>
+        {canSend && <button type="button" disabled={selectedIds.length !== 1} onClick={() => setEditingId(selectedIds[0])}>设置所选员工提醒</button>}
       </div>
 
       <div className="settings-wecom-people" aria-busy={loading}>
@@ -236,6 +240,7 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
               <span className="settings-wecom-person">
                 <strong>{item.employeeNo} · {item.name}</strong>
                 <small>{[item.department, item.position, item.team].filter(Boolean).join(' · ') || '员工档案'}</small>
+                <small>账号：{item.accountName} · {item.mentionLabel}</small>
               </span>
               <em>{item.maskedMobile}</em>
             </button>
@@ -250,6 +255,10 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
         )}
       </div>
 
+      {canSend && status?.recipients.find(item => item.id === editingId) && <WeComIdentityEditor
+        key={editingId} employee={status.recipients.find(item => item.id === editingId)!}
+        onSaved={loadStatus} onClose={() => setEditingId('')} />}
+
       <section className="settings-wecom-preview" aria-label="试发确认">
         <div>
           <small>本次消息预览</small>
@@ -257,7 +266,7 @@ export function WeComRobotSettingsCard({ canSend }: { canSend: boolean }) {
           <p>{selectedRecipients.length
             ? `将发送 1 条消息并尝试提醒：${selectedRecipients.map(item => `${item.employeeNo} ${item.name}`).join('、')}`
             : '选择员工后，这里会显示本次提醒对象。'}</p>
-          <span>企业微信接口返回成功只代表消息进入群；员工手机号需与企微通讯录一致且员工在该群内，才能被正确 @。</span>
+          <span>试发后请到群内核对原生 @，再在员工提醒设置中记录结果。接口接收、群内核对与业务接单分别记录。</span>
         </div>
         <label className="settings-wecom-confirm">
           <input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} disabled={!canSend || !configReady || !selectedIds.length || sending} />

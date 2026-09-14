@@ -1,3 +1,4 @@
+import { wecomIdentity } from './wecom-identity';
 import { Prisma } from '@prisma/client';
 import { resolveQualityOperators, resolveQualityOperatorAssignments } from './quality-operators';
 import { qualityTaskCauses, qualityTaskSupplement, QUALITY_TASK_SUPPLEMENT_FIELDS, type QualityOperatorAssignments } from './quality-direct-shared';
@@ -33,12 +34,12 @@ function requireCondition(value: unknown, message: string, status = 409): assert
 export async function qualityWorkflowPeople() {
   const [users, reviewers] = await Promise.all([
     prisma.user.findMany({ where: { isActive: true, accountStatus: 'ACTIVE', fieldPasswordOnly: false },
-      select: { id: true, displayName: true, username: true, ...accountSelect, employee: { select: { isActive: true, notificationEnabled: true, mobile: true, department: true } } }, orderBy: { displayName: 'asc' } }),
+      select: { id: true, displayName: true, username: true, ...accountSelect, employee: { select: { id: true, isActive: true, notificationEnabled: true, mobile: true, department: true, wecomUserId: true, wecomUserIdVerifiedAt: true } } }, orderBy: { displayName: 'asc' } }),
     eligibleUserIdsForCapability(prisma, 'QUALITY', 'EXECUTE_WORKFLOW'),
   ]);
   return users.filter(user => qualityWorkflowAccountReady(user)).map(user => ({ id: user.id, displayName: user.displayName, username: user.username,
     department: user.employee?.department || '', canReview: reviewers.includes(user.id),
-    notificationHint: !user.employee ? '未绑定人事' : !user.employee.isActive ? '员工已停用' : !user.employee.notificationEnabled ? '通知关闭' : !user.employee.mobile ? '未填写手机号' : '人事已绑定（需在企微群内）' }));
+    notificationHint: !user.employee ? '未绑定人事' : !user.employee.isActive ? '员工已停用' : !user.employee.notificationEnabled ? '通知关闭' : wecomIdentity(user.employee).method === 'MISSING' ? '提醒身份待配置' : wecomIdentity(user.employee).method === 'USER_ID' ? '企业微信成员已核对' : '手机号已配置，提醒待验证' }));
 }
 
 /** All stage writes share the report lock and optimistic version, including task/photo mutations. */
@@ -225,8 +226,9 @@ export async function actOnQualityWorkflow(tx: Prisma.TransactionClient, reportI
       description = '交接品质确认人，原审核人及草稿记录保留在审计中';
     } else if (action === 'RETRY_NOTIFICATION') {
       requireCondition(actor.canManage, '仅质量管理人员可重新投递通知', 403);
-      const item = await tx.qualityRiskNotification.findFirst({ where: { id: String(payload.notificationId || ''), reportId, state: { in: ['FAILED', 'WAITING_CONFIG'] } } });
-      requireCondition(item, '仅失败或等待配置的通知可重新投递', 400);
+      const item = await tx.qualityRiskNotification.findFirst({ where: { id: String(payload.notificationId || ''), reportId, state: { in: ['FAILED', 'WAITING_CONFIG', 'UNCERTAIN'] } } });
+      requireCondition(item, '仅失败、等待配置或回执未确认的通知可重新投递', 400);
+      requireCondition(item.state !== 'UNCERTAIN' || payload.confirmResend === true, '请先核对群消息，再确认是否重新发送', 400);
       await tx.qualityRiskNotification.update({ where: { id: item.id }, data: { state: 'PENDING', attempts: 0, availableAt: new Date(), leaseToken: null, lastError: null } });
       detail = { ...detail, notificationId: item.id, previousAttempts: item.attempts };
       description = '管理员重新排队通知；发送前仍会检查任务时效及接收人';

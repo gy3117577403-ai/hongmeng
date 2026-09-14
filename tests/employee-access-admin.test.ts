@@ -54,7 +54,7 @@ function employeeRecord(overrides: Partial<EmployeeAccessAdminRecord> = {}): Emp
     team: null,
     hireDate: new Date('2026-01-01T00:00:00.000Z'),
     mobile: '13800138000',
-    wecomUserId: null,
+    wecomUserId: null, wecomUserIdVerifiedAt: null, wecomMentionCheck: null,
     notificationEnabled: true,
     isActive: true,
     attendanceEnabled: true,

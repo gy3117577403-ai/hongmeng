@@ -122,3 +122,7 @@
 .risk-modal-backdrop .risk-confirm-modal>p{font-size:15px;line-height:1.6}
 .risk-modal-backdrop .risk-confirm-modal>span{font-size:14px;line-height:1.7}
 @media(max-width:800px){.qv4-intake .qv4-intake-fields{align-items:stretch}.qv4-intake .qv4-intake-column>:is(section,details){width:100%}.risk-modal-backdrop .risk-archive-modal{width:100%;max-height:97dvh}.risk-modal-backdrop .risk-archive-modal-body{padding:12px}.risk-modal-backdrop .archive-impact-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.risk-modal-backdrop .archive-policy-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.risk-modal-backdrop .archive-policy-summary>p{grid-column:1/-1}.risk-modal-backdrop .risk-archive-modal>footer>div{width:100%}.risk-modal-backdrop .risk-archive-modal>footer :is(button,a){flex:1}}
+.qv3-notification { display: grid; gap: 8px; }
+.qv3-notification > div:first-child { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.qv3-notification pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; padding: 12px; background: #f7f9fc; border-radius: 10px; }
+.qv3-notification-log > summary > span { font-weight: 400; color: #718399; }

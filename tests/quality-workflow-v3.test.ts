@@ -32,6 +32,7 @@ test('notification origin is configured HTTPS and UTF8 content preserves the com
   const content = qualityNotificationContent('待处理', '中文尺寸异常😀'.repeat(1000), url, 'abc123');
   assert.ok(Buffer.byteLength(content) <= 2000);
   assert.ok(content.includes(url));
-  assert.ok(content.includes('不表示已接单'));
+  assert.ok(content.includes('查看并处理'));
+  assert.ok(!content.includes('通知编号'));
   assert.ok(!content.includes('\ufffd'));
 });

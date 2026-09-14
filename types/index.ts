@@ -1067,7 +1067,7 @@ export type InternalQualityRiskDTO = {
   createdById?: string | null;
   reviewRound?: number;
   reviews?: Array<{ id: string; round: number; reviewerId: string; submittedById: string; snapshot: unknown; result: string | null; decision: string; returnReason: string | null; returnedTaskIds: string[]; submittedAt: string; decidedAt: string | null }>;
-  notifications?: Array<{ id: string; recipientId: string; title: string; state: string; attempts: number; lastError: string | null; targetRoute: string; acceptedAt: string | null; createdAt: string }>;
+  notifications?: Array<{ deliverySnapshot?: { accountName: string; employeeId: string; employeeName: string; employeeNo: string; method: string; maskedTarget: string; verification: string } | null; deliveryCount?: number; deliveryContent?: string | null; lastAttemptAt?: string | null; taskId?: string | null; id: string; recipientId: string; title: string; state: string; attempts: number; lastError: string | null; targetRoute: string; acceptedAt: string | null; createdAt: string }>;
   ownerUserId?: string | null;
   ownerName?: string | null;
   printPhotoLayout?: 'PAIR' | 'SINGLE';

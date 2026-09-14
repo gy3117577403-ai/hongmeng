@@ -106,6 +106,26 @@ try {
     await page.setViewportSize({width:1366,height:1024});await page.goto(origin+'/workspace/quality/internal-risks/'+id+'/print-preview');await page.getByRole('button',{name:'适合窗口',exact:true}).click();await snap('print-preview');
     const printData=(await get('/api/quality/internal-risks/'+id+'/print-preview')).preview;
     await page.goto(origin+printData.warning.employeePath);await page.setViewportSize({width:390,height:844});await snap('phone-published-warning');
+    await login('admin'); await page.setViewportSize({width:1366,height:1024});
+    await page.goto(origin+'/workspace/quality/internal-risks?reportId='+id);
+    await page.locator('.qv3-notification-log > summary').click();
+    await page.locator('.qv3-notification-log').scrollIntoViewIfNeeded();
+    check(await page.getByRole('link',{name:'查看提醒设置与人员绑定'}).isVisible(),'notification audit has direct identity setup entry');
+    await snap('notification-history-tablet');
+    await page.getByRole('link',{name:'查看提醒设置与人员绑定'}).click();
+    await page.getByRole('heading',{name:'质量消息提醒',exact:true}).waitFor();
+    await page.locator('.settings-wecom-toolbar input').fill(f.users.lead.username);
+    await page.locator('.settings-wecom-people button').first().click();
+    await page.getByRole('button',{name:'设置所选员工提醒',exact:true}).click();
+    await page.getByRole('textbox',{name:'企业微信成员 UserID',exact:true}).fill(f.marker+'.lead');
+    await page.getByLabel('已核对该成员属于此员工').check();
+    await page.getByRole('button',{name:'保存提醒身份',exact:true}).click();
+    await page.getByText('身份已保存，可选中此员工试发验证。',{exact:true}).waitFor();
+    const identity=(await get('/api/integrations/wecom/robot')).recipients.find(row=>row.accountId===f.users.lead.id);
+    check(identity.identityMethod==='USER_ID'&&identity.mentionState==='UNVERIFIED','saved exact account uses verified UserID without claiming group @');
+    await page.locator('.settings-wecom-identity').scrollIntoViewIfNeeded(); await snap('notification-identity-tablet');
+    await page.setViewportSize({width:390,height:844}); await page.locator('.settings-wecom-identity').scrollIntoViewIfNeeded(); await snap('notification-identity-phone');
+    check(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+2),'phone identity settings have no horizontal overflow');
     check(!errors.length,'no uncaught browser errors: '+errors.join(';'));return {passed:true,reportId:id,checks};
     } catch(error) { await snap('failure'); throw error; }
   }`;

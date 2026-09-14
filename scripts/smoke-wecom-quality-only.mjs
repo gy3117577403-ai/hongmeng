@@ -36,6 +36,8 @@ async function stage(action, who, payload = {}) {
   report = (await request(action, who, `/api/quality/internal-risks/${report.id}/stage`, 'POST', { action, payload, expectedVersion: report.version })).data.report;
 }
 async function delivery(event) {
+  // Mature only this synthetic report's grouping window.
+  await prisma.qualityRiskNotification.updateMany({ where: { reportId: report.id, eventType: event, state: 'PENDING' }, data: { availableAt: new Date(Date.now() - 1000) } });
   // Reset only the isolated dispatch clock so smoke tests do not wait for rate limiting.
   await prisma.qualityRobotDispatchClock.deleteMany({ where: { id: 'quality' } });
   for (let index = 0; index < 12; index++) {

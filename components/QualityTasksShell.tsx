@@ -23,7 +23,8 @@ export default function QualityTasksShell({ user, reviewMode = false }: { user: 
     setLoading(true); setError('');
     try {
       const linkId = new URLSearchParams(window.location.search).get('reportId');
-      const response = await fetch((reviewMode ? '/api/quality-confirmation' : '/api/quality-tasks') + (linkId ? '?reportId=' + encodeURIComponent(linkId) : ''), { cache: 'no-store' });
+      const batch = new URLSearchParams(window.location.search).get('batch');
+      const response = await fetch((reviewMode ? '/api/quality-confirmation' : '/api/quality-tasks') + (linkId ? '?reportId=' + encodeURIComponent(linkId) : batch ? '?batch=' + encodeURIComponent(batch) : ''), { cache: 'no-store' });
       const body = await response.json(); if (!response.ok) throw new Error(body.error || '加载失败');
       if (sequence !== request.current) return;
       setReports(body.reports); setUsers(body.assignees || []);

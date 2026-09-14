@@ -446,7 +446,7 @@ export function serializeInternalQualityRisk(report: InternalQualityRiskRecord) 
     createdById: report.createdById,
     reviewRound: report.reviewRound,
     reviews: (report.reviews || []).map(review => ({ ...review, submittedAt: review.submittedAt.toISOString(), decidedAt: review.decidedAt?.toISOString() || null })),
-    notifications: (report.notifications || []).map(item => ({ id: item.id, recipientId: item.recipientId, title: item.title, state: item.state, attempts: item.attempts, lastError: item.lastError, targetRoute: item.targetRoute, acceptedAt: item.acceptedAt?.toISOString() || null, createdAt: item.createdAt.toISOString() })),
+    notifications: (report.notifications || []).map(item => ({ deliverySnapshot: item.deliverySnapshot as { accountName: string; employeeId: string; employeeName: string; employeeNo: string; method: string; maskedTarget: string; verification: string } | null, deliveryCount: item.deliveryCount, deliveryContent: item.deliveryContent, lastAttemptAt: item.lastAttemptAt?.toISOString() || null, taskId: item.taskId, id: item.id, recipientId: item.recipientId, title: item.title, state: item.state, attempts: item.attempts, lastError: item.lastError, targetRoute: item.targetRoute, acceptedAt: item.acceptedAt?.toISOString() || null, createdAt: item.createdAt.toISOString() })),
     id: report.id,
     sequence: report.sequence,
     reportNo: report.reportNo,

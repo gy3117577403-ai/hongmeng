@@ -18,7 +18,7 @@ function employee(id: string, employeeNo: string, name: string, hireDate: Date |
     team: '装配组',
     hireDate,
     mobile: null,
-    wecomUserId: null,
+    wecomUserId: null, wecomUserIdVerifiedAt: null, wecomMentionCheck: null,
     notificationEnabled: true,
     isActive: true,
     attendanceEnabled: true,

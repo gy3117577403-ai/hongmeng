@@ -244,6 +244,10 @@ const routeInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
           processLaborPools: true,
           sourceQuantityMovements: true,
           targetQuantityMovements: true,
+          insertedBeforeObligations: true,
+          completions: true,
+          executions: true,
+          targetedRouteChangeDiffs: true,
         },
       },
     },
@@ -1647,6 +1651,10 @@ async function retireRemovedStep(tx: Tx, step: DeploymentStepRecord, deploymentR
   const hasReferences = stepHasFacts(step)
     || step._count.dailyProcessTasks > 0
     || step._count.semiFinishedLotSteps > 0
+    || step._count.insertedBeforeObligations > 0
+    || step._count.completions > 0
+    || step._count.executions > 0
+    || step._count.targetedRouteChangeDiffs > 0
     || Boolean(step.supplementObligation);
   if (!hasReferences) {
     await tx.workOrderProcessStep.delete({ where: { id: step.id } });
@@ -2197,6 +2205,33 @@ async function applyRouteDeployment(
     systemCoveredQty += projection.systemCoveredQty;
     actualRequiredQty += projection.actualRequiredQty;
     fulfillmentModes.add(projection.fulfillmentMode);
+  }
+
+  // Keep fulfilled/cancelled obligation anchors as historical evidence. Only
+  // active obligations that survive this publication follow the new ordering.
+  // Snapshot reference counts still retain the old anchor even after rewiring.
+  const activeObligations = await tx.processSupplementObligation.findMany({
+    where: { routeId: route.id, status: 'ACTIVE', displayStepId: { in: [...retainedIds] } },
+  });
+  for (const obligation of activeObligations) {
+    const entry = profile.entries.find(item => stepIdByKey.get(item.occurrenceKey) === obligation.displayStepId);
+    if (!entry) continue;
+    const nextEntry = profile.entries.find(item => item.sequenceGroup > entry.sequenceGroup
+      && stepIdByKey.has(item.occurrenceKey));
+    const nextId = nextEntry ? stepIdByKey.get(nextEntry.occurrenceKey)! : null;
+    if (obligation.insertBeforeStepId === nextId && obligation.displayPosition === entry.position
+      && obligation.intendedSequenceGroup === entry.sequenceGroup) continue;
+    await tx.processSupplementObligation.update({ where: { id: obligation.id }, data: {
+      insertBeforeStepId: nextId, displayPosition: entry.position,
+      intendedSequenceGroup: entry.sequenceGroup, version: { increment: 1 },
+    } });
+    await tx.processRouteActivity.create({ data: { routeId: route.id, stepId: obligation.displayStepId,
+      actorId: input.actorId, action: 'product_time_supplement_anchor_updated',
+      content: `${obligation.processName} 补报位置随新工序路线同步，已报数量及工时保持原记录`,
+      detail: { deploymentId: input.deploymentId, obligationId: obligation.id,
+        previousInsertBeforeStepId: obligation.insertBeforeStepId, insertBeforeStepId: nextId,
+        previousPosition: obligation.displayPosition, position: entry.position },
+    } });
   }
 
   const removedGroups = new Map<number, DeploymentStepRecord[]>();

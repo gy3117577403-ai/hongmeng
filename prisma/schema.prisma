@@ -1348,6 +1348,8 @@ model Employee {
   hireDate                         DateTime?                            @map("hire_date") @db.Date
   mobile                           String?                              @unique
   wecomUserId                      String?                              @unique @map("wecom_user_id")
+  wecomUserIdVerifiedAt            DateTime?                            @map("wecom_user_id_verified_at")
+  wecomMentionCheck                Json?                                @map("wecom_mention_check")
   notificationEnabled              Boolean                              @default(true) @map("notification_enabled")
   isActive                         Boolean                              @default(true) @map("is_active")
   attendanceEnabled                Boolean                              @default(true) @map("attendance_enabled")
@@ -4723,12 +4725,19 @@ model QualityRiskNotification {
   leaseToken  String?                   @map("lease_token")
   lastError   String?                   @map("last_error")
   acceptedAt  DateTime?                 @map("accepted_at")
+  shortCode   String?                   @unique @map("short_code")
+  deliveryGroup String?                 @map("delivery_group")
+  deliveryCount Int                    @default(0) @map("delivery_count")
+  deliverySnapshot Json?               @map("delivery_snapshot")
+  deliveryContent String?              @map("delivery_content")
+  lastAttemptAt DateTime?              @map("last_attempt_at")
   createdAt   DateTime                  @default(now()) @map("created_at")
   updatedAt   DateTime                  @updatedAt @map("updated_at")
   report      InternalQualityRiskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@index([state, availableAt])
   @@index([reportId, createdAt])
+  @@index([deliveryGroup])
   @@map("quality_risk_notifications")
 }
 
@@ -5190,6 +5199,7 @@ model ProcessSupplementObligation {
   coverage                    ProcessSupplementCoverage?
 
   @@unique([deploymentRouteId, occurrenceKey])
+  @@index([insertBeforeStepId])
   @@index([workOrderId, status, displayPosition])
   @@index([routeId, status, displayPosition])
   @@index([processDefinitionId])

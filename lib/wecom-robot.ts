@@ -102,10 +102,15 @@ export function toWeComMentionMobile(value: string | null | undefined): string |
   return match?.[1] || null;
 }
 
+export function toWeComMentionUserId(value: string | null | undefined): string | null {
+  const id = String(value || '').trim();
+  return id && id.toLowerCase() !== '@all' && /^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,63}$/.test(id) ? id : null;
+}
+
 function assertTextSize(content: string) {
   const bytes = Buffer.byteLength(content, 'utf8');
   if (bytes > WECOM_ROBOT_TEXT_MAX_BYTES) {
-    throw new WeComRobotError('企业微信测试消息内容过长', {
+    throw new WeComRobotError('企业微信消息内容过长', {
       status: 400,
       code: 'WECOM_TEXT_TOO_LONG',
     });
@@ -141,7 +146,8 @@ export function buildWeComRobotTestMessage(
 export async function sendWeComRobotText(options: {
   source: WeComNotificationSource;
   content: string;
-  mentionedMobiles: string[];
+  mentionedMobiles?: string[];
+  mentionedUserIds?: string[];
   webhookUrl?: string | null;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -151,14 +157,15 @@ export async function sendWeComRobotText(options: {
   }
   assertTextSize(options.content);
   const webhook = parseWebhookUrl(options.webhookUrl ?? process.env.WECOM_ROBOT_WEBHOOK_URL);
-  const mentionedMobiles = [...new Set(options.mentionedMobiles.map(toWeComMentionMobile).filter((item): item is string => Boolean(item)))];
-  if (!mentionedMobiles.length) {
+  const mentionedMobiles = [...new Set((options.mentionedMobiles || []).map(toWeComMentionMobile).filter((item): item is string => Boolean(item)))];
+  const mentionedUserIds = [...new Set((options.mentionedUserIds || []).map(toWeComMentionUserId).filter((item): item is string => Boolean(item)))];
+  if (!mentionedMobiles.length && !mentionedUserIds.length) {
     throw new WeComRobotError('没有可用于企业微信提醒的手机号', {
       status: 400,
       code: 'WECOM_MENTION_MOBILE_MISSING',
     });
   }
-  if (mentionedMobiles.length > WECOM_ROBOT_TEST_MAX_RECIPIENTS) {
+  if (mentionedMobiles.length + mentionedUserIds.length > WECOM_ROBOT_TEST_MAX_RECIPIENTS) {
     throw new WeComRobotError(`一次最多选择 ${WECOM_ROBOT_TEST_MAX_RECIPIENTS} 人进行联调`, {
       status: 400,
       code: 'WECOM_RECIPIENT_LIMIT',
@@ -174,7 +181,8 @@ export async function sendWeComRobotText(options: {
         msgtype: 'text',
         text: {
           content: options.content,
-          mentioned_mobile_list: mentionedMobiles,
+          ...(mentionedMobiles.length ? { mentioned_mobile_list: mentionedMobiles } : {}),
+          ...(mentionedUserIds.length ? { mentioned_list: mentionedUserIds } : {}),
         },
       }),
       signal: AbortSignal.timeout(options.timeoutMs ?? 8_000),

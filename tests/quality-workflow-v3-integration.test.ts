@@ -35,13 +35,12 @@ test('v3 PostgreSQL: multiple independent tasks, frozen rounds, targeted return,
     await fail('START_TASK', { taskId: bTask }, a.id, /自己/);
     await fail('COMPLETE_TASK', { taskId: aTask }, a.id, /接单/);
     const beforeVersion = report.version;
-    await act('START_TASK', { taskId: aTask });
-    await assert.rejects(prisma.$transaction(tx => actOnQualityWorkflow(tx, report.id, beforeVersion, 'START_TASK', { taskId: bTask }, actor(b.id))), /更新/);
 
     // Missing configuration does not roll back the task and never calls an external endpoint.
     let externalCalls = 0;
     const capture: Array<Record<string, any>> = [];
     const fakeFetch = (async (_url: unknown, init?: RequestInit) => { externalCalls++; capture.push(JSON.parse(String(init?.body))); return new Response(JSON.stringify({ errcode: 0 }), { status: 200 }); }) as typeof fetch;
+    await prisma.qualityRiskNotification.updateMany({ where: { reportId: report.id }, data: { availableAt: new Date(Date.now() - 1000) } });
     await dispatchQualityNotifications({ webhookUrl: '', origin: 'https://quality.example.com', fetchImpl: fakeFetch });
     assert.equal(externalCalls, 0);
     assert.ok(await prisma.qualityRiskNotification.count({ where: { reportId: report.id, state: 'WAITING_CONFIG' } }));
@@ -50,9 +49,11 @@ test('v3 PostgreSQL: multiple independent tasks, frozen rounds, targeted return,
     await prisma.qualityRobotDispatchClock.deleteMany({ where: { id: 'quality' } });
     await dispatchQualityNotifications({ webhookUrl: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=isolated-test-key-20260827', origin: 'https://quality.example.com', fetchImpl: fakeFetch });
     assert.equal(externalCalls, 1); assert.equal(capture[0].msgtype, 'text'); assert.equal(capture[0].text.mentioned_mobile_list.length, 1);
-    assert.ok(employees.some(employee => capture[0].text.mentioned_mobile_list[0] === employee.mobile));
-    assert.match(capture[0].text.content, /quality-tasks\?reportId=/);
-    assert.match(capture[0].text.content, /taskId=/);
+    const sentItem = await prisma.qualityRiskNotification.findFirstOrThrow({ where: { reportId: report.id, state: 'SENT' } });
+    const expectedEmployee = employees[users.findIndex(user => user.id === sentItem.recipientId)];
+    assert.equal(capture[0].text.mentioned_mobile_list[0], expectedEmployee.mobile);
+    assert.match(capture[0].text.content, /\/q\/[A-Za-z0-9_-]{12}/);
+    assert.equal((sentItem.deliverySnapshot as Record<string, unknown>).employeeId, expectedEmployee.id);
     // A rejected robot response is durable; explicit retry and concurrent workers
     // still claim the remaining task notification once, without double delivery.
     const validWebhook = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=isolated-test-key-20260827';
@@ -69,6 +70,8 @@ test('v3 PostgreSQL: multiple independent tasks, frozen rounds, targeted return,
     assert.equal(concurrent.reduce((sum, item) => sum + item.accepted, 0), 1);
     assert.equal(externalCalls, 2);
     assert.equal((await prisma.qualityRiskNotification.findUniqueOrThrow({ where: { id: failedItem.id } })).state, 'SENT');
+    await act('START_TASK', { taskId: aTask });
+    await assert.rejects(prisma.$transaction(tx => actOnQualityWorkflow(tx, report.id, beforeVersion, 'START_TASK', { taskId: bTask }, actor(b.id))), /更新/);
     await fail('COMPLETE_TASK', { taskId: aTask, result: '完成' }, a.id, /措施/);
     await act('COMPLETE_TASK', { taskId: aTask, actionTaken: '重新调机', result: '首件复测正常' });
     const analysis = { occurrenceCause: '参数偏移', rootCause: '换模未复核', finalConclusion: '需增加换模首件确认', correctiveAction: '更新换模核对步骤并复测三件' };
