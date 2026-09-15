@@ -7,6 +7,193 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Physical stock is separate from production completion and delivery demand.
+model FgLot {
+  id String @id @default(uuid())
+  sourceKey String @unique
+  sourceKind String @default("PRODUCTION")
+  movementId String? @unique
+  workOrderId String?
+  workOrderCode String
+  productKey String
+  productName String
+  specification String @default("")
+  unit String @default("件")
+  ownerType String @default("CUSTOMER")
+  customerName String @default("")
+  sourceQuantity Int
+  pending Int @default(0)
+  available Int @default(0)
+  reserved Int @default(0)
+  held Int @default(0)
+  blocked Int @default(0)
+  location String @default("")
+  openingReview Boolean @default(false)
+  note String @default("")
+  version Int @default(0)
+  receivedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ledger FgLedger[]
+  holds FgHold[]
+  lines FgShipmentLine[]
+  reworks FgRework[]
+  @@index([workOrderId])
+  @@index([customerName, productKey])
+  @@index([createdAt])
+  @@map("fg_lots")
+}
+
+model FgLedger {
+  id String @id @default(uuid())
+  lotId String
+  kind String
+  quantity Int
+  before Json
+  after Json
+  reference String @default("")
+  reason String @default("")
+  actorId String
+  actorName String
+  createdAt DateTime @default(now())
+  lot FgLot @relation(fields:[lotId], references:[id], onDelete:Restrict)
+  @@index([lotId, createdAt])
+  @@index([createdAt, kind])
+  @@map("fg_ledger")
+}
+
+model FgHold {
+  id String @id @default(uuid())
+  lotId String
+  quantity Int
+  released Int @default(0)
+  reason String
+  dueDate String?
+  actorId String
+  actorName String
+  createdAt DateTime @default(now())
+  lot FgLot @relation(fields:[lotId], references:[id], onDelete:Restrict)
+  @@index([dueDate])
+  @@map("fg_holds")
+}
+
+model FgShipment {
+  id String @id @default(uuid())
+  number String @unique
+  status String @default("DRAFT")
+  customerName String
+  recipient String @default("")
+  phone String @default("")
+  address String @default("")
+  method String @default("COURIER")
+  carrier String @default("")
+  waybills Json @default("[]")
+  boxes Int @default(1)
+  handoverName String @default("")
+  note String @default("")
+  batchId String?
+  plannedDate String
+  shippedAt DateTime?
+  actorId String
+  actorName String
+  version Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lines FgShipmentLine[]
+  attachments FgAttachment[]
+  batch FgDispatchBatch? @relation(fields:[batchId], references:[id], onDelete:Restrict)
+  @@index([status, plannedDate])
+  @@index([shippedAt])
+  @@map("fg_shipments")
+}
+
+model FgShipmentLine {
+  id String @id @default(uuid())
+  shipmentId String
+  lotId String
+  quantity Int
+  returned Int @default(0)
+  dailyItemId String?
+  shipment FgShipment @relation(fields:[shipmentId], references:[id], onDelete:Restrict)
+  lot FgLot @relation(fields:[lotId], references:[id], onDelete:Restrict)
+  returns FgReturn[]
+  @@unique([shipmentId, lotId])
+  @@index([lotId])
+  @@map("fg_shipment_lines")
+}
+
+model FgDispatchBatch {
+  id String @id @default(uuid())
+  number String @unique
+  businessDate String
+  sequence Int
+  name String @default("")
+  carrier String @default("")
+  note String @default("")
+  closedAt DateTime?
+  actorName String
+  createdAt DateTime @default(now())
+  shipments FgShipment[]
+  @@unique([businessDate, sequence])
+  @@map("fg_dispatch_batches")
+}
+
+model FgReturn {
+  id String @id @default(uuid())
+  lineId String
+  lotId String @unique
+  quantity Int
+  reason String
+  actorName String
+  createdAt DateTime @default(now())
+  line FgShipmentLine @relation(fields:[lineId], references:[id], onDelete:Restrict)
+  @@map("fg_returns")
+}
+
+model FgRework {
+  id String @id @default(uuid())
+  lotId String
+  quantity Int
+  returned Int @default(0)
+  scrapped Int @default(0)
+  reason String
+  destination String
+  actorName String
+  createdAt DateTime @default(now())
+  lot FgLot @relation(fields:[lotId], references:[id], onDelete:Restrict)
+  @@map("fg_reworks")
+}
+
+model FgAttachment {
+  id String @id @default(uuid())
+  shipmentId String
+  objectKey String @unique
+  originalName String
+  contentType String
+  size Int
+  actorName String
+  createdAt DateTime @default(now())
+  deletedAt DateTime?
+  shipment FgShipment @relation(fields:[shipmentId], references:[id], onDelete:Restrict)
+  @@index([shipmentId, deletedAt])
+  @@map("fg_attachments")
+}
+
+model FgMutation {
+  key String @id
+  payloadHash String
+  actorId String
+  result Json
+  createdAt DateTime @default(now())
+  @@map("fg_mutations")
+}
+
+model FgSequence {
+  key String @id
+  value Int @default(0)
+  @@map("fg_sequences")
+}
+
 enum WorkOrderBranchType {
   REWORK
   SCRAP_REPLENISH

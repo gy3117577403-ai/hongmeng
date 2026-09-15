@@ -1,3 +1,40 @@
+# Finished goods warehouse design QA — v1.34.174
+
+Result: **passed**. Reviewed at 1366 × 1024 on the running PostgreSQL/S3-backed application using an ordinary signed-in account and disposable test data. This is UI acceptance of the local application; published-image acceptance is tracked separately.
+
+## Reference and comparison
+
+Selected reference: `exec-b39ec955-8a4a-4e77-aa83-14021ff08f93.png`, 1448 × 1086. Its full canvas was uniformly scaled to 1366 × 1024; no reference region was removed. Actual screenshots are native 1366 × 1024. Comparison labels sit outside both canvases.
+
+- [Full comparison](docs/finished-goods-v1.34.174/reference-comparison.png): selected reference left, implemented application right, in the same artifact.
+- [Focused comparison](docs/finished-goods-v1.34.174/reference-comparison-detail.png): first 400 px of each normalized canvas, covering hierarchy, toolbar, columns, and row controls.
+- [Default workbench](docs/finished-goods-v1.34.174/workbench.png).
+- [Continuous processing](docs/finished-goods-v1.34.174/continuous.png).
+
+The compact row composition, navy rail, orange accents, inline quantity/carrier/waybill fields, row status, and persistent pagination follow the selected direction. Existing application branding/navigation remains real. New inventory, holds, batch, and history tabs represent implemented flows. Live metrics and access-appropriate navigation replace decorative reference content.
+
+## Findings resolved
+
+1. Shared shell spacing and navigation styles initially overrode the warehouse canvas; scoped overrides now preserve its full width and navy rail.
+2. Compact controls initially forced extra row height in continuous mode. Measured row/control sizing now displays all **24 rows** in both default and continuous modes, with no horizontal page overflow and no bottom-dock overlap. This also passed with a success notice visible.
+3. Inactive rows no longer imply an editable outgoing quantity. Public stock provides receive/allocation actions. Multi-line shipment quantities are locked and the whole shipment is explicitly listed before confirmation; confirmation waits for those details.
+4. Enter saves logistics without dispatching. Actual shipping requires physical-handover confirmation. Continuous processing advances to the next eligible row. Automatic refresh preserves selection/drafts and pauses while typing or using a dialog.
+5. Dialogs trap keyboard focus, support Escape, and restore focus. Browser console reported no errors during final UI acceptance.
+
+## Operated states and evidence
+
+- Search, dense pagination, normal and continuous views: 24 complete rows at target viewport; no horizontal overflow.
+- Real partial dispatch: 20 pending, ship 8, retain 12 pending. Continuous dispatch: 40 pending, ship 10, retain 30 pending and advance.
+- Receive 20, hold 15, release 5: available 10, held 10, pending 40 before subsequent shipment. Hold due dates only remind; no automatic stock release.
+- Merge two customer-matched lots at 5 each, display both lines, ship entire document, retain remaining stock; one shared waybill appears on both shipment rows.
+- Batch cards, historical rows, missing-waybill indicators, server-saved logistics and disabled shipped quantity fields inspected.
+- Excel link produced a browser download event. HTTP acceptance additionally parsed the real XLSX, verified print HTML, and uploaded/read/soft-deleted an S3 attachment.
+- Database integration covers concurrency, idempotency, stock conservation, public allocation, returns, rework, reservation, rollback, source withdrawal guards, actual final-process completion, and historical FIFO migration with reversals.
+
+No unresolved blocking UI findings. Browser testing uses synthetic local data, not production inventory. Tablet touch operation beyond the tested desktop viewport remains a physical-device follow-up; the target viewport itself is verified.
+
+---
+
 # First inspection and patrol archive design QA — v1.34.173
 
 Scope: implement the approved first-inspection workbench and mobile flow, and the date-based paper patrol archive. This is a functional redesign using synthetic records in a dedicated PostgreSQL/MinIO environment. No production records were modified.

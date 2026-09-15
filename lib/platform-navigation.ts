@@ -30,6 +30,7 @@ export const PLATFORM_NAVIGATION_GROUPS: PlatformNavigationGroup[] = [
     { href: '/workspace/quality-confirmation', label: '品质确认' },
   ] },
   { id: 'materials', label: '物料与仓储', items: [
+    { href: '/workspace/finished-goods', label: '成品仓' },
     { href: '/workspace/procurement', label: '物料跟进' },
     { href: '/workspace/warehouse', label: '仓库管理', modeSwitchable: true },
     { href: '/workspace/wip', label: '半成品仓' },

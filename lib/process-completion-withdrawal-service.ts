@@ -750,6 +750,7 @@ function buildWithdrawalRollbackPlan(
             }),
           });
         } catch (error) {
+      if (error instanceof Error && error.message.includes('FG_SOURCE_IN_USE')) throw new ProcessCompletionWithdrawalError('成品已接收或已发货，请先在成品仓处理关联库存，再撤回生产记录', 409, 'FG_SOURCE_IN_USE');
           if (error instanceof ProcessCompletionWithdrawalError) {
             blockers.push({ code: error.code, message: error.message });
           } else {
@@ -1277,6 +1278,7 @@ export async function createProcessCompletionWithdrawalRequest(input: {
         timeout: 15_000,
       });
     } catch (error) {
+      if (error instanceof Error && error.message.includes('FG_SOURCE_IN_USE')) throw new ProcessCompletionWithdrawalError('成品已接收或已发货，请先在成品仓处理关联库存，再撤回生产记录', 409, 'FG_SOURCE_IN_USE');
       if (
         attempt === 0
         && error instanceof Prisma.PrismaClientKnownRequestError
@@ -2358,6 +2360,7 @@ export async function decideProcessCompletionWithdrawalRequest(input: {
         timeout: 20_000,
       });
     } catch (error) {
+      if (error instanceof Error && error.message.includes('FG_SOURCE_IN_USE')) throw new ProcessCompletionWithdrawalError('成品已接收或已发货，请先在成品仓处理关联库存，再撤回生产记录', 409, 'FG_SOURCE_IN_USE');
       if (
         attempt === 0
         && error instanceof Prisma.PrismaClientKnownRequestError
@@ -2528,6 +2531,7 @@ export async function withdrawProcessCompletion(
         timeout: 20_000,
       });
     } catch (error) {
+      if (error instanceof Error && error.message.includes('FG_SOURCE_IN_USE')) throw new ProcessCompletionWithdrawalError('成品已接收或已发货，请先在成品仓处理关联库存，再撤回生产记录', 409, 'FG_SOURCE_IN_USE');
       if (
         attempt === 0
         && error instanceof Prisma.PrismaClientKnownRequestError

@@ -164,3 +164,7 @@ test('quality-only staff can enter an existing work order QR and quick capture w
   assert.equal(canAccessAppRoute(quality, '/production'), false);
   assert.equal(canAccessAppRoute(access('FIELD_REPORT'), '/workspace/quality/quick'), false);
 });
+test('finished goods is shared and provides a landing page without other module grants', () => {
+  assert.equal(canAccessAppRoute(access(), '/workspace/finished-goods'), true);
+  assert.equal(landingRouteForAccess(access()), '/workspace/finished-goods');
+});

@@ -110,6 +110,8 @@ export function routeAccessRule(pathname: string): RouteAccessRule | null {
 }
 
 export function canAccessAppRoute(access: AppAccess, pathname: string): boolean {
+  // Finished goods is shared by every authenticated user; page access still requires login.
+  if (/^\/workspace\/finished-goods(?:\/|$)/.test(normalizedPath(pathname))) return true;
   const rule = routeAccessRule(pathname);
   if (!rule) return false;
   const modules = new Set(access.modules);
@@ -124,5 +126,5 @@ export function landingRouteForAccess(access: AppAccess): string {
   const modules = new Set(access.modules);
   if (modules.has('BASIC_SUMMARY')) return '/home';
   if (modules.has('ACCOUNT_SELF')) return '/account';
-  return '/access-unavailable';
+  return '/workspace/finished-goods';
 }

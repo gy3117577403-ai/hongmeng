@@ -89,6 +89,14 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:daily-shipment-integration
+      - name: Finished goods PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_finished_goods_ci?schema=public
+        run: |
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_finished_goods_ci'
+          npx prisma migrate deploy
+          npx tsx --test --test-concurrency=1 tests/finished-goods-integration.test.ts
       - name: Issue work order PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -464,6 +472,13 @@ jobs:
             DRAWING_LIBRARY_QA_FIXTURE=artifacts/drawing-library-v134146/release-fixture.json \
             DRAWING_LIBRARY_QA_OUTPUT=artifacts/drawing-library-v134146/release-http.json \
             node scripts/smoke-drawing-library.mjs
+          mkdir -p artifacts/finished-goods
+          docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime hongmeng-release-smoke node \
+            < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/release-fixture.json
+          FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime \
+            FINISHED_GOODS_QA_FIXTURE=artifacts/finished-goods/release-fixture.json \
+            FINISHED_GOODS_QA_OUTPUT=artifacts/finished-goods/release-http.json \
+            node scripts/smoke-finished-goods.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -800,6 +815,14 @@ jobs:
             DRAWING_LIBRARY_QA_FIXTURE=artifacts/drawing-library-v134146/mirror-fixture.json \
             DRAWING_LIBRARY_QA_OUTPUT=artifacts/drawing-library-v134146/mirror-http.json \
             node scripts/smoke-drawing-library.mjs
+          mkdir -p artifacts/finished-goods
+          docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime "$app_name" node \
+            < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/hangzhou-fixture.json
+          FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime \
+            FINISHED_GOODS_QA_BASE=http://127.0.0.1:3300 \
+            FINISHED_GOODS_QA_FIXTURE=artifacts/finished-goods/hangzhou-fixture.json \
+            FINISHED_GOODS_QA_OUTPUT=artifacts/finished-goods/hangzhou-http.json \
+            node scripts/smoke-finished-goods.mjs
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
@@ -807,6 +830,15 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload finished goods acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: finished-goods-${{ github.ref_name }}
+          path: |
+            artifacts/finished-goods/*http.json
+            artifacts/finished-goods/*.xlsx
+          if-no-files-found: warn
       - name: Upload reporting recovery acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

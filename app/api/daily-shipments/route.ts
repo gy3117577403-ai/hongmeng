@@ -21,10 +21,8 @@ import {
   loadShipmentCarryoverOverview,
   loadShipmentHistoryOverview,
   loadShipmentWarningOverview,
-  recordDailyShipment,
   releaseDailyShipmentReservation,
   rollOverDailyShipmentPlan,
-  reverseDailyShipment,
   setDailyShipmentItemMark,
   transferDailyShipmentReservation,
   updateDailyShipmentItem,
@@ -109,6 +107,9 @@ export async function POST(request: NextRequest) {
     const user = await requireUser();
     const body = asRecord(await request.json());
     const action = String(body.action || '').trim();
+    if (action === 'RECORD_SHIPMENT' || action === 'REVERSE_SHIPMENT') {
+      return NextResponse.json({ ok: false, code: 'SHIPMENT_MOVED_TO_FINISHED_GOODS', error: '实际发货和退货已统一到成品仓，请前往成品仓操作', href: '/workspace/finished-goods' }, { status: 410 });
+    }
     if (!dailyShipmentRequiredAction(action)) {
       throw new DailyShipmentServiceError('不支持的日出货计划操作', 'SHIPMENT_ACTION_INVALID');
     }
@@ -200,28 +201,6 @@ export async function POST(request: NextRequest) {
           itemVersion: body.itemVersion,
           targetShipDate: body.targetShipDate,
           idempotencyKey,
-        });
-        break;
-      case 'RECORD_SHIPMENT':
-        result = await recordDailyShipment({
-          actorUserId: user.id,
-          itemId: body.itemId,
-          itemVersion: body.itemVersion,
-          idempotencyKey,
-          quantity: body.quantity,
-          shippedAt: body.shippedAt,
-          note: body.note,
-        });
-        break;
-      case 'REVERSE_SHIPMENT':
-        result = await reverseDailyShipment({
-          actorUserId: user.id,
-          eventId: body.eventId,
-          itemVersion: body.itemVersion,
-          idempotencyKey,
-          quantity: body.quantity,
-          reversedAt: body.reversedAt,
-          reason: body.reason,
         });
         break;
       default:
