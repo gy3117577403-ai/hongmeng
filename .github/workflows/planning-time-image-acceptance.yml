@@ -1,0 +1,111 @@
+name: Planning time published image acceptance
+on:
+  push:
+    branches: ['codex/planning-time-consistency-v134178']
+    paths: ['.github/workflows/planning-time-image-acceptance.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: planning-time-published-image-acceptance
+  cancel-in-progress: false
+jobs:
+  immutable-hangzhou-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RELEASE_VERSION: v1.34.179
+      RELEASE_REVISION: e3cae674f799d6c649a9fe0e2256f8f5d26e8611
+      RELEASE_DIGEST: sha256:04d9b22b9d538306e8bdf4fcb3123a72b4136ca33392d96f9464ba9a123731e4
+      RELEASE_REPOSITORY: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:25479/plan_image_acceptance?schema=public
+      S3_ACCESS_KEY_ID: planimageqa
+      S3_SECRET_ACCESS_KEY: DisposablePlanImageStorage2026
+      SEED_ADMIN_USERNAME: planimageadmin
+      SEED_ADMIN_PASSWORD: DisposablePlanImageSeed2026!Z
+      SMOKE_ADMIN_CHANGED_PASSWORD: DisposablePlanImageChanged2026!R
+      SESSION_SECRET: disposable-plan-image-session-secret-20260915-acceptance
+      APP_BASE_URL: http://127.0.0.1:3379
+    steps:
+      # Acceptance must use the published source, not the workflow commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: v1.34.179
+      - name: Verify immutable source
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_REVISION"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci && npx prisma generate
+      - name: Prepare pinned object storage image
+        run: bash scripts/pull-ci-minio.sh
+      - name: Pull the published Hangzhou image anonymously
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/planning-time-published
+          export DOCKER_CONFIG="$(mktemp -d)"
+          image="$RELEASE_REPOSITORY:$RELEASE_VERSION"
+          docker pull "$image"
+          docker image inspect "$image" > artifacts/planning-time-published/image.json
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = "linux/amd64"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$RELEASE_VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$RELEASE_REVISION"
+          docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" | grep -Fx "$RELEASE_REPOSITORY@$RELEASE_DIGEST"
+          echo "$RELEASE_REPOSITORY@$RELEASE_DIGEST" > artifacts/planning-time-published/verified-image.txt
+      - name: Start a fresh database and object storage
+        run: |
+          set -euo pipefail
+          docker network create plan-image-acceptance
+          docker run -d --name plan-image-postgres --network plan-image-acceptance --tmpfs /var/lib/postgresql/data -p 127.0.0.1:25479:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=plan_image_acceptance postgres:16-alpine
+          docker run -d --name plan-image-minio --network plan-image-acceptance --tmpfs /data -p 127.0.0.1:29079:9000 -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" hongmeng-ci-minio:verified-a1a8bd4ac40a server /data
+          for attempt in $(seq 1 40); do if docker exec plan-image-postgres pg_isready -U postgres -d plan_image_acceptance; then break; fi; sleep 2; done
+          docker exec plan-image-postgres pg_isready -U postgres -d plan_image_acceptance
+          SMOKE_STORAGE_ALLOW=disposable-ci-storage S3_ENDPOINT=http://127.0.0.1:29079 S3_BUCKET=workorder-resources node scripts/prepare-smoke-storage.mjs
+      - name: Run the original entrypoint and migrations from the immutable image
+        run: |
+          set -euo pipefail
+          docker run -d --name plan-image-app --network plan-image-acceptance -p 127.0.0.1:3379:3000 \
+            -e APP_BASE_URL="$APP_BASE_URL" \
+            -e DATABASE_URL='postgresql://postgres:postgres@plan-image-postgres:5432/plan_image_acceptance?schema=public' \
+            -e SESSION_SECRET="$SESSION_SECRET" -e SEED_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" -e SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            -e S3_ENDPOINT=http://plan-image-minio:9000 -e S3_PUBLIC_ENDPOINT=http://127.0.0.1:29079 \
+            -e S3_REGION=auto -e S3_BUCKET=workorder-resources -e S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" -e S3_FORCE_PATH_STYLE=true \
+            "$RELEASE_REPOSITORY@$RELEASE_DIGEST"
+          for attempt in $(seq 1 90); do if curl -fsS "$APP_BASE_URL/api/ready" > artifacts/planning-time-published/ready.json; then break; fi; sleep 2; done
+          curl -fsS "$APP_BASE_URL/api/health" > artifacts/planning-time-published/health.json
+          curl -fsS "$APP_BASE_URL/api/ready" > artifacts/planning-time-published/ready.json
+          docker exec plan-image-app node node_modules/prisma/build/index.js migrate status > artifacts/planning-time-published/migrations.txt
+      - name: Fresh-seed password change and authenticated business smoke
+        run: |
+          set -euo pipefail
+          SAMPLE_QA_BASE="$APP_BASE_URL" SAMPLE_QA_ALLOW_DISPOSABLE_MUTATION=clean-ci-runtime EXPECTED_APP_VERSION="$RELEASE_VERSION" \
+            SMOKE_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" SMOKE_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            node scripts/smoke-sample-capture.mjs > artifacts/planning-time-published/clean-runtime.json
+      - name: Historical correction and compatibility regression
+        env:
+          RUN_DB_INTEGRATION: '1'
+          DAILY_PLAN_ENABLED: 'true'
+        run: npm run test:planning-integration | tee artifacts/planning-time-published/database-tests.txt
+      - name: Excel upload to candidate, plan, production and export
+        run: |
+          set -euo pipefail
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime plan-image-app node < scripts/seed-quality-data-smoke.cjs > /tmp/plan-image-fixture.json
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime plan-image-app node < scripts/seed-planning-import-smoke.cjs > /tmp/plan-image-reference.json
+          QUALITY_DATA_QA_BASE="$APP_BASE_URL" QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_DATA_QA_FIXTURE=/tmp/plan-image-fixture.json PLANNING_IMPORT_QA_REFERENCE=/tmp/plan-image-reference.json \
+            PLANNING_IMPORT_QA_OUTPUT=artifacts/planning-time-published/import-runtime.json \
+            node scripts/smoke-planning-import.mjs
+      - name: Preserve runtime logs
+        if: always()
+        run: docker logs plan-image-app > artifacts/planning-time-published/startup.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: planning-time-v1.34.179-immutable-hangzhou
+          path: artifacts/planning-time-published/
+      - name: Remove disposable acceptance containers
+        if: always()
+        run: |
+          docker rm -f plan-image-app plan-image-minio plan-image-postgres || true
+          docker network rm plan-image-acceptance || true
