@@ -108,8 +108,8 @@ test('production execution defaults to weekly plan attainment and exposes separa
   assert.match(component, /subscribeProductionDataInvalidations[\s\S]*?productionBoardCache\.clear\(\)[\s\S]*?setRefreshToken\(value => value \+ 1\)/, 'WIP invalidation must force the summary-bearing first page to refetch');
   assert.match(component, /percentage:\s*summary\?\.planTotals\.percentage \?\? null/);
   assert.match(component, /周计划达成率/);
-  assert.match(component, /计划数量达成率/);
-  assert.match(component, /有效标准工时完成率/);
+  assert.match(component, /成品数量达成率/);
+  assert.match(component, /EmployeeRealtimeHours/);
   assert.match(component, /已完成有效标准工时 ÷ 有效计划标准工时/);
   assert.match(component, /reclassifiedFromNativeMilliseconds/);
   assert.match(component, /targetWipCompletedMilliseconds/);

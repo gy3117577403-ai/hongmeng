@@ -61,6 +61,10 @@ export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   try { value = await response.json(); }
   catch { throw new Error('服务暂时不可用，请稍后重试'); }
   if (!response.ok || value.ok === false) throw new Error(value.error || '操作失败，请重试');
+  if (options?.method && options.method !== 'GET') {
+    window.dispatchEvent(new Event('hongmeng:hours-changed'));
+    try { window.localStorage.setItem('hongmeng:hours-changed', String(Date.now())); } catch {}
+  }
   return value;
 }
 export async function compressPhoto(file: File) {

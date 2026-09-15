@@ -481,6 +481,14 @@ jobs:
             FINISHED_GOODS_QA_FIXTURE=artifacts/finished-goods/release-fixture.json \
             FINISHED_GOODS_QA_OUTPUT=artifacts/finished-goods/release-http.json \
             node scripts/smoke-finished-goods.mjs
+          mkdir -p artifacts/realtime-hours
+          docker exec -i -e REALTIME_HOURS_QA_ALLOW=disposable-realtime-hours-runtime hongmeng-release-smoke node \
+            < scripts/seed-realtime-hours-smoke.cjs > artifacts/realtime-hours/release-fixture.json
+          REALTIME_HOURS_QA_ALLOW=disposable-realtime-hours-runtime \
+            REALTIME_HOURS_QA_BASE=http://127.0.0.1:3000 \
+            REALTIME_HOURS_QA_FIXTURE=artifacts/realtime-hours/release-fixture.json \
+            REALTIME_HOURS_QA_OUTPUT=artifacts/realtime-hours/release-http.json \
+            node scripts/smoke-realtime-hours.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -825,6 +833,14 @@ jobs:
             FINISHED_GOODS_QA_FIXTURE=artifacts/finished-goods/hangzhou-fixture.json \
             FINISHED_GOODS_QA_OUTPUT=artifacts/finished-goods/hangzhou-http.json \
             node scripts/smoke-finished-goods.mjs
+          mkdir -p artifacts/realtime-hours
+          docker exec -i -e REALTIME_HOURS_QA_ALLOW=disposable-realtime-hours-runtime "$app_name" node \
+            < scripts/seed-realtime-hours-smoke.cjs > artifacts/realtime-hours/hangzhou-fixture.json
+          REALTIME_HOURS_QA_ALLOW=disposable-realtime-hours-runtime \
+            REALTIME_HOURS_QA_BASE=http://127.0.0.1:3300 \
+            REALTIME_HOURS_QA_FIXTURE=artifacts/realtime-hours/hangzhou-fixture.json \
+            REALTIME_HOURS_QA_OUTPUT=artifacts/realtime-hours/hangzhou-http.json \
+            node scripts/smoke-realtime-hours.mjs
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
@@ -832,6 +848,13 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload realtime hours acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: realtime-hours-${{ github.ref_name }}
+          path: artifacts/realtime-hours/*http.json
+          if-no-files-found: warn
       - name: Upload finished goods acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

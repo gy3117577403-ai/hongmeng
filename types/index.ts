@@ -2928,6 +2928,13 @@ export type ReportAttendanceCalendarDayTypeDTO = 'workday' | 'weekly_rest' | 'ho
 export type ReportAttendanceCalendarOverrideTypeDTO = 'default' | 'holiday' | 'temporary_workday' | null;
 
 export type EmployeeHoursMetricFieldsDTO = {
+  scheduledTargetMilliseconds?: number;
+  pendingMatchingMilliseconds?: number;
+  pendingReviewMilliseconds?: number;
+  reportedDurationMilliseconds?: number;
+  missingTimeRecordCount?: number;
+  estimatedCapacityMilliseconds?: number;
+  estimatedAttainmentBasisPoints?: number | null;
   teamSnapshot?: string | null;
   otherWorkMilliseconds?: number;
   otherWorkCount?: number;
@@ -3196,6 +3203,7 @@ export type ReportOperationsDTO = {
 };
 
 export type EmployeeAttainmentRowDTO = EmployeeHoursMetricFieldsDTO & {
+  workRecords?: import('@/lib/employee-realtime-hours').EmployeeWorkRecord[];
   employee: EmployeeDTO;
   attainmentEligible: boolean;
   attainmentFactorBasisPoints: number;
@@ -3330,6 +3338,8 @@ export type ReportCompletedBatchesDTO = {
 };
 
 export type EmployeeAttainmentReportDTO = {
+  metricVersion?: string;
+  generatedAt?: string;
   period: ReportCenterPeriodDTO;
   date: string;
   workforceScope?: 'PRODUCTION';

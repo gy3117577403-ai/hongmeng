@@ -5,6 +5,8 @@ import {
   parseWorkDate,
 } from '@/lib/attendance';
 import { prisma } from '@/lib/prisma';
+import { activeOtherWorkRecords, pendingMatchingLabor, type EmployeeWorkRecord } from '@/lib/employee-realtime-hours';
+import { loadUncreditedEmployeeWork } from '@/lib/employee-uncredited-work';
 import { employeePolicyChanges } from '@/lib/employee-attainment-policy-service';
 import { policyForWorkDate } from '@/lib/employee-attainment-policy';
 import {
@@ -70,6 +72,7 @@ function emptyRow(employee: Parameters<typeof serializeEmployee>[0]): EmployeeAt
     days: [],
     details: [],
     claimDetails: [],
+    workRecords: [],
   };
 }
 
@@ -140,6 +143,7 @@ function employeeDayDto(date: string, day: DailyAttainment): EmployeeAttainmentD
   const performance = laborPerformanceMetrics({ ...hours, attainmentFactorBasisPoints: 10_000 });
   return {
     ...hours,
+    scheduledTargetMilliseconds: day.scheduledTargetMilliseconds,
     teamSnapshot: day.teamSnapshot,
     date,
     attendanceRequired: day.attendanceRequired,
@@ -199,9 +203,11 @@ export async function loadEmployeeHoursReport(input: {
       ...attendanceRecordScopeWhere('PRODUCTION'),
     };
     const otherWorkFacts = await prisma.otherWorkTimeRequest.findMany({
-      where: { status: 'APPROVED', voidedAt: null, workDate: { gte: startDate, lt: factDateEnd },
+      where: { status: { in: ['PENDING', 'APPROVED'] }, voidedAt: null, workDate: { gte: startDate, lt: factDateEnd },
         ...(employeeIdConstraint ? { employeeId: employeeIdConstraint } : {}) },
-      select: { employeeId: true, workDate: true, approvedMinutes: true, attainmentEligibleSnapshot: true, attainmentStreamSnapshot: true, teamSnapshot: true },
+      select: { id: true, correctionOfId: true, status: true, voidedAt: true, requestedMinutes: true,
+        categoryNameSnapshot: true, description: true, submittedAt: true, createdAt: true,
+        employeeId: true, workDate: true, approvedMinutes: true, attainmentEligibleSnapshot: true, attainmentStreamSnapshot: true, teamSnapshot: true },
     });
     const [executions, laborClaims, employees, attendanceRecords, capacityOverrides, abnormalAllocations, calendarOverrides, rosterRecords] = await Promise.all([
       prisma.processExecution.findMany({
@@ -267,6 +273,7 @@ export async function loadEmployeeHoursReport(input: {
                   reportQuantityBasis: true,
                   reportUnitLabel: true,
                   completedAt: true,
+                  id: true, processedQty: true, coveredQty: true, coverageStatus: true,
                   workStartedAt: true,
                   workEndedAt: true,
                   participants: { select: { employeeId: true } },
@@ -334,13 +341,15 @@ export async function loadEmployeeHoursReport(input: {
         where: {
           workDate: { gte: startDate, lt: factDateEnd },
           ...(employeeIdConstraint ? { employeeId: employeeIdConstraint } : {}),
-          event: { deletedAt: null, employeeExempt: true, qualityStatus: 'confirmed' },
+          event: { deletedAt: null, qualityStatus: { in: ['pending', 'confirmed'] } },
         },
         select: {
           employeeId: true,
           workDate: true,
           durationMilliseconds: true,
-          event: { select: { approvedDurationMilliseconds: true } },
+          id: true,
+          event: { select: { id: true, title: true, createdAt: true, qualityStatus: true, approvedDurationMilliseconds: true,
+            workOrder: { select: { code: true, specification: true } }, processStep: { select: { processName: true } } } },
         },
       }),
       prisma.attendanceCalendarDay.findMany({
@@ -386,15 +395,34 @@ export async function loadEmployeeHoursReport(input: {
       }
       return daily;
     };
-    for (const other of otherWorkFacts) {
+    const recordWork = (record: EmployeeWorkRecord) => {
+      if (!productionEmployeeIds.has(record.employeeId)
+        || !isEmployeeEmployedOnDate(employeeById.get(record.employeeId), record.workDate)) return;
+      const row = groups.get(record.employeeId)!;
+      row.workRecords!.push(record);
+      const daily = dailyFor(record.employeeId, record.workDate);
+      daily.pendingMatchingMilliseconds = (daily.pendingMatchingMilliseconds || 0) + record.pendingMatchingMilliseconds;
+      daily.pendingReviewMilliseconds = (daily.pendingReviewMilliseconds || 0) + record.pendingReviewMilliseconds;
+      daily.reportedDurationMilliseconds = (daily.reportedDurationMilliseconds || 0) + record.reportedDurationMilliseconds;
+      daily.missingTimeRecordCount = (daily.missingTimeRecordCount || 0) + (record.missingTime ? 1 : 0);
+      activityEmployeeIds.add(record.employeeId);
+    };
+    for (const other of activeOtherWorkRecords(otherWorkFacts)) {
       if (!productionEmployeeIds.has(other.employeeId)) continue;
+      if (!isEmployeeEmployedOnDate(employeeById.get(other.employeeId), dateKeyFromDatabase(other.workDate))) continue;
       const daily = dailyFor(other.employeeId, dateKeyFromDatabase(other.workDate));
       activityEmployeeIds.add(other.employeeId);
-      daily.otherWorkMilliseconds = (daily.otherWorkMilliseconds || 0) + (other.approvedMinutes || 0) * 60_000;
+      const milliseconds = (other.status === 'APPROVED' ? other.approvedMinutes ?? other.requestedMinutes : other.requestedMinutes) * 60_000;
+      daily.otherWorkMilliseconds = (daily.otherWorkMilliseconds || 0) + milliseconds;
       daily.otherWorkCount = (daily.otherWorkCount || 0) + 1;
       daily.attainmentEligible = other.attainmentEligibleSnapshot;
       daily.attainmentStream = parseAttainmentStream(other.attainmentStreamSnapshot);
       daily.teamSnapshot = other.teamSnapshot;
+      recordWork({ id: `other:${other.id}`, employeeId: other.employeeId, workDate: dateKeyFromDatabase(other.workDate),
+        sourceId: other.id, source: 'other', type: 'other', title: `${other.categoryNameSnapshot} · ${other.description}`,
+        milliseconds, pendingMatchingMilliseconds: 0, pendingReviewMilliseconds: other.status === 'PENDING' ? milliseconds : 0,
+        reportedDurationMilliseconds: 0, missingTime: false, state: other.status === 'PENDING' ? 'pending_review' : 'recorded',
+        recordedAt: (other.submittedAt || other.createdAt).toISOString() });
     }
     for (const attendance of attendanceRecords) {
       if (!productionEmployeeIds.has(attendance.employeeId)) continue;
@@ -449,14 +477,21 @@ export async function loadEmployeeHoursReport(input: {
       if (!isEmployeeEmployedOnDate(employeeById.get(allocation.employeeId), allocationDateKey)) continue;
       const row = groups.get(allocation.employeeId);
       if (row) {
-        const approvedDuration = allocation.event.approvedDurationMilliseconds
-          ?? allocation.durationMilliseconds;
+        const approvedDuration = allocation.event.qualityStatus === 'confirmed'
+          ? allocation.event.approvedDurationMilliseconds ?? allocation.durationMilliseconds : allocation.durationMilliseconds;
         activityEmployeeIds.add(allocation.employeeId);
         dailyFor(
           allocation.employeeId,
           allocationDateKey,
         ).exemptAbnormalMilliseconds += approvedDuration;
         row.exemptAbnormalMilliseconds += approvedDuration;
+        recordWork({ id: `abnormal:${allocation.id}`, sourceId: allocation.event.id, source: 'abnormal', type: 'abnormal',
+          employeeId: allocation.employeeId, workDate: allocationDateKey, title: allocation.event.title,
+          workOrderCode: allocation.event.workOrder?.code, specification: allocation.event.workOrder?.specification,
+          processName: allocation.event.processStep?.processName, milliseconds: approvedDuration,
+          pendingMatchingMilliseconds: 0, pendingReviewMilliseconds: allocation.event.qualityStatus === 'pending' ? approvedDuration : 0,
+          reportedDurationMilliseconds: 0, missingTime: false, state: allocation.event.qualityStatus === 'pending' ? 'pending_review' : 'recorded',
+          recordedAt: allocation.event.createdAt.toISOString() });
       }
     }
     for (const execution of executions) {
@@ -498,7 +533,7 @@ export async function loadEmployeeHoursReport(input: {
       };
       const row = groups.get(execution.employeeId) || emptyRow(execution.employee);
       activityEmployeeIds.add(execution.employeeId);
-      if (execution.countsForEfficiency) {
+      {
         row.legacyExecutionStandardLaborMilliseconds += execution.standardLaborMilliseconds;
         row.actualLaborMilliseconds += execution.actualLaborMilliseconds;
         const daily = dailyFor(execution.employeeId, executionDateKey);
@@ -511,6 +546,11 @@ export async function loadEmployeeHoursReport(input: {
       row.executionCount += 1;
       row.details.push(detail);
       groups.set(execution.employeeId, row);
+      recordWork({ id: `execution:${execution.id}`, sourceId: execution.id, source: 'execution', type: 'production',
+        employeeId: execution.employeeId, workDate: executionDateKey, title: execution.step.processName,
+        workOrderCode: workOrder.code, specification: workOrder.specification, processName: execution.step.processName,
+        milliseconds: execution.standardLaborMilliseconds, pendingMatchingMilliseconds: 0, pendingReviewMilliseconds: 0,
+        reportedDurationMilliseconds: 0, missingTime: false, state: 'recorded', recordedAt: execution.createdAt.toISOString() });
     }
     const claimActualEvidence = new Set<string>();
     for (const claim of laborClaims) {
@@ -521,7 +561,7 @@ export async function loadEmployeeHoursReport(input: {
       const row = groups.get(claim.employeeId) || emptyRow(claim.employee);
       activityEmployeeIds.add(claim.employeeId);
       const claimDaily = dailyFor(claim.employeeId, claimDateKey);
-      if (claim.pool.countsForEfficiency) {
+      {
         claimDaily.standardLaborMilliseconds += standardLaborMilliseconds;
         claimDaily.claimedStandardLaborMilliseconds += standardLaborMilliseconds;
         const completion = claim.pool.completion;
@@ -569,6 +609,18 @@ export async function loadEmployeeHoursReport(input: {
         corrected: claim.pool.standardSource === 'supervisor_correction',
       });
       groups.set(claim.employeeId, row);
+      const pending = pendingMatchingLabor(standardLaborMilliseconds, claim.pool.completion.processedQty, claim.pool.completion.coveredQty);
+      recordWork({ id: `claim:${claim.id}`, sourceId: claim.pool.completion.id, source: 'claim', type: 'production',
+        employeeId: claim.employeeId, workDate: claimDateKey, title: claim.pool.step.processName,
+        workOrderCode: claim.pool.workOrder.code, specification: claim.pool.workOrder.specification, processName: claim.pool.step.processName,
+        milliseconds: standardLaborMilliseconds, pendingMatchingMilliseconds: pending, pendingReviewMilliseconds: 0,
+        reportedDurationMilliseconds: 0, missingTime: false, state: pending > 0 ? 'pending_match' : 'recorded',
+        recordedAt: claim.pool.completion.completedAt.toISOString() });
+    }
+    for (const record of await loadUncreditedEmployeeWork(startDate, factDateEnd, [...productionEmployeeIds])) {
+      if (!isEmployeeEmployedOnDate(employeeById.get(record.employeeId), record.workDate)) continue;
+      dailyFor(record.employeeId, record.workDate).standardLaborMilliseconds += record.milliseconds;
+      recordWork(record);
     }
     const calendarByDate = new Map(calendarOverrides.map(item => [dateKeyFromDatabase(item.workDate), item]));
     const rosterDates = new Set(rosterRecords.map(record => dateKeyFromDatabase(record.workDate)));
@@ -594,9 +646,12 @@ export async function loadEmployeeHoursReport(input: {
           day.attendanceStatus !== 'missing' || day.scheduledOverrideMilliseconds !== null
           || (calendar.isWorkday && calendar.effectiveDayType !== 'temporary_workday' && rosterDates.has(dateKey) && row.employee.isActive && row.employee.attendanceEnabled)
         );
+        day.scheduledTargetMilliseconds = day.isFuture ? 0 : Math.max(0,
+          (day.scheduledOverrideMilliseconds ?? day.scheduledMilliseconds) + day.plannedOvertimeMilliseconds - day.leaveMilliseconds);
         return day;
       });
       row.days = dailyInputs.map((day, index) => employeeDayDto(employedDateKeys[index], day));
+      row.workRecords?.sort((a, b) => b.workDate.localeCompare(a.workDate) || b.recordedAt.localeCompare(a.recordedAt));
       row.attainmentEligible = dailyInputs.some(day =>
         day.attainmentEligible
         && day.attainmentStream === 'batch'

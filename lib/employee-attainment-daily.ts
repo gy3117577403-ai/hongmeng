@@ -1,7 +1,8 @@
 import { aggregateEmployeeHours } from '@/lib/employee-hours-metrics';
 import type { AttainmentStream } from '@/types';
 
-export type DailyAttainmentInput = {
+export type DailyAttainmentInput = import('@/lib/employee-realtime-hours').RealtimeHoursBreakdown & {
+  scheduledTargetMilliseconds?: number;
   teamSnapshot?: string | null;
   attendanceMilliseconds: number;
   exemptAbnormalMilliseconds: number;

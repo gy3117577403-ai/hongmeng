@@ -14,6 +14,8 @@ import {
 import { submitProcessCompletion, reportingSubmissionReason } from '@/lib/process-report-submissions';
 import type { ReportingSourceInput } from '@/lib/process-report-submission-contract';
 import { prisma } from '@/lib/prisma';
+import { loadUncreditedEmployeeWork } from '@/lib/employee-uncredited-work';
+import { parseWorkDate } from '@/lib/attendance';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import {
@@ -128,7 +130,15 @@ export async function POST(
           qualityReport: body.qualityReport,
           defectDisposition: body.defectDisposition,
         });
-    if ('pending' in data && data.pending) return NextResponse.json({ ok: true, pending: true, submission: data.submission }, { status: 202 });
+    if ('pending' in data && data.pending) {
+      const start = parseWorkDate(data.submission.workDate).value;
+      const records = await loadUncreditedEmployeeWork(start, new Date(start.getTime() + 86_400_000), [currentEmployee.id]);
+      const own = records.filter(record => record.sourceId === data.submission.id || record.sourceId === data.submission.completionId);
+      return NextResponse.json({ ok: true, pending: true, submission: data.submission, data: {
+        workDate: data.submission.workDate,
+        personalLaborMilliseconds: own.some(record => record.missingTime) ? null : own.reduce((sum, record) => sum + record.milliseconds, 0),
+      } }, { status: 202 });
+    }
     const completed = 'pending' in data ? data.data : data;
     const completionIds = 'items' in completed ? completed.items.map(item => item.result.completionId) : [completed.completionId];
     const personal = await prisma.processLaborClaim.aggregate({ where: { employeeId: currentEmployee.id,

@@ -635,6 +635,8 @@ export default function FieldReportMobile({
       });
       const body = await response.json().catch(() => ({})) as { error?: string; data?: { event?: { sequence?: number } } };
       if (!response.ok) throw new Error(body.error || '异常工时登记失败');
+      window.dispatchEvent(new Event('hongmeng:hours-changed'));
+      try { window.localStorage.setItem('hongmeng:hours-changed', String(Date.now())); } catch {}
       const sequence = body.data?.event?.sequence;
       setAbnormalDraft(null);
       setSuccess({

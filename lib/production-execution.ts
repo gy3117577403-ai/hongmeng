@@ -11,6 +11,7 @@ import {
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { productionPlanAttainmentForScope } from '@/lib/production-plan-attainment';
+import { loadProductionOutcomeSummary } from '@/lib/production-outcome-metrics';
 import { PRODUCTION_CONTROL_SELECT, serializeProductionControl, productionCustomerDate } from '@/lib/production-control';
 import {
   productionTeamScopeWhere,
@@ -2039,6 +2040,8 @@ async function buildProductionExecutionSnapshot(input: {
         input.productionScope,
       )
     : null;
+  const outcomeSummary = input.includeSummary && input.week.weekStart
+    ? await loadProductionOutcomeSummary(input.week.weekStart, input.productionScope) : null;
   const summaryWipRecords = summaryStandaloneWip.flatMap(continuation => {
     const order = wipSummaryOrderById.get(continuation.workOrderId);
     return order ? [{ continuation, order }] : [];
@@ -2072,6 +2075,7 @@ async function buildProductionExecutionSnapshot(input: {
     ...(input.includeSummary && summaryBase ? {
       summary: {
         ...summaryBase,
+        ...outcomeSummary,
         total: summaryBase.total + summaryStandaloneWip.length,
         stageCounts: summaryStageCounts,
         stageQuantityTotals: summaryStageQuantityTotals,
@@ -2249,6 +2253,7 @@ export async function summarizeProduction(week: ProductionWeek, scope?: Producti
   const visibleOrderIds = new Set(orders.map(order => order.id));
   const carryoverByOrder = new Map([...loadedCarryoverByOrder].filter(([workOrderId]) => visibleOrderIds.has(workOrderId)));
   const summary = summarizeProductionRecords(week, orders, arrangementsByOrder, now, scope);
+  const outcomeSummary = week.weekStart ? await loadProductionOutcomeSummary(week.weekStart, scope) : null;
   const nativeIds = new Set(orders.map(order => order.id));
   const standaloneContinuations = continuations.filter(item => item.crossWeek || !nativeIds.has(item.workOrderId));
   const continuationOrderIds = [...new Set(standaloneContinuations.map(item => item.workOrderId))];
@@ -2285,6 +2290,7 @@ export async function summarizeProduction(week: ProductionWeek, scope?: Producti
     : null;
   return {
     ...summary,
+    ...outcomeSummary,
     total: summary.total + standaloneContinuations.length,
     stageCounts,
     stageQuantityTotals,

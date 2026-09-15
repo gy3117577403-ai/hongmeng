@@ -3,7 +3,7 @@ import { chinaDateKey } from '@/lib/china-date';
 
 export type EmployeeAttainmentDetail = {
   id: string;
-  source: 'claim' | 'execution';
+  source: 'claim' | 'execution' | 'completion' | 'submission';
   date: string;
   workOrderCode: string;
   productName: string | null;
@@ -18,8 +18,20 @@ export type EmployeeAttainmentDetail = {
 };
 
 export function employeeAttainmentDetails(
-  row: Pick<EmployeeAttainmentRowDTO, 'claimDetails' | 'details'>,
+  row: Pick<EmployeeAttainmentRowDTO, 'claimDetails' | 'details' | 'workRecords'>,
 ): EmployeeAttainmentDetail[] {
+  if (row.workRecords) {
+    return row.workRecords.filter(record => record.type === 'production').map(record => {
+      const claim = row.claimDetails.find(item => `claim:${item.id}` === record.id);
+      const execution = row.details.find(item => `execution:${item.id}` === record.id);
+      return { id: record.id, source: record.source as EmployeeAttainmentDetail['source'], date: record.workDate,
+        workOrderCode: record.workOrderCode || '', specification: record.specification || null,
+        productName: claim?.productName || execution?.productName || null,
+        processCode: claim?.processCode || execution?.processCode || '', processName: record.processName || record.title,
+        quantity: claim?.quantity ?? execution?.goodQty ?? 0, unitLabel: claim?.unitLabel || execution?.unitLabel || '件',
+        standardLaborMilliseconds: record.milliseconds, recordedLaborMilliseconds: record.milliseconds, countsForEfficiency: true };
+    });
+  }
   return [
     ...row.claimDetails.map(item => ({
       id: `claim:${item.id}`,

@@ -291,6 +291,7 @@ async function createPending(tx: Tx, command: Input, reasonCode: string, message
     assigneeUserIds = admins.map(actor => actor.id);
   }
   if (!assigneeUserIds.length) fail('没有能处理此工单的有效账号，请管理员配置负责人', 'PROCESS_SUBMISSION_ASSIGNEE_REQUIRED');
+  const targetWorkOrder = await tx.workOrder.findUniqueOrThrow({ where: { id: route.workOrderId }, select: { productionTargetQty: true } });
   const item = await tx.processReportSubmission.create({ data: {
     idempotencyKey: parsed.idempotencyKey, payloadFingerprint: fingerprint, status: 'PENDING', reasonCode,
     workOrderId: route.workOrderId, routeId: route.id, stepId: step.id, workDate: parsed.workDate,
@@ -302,7 +303,8 @@ async function createPending(tx: Tx, command: Input, reasonCode: string, message
     snapshot: json({ routeVersion: route.version, quantityVersion: step.quantityVersion, productTimeProfileVersion: step.productTimeProfileVersion,
       productTimeEntryId: step.productTimeEntryId, processCode: step.processCode, processName: step.processName,
       reportQuantityBasis: step.reportQuantityBasis, reportUnitLabel: step.reportUnitLabel, timeBasis: step.timeBasis,
-      unitsPerProduct: step.unitsPerProduct, standardMillisecondsPerUnit: step.standardMillisecondsPerUnit }),
+      unitsPerProduct: step.unitsPerProduct, standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
+      setupMilliseconds: step.setupMilliseconds, targetQuantity: targetWorkOrder.productionTargetQty }),
     result: result ? json(result) : undefined, lastError: message,
   } });
   const assigned = await reassignForCurrentRequirements(tx, item, true, false);

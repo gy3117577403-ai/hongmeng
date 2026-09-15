@@ -14,7 +14,7 @@ const h=3600000;
 test('other work independent workflow, concurrent approval, evidence lock and report reconciliation', {skip:!enabled}, async t=>{
   const url=new URL(process.env.DATABASE_URL || '');
   assert.ok(['127.0.0.1','localhost'].includes(url.hostname));
-  assert.ok(url.pathname==='/hongmeng_other_hours_v134147' && url.port==='55448' || url.pathname==='/hongmeng_other_hours_ux_v134151' && url.port==='55452' || url.pathname==='/hongmeng_ci' && process.env.CI==='true', 'Only isolated QA or named CI databases');
+  assert.ok(url.pathname==='/hongmeng_other_hours_v134147' && url.port==='55448' || url.pathname==='/hongmeng_other_hours_ux_v134151' && url.port==='55452' || url.pathname==='/hongmeng_hours183' && url.port==='25483' || url.pathname==='/hongmeng_ci' && process.env.CI==='true', 'Only isolated QA or named CI databases');
   const marker='OTHER-IT-'+randomUUID().slice(0,8);
   const today=otherWorkToday();
   const prior=new Date(new Date(today+'T00:00:00Z').getTime()-86400000).toISOString().slice(0,10);
@@ -55,7 +55,7 @@ test('other work independent workflow, concurrent approval, evidence lock and re
       await assert.rejects(commandOtherWork(operator,rowId,{action:'APPROVE',version:pending.version}),/自审|范围/);
       const foreign={...leader,access:resolveAccessContext([{...grants[1],scopeKey:'TEAM:another-team'}])};
       await assert.rejects(commandOtherWork(foreign,rowId,{action:'APPROVE',version:pending.version}));
-      assert.equal((await report()).summary.otherWorkMilliseconds,0);
+      assert.equal((await report()).summary.otherWorkMilliseconds,2*h);
       const results=await Promise.allSettled([commandOtherWork(leader,rowId,{action:'APPROVE',version:pending.version}),commandOtherWork(supervisor,rowId,{action:'APPROVE',version:pending.version})]);
       assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
       assert.equal(await prisma.otherWorkTimeReview.count({where:{requestId:rowId,action:'APPROVE'}}),1);

@@ -8,6 +8,8 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { loadUncreditedEmployeeWork } from '@/lib/employee-uncredited-work';
+import { parseWorkDate } from '@/lib/attendance';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
 import { submitProcessCompletion, reportingSubmissionReason } from '@/lib/process-report-submissions';
 import { ProcessCompletionServiceError } from '@/lib/process-completion-service';
@@ -81,7 +83,15 @@ export async function POST(
       actor: `${employee.employeeNo} · ${employee.name}`,
       idempotencyKey: body.idempotencyKey,
     });
-    if (result.pending) return NextResponse.json({ ok: true, pending: true, submission: result.submission }, { status: 202 });
+    if (result.pending) {
+      const start = parseWorkDate(result.submission.workDate).value;
+      const own = (await loadUncreditedEmployeeWork(start, new Date(start.getTime() + 86400000), [employee.id]))
+        .filter(record => record.sourceId === result.submission.id || record.sourceId === result.submission.completionId);
+      return NextResponse.json({ ok: true, pending: true, submission: result.submission, data: {
+        workDate: result.submission.workDate,
+        personalLaborMilliseconds: own.some(record => record.missingTime) ? null : own.reduce((sum, record) => sum + record.milliseconds, 0),
+      } }, { status: 202 });
+    }
     const data = result.data;
     if ('changeId' in data && typeof data.changeId === 'string') {
       await dispatchProcessRouteChangeOutboxBestEffort({ changeId: data.changeId, limit: 2 });

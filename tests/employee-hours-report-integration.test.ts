@@ -19,7 +19,7 @@ test('employee facts reconcile pending labor, rest days, historical eligibility,
     && /^\/hongmeng_employee_hours_v134142_(report|ci)$/.test(target.pathname);
   const githubTestDatabase = (target.port || '5432') === '5432'
     && target.pathname === '/hongmeng_ci' && process.env.CI === 'true';
-  assert.ok(localTestDatabase || githubTestDatabase, 'Only the dedicated local report/CI database or named GitHub CI database is allowed');
+  assert.ok(localTestDatabase || githubTestDatabase || (target.port === '25483' && target.pathname === '/hongmeng_hours183'), 'Only the dedicated local report/CI database or named GitHub CI database is allowed');
   const marker = `IT-HOURS-${randomUUID().slice(0, 8)}`;
   const actor = await prisma.user.create({ data: { username: marker, displayName: marker, passwordHash: 'isolated-test' } });
   const employees = await Promise.all([0, 1].map(index => prisma.employee.create({ data: {
@@ -88,15 +88,15 @@ test('employee facts reconcile pending labor, rest days, historical eligibility,
     const main = report.rows.find(row => row.employee.id === ids[0])!;
     const missing = report.rows.find(row => row.employee.id === ids[1])!;
     assert.equal(main.attendanceMilliseconds, 15 * hour);
-    assert.equal(main.standardLaborMilliseconds, 14 * hour);
-    assert.equal(employeeAttainmentDetails(main).reduce((sum, detail) => sum + detail.standardLaborMilliseconds, 0), 14 * hour);
+    assert.equal(main.standardLaborMilliseconds, 17 * hour);
+    assert.equal(employeeAttainmentDetails(main).reduce((sum, detail) => sum + detail.standardLaborMilliseconds, 0), 17 * hour);
     assert.equal(employeeAttainmentDetails(main).reduce((sum, detail) => sum + detail.recordedLaborMilliseconds, 0), 17 * hour);
     assert.equal(main.claimDetails.filter(detail => detail.countsForEfficiency === false).length, 1);
-    assert.equal(main.exemptAbnormalMilliseconds, hour);
+    assert.equal(main.exemptAbnormalMilliseconds, 2 * hour);
     assert.equal(main.regularAttendanceMilliseconds, 13 * hour);
-    assert.equal(main.attainmentBasisPoints, 10526);
-    assert.equal(main.days.find(day => day.date === '2026-09-06')!.targetAttainmentBasisPoints, 9474);
-    assert.equal(main.days.find(day => day.date === '2026-09-07')!.targetAttainmentBasisPoints, 12632);
+    assert.equal(main.attainmentBasisPoints, 13333);
+    assert.equal(main.days.find(day => day.date === '2026-09-06')!.targetAttainmentBasisPoints, 10526);
+    assert.equal(main.days.find(day => day.date === '2026-09-07')!.targetAttainmentBasisPoints, 18947);
     assert.equal(main.days.find(day => day.date === '2026-09-09')!.standardLaborMilliseconds, 0);
     assert.equal(main.actualLaborMilliseconds, 0);
     assert.equal(main.processEfficiencyBasisPoints, null);
@@ -105,7 +105,7 @@ test('employee facts reconcile pending labor, rest days, historical eligibility,
     assert.equal(missing.unmatchedStandardLaborMilliseconds, 0);
     assert.equal(missing.attainmentBasisPoints, null);
     assert.equal(missing.attainmentDataComplete, false);
-    assert.equal(report.summary.standardLaborMilliseconds, 16 * hour);
+    assert.equal(report.summary.standardLaborMilliseconds, 19 * hour);
     assert.equal(report.summary.attainmentBasisPoints, null);
     const operations = employeeHoursOperationsRows(report.rows, reportRangeDateKeys(range.start, range.end));
     for (const row of report.rows) {

@@ -12,6 +12,7 @@ import './process-report-recovery.css';
 import ReportingRecoveryDialog from '@/components/ReportingRecoveryDialog';
 import { productionProcessProgress } from '@/lib/production-process-progress';
 import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
+import { EmployeeRealtimeHours } from '@/components/EmployeeRealtimeHours';
 import { canManageProductionControl, canAdjustProductionDates, type ProductionControlView } from '@/lib/production-control';
 
 
@@ -72,7 +73,7 @@ type ProductionFlowAction = 'start_process_route';
 type DispatchDensity = 'comfortable' | 'compact';
 type DispatchPreset = 'paused' | 'all' | 'today' | 'in_production' | 'not_started' | 'next_process' | 'due_soon' | 'exceptions' | 'completed';
 type DispatchTone = 'normal' | 'warning' | 'danger';
-type ProductionAttainmentMetric = 'batch' | 'quantity' | 'labor';
+type ProductionAttainmentMetric = 'batch' | 'quantity' | 'labor' | 'employee';
 
 type DispatchRisk = {
   label: string;
@@ -443,6 +444,7 @@ type ProductionOrder = {
 };
 
 type ProductionSummary = {
+  planAdjustment?: { originalQuantity: number; movedQuantity: number; scheduledQuantity: number };
   scope: WeekScope;
   readOnly: boolean;
   weekStartDate?: string | null;
@@ -3347,7 +3349,7 @@ export default function ProductionExecutionCenter({
               <span><CheckCircle2 size={14} aria-hidden="true" />口径已拆分</span>
               <button type="button" aria-label="关闭达成率总览" onClick={() => setAttainmentOverviewOpen(false)}><X size={17} aria-hidden="true" /></button>
             </header>
-            <p><Info size={14} aria-hidden="true" />计划项、产品数量和标准工时是三种不同口径，不再混成一个百分比。</p>
+            <p><Info size={14} aria-hidden="true" />计划项看任务，成品数量看产出，员工工时包含已提交的生产、异常和其他工时。</p>
             <div className="production-attainment-picker-grid">
               <button type="button" className="batch" onClick={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('batch'); }}>
                 <span><ListChecks size={18} aria-hidden="true" />周计划达成率<ChevronDown size={14} aria-hidden="true" /></span>
@@ -3357,25 +3359,23 @@ export default function ProductionExecutionCenter({
                 <em>查看计算明细</em>
               </button>
               <button type="button" className="quantity" onClick={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('quantity'); }}>
-                <span><Rows3 size={18} aria-hidden="true" />计划数量达成率<ChevronDown size={14} aria-hidden="true" /></span>
+                <span><Rows3 size={18} aria-hidden="true" />成品数量达成率<ChevronDown size={14} aria-hidden="true" /></span>
                 <strong>{formatProductionPercentage(summary?.quantityTotals.percentage ?? null)}</strong>
                 <small>{summary ? `${summary.quantityTotals.completedQty.toLocaleString()} / ${summary.quantityTotals.targetQty.toLocaleString()} 件` : '—'}</small>
                 <i><b style={{ width: `${Math.min(100, summary?.quantityTotals.percentage ?? 0)}%` }} /></i>
                 <em>查看计算明细</em>
               </button>
-              <button type="button" className="labor" onClick={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('labor'); }}>
-                <span><Clock3 size={18} aria-hidden="true" />有效标准工时完成率<ChevronDown size={14} aria-hidden="true" /></span>
-                <strong>{formatProductionPercentage(summary?.wipPlanMetrics?.percentage ?? null)}</strong>
-                <small>{summary?.wipPlanMetrics ? `${productionHours(summary.wipPlanMetrics.completedMilliseconds)} / ${productionHours(summary.wipPlanMetrics.effectivePlannedMilliseconds)} 小时` : '—'}</small>
-                <i><b style={{ width: `${Math.min(100, summary?.wipPlanMetrics?.percentage ?? 0)}%` }} /></i>
-                <em>查看计算明细</em>
-              </button>
+              <EmployeeRealtimeHours mode="card" date={summary?.weekStartDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })}
+                onOpen={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('employee'); }} />
             </div>
             <footer><Info size={13} aria-hidden="true" />点击任一指标，查看公式、分子、分母和调整明细。<span>更新 {lastProductionLoadedTime}</span></footer>
           </section>
         </PortalMenu>
 
-        {attainmentDetailMetric && summary && <ProductionAttainmentDrawer
+        {attainmentDetailMetric === 'employee' && <EmployeeRealtimeHours mode="detail"
+          date={summary?.weekStartDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })}
+          onClose={() => setAttainmentDetailMetric(null)} onProductionProgress={() => setAttainmentDetailMetric('labor')} />}
+        {attainmentDetailMetric && attainmentDetailMetric !== 'employee' && summary && <ProductionAttainmentDrawer
           summary={summary}
           activeMetric={attainmentDetailMetric}
           updatedAt={lastProductionLoadedTime || '尚未同步'}
@@ -3661,15 +3661,15 @@ function ProductionAttainmentDrawer({
       }
     : activeMetric === 'quantity'
       ? {
-          label: '计划数量达成率',
-          formula: '有效完成数量 ÷ 有效计划数量',
+          label: '成品数量达成率',
+          formula: '实际成品完成数量 ÷ 当前计划数量',
           percentage: summary.quantityTotals.percentage,
           numerator: summary.quantityTotals.completedQty,
           denominator: summary.quantityTotals.targetQty,
           unit: '件',
         }
       : {
-          label: '有效标准工时完成率',
+          label: '生产工序进度',
           formula: '已完成有效标准工时 ÷ 有效计划标准工时',
           percentage: labor?.percentage ?? null,
           numerator: labor?.completedMilliseconds ?? 0,
@@ -3731,9 +3731,14 @@ function ProductionAttainmentDrawer({
             <header><Rows3 size={18} aria-hidden="true" /><div><small>数量构成</small><strong>有效计划数量</strong></div></header>
             <dl>
               <div><dt>有效计划数量</dt><dd>{summary.quantityTotals.targetQty.toLocaleString()} 件</dd></div>
+              {summary.planAdjustment && <>
+                <div><dt>原生排定数量</dt><dd>{summary.planAdjustment.originalQuantity.toLocaleString()} 件</dd></div>
+                <div><dt>转仓移出本周</dt><dd>− {summary.planAdjustment.movedQuantity.toLocaleString()} 件</dd></div>
+                <div><dt>半成品排入本周</dt><dd>+ {summary.planAdjustment.scheduledQuantity.toLocaleString()} 件</dd></div>
+              </>}
               <div><dt>已经完成数量</dt><dd className="positive">{summary.quantityTotals.completedQty.toLocaleString()} 件</dd></div>
               <div><dt>剩余计划数量</dt><dd>{remaining.toLocaleString()} 件</dd></div>
-              <div className="total"><dt>计划数量达成率</dt><dd>{formatProductionPercentage(summary.quantityTotals.percentage)}</dd></div>
+              <div className="total"><dt>成品数量达成率</dt><dd>{formatProductionPercentage(summary.quantityTotals.percentage)}</dd></div>
             </dl>
             {summary.quantityTotals.missingOrders > 0 && <p className="production-attainment-warning"><AlertTriangle size={15} aria-hidden="true" />有 {summary.quantityTotals.missingOrders} 个计划项缺少有效数量，未静默写成 0，请先补齐数据。</p>}
           </section>}
@@ -3768,7 +3773,9 @@ function ProductionAttainmentDrawer({
           <section className="production-attainment-rules">
             <header><Info size={18} aria-hidden="true" /><strong>口径说明</strong></header>
             <ul>
-              <li>计划项、数量、工时三个指标独立计算，不能互相替代。</li>
+              <li>计划项和成品数量以实际完成为准，半成品转仓不增加成品完成数量。</li>
+              <li>员工实时工时包括已提交的生产、异常和其他工时；待前序匹配照常计入。</li>
+              <li>本页生产工序进度按调整后的计划标准工时计算，可单独查看，不能代替员工工时达成率。</li>
               <li>普通暂停仍保留在有效计划内；正式取消、跨周改排和半成品转仓通过调整记录改变归属。</li>
               <li>仓内尚未排入生产周的半成品不进入目标周分母；当前未排数量 {(labor?.unscheduledWipQuantity ?? 0).toLocaleString()} 件。</li>
               <li>历史周正式报表使用完整生产周和结算状态，避免一两天被当作完整周。</li>
@@ -4646,7 +4653,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       {activeSteps.length > 10 && <aside className="process-completion-route-sidebar"><ProcessStepPicker desktop strictSequence={context?.reportingPolicy === 'strict_sequence'} steps={activeSteps.map(step => ({ ...step, ...(context?.routeSteps.find(row => row.id === step.id) || {}), reportableQty: context?.routeSteps.find(row => row.id === step.id)?.reportableQty ?? Math.max(0, (dispatchTargetQuantity(order)) - (step.processedQty || 0)) }))} currentId={selectedStepId} disabled={saving || qualityUploading || loading || locked} onSelect={selectStep} /></aside>}
       <div className="process-completion-scroll">
       {recoveryNotice}
-      {order.wipContinuation && <section className="process-report-recovery-notice"><div><strong>报工来源：半成品 {order.wipContinuation.lotNo}</strong><p>计划周 {order.wipContinuation.targetWeekStartDate} 至 {order.wipContinuation.targetWeekEndDate} · 本次实际生产日期 {value?.workDate || '正在读取'}{pendingSource ? '。本次日期不在原计划周，将提交待确认续作申报，数量与工时暂不计入正式报工。' : '。按所选批次剩余数量核销。'}</p></div></section>}
+      {order.wipContinuation && <section className="process-report-recovery-notice"><div><strong>报工来源：半成品 {order.wipContinuation.lotNo}</strong><p>计划周 {order.wipContinuation.targetWeekStartDate} 至 {order.wipContinuation.targetWeekEndDate} · 本次实际生产日期 {value?.workDate || '正在读取'}{pendingSource ? '。本次日期不在原计划周，将提交待确认续作申报，已申报工时立即计入员工实时达成率，成品数量待匹配后更新。' : '。按所选批次剩余数量核销。'}</p></div></section>}
 
       {activeSteps.length > 1 && activeSteps.length <= 10 && <section className="process-completion-step-picker" aria-label="选择本次报工工序">
         <label htmlFor="process-completion-step">

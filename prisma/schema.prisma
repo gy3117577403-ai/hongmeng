@@ -2557,6 +2557,7 @@ model ProcessReportSubmission {
   @@index([createdById, status, createdAt])
   @@index([status, createdAt])
   @@index([sourceAllocationId, status])
+  @@index([status, workDate])
   @@map("process_report_submissions")
 }
 
@@ -2637,6 +2638,7 @@ model ProcessCompletion {
   withdrawalRequests           ProcessCompletionWithdrawalRequest[]
 
   @@index([workOrderId, workDate])
+  @@index([workDate, voidedAt])
   @@index([routeId, completedAt])
   @@index([stepId, completedAt])
   @@index([stepId, coverageStatus, completedAt])

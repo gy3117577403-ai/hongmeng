@@ -101,6 +101,8 @@ export function useProcessReportDraft<T>(ownerId: string, scopePrefix: string, o
         throw new ProcessReportRequestError(result.error || '报工暂未受理，输入已保留。', result.code, response.status, result.canSubmitPending);
       }
       clear(scope);
+      window.dispatchEvent(new Event('hongmeng:hours-changed'));
+      try { window.localStorage.setItem('hongmeng:hours-changed', String(Date.now())); } catch {}
       return result;
     } catch (error) {
       if (error instanceof ProcessReportRequestError) throw error;

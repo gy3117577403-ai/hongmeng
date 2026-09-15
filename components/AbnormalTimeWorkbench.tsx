@@ -173,6 +173,8 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || '异常工时审核失败');
+      window.dispatchEvent(new Event('hongmeng:hours-changed'));
+      try { window.localStorage.setItem('hongmeng:hours-changed', String(Date.now())); } catch {}
       setToast('异常工时已同意，个人工时口径已同步');
       setRefreshToken(value => value + 1);
     } catch (reason) {
@@ -202,6 +204,8 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || '异常工时审核失败');
+      window.dispatchEvent(new Event('hongmeng:hours-changed'));
+      try { window.localStorage.setItem('hongmeng:hours-changed', String(Date.now())); } catch {}
       setReview(null);
       setToast('异常工时已驳回，不计入个人工时');
       setRefreshToken(value => value + 1);

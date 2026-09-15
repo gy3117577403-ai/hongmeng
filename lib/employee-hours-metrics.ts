@@ -1,9 +1,10 @@
 import { basisPoints, ATTAINMENT_CAPACITY_FACTOR } from '@/lib/attendance';
 
-export const EMPLOYEE_HOURS_METRIC_VERSION = 'attendance-target-95-v2';
+export const EMPLOYEE_HOURS_METRIC_VERSION = 'submitted-work-realtime-v3';
 
 /** Production credit is earned on the business date, independently of attendance reconciliation. */
-export type EmployeeHoursDayInput = {
+export type EmployeeHoursDayInput = import('@/lib/employee-realtime-hours').RealtimeHoursBreakdown & {
+  scheduledTargetMilliseconds?: number;
   attendanceMilliseconds: number;
   standardLaborMilliseconds: number;
   exemptAbnormalMilliseconds: number;
@@ -42,6 +43,9 @@ export function employeeHoursDayMetrics(input: EmployeeHoursDayInput) {
   );
   const attainmentCapacityMilliseconds = eligible ? attendanceMilliseconds * ATTAINMENT_CAPACITY_FACTOR : 0;
   const attainmentNumeratorMilliseconds = eligible ? standardLaborMilliseconds + exemptAbnormalMilliseconds + otherWorkMilliseconds : 0;
+  const estimatedCapacityMilliseconds = eligible && !attendanceDataIssue ? (input.attendanceConfirmed ? attendanceMilliseconds
+    : nonnegative(input.scheduledTargetMilliseconds)) * ATTAINMENT_CAPACITY_FACTOR : 0;
+  const missingTimeRecordCount = future ? 0 : nonnegative(input.missingTimeRecordCount);
   return {
     attendanceMilliseconds,
     regularAttendanceMilliseconds: attendanceMilliseconds - recognizedOvertimeMilliseconds,
@@ -56,6 +60,13 @@ export function employeeHoursDayMetrics(input: EmployeeHoursDayInput) {
     otherWorkCount: future ? 0 : nonnegative(input.otherWorkCount),
     restAllowanceMilliseconds: eligible ? attendanceMilliseconds - attainmentCapacityMilliseconds : 0,
     actualLaborMilliseconds,
+    pendingMatchingMilliseconds: future ? 0 : nonnegative(input.pendingMatchingMilliseconds),
+    pendingReviewMilliseconds: future ? 0 : nonnegative(input.pendingReviewMilliseconds),
+    reportedDurationMilliseconds: future ? 0 : nonnegative(input.reportedDurationMilliseconds),
+    missingTimeRecordCount,
+    estimatedCapacityMilliseconds,
+    estimatedAttainmentBasisPoints: estimatedCapacityMilliseconds > 0
+      ? basisPoints(attainmentNumeratorMilliseconds, estimatedCapacityMilliseconds) : null,
     unmatchedStandardLaborMilliseconds: 0,
     attainmentCapacityMilliseconds,
     attainmentNumeratorMilliseconds,
@@ -74,16 +85,24 @@ export function aggregateEmployeeHours(days: Iterable<EmployeeHoursDayInput>) {
     exemptAbnormalMilliseconds: 0, creditedAbnormalMilliseconds: 0, actualLaborMilliseconds: 0,
     otherWorkMilliseconds: 0, otherWorkCount: 0, restAllowanceMilliseconds: 0,
     unmatchedStandardLaborMilliseconds: 0, attainmentCapacityMilliseconds: 0, attainmentNumeratorMilliseconds: 0,
+    pendingMatchingMilliseconds: 0, pendingReviewMilliseconds: 0, reportedDurationMilliseconds: 0, missingTimeRecordCount: 0,
+    estimatedCapacityMilliseconds: 0, estimatedMissingDays: 0,
     attainmentIncompleteDays: 0, effectiveProductionMilliseconds: 0, unexplainedMilliseconds: 0,
   };
   for (const day of days) {
     const metrics = employeeHoursDayMetrics(day);
-    for (const key of Object.keys(totals) as Array<keyof typeof totals>) totals[key] += metrics[key];
+    for (const key of Object.keys(totals) as Array<keyof typeof totals>) {
+      if (key === 'estimatedMissingDays') continue;
+      totals[key] += metrics[key];
+    }
+    if (metrics.attainmentIncompleteDays && metrics.estimatedCapacityMilliseconds <= 0) totals.estimatedMissingDays += 1;
   }
   return {
     ...totals,
     attendanceMissingDays: totals.attainmentIncompleteDays,
     attainmentDataComplete: totals.attainmentIncompleteDays === 0,
+    estimatedAttainmentBasisPoints: totals.estimatedMissingDays > 0 ? null
+      : basisPoints(totals.attainmentNumeratorMilliseconds, totals.estimatedCapacityMilliseconds),
     attainmentBasisPoints: totals.attainmentIncompleteDays > 0
       ? null : basisPoints(totals.attainmentNumeratorMilliseconds, totals.attainmentCapacityMilliseconds),
   };

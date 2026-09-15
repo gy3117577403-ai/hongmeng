@@ -219,7 +219,7 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
       if (submit) {
         row = (await api<{ row: Row }>('/api/other-work-times/' + row.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'SUBMIT', version: row.version }) })).row;
       }
-      notify(submit ? '已提交，等待审批' : '草稿已保存');
+      notify(submit ? '已提交并计入工时，等待核对' : '草稿已保存');
       if (field || submit) {
         resetEditor({ ...initialForm(), categoryId: data?.categories.find(c => c.isActive)?.id || '' });
         idempotency.current = ''; correctionOf.current = null; showMine(row);
@@ -381,9 +381,9 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
     {modal && <OtherHoursDialog title={modal === 'help' ? field ? '填写说明' : '其他工时说明' : modal === 'qr' ? '其他工时固定二维码' : modal === 'categories' ? '选择事项分类' : modal === 'filters' ? '筛选申报' : modal === 'decision' ? decisionTitle[decisionAction] : modal === 'discard' ? '填写内容尚未保存' : '管理事项分类'}
       onClose={closeModal} busy={busy} interactionEnabled={!preview}>
       {error && <p className="oh-dialog-error" role="alert">{error}</p>}
-      {modal === 'help' && <div className="oh-help-content">{!field && <div className="oh-formula">个人达成率 =<br />（完成工时 + 已确认损耗 + 已通过其他工时）<br />÷（出勤工时 × 95%）× 100%</div>}
+      {modal === 'help' && <div className="oh-help-content">{!field && <div className="oh-formula">个人达成率 =<br />（生产报工 + 异常工时 + 其他工时）<br />÷（出勤工时 × 95%）× 100%</div>}
         <p>{field ? '按实际工作日期选择事项，填写实际耗时，并用一句话说明做了什么。照片可以按需补充。' : '出勤工时包含正常出勤和已确认实际加班，预留 5% 休息余量。'}</p>
-        <p>提交后在“我的申报”查看进度，审批通过的时长归入实际工作日期。{!field && '日、周、月报表同步汇总。'}</p><button type="button" className="primary" onClick={closeModal}>知道了</button></div>}
+        <p>提交后在“我的申报”查看进度，提交成功即计入实际工作日期，核对后只调整差额。{!field && '日、周、月报表同步汇总。'}</p><button type="button" className="primary" onClick={closeModal}>知道了</button></div>}
       {modal === 'qr' && <div className="oh-qr"><p>协助样品 · 临时安排 · 公共辅助事务</p>{qr ? <img src={qr} alt="其他工时申报固定二维码" /> : <p>正在生成…</p>}
         <strong>扫码 → 登录本人账号 → 填写工作 → 提交审批</strong><div className="oh-actions">{qr && <a className="oh-button" href={qr} download="其他工时申报二维码.png"><Download size={16} />下载二维码</a>}<button type="button" onClick={() => window.print()}>打印张贴版</button></div></div>}
       {modal === 'categories' && <div className="oh-category-list">{data?.categories.filter(c => c.isActive).map(c => <button key={c.id} type="button" aria-pressed={c.id === form.categoryId} onClick={() => { update('categoryId', c.id); closeModal(); }}>{c.name}</button>)}
