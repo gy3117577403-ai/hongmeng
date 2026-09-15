@@ -65,7 +65,7 @@ FROM plan_time_evidence;
 -- total. No process entry, completion, quantity movement or employee labor row
 -- is changed by this migration.
 INSERT INTO production_plan_changes (id, plan_order_id, batch_id, action, before_data, after_data, impact_data, reason, created_at)
-SELECT 'plan-time-v178-' || id, plan_order_id, id, 'repair_plan_time_consistency',
+SELECT 'plan-time-v179-' || id, plan_order_id, id, 'repair_plan_time_consistency',
   jsonb_build_object('unitMilliseconds', old_unit, 'totalMilliseconds', old_total::text),
   jsonb_build_object('unitMilliseconds', new_unit, 'totalMilliseconds', COALESCE(new_unit::bigint * quantity, old_total)::text, 'planTimeSource', source),
   jsonb_build_object('importChangeId', import_change_id, 'manualChangeId', manual_change_id,
@@ -98,11 +98,11 @@ CREATE FUNCTION sync_plan_batch_work_order_time() RETURNS trigger LANGUAGE plpgs
 BEGIN
   IF NEW.work_order_id IS NOT NULL AND NEW.deleted_at IS NULL THEN
     UPDATE work_orders SET
-      unit_work_hours = (NEW.unit_milliseconds_snapshot::numeric / 3600000)::text,
-      total_work_hours = (NEW.total_milliseconds_snapshot::numeric / 3600000)::text
+      unit_work_hours = COALESCE((NEW.unit_milliseconds_snapshot::numeric / 3600000)::text, unit_work_hours),
+      total_work_hours = COALESCE((NEW.total_milliseconds_snapshot::numeric / 3600000)::text, total_work_hours)
     WHERE id = NEW.work_order_id AND
-      (unit_work_hours IS DISTINCT FROM (NEW.unit_milliseconds_snapshot::numeric / 3600000)::text
-       OR total_work_hours IS DISTINCT FROM (NEW.total_milliseconds_snapshot::numeric / 3600000)::text);
+      ((NEW.unit_milliseconds_snapshot IS NOT NULL AND unit_work_hours IS DISTINCT FROM (NEW.unit_milliseconds_snapshot::numeric / 3600000)::text)
+       OR (NEW.total_milliseconds_snapshot IS NOT NULL AND total_work_hours IS DISTINCT FROM (NEW.total_milliseconds_snapshot::numeric / 3600000)::text));
   END IF;
   RETURN NEW;
 END $$;
@@ -114,16 +114,16 @@ DECLARE batch production_plan_batches%ROWTYPE;
 BEGIN
   SELECT * INTO batch FROM production_plan_batches WHERE work_order_id = NEW.id AND deleted_at IS NULL;
   IF FOUND THEN
-    NEW.unit_work_hours := (batch.unit_milliseconds_snapshot::numeric / 3600000)::text;
-    NEW.total_work_hours := (batch.total_milliseconds_snapshot::numeric / 3600000)::text;
+    NEW.unit_work_hours := COALESCE((batch.unit_milliseconds_snapshot::numeric / 3600000)::text, OLD.unit_work_hours);
+    NEW.total_work_hours := COALESCE((batch.total_milliseconds_snapshot::numeric / 3600000)::text, OLD.total_work_hours);
   END IF;
   RETURN NEW;
 END $$;
 CREATE TRIGGER managed_work_order_plan_time BEFORE UPDATE OF unit_work_hours, total_work_hours
   ON work_orders FOR EACH ROW EXECUTE FUNCTION protect_managed_work_order_time();
 
-UPDATE work_orders w SET unit_work_hours = (b.unit_milliseconds_snapshot::numeric / 3600000)::text,
-  total_work_hours = (b.total_milliseconds_snapshot::numeric / 3600000)::text
+UPDATE work_orders w SET unit_work_hours = COALESCE((b.unit_milliseconds_snapshot::numeric / 3600000)::text, w.unit_work_hours),
+  total_work_hours = COALESCE((b.total_milliseconds_snapshot::numeric / 3600000)::text, w.total_work_hours)
 FROM production_plan_batches b WHERE b.work_order_id = w.id AND b.deleted_at IS NULL;
 
 COMMIT;

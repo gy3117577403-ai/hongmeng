@@ -90,7 +90,7 @@ test('migration restores original import evidence, preserves explicit adjustment
     }
     await tx.productionPlanChange.create({ data: { planOrderId: f.order.id, batchId: manual.id, action: 'update_released_plan_batch',
       beforeData: { unitMilliseconds: 600000 }, afterData: { unitMilliseconds: 900000 }, createdAt: new Date('2026-09-11') } });
-    const migration = readFileSync(new URL('../prisma/migrations/202609150001_planning_time_consistency/migration.sql', import.meta.url), 'utf8');
+    const migration = readFileSync(new URL('../prisma/migrations/20260915130000_planning_time_consistency/migration.sql', import.meta.url), 'utf8');
     const reconciliation = migration.slice(migration.indexOf('CREATE FUNCTION pg_temp.plan_ms'), migration.indexOf('-- Keep integer milliseconds'));
     for (const statement of reconciliation.split(/\n(?=CREATE (?:FUNCTION|TEMP TABLE)|INSERT INTO|UPDATE production_plan_batches)/)) {
       await tx.$executeRawUnsafe(statement);
@@ -106,6 +106,22 @@ test('migration restores original import evidence, preserves explicit adjustment
     assert.equal(restoredFile.totalMillisecondsSnapshot, 38250000n);
     assert.equal(await tx.productionPlanChange.count({ where: { batchId: imported.id, action: 'repair_plan_time_consistency' } }), 1);
     assert.equal(await tx.productProcessTimeEntry.count({ where: { profileId: f.profile.id, unitMilliseconds: 1630000 } }), 1);
+    throw new Rollback();
+  }, { timeout: 60000 }), Rollback);
+});
+
+test('legacy execution hours without a known batch plan survive migration and compatibility writes', { skip: !enabled }, async () => {
+  await assert.rejects(prisma.$transaction(async tx => {
+    const f = await fixture(tx);
+    await tx.productionPlanOrder.update({ where: { id: f.order.id }, data: { planningUnitMilliseconds: null } });
+    const work = await tx.workOrder.create({ data: { code: randomUUID(), productName: '旧工单', stage: 'frontend',
+      unitWorkHours: '0.25', totalWorkHours: '75' } });
+    await tx.productionPlanBatch.create({ data: { ...f.batchData, batchNo: 1, workOrderId: work.id } });
+    const migration = readFileSync(new URL('../prisma/migrations/20260915130000_planning_time_consistency/migration.sql', import.meta.url), 'utf8');
+    await tx.$executeRawUnsafe(migration.slice(migration.lastIndexOf('UPDATE work_orders w SET'), migration.indexOf('COMMIT;')));
+    await tx.workOrder.update({ where: { id: work.id }, data: { unitWorkHours: '99', totalWorkHours: '999' } });
+    const kept = await tx.workOrder.findUniqueOrThrow({ where: { id: work.id } });
+    assert.equal(kept.unitWorkHours, '0.25'); assert.equal(kept.totalWorkHours, '75');
     throw new Rollback();
   }, { timeout: 60000 }), Rollback);
 });
