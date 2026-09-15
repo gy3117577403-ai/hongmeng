@@ -61,6 +61,7 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
           productTimeProfileId: refs.productTimeProfileId,
           productTimeProfileVersion: refs.productTimeProfileVersion,
           unitMillisecondsSnapshot: effectiveUnitMilliseconds,
+          planTimeSource: parsed.data.unitMilliseconds ? 'manual' : order.planningUnitMilliseconds ? 'order' : refs.unitMilliseconds ? 'published' : 'missing',
           totalMillisecondsSnapshot: effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(parsed.data.quantity) : null,
         },
       });

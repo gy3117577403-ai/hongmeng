@@ -1,5 +1,6 @@
 'use client';
 
+import { planMinutesText, planTimeSourceText } from '@/lib/planning-time';
 import {
   AlertTriangle,
   ArrowDown,
@@ -138,6 +139,7 @@ type ProductTimePayload = {
 };
 
 type ProductTimeDetailPayload = {
+  planningReference?: ProductTimeListItemDTO['planningReference'];
   ok?: boolean;
   error?: string;
   item?: Pick<ProductTimeListItemDTO, 'id' | 'customerName' | 'customerCode' | 'specification' | 'productName' | 'updatedAt'>;
@@ -623,6 +625,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       if (status !== 'all') params.set('status', status);
       if (planningScope !== 'all') params.set('scope', planningScope);
       if (planningScope === 'history') params.set('weekStartDate', historyWeekStart);
+      const sourceBatchId = new URLSearchParams(window.location.search).get('batchId');
+      if (sourceBatchId) params.set('batchId', sourceBatchId);
       params.set('page', String(requestedPage));
       params.set('pageSize', '50');
       if (optionsLoadedRef.current) params.set('includeOptions', '0');
@@ -641,9 +645,9 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setPeriods(data.periods);
       const urlItemId = new URLSearchParams(window.location.search).get('itemId') || '';
       const requested = preferredItemId || urlItemId || selectedIdRef.current;
-      if (!append && requested && !nextItems.some(item => item.id === requested)) {
+      if (!append && requested && (planningScope === 'all' || sourceBatchId) && !nextItems.some(item => item.id === requested)) {
         try {
-          const detail = await fetchJson<ProductTimeDetailPayload>(`/api/product-time-profiles/${encodeURIComponent(requested)}`, {
+          const detail = await fetchJson<ProductTimeDetailPayload>(`/api/product-time-profiles/${encodeURIComponent(requested)}?batchId=${encodeURIComponent(sourceBatchId || "")}`, {
             cache: 'no-store',
             signal: request.controller.signal,
             timeoutMs: 8_000,
@@ -657,7 +661,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             published: profiles.find(profile => profile.status === 'published') || null,
             quotation: detail.quotation || null,
             planning: null,
-            planningReference: null,
+            planningReference: detail.planningReference || null,
           }, ...nextItems];
           } else if (preferredItemId || urlItemId) {
             setError(detail.error || '指定产品不存在、已删除或无权访问');
@@ -731,6 +735,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setPlanningScope(scope);
       setStatus('all');
       const url = new URL(window.location.href);
+      url.searchParams.delete('batchId');
+      url.searchParams.delete('itemId');
       if (scope === 'all') url.searchParams.delete('scope');
       else url.searchParams.set('scope', scope);
       window.history.replaceState(null, '', `${url.pathname}${url.search}`);
@@ -2118,12 +2124,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             <section className="product-time-quotation-editor" aria-labelledby="product-time-quotation-title">
               <header><span><small>商业基准</small><strong id="product-time-quotation-title">单套报价工时</strong></span><b className={quotationDirty ? 'dirty' : undefined}>{quotationDirty ? '未保存' : activeQuotation ? `V${activeQuotation.version}` : '待维护'}</b></header>
               {planningReference ? <div className="product-time-planning-candidate">
-                <span><small>最近计划候选</small><strong>{duration(planningReference.unitMilliseconds)}</strong><em>{planningReference.weekStartDate && planningReference.weekEndDate ? `${planningReference.weekStartDate} 至 ${planningReference.weekEndDate}` : '计划订单'} · {planningReference.quantity.toLocaleString('zh-CN')} 件</em></span>
-                {canManageProductTimes && <button type="button" onClick={adoptPlanningQuotation}>填入 {duration(planningReference.unitMilliseconds)}</button>}
+                <span><small>计划候选{planningReference.batchNo ? ` · 第 ${planningReference.batchNo} 批` : ''}</small><strong>{planMinutesText(planningReference.unitMilliseconds)}</strong><em>{planningReference.weekStartDate && planningReference.weekEndDate ? `${planningReference.weekStartDate} 至 ${planningReference.weekEndDate}` : '计划订单'} · {planningReference.quantity.toLocaleString('zh-CN')} 件</em><em>{planTimeSourceText[planningReference.planTimeSource || 'legacy']}</em></span>
+                {canManageProductTimes && <button type="button" onClick={adoptPlanningQuotation}>填入 {planMinutesText(planningReference.unitMilliseconds)}</button>}
               </div> : <div className="product-time-planning-candidate empty"><span><small>最近计划候选</small><strong>暂无计划单套工时</strong><em>计划订单维护后可在这里人工采用</em></span></div>}
               <label><span>秒 / 套</span><input disabled={!canManageProductTimes} inputMode="decimal" aria-describedby="product-time-quotation-conversion" value={quotationSeconds} onChange={event => { setQuotationSeconds(event.target.value); setQuotationSourceType('manual'); setQuotationSourceRefId(null); setQuotationDirty(true); }} placeholder="输入报价工时" /><small id="product-time-quotation-conversion" className={quotationSeconds.trim() && (!Number.isFinite(parsedQuotationSeconds) || parsedQuotationSeconds <= 0 || parsedQuotationSeconds > 86_400) ? 'error' : undefined}>{quotationPreviewText}</small></label>
               <label><span>报价说明</span><input disabled={!canManageProductTimes} value={quotationRemark} onChange={event => { setQuotationRemark(event.target.value); setQuotationDirty(true); }} placeholder="版本或测算依据，可选" /></label>
-              <div className="product-time-quotation-compare"><span>生产标准<strong>{perBatchEntryCount ? '含按批口径' : duration(totalMilliseconds)}</strong></span><span>计划候选<strong>{planningReference ? duration(planningReference.unitMilliseconds) : '暂无'}</strong></span><span>当前报价<strong>{activeQuotation ? duration(activeQuotation.unitMilliseconds) : '未录入'}</strong></span></div>
+              <div className="product-time-quotation-compare"><span>生产标准<strong>{perBatchEntryCount ? '含按批口径' : duration(totalMilliseconds)}</strong></span><span>计划候选<strong>{planningReference ? planMinutesText(planningReference.unitMilliseconds) : '暂无'}</strong></span><span>当前报价<strong>{activeQuotation ? duration(activeQuotation.unitMilliseconds) : '未录入'}</strong></span></div>
               <small className="product-time-quotation-source">当前编辑来源：{quotationSourceText(quotationSourceType)}。采用计划工时后仍需保存，保存会创建新的报价版本。</small>
               {canManageProductTimes && <button className="hm-workbench-button" type="button" disabled={quotationSaving || !quotationDirty} onClick={() => void saveQuotation()}><Save size={15} aria-hidden="true" />{quotationSaving ? '保存中' : '保存报价工时'}</button>}
             </section>

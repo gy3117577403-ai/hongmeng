@@ -1375,8 +1375,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const publishedProfile = order.drawingLibraryItem?.productTimeProfiles[0] || null;
     const productTimeLink = productTimeRouteLink(workOrder, publishedProfile?.version || null);
     const effectiveUnitMilliseconds = batch.unitMillisecondsSnapshot
-      || (publishedProfile ? productTimeTotalMilliseconds(publishedProfile.entries) : null)
-      || order.planningUnitMilliseconds;
+      || order.planningUnitMilliseconds
+      || (publishedProfile ? productTimeTotalMilliseconds(publishedProfile.entries) : null);
     const resourceCodes = new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || []);
     const facts = {
       releaseState: batch.releaseState as ProductionPlanReleaseState,

@@ -10,7 +10,7 @@ export function resolvePlanningImportTime(input: {
   order?: number | null;
   quantity: number;
 }): PlanningImportTime {
-  for (const source of ['import', 'published', 'order'] as const) {
+  for (const source of ['import', 'order', 'published'] as const) {
     const value = source === 'import' ? input.imported : input[source];
     if (Number.isSafeInteger(value) && Number(value) > 0) {
       return { unitMilliseconds: value!, totalMilliseconds: (BigInt(value!) * BigInt(input.quantity)).toString(), source };

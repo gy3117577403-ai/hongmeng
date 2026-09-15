@@ -1,3 +1,4 @@
+import { loadPlanningTimeReferences } from '@/lib/planning-time-reference';
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -175,60 +176,10 @@ export async function GET(req: NextRequest) {
       }) : Promise.resolve(null),
     ]);
     markRequest(observation, 'product_page');
-    const planningReferences = items.length
-      ? await prisma.productionPlanOrder.findMany({
-          where: {
-            deletedAt: null,
-            drawingLibraryItemId: { in: items.map(item => item.id) },
-            planningUnitMilliseconds: { gt: 0 },
-          },
-          select: {
-            id: true,
-            drawingLibraryItemId: true,
-            planningUnitMilliseconds: true,
-            updatedAt: true,
-            batches: {
-              where: { deletedAt: null },
-              orderBy: [{ updatedAt: 'desc' }, { batchNo: 'desc' }],
-              take: 1,
-              select: {
-                id: true,
-                batchNo: true,
-                quantity: true,
-                weekStartDate: true,
-                weekEndDate: true,
-                updatedAt: true,
-              },
-            },
-          },
-          orderBy: { updatedAt: 'desc' },
-          take: 5000,
-        })
-      : [];
-    const planningReferenceByItem = new Map<string, {
-      planOrderId: string;
-      batchId: string | null;
-      batchNo: number | null;
-      quantity: number;
-      unitMilliseconds: number;
-      weekStartDate: string | null;
-      weekEndDate: string | null;
-      updatedAt: string;
-    }>();
-    for (const order of planningReferences) {
-      if (!order.drawingLibraryItemId || !order.planningUnitMilliseconds || planningReferenceByItem.has(order.drawingLibraryItemId)) continue;
-      const batch = order.batches[0] || null;
-      planningReferenceByItem.set(order.drawingLibraryItemId, {
-        planOrderId: order.id,
-        batchId: batch?.id || null,
-        batchNo: batch?.batchNo ?? null,
-        quantity: batch?.quantity || 0,
-        unitMilliseconds: order.planningUnitMilliseconds,
-        weekStartDate: batch ? chinaDate(batch.weekStartDate) : null,
-        weekEndDate: batch ? chinaDate(batch.weekEndDate) : null,
-        updatedAt: (batch?.updatedAt || order.updatedAt).toISOString(),
-      });
-    }
+    const planningReferenceByItem = await loadPlanningTimeReferences(prisma, items.map(item => item.id), {
+      batchId: cleanProductTimeText(req.nextUrl.searchParams.get('batchId'), 80),
+      scoped: scope !== 'all', batchIds: planningBatches.map(batch => batch.id),
+    });
     markRequest(observation, 'planning_reference');
     const rows = items.map(item => {
       const draft = item.productTimeProfiles.find(profile => profile.status === 'draft') || null;

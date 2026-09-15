@@ -112,10 +112,8 @@ export function summarizePlanningCapacitySnapshot(
   let missingTimeBatchCount = 0;
   let frozenBatchCount = 0;
   for (const batch of batches) {
-    const total = batch.totalMillisecondsSnapshot
-      ?? (batch.unitMillisecondsSnapshot || batch.planOrder.planningUnitMilliseconds
-        ? BigInt((batch.unitMillisecondsSnapshot || batch.planOrder.planningUnitMilliseconds)!) * BigInt(batch.quantity)
-        : null);
+    const unit = batch.unitMillisecondsSnapshot || batch.planOrder.planningUnitMilliseconds;
+    const total = unit ? BigInt(unit) * BigInt(batch.quantity) : batch.totalMillisecondsSnapshot;
     if (total === null) {
       missingTimeBatchCount += 1;
       continue;

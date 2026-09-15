@@ -50,6 +50,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         where: { id: params.id, deletedAt: null },
       });
       if (!current) throw new WorkOrderPatchGuardError('工单不存在', 404);
+      if ((body.unitWorkHours !== undefined || body.totalWorkHours !== undefined)
+        && await tx.productionPlanBatch.count({ where: { workOrderId: current.id, deletedAt: null } })) {
+        throw new WorkOrderPatchGuardError('此工单的计划工时由计划批次统一管理，请在计划中心修改单件计划工时', 409);
+      }
       if ((data.plannedAt !== undefined && (data.plannedAt instanceof Date ? data.plannedAt.getTime() : null) !== (current.plannedAt?.getTime() ?? null))
         || (data.deliveryDay !== undefined && data.deliveryDay !== current.deliveryDay)) {
         throw new WorkOrderPatchGuardError('交期和预计完成日请由计划或管理员使用“调整交期”入口修改，必须保留原因与历史', 409);

@@ -242,19 +242,15 @@ function processStatus(batch: ProductionPlanBatchDTO): string {
 
 function effectiveUnitMilliseconds(order: ProductionPlanOrderDTO, batch: ProductionPlanBatchDTO): number | null {
   return batch.unitMillisecondsSnapshot
+    || order.planningUnitMilliseconds
     || order.effectiveUnitMilliseconds
     || order.currentUnitMilliseconds
-    || order.planningUnitMilliseconds
     || null;
 }
 
 function currentBatchHours(order: ProductionPlanOrderDTO, batch: ProductionPlanBatchDTO) {
   const unitMilliseconds = effectiveUnitMilliseconds(order, batch);
-  const totalMilliseconds = batch.totalMillisecondsSnapshot
-    ? finiteNumber(batch.totalMillisecondsSnapshot)
-    : unitMilliseconds
-      ? unitMilliseconds * batch.quantity
-      : null;
+  const totalMilliseconds = unitMilliseconds ? unitMilliseconds * batch.quantity : finiteNumber(batch.totalMillisecondsSnapshot);
   return {
     unitHours: millisecondsToHours(unitMilliseconds),
     totalHours: millisecondsToHours(totalMilliseconds),

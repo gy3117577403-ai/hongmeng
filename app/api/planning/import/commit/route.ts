@@ -336,6 +336,8 @@ async function commitBatch(
           productTimeProfileId: profile?.id || null,
           productTimeProfileVersion: profile?.version || null,
           unitMillisecondsSnapshot: unitMilliseconds,
+          importedUnitMilliseconds: row.input.planningUnitMilliseconds || null,
+          planTimeSource: planTime.source,
           totalMillisecondsSnapshot: unitMilliseconds ? BigInt(unitMilliseconds) * BigInt(row.input.plannedQuantity) : null,
         },
       });

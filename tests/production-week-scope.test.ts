@@ -471,9 +471,10 @@ test('next-week preparation aligns a current-week batch to the natural next week
   assert.equal(chinaDate(aligned.plannedCompletionDate), '2026-07-29');
 });
 
-test('batch labor time overrides product and order defaults', () => {
+test('batch plan precedes order plan; process standard is used only without a plan', () => {
   assert.equal(effectivePlanningUnitMilliseconds(20_000, 30_000, 40_000), 20_000);
-  assert.equal(effectivePlanningUnitMilliseconds(null, 30_000, 40_000), 30_000);
+  assert.equal(effectivePlanningUnitMilliseconds(null, 30_000, 40_000), 40_000);
+  assert.equal(effectivePlanningUnitMilliseconds(null, 30_000, null), 30_000);
   assert.equal(effectivePlanningUnitMilliseconds(null, null, 40_000), 40_000);
   assert.equal(effectivePlanningUnitMilliseconds(null, null, null), null);
 });

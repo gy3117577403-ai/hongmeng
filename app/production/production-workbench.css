@@ -8173,6 +8173,25 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   white-space: normal;
 }
 
+.hm-production-workbench .production-dispatch-plan-time {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 4px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #ffdfc7;
+  line-height: 1.35;
+}
+
+.hm-production-workbench .production-dispatch-plan-time > strong {
+  color: #a44412;
+  font-size: 12px;
+}
+
+.hm-production-workbench .production-dispatch-plan-time > small {
+  color: #62748a;
+  font-size: 11px;
+}
+
 .hm-production-workbench .production-dispatch-progress-summary > span {
   display: block;
   overflow: hidden;

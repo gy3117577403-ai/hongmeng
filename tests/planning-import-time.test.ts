@@ -28,7 +28,7 @@ test('minutes are converted precisely and invalid supplied times are rejected',(
 });
 test('import time wins without changing formal product times; blank falls back without treating missing as zero',()=>{
   assert.equal(resolvePlanningImportTime({imported:120000,published:60000,order:30000,quantity:40}).source,'import');
-  assert.equal(resolvePlanningImportTime({published:60000,order:30000,quantity:40}).source,'published');
+  assert.equal(resolvePlanningImportTime({published:60000,order:30000,quantity:40}).source,'order');
   assert.equal(resolvePlanningImportTime({published:0,order:30000,quantity:40}).source,'order');
   assert.deepEqual(resolvePlanningImportTime({quantity:40}),{unitMilliseconds:null,totalMilliseconds:null,source:'missing'});
 });

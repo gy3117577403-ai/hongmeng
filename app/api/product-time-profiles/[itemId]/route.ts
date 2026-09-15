@@ -1,3 +1,4 @@
+import { loadPlanningTimeReferences } from '@/lib/planning-time-reference';
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -53,7 +54,8 @@ export async function GET(_req: NextRequest, { params }: { params: { itemId: str
     await requireUser();
     const payload = await profilePayload(params.itemId);
     if (!payload) return NextResponse.json({ ok: false, error: '图纸资料产品不存在' }, { status: 404 });
-    return NextResponse.json({ ok: true, ...payload });
+    const references = await loadPlanningTimeReferences(prisma, [params.itemId], { batchId: _req.nextUrl.searchParams.get('batchId') || '' });
+    return NextResponse.json({ ok: true, ...payload, planningReference: references.get(params.itemId) || null });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     console.error('product time profile detail failed', error);

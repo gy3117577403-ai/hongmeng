@@ -54,6 +54,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
               releaseState: true,
               workOrderId: true,
               productTimeProfileId: true,
+              planTimeSource: true,
             },
           },
         },
@@ -92,7 +93,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
           error: '订单已有下达批次，不能切换产品或规格；请新建计划，避免沿用旧产品工艺与标准工时',
         }, { status: 409 });
       }
-      const effectiveOrderUnitMilliseconds = references.unitMilliseconds || canonical.planningUnitMilliseconds;
+      const effectiveOrderUnitMilliseconds = canonical.planningUnitMilliseconds || references.unitMilliseconds;
       if (released.length && !effectiveOrderUnitMilliseconds) {
         return NextResponse.json({ ok: false, error: '已下达订单必须保留有效单件工时' }, { status: 409 });
       }
@@ -177,7 +178,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       }
       if (canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds) {
         const effectiveUnitMilliseconds = effectiveOrderUnitMilliseconds;
-        for (const batch of existing.batches.filter(item => !item.productTimeProfileId)) {
+        for (const batch of existing.batches.filter(item => ['order', 'published', 'missing'].includes(item.planTimeSource))) {
           const totalMilliseconds = effectiveUnitMilliseconds
             ? BigInt(effectiveUnitMilliseconds) * BigInt(batch.quantity)
             : null;
@@ -187,6 +188,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
               productTimeProfileId: references.productTimeProfileId,
               productTimeProfileVersion: references.productTimeProfileVersion,
               unitMillisecondsSnapshot: effectiveUnitMilliseconds,
+              planTimeSource: canonical.planningUnitMilliseconds ? "order" : "published",
               totalMillisecondsSnapshot: totalMilliseconds,
             },
           });

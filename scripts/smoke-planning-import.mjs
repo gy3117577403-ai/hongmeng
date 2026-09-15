@@ -63,6 +63,29 @@ if(process.env.PLANNING_IMPORT_QA_REFERENCE){
   const normalized=makeReferenceRow('');normalized[3]='  '+reference.specification.toLowerCase()+'  ';
   const check=await preview([normalized],date(28));assert.equal(check.body.rows[0].timePreview.unitMilliseconds,60000);assert.equal(check.body.rows[0].matchedDrawingLibraryItemId,reference.id);
   checks.push('published product time is reused, explicit time overrides only the new batch, and normalized product identity reuses the same archive');
+  const exactRow=makeReferenceRow(10); exactRow[4]=300; exactRow[5]=300;
+  const exact=await preview([exactRow],date(0));
+  const exactResult=await commit(exact.body,{'2':'new'});
+  assert.equal(exactResult.summary.created,1);
+  const plans=(await request('/api/planning/orders?keyword='+encodeURIComponent(reference.specification))).body.orders;
+  const exactOrder=plans.find(o=>o.orderQuantity===300&&o.batches.some(b=>b.unitMillisecondsSnapshot===600000));
+  assert.ok(exactOrder);const exactBatch=exactOrder.batches.find(b=>b.unitMillisecondsSnapshot===600000);
+  assert.equal(exactBatch.totalMillisecondsSnapshot,'180000000');assert.equal(exactBatch.planTimeSource,'import');assert.equal(exactBatch.importedUnitMilliseconds,600000);
+  assert.ok(exactBatch.workOrderId,'current-week imported plan releases to production');
+  const profiles=(await request('/api/product-time-profiles?itemId='+reference.id+'&batchId='+exactBatch.id)).body;
+  const candidate=profiles.items.find(i=>i.id===reference.id).planningReference;
+  assert.equal(candidate.batchId,exactBatch.id);assert.equal(candidate.unitMilliseconds,600000);assert.equal(candidate.quantity,300);
+  const detail=(await request('/api/product-time-profiles/'+reference.id+'?batchId='+exactBatch.id)).body;
+  assert.equal(detail.planningReference.unitMilliseconds,600000);
+  const board=(await request('/api/work-orders/execution?scope=current&keyword='+encodeURIComponent(reference.specification)+'&pageSize=100')).body;
+  const execution=board.data.items.find(i=>i.id===exactBatch.workOrderId);assert.ok(execution);
+  assert.equal(execution.planUnitMilliseconds,600000);assert.equal(execution.planTotalMilliseconds,'180000000');
+  assert.equal(Number(execution.unitWorkHours)*60,10);assert.equal(Number(execution.totalWorkHours),50);
+  await request('/api/work-orders/'+exactBatch.workOrderId,'PATCH',{unitWorkHours:'99'},409);
+  const csv=(await request('/api/export/production-execution.csv?scope=current&keyword='+encodeURIComponent(reference.specification))).body.toString('utf8');
+  assert.ok(csv.includes('单件计划工时（分钟）'));assert.ok(csv.includes(',10,50'));
+  checks.push('uploaded 10 minutes x 300 = 50 hours across plan, selected candidate, detail, production and export; generic work-order edits cannot desynchronize it');
+
 }
 const output=process.env.PLANNING_IMPORT_QA_OUTPUT||'output/playwright/planning-import-runtime-v124.json';
 await fs.mkdir(path.dirname(output),{recursive:true});

@@ -1713,6 +1713,8 @@ export type ProductionPlanBatchDTO = {
   productTimeProfileId?: string | null;
   productTimeProfileVersion?: number | null;
   unitMillisecondsSnapshot?: number | null;
+  importedUnitMilliseconds?: number | null;
+  planTimeSource?: string;
   totalMillisecondsSnapshot?: string | null;
   holds?: ProductionPlanBatchHoldDTO[];
   materialExecutionControl?: import('@/lib/material-execution-control').MaterialExecutionControlView;
@@ -2047,6 +2049,7 @@ export type ProductTimePlanningContextDTO = {
 };
 
 export type ProductTimePlanningReferenceDTO = {
+  planTimeSource?: string;
   planOrderId: string;
   batchId?: string | null;
   batchNo?: number | null;

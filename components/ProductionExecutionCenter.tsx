@@ -1,6 +1,7 @@
 'use client';
 import ProcessQualityFields from '@/components/ProcessQualityFields';
 import ProcessStepPicker from '@/components/ProcessStepPicker';
+import { planMinutesText, planHoursText } from '@/lib/planning-time';
 import { processQualityType, qualityReportForQuantity, type ProcessQualityReport } from '@/lib/process-quality-report';
 
 import QuickWarnings from '@/components/quality-quick/QuickWarnings';
@@ -394,6 +395,8 @@ type ProductionOrder = {
   drawingIssuedAt?: string | null;
   drawingIssueNote?: string | null;
   planActive: boolean;
+  planUnitMilliseconds?: number | null;
+  planTotalMilliseconds?: string | null;
   unitWorkHours?: string | null;
   totalWorkHours?: string | null;
   remark?: string | null;
@@ -3432,7 +3435,7 @@ export default function ProductionExecutionCenter({
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
           <section className="production-dispatch-list-panel" aria-label="生产工单调度列表">
             <header className="production-dispatch-list-head">
-              <span>序号</span><span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>已计标准工时</span><span>交期 / 风险</span><span>备注</span><span>现场操作</span>
+              <span>序号</span><span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>计划工时 / 标准进度</span><span>交期 / 风险</span><span>备注</span><span>现场操作</span>
             </header>
             <div ref={boardShellRef} className="production-dispatch-list hm-scroll-region" tabIndex={0} aria-label={initialBoardLoading ? '生产工单列表，正在加载' : board ? `生产工单列表，共 ${board.pagination.total} 项` : '生产工单列表，数据加载失败'}>
               {dispatchItems.map((item, rowIndex) => <ProductionDispatchRow
@@ -4081,11 +4084,15 @@ function ProductionDispatchRow({
     </div>
 
     <div className={`production-dispatch-progress ${laborWarning ? 'incomplete' : ''}`.trim()} title={laborWarning || `${isMovedOutSource ? '整单累计' : '总'}标准工时 ${totalLaborText}`}>
+      {order.planUnitMilliseconds && <div className="production-dispatch-plan-time">
+        <strong>{isWipContinuation ? '原批次计划' : '本批计划'} {planHoursText(order.planTotalMilliseconds)}</strong>
+        <small>单件 {planMinutesText(order.planUnitMilliseconds)}</small>
+      </div>}
       <span><b>{laborPercentage === null ? '待维护' : formatProductionPercentage(laborPercentage)}</b><small>{isMovedOutSource ? '整单累计已完成' : '已完成'} {completedLaborText}</small></span>
       <i><span style={{ width: `${progressPercentage}%` }} /></i>
       <em className="production-dispatch-progress-summary">
-        <span>计划差额 {remainingLaborText}</span>
-        <span>总计 {totalLaborText}</span>
+        <span>未完成标准 {remainingLaborText}</span>
+        <span>标准合计 {totalLaborText}</span>
       </em>
       {isMovedOutSource && <small className="production-dispatch-progress-scope-note"><b>整单工时进度</b>，不等同本周动态有效计划达成率；{isFullyMovedOutSource ? '本周有效计划仅保留转仓前已完成工序，转出剩余工序在目标周核算' : `本周普通来源仅限 ${formatProductionQuantity(movedOutSummary?.nativeRemainingQuantity ?? 0)} 件，转出部分在目标周核算`}</small>}
       {laborReachedButOpen && <small className="production-dispatch-progress-warning">工时已达 · {currentQuantityProgress?.pending ? '报工待核销' : currentQuantityProgress?.remaining ? '仍有工序待报工' : '待完成状态确认'}</small>}
@@ -5021,7 +5028,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
         {tab === 'source' && <InfoGrid items={[
           ['订单日期', dateText(order.orderDate) || '-'], ['业务员', order.salesperson || '-'], ['客户等级', order.customerLevel || '-'],
           ['导入批次', order.importBatchId || '-'], ['来源工作表', order.sourceSheetName || '-'], ['来源行号', order.sourceRowNo ? String(order.sourceRowNo) : '-'], ['内部工单', order.businessCode || '-'],
-          ['工序', order.processName || '-'], ['单位工时', order.unitWorkHours || '-'], ['总工时', order.totalWorkHours || '-'], ['图纸说明', order.drawingIssueNote || '-'],
+          ['工序', order.processName || '-'], ['单件计划工时', order.planUnitMilliseconds ? planMinutesText(order.planUnitMilliseconds) : order.unitWorkHours || '-'], ['总计划工时', order.planTotalMilliseconds ? planHoursText(order.planTotalMilliseconds) : order.totalWorkHours || '-'], ['图纸说明', order.drawingIssueNote || '-'],
         ]} />}
       </div>
       <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button>{order.processRoute && <Link href={`/workspace/workflows?workOrderId=${encodeURIComponent(order.id)}&from=production`}><GitPullRequestArrow size={15} />工艺变更</Link>}{canPrintTraveler && <button type="button" disabled={travelerPrinting || !order.processRoute || order.processRoute.status === 'draft'} title={!order.processRoute || order.processRoute.status === 'draft' ? '确认工艺路线后才能打印' : '生成一工单一码流转单'} onClick={printTraveler}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button>}<button className="primary-button" type="button" onClick={close}>关闭</button></div>

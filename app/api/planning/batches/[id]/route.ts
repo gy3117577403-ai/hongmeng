@@ -126,6 +126,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
           productTimeProfileId: refs.productTimeProfileId,
           productTimeProfileVersion: refs.productTimeProfileVersion,
           unitMillisecondsSnapshot: effectiveUnitMilliseconds,
+          planTimeSource: body.unitMilliseconds !== undefined && parsed.data.unitMilliseconds !== existing.unitMillisecondsSnapshot ? 'manual' : existing.planTimeSource,
           totalMillisecondsSnapshot: effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(parsed.data.quantity) : null,
         },
       });

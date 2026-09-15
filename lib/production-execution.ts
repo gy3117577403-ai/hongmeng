@@ -1,3 +1,4 @@
+import { resolvePlanMilliseconds, planTotalMilliseconds } from '@/lib/planning-time';
 import { readProductionSnapshot, saveProductionSnapshot, productionSnapshotKey } from '@/lib/production-execution-snapshot';
 import { productionReadKey } from '@/lib/production-read-coordinator';
 import {
@@ -54,6 +55,9 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
       deletedAt: true,
       releaseState: true,
       activatedAt: true,
+      quantity: true,
+      unitMillisecondsSnapshot: true,
+      planOrder: { select: { planningUnitMilliseconds: true } },
     },
   },
   drawingLibraryItem: {
@@ -1372,6 +1376,10 @@ export function serializeProductionOrder(
     drawingIssuedAt: order.drawingIssuedAt?.toISOString() || null,
     drawingIssueNote: order.drawingIssueNote,
     planActive: order.planActive,
+    planUnitMilliseconds: order.productionPlanBatch && !order.productionPlanBatch.deletedAt
+      ? resolvePlanMilliseconds(order.productionPlanBatch.unitMillisecondsSnapshot, order.productionPlanBatch.planOrder.planningUnitMilliseconds) : null,
+    planTotalMilliseconds: order.productionPlanBatch && !order.productionPlanBatch.deletedAt
+      ? planTotalMilliseconds(resolvePlanMilliseconds(order.productionPlanBatch.unitMillisecondsSnapshot, order.productionPlanBatch.planOrder.planningUnitMilliseconds), order.productionPlanBatch.quantity)?.toString() || null : null,
     unitWorkHours: order.unitWorkHours,
     totalWorkHours: order.totalWorkHours,
     remark: order.remark,

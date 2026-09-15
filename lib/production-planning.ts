@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { resolvePlanMilliseconds, planTotalMilliseconds } from '@/lib/planning-time';
 import { randomUUID } from 'node:crypto';
 import { DrawingLibraryResolutionError, findDrawingProductCandidates, lockDrawingProduct, requireActiveDrawing, resolveOrCreateDrawingProduct } from '@/lib/drawing-library-resolution';
 import { sameDrawingProduct } from '@/lib/drawing-product-identity';
@@ -541,10 +542,7 @@ export function effectivePlanningUnitMilliseconds(
   productUnitMilliseconds?: number | null,
   orderUnitMilliseconds?: number | null,
 ): number | null {
-  return positiveMilliseconds(batchUnitMilliseconds)
-    || positiveMilliseconds(productUnitMilliseconds)
-    || positiveMilliseconds(orderUnitMilliseconds)
-    || null;
+  return resolvePlanMilliseconds(batchUnitMilliseconds, orderUnitMilliseconds, productUnitMilliseconds);
 }
 
 export async function resolvePlanningReferences(
@@ -1382,6 +1380,7 @@ function batchTravelerPrint(
 function batchDto(
   batch: ProductionPlanOrderRecord['batches'][number],
   resources: ReturnType<typeof planningResourceSummary>,
+  orderUnit: number | null,
 ): ProductionPlanBatchDTO {
   const state = batch.releaseState as ProductionPlanReleaseState;
   const route = batch.workOrder?.processRoute;
@@ -1404,8 +1403,10 @@ function batchDto(
     workOrderId: batch.workOrderId,
     productTimeProfileId: batch.productTimeProfileId,
     productTimeProfileVersion: batch.productTimeProfileVersion,
-    unitMillisecondsSnapshot: batch.unitMillisecondsSnapshot,
-    totalMillisecondsSnapshot: batch.totalMillisecondsSnapshot?.toString() || null,
+    unitMillisecondsSnapshot: resolvePlanMilliseconds(batch.unitMillisecondsSnapshot, orderUnit),
+    totalMillisecondsSnapshot: (planTotalMilliseconds(resolvePlanMilliseconds(batch.unitMillisecondsSnapshot, orderUnit), batch.quantity) ?? batch.totalMillisecondsSnapshot)?.toString() || null,
+    planTimeSource: batch.planTimeSource,
+    importedUnitMilliseconds: batch.importedUnitMilliseconds,
     holds: batch.holds.map(hold => ({
       id: hold.id,
       holdType: hold.holdType,
@@ -1444,7 +1445,7 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
   const resources = planningResourceSummary(activeDrawingLibraryItem);
   const profile = activeDrawingLibraryItem?.productTimeProfiles[0] || null;
   const currentUnitMilliseconds = profile ? productTimeTotalMilliseconds(profile.entries) : null;
-  const effectiveUnitMilliseconds = currentUnitMilliseconds || order.planningUnitMilliseconds;
+  const effectiveUnitMilliseconds = resolvePlanMilliseconds(null, order.planningUnitMilliseconds, currentUnitMilliseconds);
   const now = new Date();
   const qualityWarnings = (activeDrawingLibraryItem?.qualityRiskRevisionLinks || []).flatMap(link => {
     if (!link.revision.currentFor) return [];
@@ -1496,7 +1497,7 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     remark: order.remark,
     currentUnitMilliseconds,
     currentProductTimeVersion: profile?.version || null,
-    batches: order.batches.map(batch => batchDto(batch, resources)),
+    batches: order.batches.map(batch => batchDto(batch, resources, order.planningUnitMilliseconds)),
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
   };

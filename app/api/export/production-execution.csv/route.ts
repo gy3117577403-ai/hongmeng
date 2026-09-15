@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
         pageSize: 5000,
         productionScope,
       });
-      const headers = ['序号', '工单号', '规格', '客户', '品名', '状态', '优先级', '客户交期', '未交量', '完成数量', '图纸状态', '配料状态', '资料完整度', '最近进度', '最近更新时间', '当前问题备注', '暂停原因', '内部预计完成', '原客户承诺', '原计划基准'];
+      const headers = ['序号', '工单号', '规格', '客户', '品名', '状态', '优先级', '客户交期', '未交量', '完成数量', '图纸状态', '配料状态', '资料完整度', '最近进度', '最近更新时间', '当前问题备注', '暂停原因', '内部预计完成', '原客户承诺', '原计划基准', '单件计划工时（分钟）', '本批计划总工时（小时）'];
       const rows = data.items.filter(item => !selected.size || selected.has(item.id)).map((item, index) => [
         index + 1,
         item.businessCode || item.code,
@@ -86,6 +86,8 @@ export async function GET(req: NextRequest) {
         item.productionControl?.estimatedCompletionDate || '',
         item.productionControl?.deliveryBaselineDate || '',
         item.productionControl?.planBaselineDate || '',
+        item.planUnitMilliseconds ? item.planUnitMilliseconds / 60000 : '',
+        item.planTotalMilliseconds ? Number(item.planTotalMilliseconds) / 3600000 : '',
       ]);
       return {
         content: `\uFEFF${[headers, ...rows].map(row => row.map(csv).join(',')).join('\r\n')}`,
