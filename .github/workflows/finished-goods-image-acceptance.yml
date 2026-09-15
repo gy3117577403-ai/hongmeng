@@ -1,0 +1,105 @@
+name: Finished goods published image acceptance
+on:
+  push:
+    branches: ['codex/finished-goods-v182-image-acceptance']
+    paths: ['.github/workflows/finished-goods-image-acceptance.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: finished-goods-published-image-acceptance
+  cancel-in-progress: false
+jobs:
+  immutable-hangzhou-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RELEASE_VERSION: v1.34.182
+      RELEASE_REVISION: e6e3a1e4c9083116e1bb357e878ce5cbae2ab73e
+      RELEASE_DIGEST: sha256:426037f1d99fa9b6cbd18d6b9f973c6c23c6fc83617c6e113095ce8542e68355
+      RELEASE_REPOSITORY: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:25479/plan_image_acceptance?schema=public
+      S3_ACCESS_KEY_ID: planimageqa
+      S3_SECRET_ACCESS_KEY: DisposablePlanImageStorage2026
+      SEED_ADMIN_USERNAME: planimageadmin
+      SEED_ADMIN_PASSWORD: DisposablePlanImageSeed2026!Z
+      SMOKE_ADMIN_CHANGED_PASSWORD: DisposablePlanImageChanged2026!R
+      SESSION_SECRET: disposable-plan-image-session-secret-20260915-acceptance
+      APP_BASE_URL: http://127.0.0.1:3379
+    steps:
+      # Acceptance must use the published source, not the workflow commit.
+      - uses: actions/checkout@v4
+        with:
+          ref: v1.34.182
+      - name: Verify immutable source
+        run: test "$(git rev-parse HEAD)" = "$RELEASE_REVISION"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci && npx prisma generate
+      - name: Prepare pinned object storage image
+        run: bash scripts/pull-ci-minio.sh
+      - name: Pull the published Hangzhou image anonymously
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/finished-goods-published
+          export DOCKER_CONFIG="$(mktemp -d)"
+          image="$RELEASE_REPOSITORY:$RELEASE_VERSION"
+          docker pull "$image"
+          docker image inspect "$image" > artifacts/finished-goods-published/image.json
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = "linux/amd64"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$RELEASE_VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$RELEASE_REVISION"
+          docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" | grep -Fx "$RELEASE_REPOSITORY@$RELEASE_DIGEST"
+          echo "$RELEASE_REPOSITORY@$RELEASE_DIGEST" > artifacts/finished-goods-published/verified-image.txt
+      - name: Start a fresh database and object storage
+        run: |
+          set -euo pipefail
+          docker network create plan-image-acceptance
+          docker run -d --name plan-image-postgres --network plan-image-acceptance --tmpfs /var/lib/postgresql/data -p 127.0.0.1:25479:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=plan_image_acceptance postgres:16-alpine
+          docker run -d --name plan-image-minio --network plan-image-acceptance --tmpfs /data -p 127.0.0.1:29079:9000 -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" hongmeng-ci-minio:verified-a1a8bd4ac40a server /data
+          for attempt in $(seq 1 40); do if docker exec plan-image-postgres pg_isready -U postgres -d plan_image_acceptance; then break; fi; sleep 2; done
+          docker exec plan-image-postgres pg_isready -U postgres -d plan_image_acceptance
+          SMOKE_STORAGE_ALLOW=disposable-ci-storage S3_ENDPOINT=http://127.0.0.1:29079 S3_BUCKET=workorder-resources node scripts/prepare-smoke-storage.mjs
+      - name: Run the original entrypoint and migrations from the immutable image
+        run: |
+          set -euo pipefail
+          docker run -d --name plan-image-app --network plan-image-acceptance -p 127.0.0.1:3379:3000 \
+            -e APP_BASE_URL="$APP_BASE_URL" \
+            -e DATABASE_URL='postgresql://postgres:postgres@plan-image-postgres:5432/plan_image_acceptance?schema=public' \
+            -e SESSION_SECRET="$SESSION_SECRET" -e SEED_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" -e SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            -e S3_ENDPOINT=http://plan-image-minio:9000 -e S3_PUBLIC_ENDPOINT=http://127.0.0.1:29079 \
+            -e S3_REGION=auto -e S3_BUCKET=workorder-resources -e S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" -e S3_FORCE_PATH_STYLE=true \
+            "$RELEASE_REPOSITORY@$RELEASE_DIGEST"
+          for attempt in $(seq 1 90); do if curl -fsS "$APP_BASE_URL/api/ready" > artifacts/finished-goods-published/ready.json; then break; fi; sleep 2; done
+          curl -fsS "$APP_BASE_URL/api/health" > artifacts/finished-goods-published/health.json
+          curl -fsS "$APP_BASE_URL/api/ready" > artifacts/finished-goods-published/ready.json
+          docker exec plan-image-app node node_modules/prisma/build/index.js migrate status > artifacts/finished-goods-published/migrations.txt
+      - name: Fresh-seed password change and authenticated business smoke
+        run: |
+          set -euo pipefail
+          SAMPLE_QA_BASE="$APP_BASE_URL" SAMPLE_QA_ALLOW_DISPOSABLE_MUTATION=clean-ci-runtime EXPECTED_APP_VERSION="$RELEASE_VERSION" \
+            SMOKE_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" SMOKE_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            node scripts/smoke-sample-capture.mjs > artifacts/finished-goods-published/clean-runtime.json
+      - name: Finished goods receipt dispatch waybills and real Excel export
+        run: |
+          set -euo pipefail
+          docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime plan-image-app node < scripts/seed-finished-goods-smoke.cjs > /tmp/finished-goods-fixture.json
+          FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime FINISHED_GOODS_QA_BASE="$APP_BASE_URL" \
+            FINISHED_GOODS_QA_FIXTURE=/tmp/finished-goods-fixture.json \
+            FINISHED_GOODS_QA_OUTPUT=artifacts/finished-goods-published/warehouse-http.json \
+            node scripts/smoke-finished-goods.mjs
+      - name: Preserve runtime logs
+        if: always()
+        run: docker logs plan-image-app > artifacts/finished-goods-published/startup.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: finished-goods-v1.34.182-immutable-hangzhou
+          path: artifacts/finished-goods-published/
+      - name: Remove disposable acceptance containers
+        if: always()
+        run: |
+          docker rm -f plan-image-app plan-image-minio plan-image-postgres || true
+          docker network rm plan-image-acceptance || true
