@@ -75,7 +75,16 @@ function logistics(input: FgInput, base?: FgShipment) {
     boxes: 'boxes' in input ? fgQty(input.boxes) : base?.boxes || 1, handoverName: field('handoverName', base?.handoverName || '', 100),
     note: field('note', base?.note || '', 1000), plannedDate: fgDate(input.plannedDate || base?.plannedDate),
     batchId: field('batchId', base?.batchId || '', 100) || null,
+    externalReference: field('externalReference', base?.externalReference || '', 150),
   };
+}
+async function checkWaybillCustomer(tx: Tx, details: ReturnType<typeof logistics>, input: FgInput, shipmentId?: string): Promise<void> {
+  if (!details.waybills.length || details.method !== 'COURIER' || input.waybillChecked === true) return;
+  const matches = await tx.fgShipment.findMany({
+    where: { ...(shipmentId ? { id: { not: shipmentId } } : {}), customerName: { not: details.customerName }, status: { in: ['DRAFT', 'RESERVED', 'SHIPPED'] }, OR: details.waybills.map(waybill => ({ waybills: { array_contains: [waybill] } })) },
+    select: { customerName: true }, take: 3,
+  });
+  if (matches.length) throw new FinishedGoodsError(`运单号也用于其他客户：${[...new Set(matches.map(row => row.customerName))].join('、')}。请核对是否误复制。`, 'FG_WAYBILL_CUSTOMER', 409);
 }
 async function validateBatch(tx: Tx, batchId: string | null, date: string, shipping = false): Promise<void> {
   if (!batchId) return;
@@ -110,6 +119,7 @@ async function saveDraft(tx: Tx, input: FgInput, actor: FgActor): Promise<Shipme
   const customer = details.customerName || lines[0].lot.customerName;
   if (!customer) throw new FinishedGoodsError('公共备货须先分配客户，再创建发货单');
   if (lines.some(line => line.lot.ownerType === 'PUBLIC' || line.lot.customerName !== customer)) throw new FinishedGoodsError('合单须为同一客户；公共备货请先分配，客户专属库存不能串用');
+  await checkWaybillCustomer(tx, { ...details, customerName: customer }, input, existing?.id);
   await validateBatch(tx, details.batchId, details.plannedDate);
   if (existing) {
     await tx.fgShipmentLine.deleteMany({ where: { shipmentId: existing.id } });
@@ -147,11 +157,10 @@ async function ship(tx: Tx, shipment: Shipment, input: FgInput, actor: FgActor):
   const details = logistics(input, shipment);
   const now = new Date();
   const today = chinaDateKey(now);
-  if (details.method === 'PICKUP') fgRequired(details.handoverName, '自提交接人', 100);
-  else {
-    fgRequired(details.recipient, '收货人', 100); fgRequired(details.address, '收货地址', 500);
-    if (details.method === 'COURIER') fgRequired(details.carrier, '承运商', 100);
-  }
+  if (details.customerName !== shipment.customerName) throw new FinishedGoodsError('出库记录的客户不能变更');
+  // Formal shipping documents and recipient details are maintained externally.
+  // An explicit physical confirmation and valid stock remain mandatory.
+  await checkWaybillCustomer(tx, details, input, shipment.id);
   await validateBatch(tx, details.batchId, today, true);
   const nextShipment = await tx.fgShipment.update({ where: { id: shipment.id }, data: { ...details, plannedDate: today, status: 'SHIPPED', shippedAt: now, actorId: actor.id, actorName: nameOf(actor), version: { increment: 1 } }, include: shipmentInclude });
   for (const line of [...shipment.lines].sort((a, b) => a.lotId.localeCompare(b.lotId))) {
@@ -291,6 +300,19 @@ async function reworkReceive(tx: Tx, input: FgInput, actor: FgActor): Promise<Re
 
 async function perform(tx: Tx, input: FgInput, actor: FgActor): Promise<Result> {
   const action = fgRequired(input.action, '操作', 40);
+  if (action === 'RECEIVE_HOLD') {
+    fgRequired(input.reason, '留库原因');
+    const received = await stockAction(tx, { ...input, action: 'RECEIVE' }, actor);
+    return stockAction(tx, { ...input, action: 'HOLD', version: received.version }, actor);
+  }
+  if (action === 'BATCH_RECEIVE') {
+    checked(input);
+    const entries = Array.isArray(input.entries) ? input.entries.map(fgRecord) : [];
+    if (!entries.length || entries.length > 100) throw new FinishedGoodsError('请选择 1 至 100 条入库记录');
+    if (new Set(entries.map(entry => entry.lotId)).size !== entries.length) throw new FinishedGoodsError('同一货批不能重复入库');
+    for (const entry of entries.sort((a,b) => String(a.lotId).localeCompare(String(b.lotId)))) await stockAction(tx, { ...entry, action: 'RECEIVE', checked: true }, actor);
+    return { count: entries.length, received: true };
+  }
   if (['RECEIVE','UNRECEIVE','OPENING_RECONCILE','HOLD','RELEASE_HOLD','BLOCK','UNBLOCK','SCRAP','ADJUST_DOWN','REWORK_OUT','MOVE','ALLOCATE'].includes(action)) return stockAction(tx, input, actor);
   if (action === 'OPENING_ADD') return createCountedLot(tx, input, actor);
   if (action === 'RETURN') return returnShipment(tx, input, actor);
@@ -316,7 +338,7 @@ async function perform(tx: Tx, input: FgInput, actor: FgActor): Promise<Result> 
     checked(input);
     const entries = Array.isArray(input.entries) ? input.entries.map(fgRecord) : [];
     if (!entries.length || entries.length > 100) throw new FinishedGoodsError('请选择 1 至 100 条出货记录');
-    for (const entry of entries) await perform(tx, { ...entry, action: 'QUICK_SHIP', checked: true }, actor);
+    for (const entry of entries) await perform(tx, { ...entry, action: 'QUICK_SHIP', checked: true, waybillChecked: input.waybillChecked === true }, actor);
     return { count: entries.length, shipped: true };
   }
   if (['SAVE_LOGISTICS','SHIP','RESERVE','UNRESERVE','CANCEL_DRAFT'].includes(action)) {
@@ -327,10 +349,11 @@ async function perform(tx: Tx, input: FgInput, actor: FgActor): Promise<Result> 
       const details = logistics(input, shipment);
       // Once shipped, date/batch/customer/method and the physical handover identity are immutable.
       if (details.customerName !== shipment.customerName) throw new FinishedGoodsError('客户不能在物流补录中变更');
-      const data = shipment.status === 'SHIPPED' ? { carrier: details.carrier, waybills: details.waybills, note: details.note } : details;
+      await checkWaybillCustomer(tx, { ...details, method: shipment.status === 'SHIPPED' ? shipment.method : details.method }, input, shipment.id);
+      const data = shipment.status === 'SHIPPED' ? { carrier: details.carrier, waybills: details.waybills, note: details.note, externalReference: details.externalReference } : details;
       if (shipment.status !== 'SHIPPED') await validateBatch(tx, details.batchId, details.plannedDate);
       const updated = await tx.fgShipment.update({ where: { id: shipment.id }, data: { ...data, version: { increment: 1 } } });
-      for (const line of shipment.lines) await tx.fgLedger.create({ data: { lotId: line.lotId, kind: 'LOGISTICS', quantity: 0, before: { carrier: shipment.carrier, waybills: shipment.waybills }, after: { carrier: updated.carrier, waybills: updated.waybills }, reference: shipment.id, reason: '保存物流信息', actorId: actor.id, actorName: nameOf(actor) } });
+      for (const line of shipment.lines) await tx.fgLedger.create({ data: { lotId: line.lotId, kind: 'LOGISTICS', quantity: 0, before: { waybills: shipment.waybills, note: shipment.note, externalReference: shipment.externalReference }, after: { waybills: updated.waybills, note: updated.note, externalReference: updated.externalReference }, reference: shipment.id, reason: input.waybillChecked === true ? '已核对跨客户共用运单并保存信息' : '保存单号与出库备注', actorId: actor.id, actorName: nameOf(actor) } });
       return { id: updated.id, version: updated.version };
     }
     if (action === 'SHIP') return ship(tx, shipment, input, actor);
@@ -418,15 +441,12 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
       legacyClosedAt: lot.legacyClosedAt?.toISOString() || null, legacyQuantity: lot.legacyQuantity,
       version: lot.version, createdAt: lot.createdAt.toISOString(), receivedAt: lot.receivedAt?.toISOString() || null, status: '', blockedReason: block(lot),
       quantity: lot.available || lot.pending, returned: 0, carrier: '', waybills: [], method: 'COURIER', recipient: '', phone: '', address: '',
-      boxes: 1, handoverName: '', batchId: '', batchNumber: '', shippedAt: null, holdDueDate: null, holdReason: '', otherDrafts: 0, shipmentLineCount: 1, shipmentNote: '',
+      boxes: 1, handoverName: '', batchId: '', batchNumber: '', shippedAt: null, holdDueDate: null, holdReason: '', otherDrafts: 0, shipmentLineCount: 1, shipmentNote: '', externalReference: '',
     });
-    const shipmentFields = (shipment: FgShipment & { batch?: { number: string } | null }) => ({ shipmentId: shipment.id, shipmentNumber: shipment.number, shipmentVersion: shipment.version, shipmentNote: shipment.note, carrier: shipment.carrier, waybills: fgWaybills(shipment.waybills), method: shipment.method, recipient: shipment.recipient, phone: shipment.phone, address: shipment.address, boxes: shipment.boxes, handoverName: shipment.handoverName, batchId: shipment.batchId || '', batchNumber: shipment.batch?.number || '', shippedAt: shipment.shippedAt?.toISOString() || null });
-    const customers = [...new Set(lots.map(l => l.customerName).filter(Boolean))];
-    const lastDestinations = await tx.fgShipment.findMany({ where: { customerName: { in: customers }, status: 'SHIPPED' }, distinct: ['customerName'], orderBy: { shippedAt: 'desc' }, select: { customerName: true, recipient: true, phone: true, address: true, method: true, carrier: true, handoverName: true } });
+    const shipmentFields = (shipment: FgShipment & { batch?: { number: string } | null }) => ({ shipmentId: shipment.id, shipmentNumber: shipment.number, shipmentVersion: shipment.version, shipmentNote: shipment.note, externalReference: shipment.externalReference, carrier: shipment.carrier, waybills: fgWaybills(shipment.waybills), method: shipment.method, recipient: shipment.recipient, phone: shipment.phone, address: shipment.address, boxes: shipment.boxes, handoverName: shipment.handoverName, batchId: shipment.batchId || '', batchNumber: shipment.batch?.number || '', shippedAt: shipment.shippedAt?.toISOString() || null });
     const stockRows: FgRow[] = lots.map(lot => {
       const active = lot.lines[0]; const hold = lot.holds.filter(h => h.quantity > h.released).sort((a, b) => (a.dueDate || 'z').localeCompare(b.dueDate || 'z'))[0];
-      const row = base(lot); const previous = lastDestinations.find(s => s.customerName === lot.customerName);
-      if (previous) Object.assign(row, previous);
+      const row = base(lot);
       if (active) Object.assign(row, shipmentFields(active.shipment), { quantity: active.quantity, lineId: active.id, otherDrafts: lot.lines.length - 1, shipmentLineCount: active.shipment._count.lines });
       row.status = active?.shipment.status === 'RESERVED' ? 'reserved' : lot.openingReview ? 'opening' : row.blockedReason ? 'restricted' : lot.available > 0 ? 'ready' : lot.pending > 0 ? 'pending' : lot.held > 0 ? 'held' : lot.blocked > 0 ? 'blocked' : 'reserved';
       row.holdDueDate = hold?.dueDate || null; row.holdReason = hold?.reason || '';
@@ -458,6 +478,10 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
     if (view === 'batches') rows.sort((a, b) => a.batchNumber.localeCompare(b.batchNumber) || a.workOrderCode.localeCompare(b.workOrderCode));
     else if (view === 'queue') { const rank: Record<string,number> = { pending:0,ready:1,reserved:1,shipped:2,blocked:4,restricted:4 }; rows.sort((a,b) => (rank[a.status] ?? 5)-(rank[b.status] ?? 5)); }
     const total = rows.length; const page = Math.max(1, Math.min(Math.ceil(total / pageSize) || 1, Math.trunc(input.page || 1)));
+    const batchDTO = (b: typeof batchRows[number]) => {
+      const actual = b.shipments.filter(s => s.status === 'SHIPPED');
+      return { id: b.id, number: b.number, businessDate: b.businessDate, sequence: b.sequence, name: b.name, carrier: b.carrier, note: b.note, closedAt: b.closedAt?.toISOString() || null, shipped: actual.length, draft: b.shipments.filter(s => ['DRAFT','RESERVED'].includes(s.status)).length, quantity: actual.flatMap(s => s.lines).reduce((sum,l) => sum + l.quantity,0), waybillCount: new Set(actual.flatMap(s => fgWaybills(s.waybills))).size, missingWaybill: actual.filter(s => s.method === 'COURIER' && !fgWaybills(s.waybills).length).length };
+    };
     return {
       rows: rows.slice((page - 1) * pageSize, page * pageSize), total, page, pageSize, date, counts,
       stats: { pending: lots.reduce((s, l) => s + l.pending, 0), physical: lots.reduce((s, l) => s + physicalStock(l), 0),
@@ -467,8 +491,8 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
         holdDue: lots.flatMap(l => l.holds).filter(h => h.quantity > h.released && h.dueDate && h.dueDate <= date).length },
       cutover: cutover ? { startedAt: cutover.startedAt.toISOString(), closedCount } : null,
       workDate,
-      batches: batchRows.filter(b => b.businessDate === date).map(b => ({ id: b.id, number: b.number, businessDate: b.businessDate, sequence: b.sequence, name: b.name, carrier: b.carrier, note: b.note, closedAt: b.closedAt?.toISOString() || null, shipped: b.shipments.filter(s => s.status === 'SHIPPED').length, draft: b.shipments.filter(s => ['DRAFT','RESERVED'].includes(s.status)).length, quantity: b.shipments.filter(s => s.status === 'SHIPPED').flatMap(s => s.lines).reduce((sum, l) => sum + l.quantity, 0) })),
-      dispatchBatches: batchRows.filter(b => b.businessDate === workDate).map(b => ({ id: b.id, number: b.number, businessDate: b.businessDate, sequence: b.sequence, name: b.name, carrier: b.carrier, note: b.note, closedAt: b.closedAt?.toISOString() || null, shipped: b.shipments.filter(s => s.status === 'SHIPPED').length, draft: b.shipments.filter(s => ['DRAFT','RESERVED'].includes(s.status)).length, quantity: b.shipments.filter(s => s.status === 'SHIPPED').flatMap(s => s.lines).reduce((sum, l) => sum + l.quantity, 0) })),
+      batches: batchRows.filter(b => b.businessDate === date).map(batchDTO),
+      dispatchBatches: batchRows.filter(b => b.businessDate === workDate).map(batchDTO),
     };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 30000 });
 }

@@ -31,7 +31,7 @@ export function fgDate(value?: unknown): string {
 }
 export function fgWaybills(value: unknown): string[] {
   const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(/[\n,，;；]+/) : [];
-  if (values.length > 100) throw new FinishedGoodsError('一张发货单最多登记 100 个运单');
+  if (values.length > 100) throw new FinishedGoodsError('一次出库最多登记 100 个运单');
   return [...new Set(values.map(v => fgText(v, 100)).filter(Boolean))];
 }
 export function fgRecord(value: unknown): FgInput {
@@ -56,10 +56,10 @@ export type FgRow = Stock & {
   openingReview: boolean; version: number; createdAt: string; receivedAt: string | null; status: string; blockedReason: string;
   quantity: number; returned: number; carrier: string; waybills: string[]; method: string; recipient: string; phone: string;
   address: string; boxes: number; handoverName: string; batchId: string; batchNumber: string; shippedAt: string | null;
-  holdDueDate: string | null; holdReason: string; otherDrafts: number; shipmentLineCount: number; shipmentNote: string;
+  holdDueDate: string | null; holdReason: string; otherDrafts: number; shipmentLineCount: number; shipmentNote: string; externalReference: string;
   legacyClosedAt: string | null; legacyQuantity: number;
 };
-export type FgBatchDTO = { id: string; number: string; businessDate: string; sequence: number; name: string; carrier: string; note: string; closedAt: string | null; shipped: number; draft: number; quantity: number };
+export type FgBatchDTO = { id: string; number: string; businessDate: string; sequence: number; name: string; carrier: string; note: string; closedAt: string | null; shipped: number; draft: number; quantity: number; waybillCount: number; missingWaybill: number };
 export type FgWorkbench = {
   rows: FgRow[]; total: number; page: number; pageSize: number; date: string;
   counts: Record<string, number>; stats: { pending: number; physical: number; available: number; reserved: number; held: number; blocked: number; shipped: number; shipmentCount: number; batchCount: number; missingWaybill: number; holdDue: number };

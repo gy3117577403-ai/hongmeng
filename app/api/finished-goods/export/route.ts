@@ -15,14 +15,14 @@ export async function GET(request: NextRequest) {
     const rows: FgRow[] = [...initial.rows];
     for (let page = 2; page <= Math.ceil(initial.total / 100); page++) rows.push(...(await loadFinishedGoods({ ...query, page })).rows);
     const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('成品仓');
-    const headers = ['状态','工单号','客户','产品','规格','单位','待接收','可用','占用','留库','隔离','本次出货','已退回','发货单','日出货批次','实际发货时间','承运商','运单号','收货人','电话','收货地址','箱数','库位','留库原因','留库到期','入库时间','历史结清时间','历史结清数量','本次入库'];
+    const headers = ['状态','工单号','客户','产品','规格','单位','待入库','可用','占用','留库','隔离','本次出库','已退回','出库记录号','日出货批次','实际出库时间','运单号','出货方式','外部单号','备注','库位','留库原因','留库到期','入库时间','历史结清时间','历史结清数量','本次入库'];
     sheet.addRow(headers); sheet.columns = headers.map((_, i) => ({ width: [3,4,17,20,23].includes(i) ? 30 : 18 }));
     const states: Record<string,string> = { ready: '待发货', pending: '待接收', opening: '期初待核对', shipped: '已发出', held: '留库', reserved: '已占用', blocked: '隔离', restricted: '生产受限', legacy: '历史默认已出', received: '已入库' };
-    for (const r of rows) sheet.addRow([states[r.status] || r.status,r.workOrderCode,r.customerName || '公共备货',r.productName,r.specification,r.unit,r.pending,r.available,r.reserved,r.held,r.blocked,r.status === 'shipped' ? r.quantity : 0,r.returned,r.shipmentNumber || '',r.batchNumber,r.shippedAt ? new Date(r.shippedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : '',r.carrier,r.waybills.join('；'),r.recipient,r.phone,r.address,r.boxes,r.location,r.holdReason,r.holdDueDate,r.receivedAt ? new Date(r.receivedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : '',r.legacyClosedAt ? new Date(r.legacyClosedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : '',r.legacyQuantity]);
+    const time = (value: string | null) => value ? new Date(value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : '';
+    for (const r of rows) sheet.addRow([states[r.status] || r.status,r.workOrderCode,r.customerName || '公共备货',r.productName,r.specification,r.unit,r.pending,r.available,r.reserved,r.held,r.blocked,r.status === 'shipped' ? r.quantity : 0,r.returned,r.shipmentNumber || '',r.batchNumber,time(r.shippedAt),r.waybills.join('；'),({COURIER:'快递 / 物流',PICKUP:'自提',DELIVERY:'送货'} as Record<string,string>)[r.method] || r.method,r.externalReference,r.shipmentNote || r.note,r.location,r.holdReason,r.holdDueDate,time(r.receivedAt),time(r.legacyClosedAt),r.legacyQuantity,r.status === 'received' ? r.quantity : 0]);
     sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } }; sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF36B12' } };
-    for (let i = 0; i < rows.length; i++) sheet.getRow(i + 2).getCell(29).value = rows[i].status === 'received' ? rows[i].quantity : 0;
-    sheet.views = [{ state: 'frozen', ySplit: 1 }]; sheet.autoFilter = { from: 'A1', to: 'AC1' };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }]; sheet.autoFilter = { from: 'A1', to: 'AA1' };
     const body = await workbook.xlsx.writeBuffer();
-    return new NextResponse(new Uint8Array(body), { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`成品仓-${initial.date}.xlsx`)}`, 'Cache-Control': 'no-store' } });
+    return new NextResponse(new Uint8Array(body), { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`仓库收发记录-${initial.date}.xlsx`)}`, 'Cache-Control': 'no-store' } });
   } catch (error) { return fgErrorResponse(error); }
 }

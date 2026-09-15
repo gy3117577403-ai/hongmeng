@@ -100,6 +100,7 @@ model FgShipment {
   boxes Int @default(1)
   handoverName String @default("")
   note String @default("")
+  externalReference String @default("")
   batchId String?
   plannedDate String
   shippedAt DateTime?

@@ -35,7 +35,7 @@ for(const [i,source] of fixture.lots.entries()) {
   if(i<4) continue;
   const row=initial.rows.find(r=>r.lotId===source.id);assert.ok(row);
   if(i>=12&&i<22) {
-    const input={action:'QUICK_SHIP',lotId:row.lotId,version:row.version,quantity:source.quantity,method:'COURIER',carrier:i%2?'京东':'顺丰',waybills:i%4===0?[]:[`SF-QA-${fixture.marker}-${i}`],recipient:'客户收货员',address:'杭州市隔离验收地址',phone:'000-验收号码',boxes:2,batchId:i<17?batch.id:batch2.id,plannedDate:fixture.date,checked:true,receive:true};
+    const input={action:'QUICK_SHIP',lotId:row.lotId,version:row.version,quantity:source.quantity,method:'COURIER',waybills:i%4===0?[]:[`SF-QA-${fixture.marker}-${i}`],batchId:i<17?batch.id:batch2.id,plannedDate:fixture.date,checked:true,receive:true};
     const key=randomUUID();const shipped=await mutate(input,key);
     assert.deepEqual({...await mutate(input,key),replayed:undefined},{...shipped,replayed:undefined});
     firstShipment ||= shipped;
@@ -50,7 +50,7 @@ for(const [i,source] of fixture.lots.entries()) {
 let snapshot=await load();assert.equal(snapshot.rows.filter(r=>r.status==='shipped').length,10);
 const candidate=snapshot.rows.find(r=>r.status==='ready');assert.ok(candidate);
 const before=candidate.available;
-const draft=await mutate({action:'SAVE_DRAFT',lotId:candidate.lotId,version:candidate.version,quantity:Math.min(before,10),carrier:'顺丰',waybills:['SF-DRAFT-ONLY'],recipient:'客户收货员',address:'杭州市隔离验收地址',plannedDate:fixture.date});
+const draft=await mutate({action:'SAVE_DRAFT',lotId:candidate.lotId,version:candidate.version,quantity:Math.min(before,10),waybills:['SF-DRAFT-ONLY'],externalReference:'EXTERNAL-'+fixture.marker,plannedDate:fixture.date});
 snapshot=await load();assert.equal(snapshot.rows.find(r=>r.lotId===candidate.lotId).available,before);assert.equal(snapshot.rows.filter(r=>r.status==='shipped').length,10);
 let shippedRow=snapshot.rows.find(r=>r.shipmentId===firstShipment.id);assert.ok(shippedRow);
 assert.ok(shippedRow.receivedAt&&shippedRow.shippedAt);const actualShippedAt=shippedRow.shippedAt;
@@ -66,7 +66,7 @@ const attachment=await call('user',`/api/finished-goods/attachments?id=${attachm
 const media=await fetch(attachment.response.headers.get('location'));assert.equal(media.status,200);assert.ok((await media.arrayBuffer()).byteLength>40);
 await call('user','/api/finished-goods/attachments','DELETE',{id:attachmentId});await call('user',`/api/finished-goods/attachments?id=${attachmentId}`,'GET',undefined,404);
 const exportResponse=await fetch(`${base}/api/finished-goods/export?q=${fixture.marker}&date=${fixture.date}&view=history`,{headers:{Cookie:cookies.user},signal:AbortSignal.timeout(90000)});assert.equal(exportResponse.status,200);
-const bytes=Buffer.from(await exportResponse.arrayBuffer());const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(bytes);assert.equal(workbook.worksheets[0].rowCount,11);
+const bytes=Buffer.from(await exportResponse.arrayBuffer());const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(bytes);assert.equal(workbook.worksheets[0].rowCount,11);const headers=workbook.worksheets[0].getRow(1).values;assert.equal(workbook.worksheets[0].columnCount,27);for(const removed of ['收货人','联系电话','收货地址','承运商','箱数'])assert.ok(!headers.includes(removed));for(const required of ['外部单号','实际出库时间','入库时间','运单号'])assert.ok(headers.includes(required));
 await fs.writeFile(path.join(path.dirname(output),'shipment-export.xlsx'),bytes);
 checks.push({method:'GET',path:'/api/finished-goods/export',status:200,records:10,bytes:bytes.length});
 const all24=await call('user',`/api/finished-goods?q=${fixture.marker}&date=${fixture.date}&pageSize=24`);assert.equal(all24.body.data.rows.length,24);assert.equal(all24.body.data.total,fixture.lots.length-4+1);

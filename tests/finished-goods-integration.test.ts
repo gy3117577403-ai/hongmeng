@@ -9,6 +9,76 @@ import { fgStock, physicalStock, type FgInput } from '../lib/finished-goods-doma
 
 const { createFixture } = require('../scripts/seed-finished-goods-smoke.cjs');
 const skip = process.env.RUN_DB_INTEGRATION !== '1';
+
+test('finished goods simple operations preserve stock and dispense with external shipping paperwork', { skip }, async t => {
+  process.env.FINISHED_GOODS_QA_ALLOW = 'disposable-finished-goods-runtime';
+  const fixture = await createFixture(prisma, 8);
+  const perform = (input: FgInput, key = randomUUID()) => mutateFinishedGoods(input, fixture.user, key);
+  const lot = (index: number) => prisma.fgLot.findUniqueOrThrow({where:{id:fixture.lots[index].id}});
+  const emptyDetails = {recipient:'',phone:'',address:'',carrier:'',handoverName:''};
+  await t.test('quick courier, pickup and delivery dispatch need no recipient or carrier', async()=>{
+    for (const [index,method] of ['COURIER','PICKUP','DELIVERY'].entries()) {
+      const source=await lot(index);
+      const body={action:'QUICK_SHIP',lotId:source.id,version:source.version,quantity:7,method,...emptyDetails,checked:true,receive:true};
+      const key=randomUUID(); const result=await perform(body,key); await perform(body,key);
+      const after=await lot(index); assert.equal(after.pending,source.pending-7); assert.equal(after.available,0);
+      const shipment=await prisma.fgShipment.findUniqueOrThrow({where:{id:String(result.id)}});
+      assert.equal(shipment.recipient,'');assert.equal(shipment.address,'');assert.equal(shipment.carrier,'');assert.ok(shipment.shippedAt);
+      assert.equal(await prisma.fgLedger.count({where:{lotId:source.id,kind:'SHIP'}}),1);
+      const workbench=await loadFinishedGoods({q:source.workOrderCode,scope:'all',filter:'missing'});
+      assert.equal(workbench.total,method==='COURIER'?1:0);
+    }
+  });
+  await t.test('receipt then partial dispatch differs from quick receipt and dispatch',async()=>{
+    const source=await lot(3);
+    await perform({action:'RECEIVE',lotId:source.id,version:source.version,quantity:source.pending,checked:true});
+    const stocked=await lot(3); const receiptTime=stocked.receivedAt;
+    const draft=await perform({action:'SAVE_DRAFT',lotId:stocked.id,version:stocked.version,quantity:12,waybills:['SAVE-ONLY-'+fixture.marker],...emptyDetails,externalReference:'OTHER-SYSTEM-01'});
+    assert.equal((await lot(3)).available,source.pending);assert.equal(await prisma.fgLedger.count({where:{lotId:source.id,kind:'SHIP'}}),0);
+    await perform({action:'SHIP',shipmentId:draft.id,shipmentVersion:draft.version,checked:true});
+    assert.equal((await lot(3)).available,source.pending-12);assert.equal((await lot(3)).pending,0);
+    assert.deepEqual((await lot(3)).receivedAt,receiptTime);
+    const shipped=await prisma.fgShipment.findUniqueOrThrow({where:{id:String(draft.id)}});
+    await perform({action:'SAVE_LOGISTICS',shipmentId:shipped.id,shipmentVersion:shipped.version,waybills:' SF-FINAL-1\nSF-FINAL-1；SF-FINAL-2 ',externalReference:'OTHER-SYSTEM-02',note:'仅补单号'});
+    const updated=await prisma.fgShipment.findUniqueOrThrow({where:{id:shipped.id}});
+    assert.deepEqual(updated.waybills,['SF-FINAL-1','SF-FINAL-2']);assert.deepEqual(updated.shippedAt,shipped.shippedAt);assert.equal(updated.externalReference,'OTHER-SYSTEM-02');
+    assert.equal((await lot(3)).available,source.pending-12);
+  });
+  await t.test('receive and hold is atomic, and batch receipt rolls back an invalid member',async()=>{
+    const source=await lot(4);
+    await perform({action:'RECEIVE_HOLD',lotId:source.id,version:source.version,quantity:10,reason:'备货',checked:true});
+    const held=await lot(4);assert.equal(held.pending,source.pending-10);assert.equal(held.held,10);assert.equal(held.available,0);
+    const next=await lot(5); const another=await lot(6);
+    await assert.rejects(perform({action:'BATCH_RECEIVE',checked:true,entries:[{lotId:next.id,version:next.version,quantity:5},{lotId:another.id,version:another.version,quantity:another.pending+1}]}));
+    assert.deepEqual(fgStock(await lot(5)),fgStock(next));assert.deepEqual(fgStock(await lot(6)),fgStock(another));
+    await perform({action:'BATCH_RECEIVE',checked:true,entries:[{lotId:next.id,version:next.version,quantity:5},{lotId:another.id,version:another.version,quantity:6}]});
+    assert.equal((await lot(5)).available,5);assert.equal((await lot(6)).available,6);
+  });
+  await t.test('same-customer shared waybills work, other customers require an explicit check',async()=>{
+    const source=await lot(5); const waybill='SHARED-'+fixture.marker;
+    const first=await perform({action:'QUICK_SHIP',lotId:source.id,version:source.version,quantity:1,waybills:[waybill],checked:true});
+    const same=await perform({action:'OPENING_ADD',quantity:2,customerName:source.customerName,productName:'合包产品',specification:'SHARED',reason:'测试实物',checked:true});
+    let row=await prisma.fgLot.findUniqueOrThrow({where:{id:String(same.id)}});
+    await perform({action:'QUICK_SHIP',lotId:row.id,version:row.version,quantity:1,waybills:[waybill],checked:true});
+    const other=await lot(6);assert.notEqual(other.customerName,source.customerName);
+    const body={action:'QUICK_SHIP',lotId:other.id,version:other.version,quantity:1,waybills:[waybill],checked:true};
+    await assert.rejects(perform(body),error=>Boolean(error && typeof error==='object' && 'code' in error && error.code==='FG_WAYBILL_CUSTOMER'));
+    assert.deepEqual(fgStock(await lot(6)),fgStock(other));
+    await perform({...body,waybillChecked:true});
+    const original=await prisma.fgShipment.findUniqueOrThrow({where:{id:String(first.id)}});
+    assert.ok(original.shippedAt);
+  });
+  await t.test('plain batches accept recipient-free dispatch and count actual waybills only',async()=>{
+    const batch=await perform({action:'CREATE_BATCH',date:fixture.date,name:'精简交接'});
+    const a=await lot(0),b=await lot(1);
+    await perform({action:'BATCH_SHIP',checked:true,entries:[{lotId:a.id,version:a.version,quantity:1,receive:true,batchId:batch.id,method:'COURIER',waybills:['BATCH-'+fixture.marker],...emptyDetails},{lotId:b.id,version:b.version,quantity:2,receive:true,batchId:batch.id,method:'COURIER',...emptyDetails}]});
+    const data=await loadFinishedGoods({view:'batches',date:fixture.date});const summary=data.batches.find(item=>item.id===batch.id)!;
+    assert.equal(summary.shipped,2);assert.equal(summary.quantity,3);assert.equal(summary.waybillCount,1);assert.equal(summary.missingWaybill,1);
+    const cutover=await prisma.fgCutover.findUniqueOrThrow({where:{id:'finished-goods-v2'}});
+    const stock=fgStock(await lot(7));await prisma.$queryRaw`SELECT fg_initialize_cutover()::text`;
+    assert.deepEqual(fgStock(await lot(7)),stock);assert.deepEqual((await prisma.fgCutover.findUniqueOrThrow({where:{id:cutover.id}})).startedAt,cutover.startedAt);
+  });
+});
 test('finished goods: physical receipt, holds, concurrency, dispatch, return, rework and source guard', { skip }, async t => {
   process.env.FINISHED_GOODS_QA_ALLOW = 'disposable-finished-goods-runtime';
   const fixture = await createFixture(prisma, 7);
