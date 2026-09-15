@@ -136,6 +136,20 @@ test('finished goods: physical receipt, holds, concurrency, dispatch, return, re
     const produced=await prisma.processQuantityMovement.findFirstOrThrow({where:{completionId:completed.completionId,type:'FINISHED_GOOD',voidedAt:null}});
     assert.equal((await prisma.fgLot.findUniqueOrThrow({where:{movementId:produced.id}})).pending,10);
   });
+  await t.test('bulk removal of original and reversal nets pending correctly and still protects received goods',async()=>{
+    const clean=await createFixture(prisma,2);
+    for(const source of clean.lots){
+      const m=await prisma.processQuantityMovement.findUniqueOrThrow({where:{id:source.movementId}});
+      await prisma.processQuantityMovement.create({data:{completionId:m.completionId,workOrderId:m.workOrderId,sourceStepId:m.sourceStepId,type:'REVERSAL',quantity:5,sourceSequenceGroup:1,reversalOfId:m.id,idempotencyKey:randomUUID()}});
+    }
+    await prisma.processQuantityMovement.deleteMany({where:{workOrderId:clean.lots[0].workOrderId}});
+    const removed=await prisma.fgLot.findUniqueOrThrow({where:{id:clean.lots[0].id}});assert.equal(removed.pending,0);assert.equal(removed.sourceQuantity,0);
+    const guarded=await prisma.fgLot.findUniqueOrThrow({where:{id:clean.lots[1].id}});
+    await perform({action:'RECEIVE',lotId:guarded.id,version:guarded.version,quantity:5,checked:true});
+    await assert.rejects(prisma.processQuantityMovement.deleteMany({where:{workOrderId:guarded.workOrderId!}}),/FG_SOURCE_IN_USE/);
+    assert.equal((await prisma.fgLot.findUniqueOrThrow({where:{id:guarded.id}})).available,5);
+    assert.equal(await prisma.processQuantityMovement.count({where:{workOrderId:guarded.workOrderId!}}),2);
+  });
   // Preserve disposable fixtures for visual acceptance; no production data is targeted.
   await t.test('historical migration nets reversals and allocates old shipments FIFO without fabricating physical stock',async()=>{
     const legacy=await createFixture(prisma,2);const source=legacy.lots[0];

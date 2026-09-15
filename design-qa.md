@@ -1,4 +1,4 @@
-# Finished goods warehouse design QA — v1.34.174
+# Finished goods warehouse design QA — v1.34.175
 
 Result: **passed**. Reviewed at 1366 × 1024 on the running PostgreSQL/S3-backed application using an ordinary signed-in account and disposable test data. This is UI acceptance of the local application; published-image acceptance is tracked separately.
 
@@ -6,10 +6,10 @@ Result: **passed**. Reviewed at 1366 × 1024 on the running PostgreSQL/S3-backed
 
 Selected reference: `exec-b39ec955-8a4a-4e77-aa83-14021ff08f93.png`, 1448 × 1086. Its full canvas was uniformly scaled to 1366 × 1024; no reference region was removed. Actual screenshots are native 1366 × 1024. Comparison labels sit outside both canvases.
 
-- [Full comparison](docs/finished-goods-v1.34.174/reference-comparison.png): selected reference left, implemented application right, in the same artifact.
-- [Focused comparison](docs/finished-goods-v1.34.174/reference-comparison-detail.png): first 400 px of each normalized canvas, covering hierarchy, toolbar, columns, and row controls.
-- [Default workbench](docs/finished-goods-v1.34.174/workbench.png).
-- [Continuous processing](docs/finished-goods-v1.34.174/continuous.png).
+- [Full comparison](docs/finished-goods-v1.34.175/reference-comparison.png): selected reference left, implemented application right, in the same artifact.
+- [Focused comparison](docs/finished-goods-v1.34.175/reference-comparison-detail.png): first 400 px of each normalized canvas, covering hierarchy, toolbar, columns, and row controls.
+- [Default workbench](docs/finished-goods-v1.34.175/workbench.png).
+- [Continuous processing](docs/finished-goods-v1.34.175/continuous.png).
 
 The compact row composition, navy rail, orange accents, inline quantity/carrier/waybill fields, row status, and persistent pagination follow the selected direction. Existing application branding/navigation remains real. New inventory, holds, batch, and history tabs represent implemented flows. Live metrics and access-appropriate navigation replace decorative reference content.
 
@@ -30,6 +30,8 @@ The compact row composition, navy rail, orange accents, inline quantity/carrier/
 - Batch cards, historical rows, missing-waybill indicators, server-saved logistics and disabled shipped quantity fields inspected.
 - Excel link produced a browser download event. HTTP acceptance additionally parsed the real XLSX, verified print HTML, and uploaded/read/soft-deleted an S3 attachment.
 - Database integration covers concurrency, idempotency, stock conservation, public allocation, returns, rework, reservation, rollback, source withdrawal guards, actual final-process completion, and historical FIFO migration with reversals.
+
+Source regression follow-up: the v1.34.174 candidate stopped before image publication on a multi-row original/reversal deletion. The v1.34.175 source trigger accounts before deletion, preserving reversal visibility and the received-stock guard. The new integration case verifies both permitted pending-only cleanup and blocked cleanup after receipt.
 
 No unresolved blocking UI findings. Browser testing uses synthetic local data, not production inventory. Tablet touch operation beyond the tested desktop viewport remains a physical-device follow-up; the target viewport itself is verified.
 

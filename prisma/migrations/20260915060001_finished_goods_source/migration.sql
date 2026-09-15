@@ -39,7 +39,7 @@ BEGIN
  IF (TG_OP<>'DELETE' AND NEW.type='REVERSAL') OR (TG_OP='DELETE' AND OLD.type='REVERSAL') THEN
    IF TG_OP='DELETE' THEN v_id:=OLD.reversal_of_id; ELSE v_id:=NEW.reversal_of_id; END IF;
    SELECT * INTO v_original FROM process_quantity_movements WHERE id=v_id;
-   IF NOT FOUND OR v_original.type<>'FINISHED_GOOD' OR v_original.voided_at IS NOT NULL THEN RETURN NULL; END IF;
+   IF NOT FOUND OR v_original.type<>'FINISHED_GOOD' OR v_original.voided_at IS NOT NULL THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
    IF TG_OP<>'INSERT' AND OLD.voided_at IS NULL THEN v_old:=-OLD.quantity; END IF;
    IF TG_OP<>'DELETE' AND NEW.voided_at IS NULL THEN v_new:=-NEW.quantity; END IF;
  ELSE
@@ -56,10 +56,10 @@ BEGIN
  IF v_new>0 THEN v_new:=GREATEST(0,v_new-v_reversed); END IF;
  END IF;
  v_delta:=v_new-v_old;
- IF v_delta=0 THEN RETURN NULL; END IF;
+ IF v_delta=0 THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
  SELECT * INTO v_lot FROM fg_lots WHERE "movementId"=v_id FOR UPDATE;
  IF NOT FOUND THEN
-   IF v_new <= 0 THEN RETURN NULL; END IF;
+   IF v_new <= 0 THEN IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF; END IF;
    SELECT * INTO v_order FROM work_orders WHERE id=NEW.work_order_id;
    INSERT INTO fg_lots (id,"sourceKey","sourceKind","movementId","workOrderId","workOrderCode","productKey","productName",specification,unit,"ownerType","customerName","sourceQuantity",pending,available,reserved,held,blocked,location,"openingReview",note,version,"createdAt","updatedAt")
    VALUES (gen_random_uuid()::text,'movement:'||v_id,'PRODUCTION',v_id,v_order.id,COALESCE(NULLIF(v_order.business_code,''),v_order.code),
@@ -75,6 +75,10 @@ BEGIN
    INSERT INTO fg_ledger (id,"lotId",kind,quantity,before,after,reference,reason,"actorId","actorName","createdAt")
    VALUES (gen_random_uuid()::text,v_lot.id,'SOURCE_CORRECTION',v_delta,to_jsonb(v_lot),jsonb_build_object('pending',v_lot.pending+v_delta,'available',v_lot.available,'reserved',v_lot.reserved,'held',v_lot.held,'blocked',v_lot.blocked),v_id,'生产来源变更','SYSTEM','生产执行',NOW());
  END IF;
- RETURN NULL;
+ IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $$;
-CREATE TRIGGER fg_production_source_change AFTER INSERT OR UPDATE OR DELETE ON process_quantity_movements FOR EACH ROW EXECUTE FUNCTION fg_production_source();
+CREATE TRIGGER fg_production_source_change AFTER INSERT OR UPDATE ON process_quantity_movements FOR EACH ROW EXECUTE FUNCTION fg_production_source();
+-- BEFORE DELETE preserves reversal visibility during a multi-row delete. If the
+-- original is removed first it sees the reversals; if a reversal is removed first
+-- it restores pending before its original is removed. Received stock still blocks.
+CREATE TRIGGER fg_production_source_delete BEFORE DELETE ON process_quantity_movements FOR EACH ROW EXECUTE FUNCTION fg_production_source();
