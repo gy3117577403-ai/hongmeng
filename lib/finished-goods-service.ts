@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { chinaDateKey } from '@/lib/china-date';
 import { syncProductionBatchToDueShipmentPlan } from '@/lib/daily-shipment-sync';
 import { netShipmentQuantity, shipmentItemStatus } from '@/lib/daily-shipment-domain';
-import { FinishedGoodsError, fgAssertStock, fgDate, fgQty, fgRecord, fgRequired, fgStock, fgText, fgWaybills, physicalStock, type FgActor, type FgInput, type FgRow, type FgWorkbench, type Stock } from '@/lib/finished-goods-domain';
+import { FinishedGoodsError, fgShortWorkOrder, fgAssertStock, fgDate, fgQty, fgRecord, fgRequired, fgStock, fgText, fgWaybills, physicalStock, type FgActor, type FgInput, type FgRow, type FgWorkbench, type Stock } from '@/lib/finished-goods-domain';
 
 type Tx = Prisma.TransactionClient;
 type Result = Record<string, string | number | boolean | null>;
@@ -31,6 +31,7 @@ async function number(tx: Tx, kind: string, date: string): Promise<{ number: str
   return { number: `${kind}${date.replace(/-/g, '')}-${String(row.value).padStart(kind === 'PC' ? 2 : 4, '0')}`, sequence: row.value };
 }
 async function ledger(tx: Tx, lot: FgLot, next: Stock, kind: string, quantity: number, actor: FgActor, reason = '', reference = ''): Promise<FgLot> {
+  if (lot.legacyClosedAt) throw new FinishedGoodsError('历史默认已出记录不能重新接收入库');
   fgAssertStock(next);
   const updated = await tx.fgLot.update({ where: { id: lot.id }, data: { ...next, version: { increment: 1 } } });
   await tx.fgLedger.create({ data: { lotId: lot.id, kind, quantity, before: fgStock(lot), after: next, reason, reference, actorId: actor.id, actorName: nameOf(actor) } });
@@ -49,6 +50,7 @@ async function sourceBlock(tx: Tx, lot: FgLot): Promise<string> {
   return '';
 }
 async function assertShippable(tx: Tx, lot: FgLot): Promise<void> {
+  if (lot.legacyClosedAt) throw new FinishedGoodsError('历史默认已出记录不能再次发货');
   if (lot.openingReview) throw new FinishedGoodsError('期初库存须先核对接收');
   const reason = await sourceBlock(tx, lot);
   if (reason) throw new FinishedGoodsError(reason, 'FG_SOURCE_BLOCKED', 409);
@@ -168,6 +170,7 @@ async function ship(tx: Tx, shipment: Shipment, input: FgInput, actor: FgActor):
 async function stockAction(tx: Tx, input: FgInput, actor: FgActor): Promise<Result> {
   let lot = await lockLot(tx, fgRequired(input.lotId, '成品记录', 100));
   version(lot.version, input.version);
+  if (lot.legacyClosedAt) throw new FinishedGoodsError('历史默认已出记录只供查询');
   const action = fgText(input.action);
   const quantity = ['MOVE', 'ALLOCATE'].includes(action) ? (action === 'ALLOCATE' ? fgQty(input.quantity) : 0) : fgQty(input.quantity, action === 'OPENING_RECONCILE');
   const reason = ['RECEIVE'].includes(action) ? fgText(input.reason) : fgRequired(input.reason, '原因');
@@ -222,7 +225,7 @@ async function stockAction(tx: Tx, input: FgInput, actor: FgActor): Promise<Resu
     await assertShippable(tx, lot);
     const bucket = 'available';
     lot = await ledger(tx, lot, { ...fgStock(lot), [bucket]: lot[bucket] - quantity }, action, quantity, actor, reason);
-    const newLot = await tx.fgLot.create({ data: { sourceKey: `allocation:${randomUUID()}`, sourceKind: 'ALLOCATION', workOrderId: lot.workOrderId, workOrderCode: lot.workOrderCode, productKey: lot.productKey, productName: lot.productName, specification: lot.specification, unit: lot.unit, ownerType: 'CUSTOMER', customerName: customer, sourceQuantity: quantity, [bucket]: quantity, location: lot.location, note: `来自公共备货 ${lot.id}；${reason}`, receivedAt: bucket === 'available' ? new Date() : null } });
+    const newLot = await tx.fgLot.create({ data: { sourceKey: `allocation:${randomUUID()}`, sourceKind: 'ALLOCATION', workOrderId: lot.workOrderId, workOrderCode: lot.workOrderCode, productKey: lot.productKey, productName: lot.productName, specification: lot.specification, unit: lot.unit, ownerType: 'CUSTOMER', customerName: customer, sourceQuantity: quantity, [bucket]: quantity, location: lot.location, note: `来自公共备货 ${lot.id}；${reason}`, receivedAt: lot.receivedAt } });
     await ledger(tx, newLot, fgStock(newLot), action, quantity, actor, reason, lot.id);
     return { id: newLot.id };
   } else throw new FinishedGoodsError('不支持的库存操作');
@@ -270,6 +273,7 @@ async function reworkReceive(tx: Tx, input: FgInput, actor: FgActor): Promise<Re
   await tx.$queryRaw`SELECT id FROM fg_reworks WHERE id=${id} FOR UPDATE`;
   const rework = await tx.fgRework.findUnique({ where: { id }, include: { lot: true } });
   if (!rework) throw new FinishedGoodsError('返工记录不存在');
+  if (rework.lot.legacyClosedAt) throw new FinishedGoodsError('此记录已按启用约定结清，不能重新转回库存');
   const quantity = fgQty(input.quantity); const reason = fgRequired(input.reason, '处理说明');
   if (quantity > rework.quantity - rework.returned - rework.scrapped) conflict('数量超过返工在外数量');
   if (input.action === 'REWORK_SCRAP') {
@@ -371,30 +375,47 @@ export async function mutateFinishedGoods(input: FgInput, actor: FgActor, idempo
   return conflict();
 }
 
-export async function loadFinishedGoods(input: { date?: string; view?: string; filter?: string; q?: string; batchId?: string; page?: number; pageSize?: number }): Promise<FgWorkbench> {
+export async function loadFinishedGoods(input: { date?: string; dateTo?: string; scope?: string; view?: string; filter?: string; q?: string; batchId?: string; page?: number; pageSize?: number }): Promise<FgWorkbench> {
   const date = fgDate(input.date);
-  const start = new Date(`${date}T00:00:00+08:00`); const end = new Date(start.getTime() + 86400000);
+  const workDate = fgDate();
+  const dateTo = input.dateTo ? fgDate(input.dateTo) : date;
+  if (dateTo < date) throw new FinishedGoodsError('结束日期不能早于开始日期');
+  const start = new Date(`${date}T00:00:00+08:00`); const end = new Date(new Date(`${dateTo}T00:00:00+08:00`).getTime() + 86400000);
   const pageSize = [24, 16, 48, 100].includes(input.pageSize || 0) ? input.pageSize! : 24;
+  const q = fgText(input.q, 200).toLocaleLowerCase();
+  const allHistory = input.scope === 'all';
+  const view = input.view || 'queue';
+  const filter = input.filter || 'all';
   return prisma.$transaction(async tx => {
     const lots = await tx.fgLot.findMany({
-      where: { OR: [{ pending: { gt: 0 } }, { available: { gt: 0 } }, { reserved: { gt: 0 } }, { held: { gt: 0 } }, { blocked: { gt: 0 } }] },
+      where: { legacyClosedAt: null, OR: [{ pending: { gt: 0 } }, { available: { gt: 0 } }, { reserved: { gt: 0 } }, { held: { gt: 0 } }, { blocked: { gt: 0 } }] },
       include: { holds: true, lines: { where: { shipment: { status: { in: ['DRAFT', 'RESERVED'] } } }, include: { shipment: { include: { batch: true, _count: { select: { lines: true } } } } }, orderBy: { shipment: { updatedAt: 'desc' } } } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    const shipped = await tx.fgShipment.findMany({ where: { status: 'SHIPPED', shippedAt: { gte: start, lt: end } }, include: shipmentInclude, orderBy: [{ shippedAt: 'desc' }, { id: 'asc' }] });
-    const batchRows = await tx.fgDispatchBatch.findMany({ where: { businessDate: date }, include: { shipments: { include: { lines: true } } }, orderBy: { sequence: 'asc' } });
+    const shipmentWhere: Prisma.FgShipmentWhereInput = { status: 'SHIPPED', ...(!allHistory ? { shippedAt: { gte: start, lt: end } } : {}) };
+    const waybillMatches = allHistory && q ? await tx.$queryRaw<{ id: string }[]>`SELECT id FROM fg_shipments WHERE waybills::text ILIKE ${'%' + q.replace(/[\\%_]/g, '\\$&') + '%'}` : [];
+    if (allHistory && q) shipmentWhere.OR = [{ number: { contains: q, mode: 'insensitive' } }, { customerName: { contains: q, mode: 'insensitive' } }, { lines: { some: { lot: { OR: [{ workOrderCode: { contains: q.replace('·', '-'), mode: 'insensitive' } }, { specification: { contains: q, mode: 'insensitive' } }, { productName: { contains: q, mode: 'insensitive' } }] } } } }, { id: { in: waybillMatches.map(s => s.id) } }];
+    const shipped = await tx.fgShipment.findMany({ where: shipmentWhere, include: shipmentInclude, orderBy: [{ shippedAt: 'desc' }, { id: 'asc' }], take: allHistory ? 20001 : undefined });
+    if (shipped.length > 20000) throw new FinishedGoodsError('历史记录较多，请按日期范围查询');
+    const batchRows = await tx.fgDispatchBatch.findMany({ where: { businessDate: { in: [...new Set([date, workDate])] } }, include: { shipments: { include: { lines: true } } }, orderBy: { sequence: 'asc' } });
+    const cutover = await tx.fgCutover.findUnique({ where: { id: 'finished-goods-v2' } });
+    const closedCount = await tx.fgLot.count({ where: { legacyClosedAt: { not: null }, legacyQuantity: { gt: 0 } } });
+    const legacyLots = view === 'legacy' ? await tx.fgLot.findMany({ where: { legacyClosedAt: { not: null }, legacyQuantity: { gt: 0 } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] }) : [];
+    const receipts = view === 'receipts' ? await tx.fgLedger.findMany({ where: { kind: { in: ['RECEIVE','OPENING','RETURN','REWORK_RETURN'] }, ...(allHistory ? {} : { createdAt: { gte: start, lt: end } }) }, include: { lot: true }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: 20001 }) : [];
+    if (receipts.length > 20000) throw new FinishedGoodsError('入库记录较多，请按日期范围查询');
     const workOrderIds = [...new Set(lots.filter(l => ['PRODUCTION','ALLOCATION'].includes(l.sourceKind)).map(l => l.workOrderId).filter((id): id is string => Boolean(id)))];
     const [workOrders, supplements] = await Promise.all([
-      tx.workOrder.findMany({ where: { id: { in: workOrderIds } }, select: { id: true, deletedAt: true } }),
+      tx.workOrder.findMany({ where: { id: { in: workOrderIds }, deletedAt: null }, select: { id: true } }),
       tx.processSupplementObligation.findMany({ where: { workOrderId: { in: workOrderIds }, status: 'ACTIVE' }, select: { workOrderId: true }, distinct: ['workOrderId'] }),
     ]);
-    const validOrders = new Set(workOrders.filter(w => !w.deletedAt).map(w => w.id));
+    const validOrders = new Set(workOrders.map(w => w.id));
     const supplementIds = new Set(supplements.map(s => s.workOrderId));
     const block = (lot: FgLot): string => !['PRODUCTION','ALLOCATION'].includes(lot.sourceKind) || (lot.sourceKind === 'ALLOCATION' && !lot.workOrderId) ? '' : !lot.workOrderId || !validOrders.has(lot.workOrderId) ? '生产来源已移除' : supplementIds.has(lot.workOrderId) ? '补充工序未完成' : '';
     const base = (lot: FgLot): FgRow => ({
       ...fgStock(lot), id: lot.id, lotId: lot.id, workOrderId: lot.workOrderId, workOrderCode: lot.workOrderCode, productKey: lot.productKey,
       productName: lot.productName, specification: lot.specification, unit: lot.unit, customerName: lot.customerName, ownerType: lot.ownerType,
       sourceKind: lot.sourceKind, sourceQuantity: lot.sourceQuantity, location: lot.location, note: lot.note, openingReview: lot.openingReview,
+      legacyClosedAt: lot.legacyClosedAt?.toISOString() || null, legacyQuantity: lot.legacyQuantity,
       version: lot.version, createdAt: lot.createdAt.toISOString(), receivedAt: lot.receivedAt?.toISOString() || null, status: '', blockedReason: block(lot),
       quantity: lot.available || lot.pending, returned: 0, carrier: '', waybills: [], method: 'COURIER', recipient: '', phone: '', address: '',
       boxes: 1, handoverName: '', batchId: '', batchNumber: '', shippedAt: null, holdDueDate: null, holdReason: '', otherDrafts: 0, shipmentLineCount: 1, shipmentNote: '',
@@ -412,21 +433,30 @@ export async function loadFinishedGoods(input: { date?: string; view?: string; f
       return row;
     });
     const shippedRows: FgRow[] = shipped.flatMap(shipment => shipment.lines.map(line => ({ ...base(line.lot), ...shipmentFields(shipment), id: line.id, lineId: line.id, quantity: line.quantity, returned: line.returned, status: 'shipped', blockedReason: '', shipmentLineCount: shipment.lines.length })));
-    const allRows = [...stockRows, ...shippedRows];
-    const q = fgText(input.q, 200).toLocaleLowerCase();
-    const commonFilter = (row: FgRow): boolean => (!q || [row.workOrderCode, row.productName, row.specification, row.customerName, row.location, row.shipmentNumber, row.waybills.join(' ')].join(' ').toLocaleLowerCase().includes(q)) && (!input.batchId || row.batchId === input.batchId);
-    const matching = allRows.filter(commonFilter);
-    const counts: Record<string, number> = { all: matching.length, pending: 0, ready: 0, shipped: 0, held: 0, opening: 0, missing: 0, blocked: 0, reserved: 0 };
+    const legacyRows: FgRow[] = legacyLots.map(lot => ({ ...base(lot), quantity: lot.legacyQuantity, status: 'legacy', blockedReason: '' }));
+    const receiptRows: FgRow[] = receipts.map(entry => ({ ...base(entry.lot), id: entry.id, quantity: Math.abs(entry.quantity), receivedAt: entry.createdAt.toISOString(), status: 'received', note: entry.reason, blockedReason: '' }));
+    const commonFilter = (row: FgRow): boolean => (!q || [row.workOrderCode, fgShortWorkOrder(row.workOrderCode), row.productName, row.specification, row.customerName, row.location, row.shipmentNumber, row.waybills.join(' ')].join(' ').toLocaleLowerCase().includes(q)) && (!input.batchId || row.batchId === input.batchId);
+    let sourceRows = view === 'legacy' ? legacyRows : view === 'receipts' ? receiptRows : view === 'history' ? shippedRows : view === 'stock' || view === 'holds' ? stockRows : [...stockRows.filter(r => r.status !== 'opening' && r.status !== 'held'), ...shippedRows];
+    if (view === 'holds') sourceRows = sourceRows.filter(r => r.held > 0);
+    if (view === 'stock' && input.date && input.scope === 'range') sourceRows = sourceRows.filter(r => r.receivedAt && new Date(r.receivedAt) >= start && new Date(r.receivedAt) < end);
+    const matching = sourceRows.filter(commonFilter);
+    const counts: Record<string, number> = { all: matching.length, processing: 0, pending: 0, ready: 0, shipped: 0, held: 0, opening: 0, missing: 0, blocked: 0, reserved: 0, legacy: closedCount, received: receiptRows.length };
     for (const row of matching) {
       if (row.status === 'shipped') { counts.shipped++; if (row.method === 'COURIER' && !row.waybills.length) counts.missing++; }
-      else { if (row.pending > 0) counts.pending++; if (row.available > 0 && !row.blockedReason && !row.openingReview) counts.ready++; if (row.held > 0) counts.held++; if (row.openingReview) counts.opening++; if (row.blocked > 0 || row.blockedReason) counts.blocked++; if (row.reserved > 0) counts.reserved++; }
+      else {
+        if (['ready','pending','reserved'].includes(row.status)) counts.processing++;
+        if (row.pending > 0 && !row.openingReview) counts.pending++;
+        if (row.available > 0 && !row.blockedReason && !row.openingReview) counts.ready++;
+        if (row.held > 0) counts.held++;
+        if (row.openingReview) counts.opening++;
+        if (row.blocked > 0 || row.blockedReason) counts.blocked++;
+        if (row.reserved > 0) counts.reserved++;
+      }
     }
-    const filter = input.filter || 'all';
-    let rows = (input.view === 'history' ? shippedRows : input.view === 'stock' || input.view === 'holds' ? stockRows : allRows).filter(commonFilter);
-    if (input.view === 'holds') rows = rows.filter(row => row.held > 0);
-    if (filter !== 'all') rows = rows.filter(row => filter === 'missing' ? row.status === 'shipped' && row.method === 'COURIER' && !row.waybills.length : filter === 'pending' ? row.status !== 'shipped' && row.pending > 0 : filter === 'ready' ? row.status !== 'shipped' && row.available > 0 && !row.blockedReason && !row.openingReview : filter === 'held' ? row.status !== 'shipped' && row.held > 0 : filter === 'blocked' ? row.status !== 'shipped' && (row.blocked > 0 || Boolean(row.blockedReason)) : row.status === filter);
-    if (input.view === 'batches') rows.sort((a, b) => a.batchNumber.localeCompare(b.batchNumber) || a.workOrderCode.localeCompare(b.workOrderCode));
-    else if (!input.view || input.view === 'queue') { const rank: Record<string,number> = { pending:0,opening:0,ready:1,reserved:1,shipped:2,held:3,blocked:4,restricted:4 }; rows.sort((a,b) => (rank[a.status] ?? 5)-(rank[b.status] ?? 5)); }
+    let rows = matching;
+    if (filter !== 'all') rows = rows.filter(row => filter === 'processing' ? ['ready','pending','reserved'].includes(row.status) : filter === 'missing' ? row.status === 'shipped' && row.method === 'COURIER' && !row.waybills.length : filter === 'pending' ? row.status !== 'shipped' && row.pending > 0 && !row.openingReview : filter === 'ready' ? row.status !== 'shipped' && row.available > 0 && !row.blockedReason && !row.openingReview : filter === 'held' ? row.status !== 'shipped' && row.held > 0 : filter === 'blocked' ? row.status !== 'shipped' && (row.blocked > 0 || Boolean(row.blockedReason)) : row.status === filter);
+    if (view === 'batches') rows.sort((a, b) => a.batchNumber.localeCompare(b.batchNumber) || a.workOrderCode.localeCompare(b.workOrderCode));
+    else if (view === 'queue') { const rank: Record<string,number> = { pending:0,ready:1,reserved:1,shipped:2,blocked:4,restricted:4 }; rows.sort((a,b) => (rank[a.status] ?? 5)-(rank[b.status] ?? 5)); }
     const total = rows.length; const page = Math.max(1, Math.min(Math.ceil(total / pageSize) || 1, Math.trunc(input.page || 1)));
     return {
       rows: rows.slice((page - 1) * pageSize, page * pageSize), total, page, pageSize, date, counts,
@@ -435,7 +465,10 @@ export async function loadFinishedGoods(input: { date?: string; view?: string; f
         shipped: shippedRows.reduce((s, r) => s + r.quantity, 0), shipmentCount: shipped.length, batchCount: new Set(shipped.map(s => s.batchId).filter(Boolean)).size,
         missingWaybill: shipped.filter(s => s.method === 'COURIER' && !fgWaybills(s.waybills).length).length,
         holdDue: lots.flatMap(l => l.holds).filter(h => h.quantity > h.released && h.dueDate && h.dueDate <= date).length },
-      batches: batchRows.map(b => ({ id: b.id, number: b.number, businessDate: b.businessDate, sequence: b.sequence, name: b.name, carrier: b.carrier, note: b.note, closedAt: b.closedAt?.toISOString() || null, shipped: b.shipments.filter(s => s.status === 'SHIPPED').length, draft: b.shipments.filter(s => ['DRAFT','RESERVED'].includes(s.status)).length, quantity: b.shipments.filter(s => s.status === 'SHIPPED').flatMap(s => s.lines).reduce((sum, l) => sum + l.quantity, 0) })),
+      cutover: cutover ? { startedAt: cutover.startedAt.toISOString(), closedCount } : null,
+      workDate,
+      batches: batchRows.filter(b => b.businessDate === date).map(b => ({ id: b.id, number: b.number, businessDate: b.businessDate, sequence: b.sequence, name: b.name, carrier: b.carrier, note: b.note, closedAt: b.closedAt?.toISOString() || null, shipped: b.shipments.filter(s => s.status === 'SHIPPED').length, draft: b.shipments.filter(s => ['DRAFT','RESERVED'].includes(s.status)).length, quantity: b.shipments.filter(s => s.status === 'SHIPPED').flatMap(s => s.lines).reduce((sum, l) => sum + l.quantity, 0) })),
+      dispatchBatches: batchRows.filter(b => b.businessDate === workDate).map(b => ({ id: b.id, number: b.number, businessDate: b.businessDate, sequence: b.sequence, name: b.name, carrier: b.carrier, note: b.note, closedAt: b.closedAt?.toISOString() || null, shipped: b.shipments.filter(s => s.status === 'SHIPPED').length, draft: b.shipments.filter(s => ['DRAFT','RESERVED'].includes(s.status)).length, quantity: b.shipments.filter(s => s.status === 'SHIPPED').flatMap(s => s.lines).reduce((sum, l) => sum + l.quantity, 0) })),
     };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 30000 });
 }

@@ -29,6 +29,8 @@ model FgLot {
   blocked Int @default(0)
   location String @default("")
   openingReview Boolean @default(false)
+  legacyClosedAt DateTime?
+  legacyQuantity Int @default(0)
   note String @default("")
   version Int @default(0)
   receivedAt DateTime?
@@ -41,7 +43,14 @@ model FgLot {
   @@index([workOrderId])
   @@index([customerName, productKey])
   @@index([createdAt])
+  @@index([legacyClosedAt])
   @@map("fg_lots")
+}
+
+model FgCutover {
+  id String @id
+  startedAt DateTime @default(now())
+  @@map("fg_cutover")
 }
 
 model FgLedger {

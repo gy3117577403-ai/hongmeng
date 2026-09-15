@@ -26,6 +26,7 @@ for(const [who,account] of [['user',fixture.user],['admin',fixture.actor]]) {
 await call('admin','/api/daily-shipments','POST',{action:'RECORD_SHIPMENT'},410,randomUUID());
 await call('admin','/api/daily-shipments','POST',{action:'REVERSE_SHIPMENT'},410,randomUUID());
 const initial=await load();assert.equal(initial.rows.length,fixture.lots.length);assert.ok(initial.rows.every(r=>r.pending>0&&r.available===0));
+assert.ok(initial.cutover.startedAt);assert.equal(initial.workDate,fixture.date);assert.ok(initial.rows.every(r=>r.receivedAt===null&&r.shippedAt===null));
 const firstPage=await call('user',`/api/finished-goods?q=${fixture.marker}&pageSize=24`);assert.equal(firstPage.body.data.rows.length,24);assert.equal(firstPage.body.data.total,fixture.lots.length);
 const batch=await mutate({action:'CREATE_BATCH',date:fixture.date,name:'上午快件',carrier:'顺丰'});
 const batch2=await mutate({action:'CREATE_BATCH',date:fixture.date,name:'下午快件',carrier:'京东'});
@@ -52,7 +53,10 @@ const before=candidate.available;
 const draft=await mutate({action:'SAVE_DRAFT',lotId:candidate.lotId,version:candidate.version,quantity:Math.min(before,10),carrier:'顺丰',waybills:['SF-DRAFT-ONLY'],recipient:'客户收货员',address:'杭州市隔离验收地址',plannedDate:fixture.date});
 snapshot=await load();assert.equal(snapshot.rows.find(r=>r.lotId===candidate.lotId).available,before);assert.equal(snapshot.rows.filter(r=>r.status==='shipped').length,10);
 let shippedRow=snapshot.rows.find(r=>r.shipmentId===firstShipment.id);assert.ok(shippedRow);
+assert.ok(shippedRow.receivedAt&&shippedRow.shippedAt);const actualShippedAt=shippedRow.shippedAt;
 await mutate({action:'SAVE_LOGISTICS',shipmentId:shippedRow.shipmentId,shipmentVersion:shippedRow.shipmentVersion,waybills:['SF-UPDATED-1','SF-UPDATED-2'],carrier:'顺丰'});
+assert.equal((await load()).rows.find(r=>r.shipmentId===firstShipment.id).shippedAt,actualShippedAt);
+const lookup=await call('user','/api/finished-goods?view=history&scope=all&date=2020-01-01&q=UPDATED-1');assert.ok(lookup.body.data.rows.some(r=>r.shipmentId===firstShipment.id));
 await mutate({action:'RETURN',lineId:shippedRow.lineId,quantity:2,checked:true,reason:'验收退货，不直接恢复可发'});
 snapshot=await load();assert.ok(snapshot.rows.some(r=>r.sourceKind==='RETURN'&&r.blocked===2&&r.available===0));
 const print=await call('user',`/workspace/finished-goods/print/${firstShipment.id}`);assert.ok(print.body.includes(firstShipment.number));assert.ok(print.body.includes('SF-UPDATED-1'));
@@ -65,6 +69,8 @@ const exportResponse=await fetch(`${base}/api/finished-goods/export?q=${fixture.
 const bytes=Buffer.from(await exportResponse.arrayBuffer());const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(bytes);assert.equal(workbook.worksheets[0].rowCount,11);
 await fs.writeFile(path.join(path.dirname(output),'shipment-export.xlsx'),bytes);
 checks.push({method:'GET',path:'/api/finished-goods/export',status:200,records:10,bytes:bytes.length});
-const all24=await call('user',`/api/finished-goods?q=${fixture.marker}&date=${fixture.date}&pageSize=24`);assert.equal(all24.body.data.rows.length,24);assert.ok(all24.body.data.total>=32);
+const all24=await call('user',`/api/finished-goods?q=${fixture.marker}&date=${fixture.date}&pageSize=24`);assert.equal(all24.body.data.rows.length,24);assert.equal(all24.body.data.total,fixture.lots.length-4+1);
+const holds=await call('user',`/api/finished-goods?q=${fixture.marker}&view=stock&filter=held`);assert.equal(holds.body.data.total,4);
+const receipts=await call('user',`/api/finished-goods?q=${fixture.marker}&view=receipts&date=${fixture.date}&pageSize=100`);assert.equal(receipts.body.data.total,fixture.lots.length-4+1);assert.ok(receipts.body.data.rows.every(r=>r.receivedAt&&r.status==='received'));
 const evidence={passed:true,base,at:new Date().toISOString(),checks:checks.length,results:checks,marker:fixture.marker,fixtureRows:fixture.lots.length,firstShipmentId:firstShipment.id,draftId:draft.id};
 await fs.writeFile(output,JSON.stringify(evidence,null,2));console.log(JSON.stringify({passed:true,checks:checks.length,output,marker:fixture.marker}));

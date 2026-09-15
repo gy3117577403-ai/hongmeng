@@ -46,6 +46,7 @@ export const FG_KINDS: Record<string, string> = {
   HOLD: '留库', RELEASE_HOLD: '释放留库', RESERVE: '发货占用', RELEASE_RESERVATION: '释放占用', SHIP: '实际发货',
   RETURN: '退货接收', UNBLOCK: '解除隔离', BLOCK: '库存隔离', REWORK_OUT: '返工转出', REWORK_RETURN: '返工回库',
   REWORK_SCRAP: '返工报废', SCRAP: '库存报废', ADJUST: '盘点调整', OPENING: '期初接收', MOVE: '移库', ALLOCATE: '备货分配',
+  LEGACY_CLOSE: '历史默认已出',
 };
 
 export type FgRow = Stock & {
@@ -56,10 +57,23 @@ export type FgRow = Stock & {
   quantity: number; returned: number; carrier: string; waybills: string[]; method: string; recipient: string; phone: string;
   address: string; boxes: number; handoverName: string; batchId: string; batchNumber: string; shippedAt: string | null;
   holdDueDate: string | null; holdReason: string; otherDrafts: number; shipmentLineCount: number; shipmentNote: string;
+  legacyClosedAt: string | null; legacyQuantity: number;
 };
 export type FgBatchDTO = { id: string; number: string; businessDate: string; sequence: number; name: string; carrier: string; note: string; closedAt: string | null; shipped: number; draft: number; quantity: number };
 export type FgWorkbench = {
   rows: FgRow[]; total: number; page: number; pageSize: number; date: string;
   counts: Record<string, number>; stats: { pending: number; physical: number; available: number; reserved: number; held: number; blocked: number; shipped: number; shipmentCount: number; batchCount: number; missingWaybill: number; holdDue: number };
-  batches: FgBatchDTO[];
+  batches: FgBatchDTO[]; dispatchBatches: FgBatchDTO[]; workDate: string;
+  cutover: { startedAt: string; closedCount: number } | null;
 };
+
+export function fgShortWorkOrder(code: string): string {
+  const match = code.match(/^(?:SC-[A-Z]+-)?(20\d{2})(\d{4})-(.+)$/i);
+  if (match) return `${match[2]}·${match[3]}`;
+  return code;
+}
+
+export function fgCompactTime(value: string | null): string {
+  if (!value) return '—';
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)).replace(/\//g, '-');
+}

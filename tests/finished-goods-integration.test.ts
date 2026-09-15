@@ -49,6 +49,7 @@ test('finished goods: physical receipt, holds, concurrency, dispatch, return, re
     const header=await prisma.fgShipment.findUniqueOrThrow({where:{id:shipmentId}});
     await perform({action:'SAVE_LOGISTICS',shipmentId,shipmentVersion:header.version,waybills:['SF-QA-1','SF-QA-2'],carrier:'顺丰'});
     assert.equal((await loadFinishedGoods({q:fixture.marker,date:fixture.date})).counts.missing,0);
+    assert.equal((await prisma.fgShipment.findUniqueOrThrow({where:{id:shipmentId}})).shippedAt?.toISOString(),header.shippedAt?.toISOString());
   });
   await t.test('production cannot be withdrawn after receipt/shipment',async()=>{
     await assert.rejects(prisma.processQuantityMovement.update({where:{id:fixture.lots[2].movementId},data:{voidedAt:new Date()}}),/FG_SOURCE_IN_USE/);
@@ -93,9 +94,12 @@ test('finished goods: physical receipt, holds, concurrency, dispatch, return, re
   await t.test('public stock is allocated once and cannot be mixed across customers',async()=>{
     const created=await perform({action:'OPENING_ADD',productName:'备货产品',specification:'V1',quantity:10,ownerType:'PUBLIC',reason:'点收盘盈',checked:true});
     const publicLot=await prisma.fgLot.findUniqueOrThrow({where:{id:String(created.id)}});
+    const originalReceipt = new Date('2026-01-02T03:04:00Z');
+    await prisma.fgLot.update({where:{id:publicLot.id},data:{receivedAt:originalReceipt}});
     const allocated=await perform({action:'ALLOCATE',lotId:publicLot.id,version:publicLot.version,quantity:6,customerName:'专属客户',reason:'订单分配'});
     assert.equal((await prisma.fgLot.findUniqueOrThrow({where:{id:publicLot.id}})).available,4);
     const customerLot=await prisma.fgLot.findUniqueOrThrow({where:{id:String(allocated.id)}});
+    assert.equal(customerLot.receivedAt?.toISOString(),originalReceipt.toISOString());
     await assert.rejects(perform({action:'SAVE_DRAFT',lotId:customerLot.id,version:customerLot.version,quantity:1,customerName:'另一客户'}),/同一客户/);
     await perform({action:'QUICK_SHIP',lotId:customerLot.id,version:customerLot.version,quantity:4,method:'PICKUP',handoverName:'专属客户收货员',checked:true});
     assert.equal((await prisma.fgLot.findUniqueOrThrow({where:{id:customerLot.id}})).available,2);
@@ -150,6 +154,16 @@ test('finished goods: physical receipt, holds, concurrency, dispatch, return, re
     assert.equal((await prisma.fgLot.findUniqueOrThrow({where:{id:guarded.id}})).available,5);
     assert.equal(await prisma.processQuantityMovement.count({where:{workOrderId:guarded.workOrderId!}}),2);
   });
+  await t.test('partial receipts retain first receipt time and expose each event separately',async()=>{
+    const source=(await createFixture(prisma,1)).lots[0];
+    let current=await prisma.fgLot.findUniqueOrThrow({where:{id:source.id}});
+    await perform({action:'RECEIVE',lotId:current.id,version:current.version,quantity:5,checked:true});
+    current=await prisma.fgLot.findUniqueOrThrow({where:{id:source.id}});const firstTime=current.receivedAt?.toISOString();assert.ok(firstTime);
+    await perform({action:'RECEIVE',lotId:current.id,version:current.version,quantity:6,checked:true});
+    current=await prisma.fgLot.findUniqueOrThrow({where:{id:source.id}});assert.equal(current.receivedAt?.toISOString(),firstTime);assert.equal(current.available,11);
+    const events=await loadFinishedGoods({q:source.workOrderCode,view:'receipts',scope:'all'});
+    assert.equal(events.total,2);assert.deepEqual(events.rows.map(r=>r.quantity).sort((a,b)=>a-b),[5,6]);assert.ok(events.rows.every(r=>r.receivedAt));
+  });
   // Preserve disposable fixtures for visual acceptance; no production data is targeted.
   await t.test('historical migration nets reversals and allocates old shipments FIFO without fabricating physical stock',async()=>{
     const legacy=await createFixture(prisma,2);const source=legacy.lots[0];
@@ -175,5 +189,43 @@ test('finished goods: physical receipt, holds, concurrency, dispatch, return, re
     assert.equal(await prisma.fgLot.count({where:{movementId:legacy.lots[1].movementId}}),0);
     await perform({action:'OPENING_RECONCILE',lotId:second.id,version:second.version,quantity:8,reason:'实盘8件',checked:true});
     const received=await prisma.fgLot.findUniqueOrThrow({where:{id:second.id}});assert.equal(received.available,8);assert.equal(received.pending,0);assert.equal(received.openingReview,false);
+  });
+  await t.test('first activation closes old balances once without fabricating shipments; new completion on an old order still enters stock',async()=>{
+    const source=(await createFixture(prisma,1)).lots[0];
+    let current=await prisma.fgLot.findUniqueOrThrow({where:{id:source.id}});
+    await perform({action:'RECEIVE',lotId:current.id,version:current.version,quantity:15,checked:true});
+    current=await prisma.fgLot.findUniqueOrThrow({where:{id:source.id}});
+    const draft=await perform({action:'SAVE_DRAFT',lotId:current.id,version:current.version,quantity:4,method:'PICKUP',handoverName:'切换验收'});
+    await perform({action:'RESERVE',shipmentId:draft.id,shipmentVersion:draft.version});
+    const existingShipments=await prisma.fgShipment.findMany({where:{status:'SHIPPED'},orderBy:{id:'asc'}});
+    const existingEvents=await prisma.shipmentEvent.count();
+    const rollback=new Error('ROLLBACK_CUTOVER_ACCEPTANCE');
+    await assert.rejects(prisma.$transaction(async tx=>{
+      const before=await tx.fgLot.findMany({where:{legacyClosedAt:null}});
+      await tx.fgCutover.delete({where:{id:'finished-goods-v2'}});
+      await tx.$executeRawUnsafe('SELECT fg_initialize_cutover()');
+      const cutoff=await tx.fgCutover.findUniqueOrThrow({where:{id:'finished-goods-v2'}});
+      for(const old of before){
+        const closed=await tx.fgLot.findUniqueOrThrow({where:{id:old.id}});
+        assert.equal(closed.legacyQuantity,old.pending+physicalStock(old));assert.equal(closed.legacyClosedAt?.toISOString(),cutoff.startedAt.toISOString());
+        assert.deepEqual(fgStock(closed),{pending:0,available:0,reserved:0,held:0,blocked:0});assert.equal(closed.openingReview,false);
+      }
+      assert.equal((await tx.fgShipment.findUniqueOrThrow({where:{id:String(draft.id)}})).status,'CANCELLED');
+      assert.deepEqual(await tx.fgShipment.findMany({where:{status:'SHIPPED'},orderBy:{id:'asc'}}),existingShipments);
+      assert.equal(await tx.shipmentEvent.count(),existingEvents);
+      const ledgerCount=await tx.fgLedger.count({where:{kind:'LEGACY_CLOSE'}});assert.equal(ledgerCount,before.length);
+      const oldMovement=await tx.processQuantityMovement.findUniqueOrThrow({where:{id:source.movementId}});
+      await tx.processQuantityMovement.update({where:{id:oldMovement.id},data:{quantity:oldMovement.quantity+1}});
+      assert.equal((await tx.fgLot.findUniqueOrThrow({where:{id:source.id}})).pending,0);
+      const newMovement=await tx.processQuantityMovement.create({data:{completionId:oldMovement.completionId,workOrderId:oldMovement.workOrderId,sourceStepId:oldMovement.sourceStepId,type:'FINISHED_GOOD',quantity:7,sourceSequenceGroup:1,idempotencyKey:randomUUID(),createdAt:new Date(Math.max(Date.now(),cutoff.startedAt.getTime()+1))}});
+      let next=await tx.fgLot.findUniqueOrThrow({where:{movementId:newMovement.id}});assert.equal(next.pending,7);assert.equal(next.legacyClosedAt,null);
+      await tx.$executeRawUnsafe('SELECT fg_initialize_cutover()');
+      assert.equal((await tx.fgCutover.findUniqueOrThrow({where:{id:cutoff.id}})).startedAt.toISOString(),cutoff.startedAt.toISOString());
+      assert.equal(await tx.fgLedger.count({where:{kind:'LEGACY_CLOSE'}}),ledgerCount);
+      next=await tx.fgLot.findUniqueOrThrow({where:{id:next.id}});assert.equal(next.pending,7);assert.equal(next.legacyClosedAt,null);
+      throw rollback;
+    },{timeout:30000}),error=>error===rollback);
+    current=await prisma.fgLot.findUniqueOrThrow({where:{id:source.id}});
+    assert.equal(current.legacyClosedAt,null);assert.equal(current.reserved,4);
   });
 });

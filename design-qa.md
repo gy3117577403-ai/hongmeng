@@ -1,3 +1,43 @@
+# Finished goods compact UI and cutover QA — v1.34.176
+
+Result: **passed** for the implemented local application at 1366 × 1024. Published image acceptance is a separate release gate.
+
+## Reference and visual comparison
+
+Selected image: `docs/finished-goods-v1.34.176/selected-ui.png` (1448 × 1086), uniformly contained in a 1366 × 1024 canvas without cropping. Actual screenshots are native 1366 × 1024. Both full canvases and the corresponding top 390 px were inspected together in the same artifacts:
+
+- [Full side-by-side](docs/finished-goods-v1.34.176/comparison-full.png).
+- [Focused comparison](docs/finished-goods-v1.34.176/comparison-focus.png).
+- [Workbench](docs/finished-goods-v1.34.176/workbench.png), [continuous processing](docs/finished-goods-v1.34.176/continuous.png).
+
+Preserved: light global navigation, compact orange tabs, narrow specification-only column, single-row records, quiet zebra stripes, editable quantity/waybill, separate receipt/dispatch times, orange row actions and fixed pagination. The active platform navigation is the real shared component; the ordinary test account's existing navigation entitlements differ from the generated reference's illustrative full rail. No new warehouse role restrictions were added.
+
+Authorized changes after the reference: historical reconciliation is replaced by a neutral historical-default-shipped record entry. Old balances are settled once at first activation, without invented waybills/times or new current-day shipment totals. Test counts and code strings are real synthetic fixture values. The table is additionally narrowed to 1066 px, keeping specification at 112 px and waybill at 156 px, with right-side room for later content. No product-name column, carrier column, row batch column, ordinal column, or unsupported scan prompt remains.
+
+## Findings resolved
+
+1. Generic button styling had too much specificity and added boxes around tabs/specifications/actions. Scoped low-specificity defaults restore the selected flat row composition while preserving global navigation styles.
+2. Waybill text was taking the copy button's space. Flex sizing now preserves a visible copy action and truncates only the display text; the full value is available for editing/details.
+3. Native batch selection, numeric entry, and Enter-to-save were operated on real backend records. A newly created batch immediately becomes selectable.
+4. Continuous-mode edits no longer clear the current row's physical confirmation. Dispatch advances to the next eligible row and clears confirmation for that next handover.
+5. Receipt records show each event separately. First-receipt age survives partial receipts and allocation; supplementing a waybill preserves the actual dispatch timestamp.
+6. Ordinary and continuous layouts each measured 24 complete rows, specification width 112 px, waybill width 156 px, and no horizontal page overflow. Dialog focus/escape behavior remains available. Browser error log was empty during acceptance.
+
+## Operated flows
+
+- Selected a daily batch, entered quantity 12 and a waybill, pressed Enter, and opened the persisted shipment draft: selected batch and values remained.
+- Dispatched 12 of 20 pending units: 8 pending remain and both actual receipt/dispatch timestamps appear.
+- Continuous dispatch of 15 from 40 pending units: next row selected automatically; subsequent checkbox is reset.
+- Created and selected a new daily batch from the header dropdown; opened receipt history and historical-default-shipped view.
+- Source HTTP acceptance passed 72 checks, including actual Excel contents, print HTML and S3 attachment upload/read/soft delete.
+- PostgreSQL integration passed 16 tests, including transactional cutoff/idempotency, preserved actual shipments/events, source changes and new movements on pre-existing work orders.
+- A separate old-version database clone upgraded 17 lots / 191 units; 4 real shipment headers and 6 events remain exactly equal. New stock survives repeated initialization.
+
+No blocking visual or interaction findings remain. Physical touch-device hardware was not tested; the requested tablet viewport and real browser controls were tested. Production inventory was not used for these tests, and Sealos was not switched.
+
+final result: passed
+
+---
 # Finished goods warehouse design QA — v1.34.175
 
 Result: **passed**. Reviewed at 1366 × 1024 on the running PostgreSQL/S3-backed application using an ordinary signed-in account and disposable test data. This is UI acceptance of the local application; published-image acceptance is tracked separately.
