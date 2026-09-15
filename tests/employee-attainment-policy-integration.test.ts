@@ -11,7 +11,7 @@ import { employeeReportRange } from '../lib/process-time';
 test('sample to production updates dated facts atomically, preserves exceptions and reconciles day week month with other hours', { skip: process.env.RUN_DB_INTEGRATION !== '1' }, async () => {
   const db = new URL(process.env.DATABASE_URL || '');
   assert(['localhost', '127.0.0.1'].includes(db.hostname));
-  assert((db.port === '55448' && db.pathname === '/hongmeng_attainment_transfer_v134150') || (process.env.CI === 'true' && db.pathname === '/hongmeng_ci'));
+  assert((db.port === '25483' && db.pathname === '/hongmeng_hours183') || (db.port === '55448' && db.pathname === '/hongmeng_attainment_transfer_v134150') || (process.env.CI === 'true' && db.pathname === '/hongmeng_ci'));
   const tag = 'POLICY-' + randomUUID().slice(0, 8), h = 3600000;
   const date = (s: string) => new Date(s + 'T00:00:00Z');
   const actor = await prisma.user.create({ data: { username: tag, displayName: tag, passwordHash: 'isolated-test' } });
@@ -90,9 +90,9 @@ test('sample to production updates dated facts atomically, preserves exceptions 
     assert.equal(await prisma.systemNotificationRecipient.count({ where: { userId: lead.id, notification: { sourceId: pending.id, eventType: 'other_work_policy_change' } } }), 1);
     assert.equal((await load('today', '2026-07-31')).attainmentBasisPoints, null);
     assert.equal((await load('today', '2026-08-01')).attainmentBasisPoints, 7830);
-    assert.equal((await load('today', '2026-08-02')).attainmentBasisPoints, 10526);
+    assert.equal((await load('today', '2026-08-02')).attainmentBasisPoints, 11184);
     assert.equal((await load('today', '2026-08-03')).attainmentBasisPoints, null);
-    const expected = Math.round((7.81 + 8) / ((10.5 + 8) * .95) * 10000);
+    const expected = Math.round((7.81 + 8.5) / ((10.5 + 8) * .95) * 10000);
     assert.equal((await load('week', '2026-08-01')).attainmentBasisPoints, expected);
     assert.equal((await load('month', '2026-08-01')).attainmentBasisPoints, expected);
     const unchanged = await prisma.attendanceRecord.findUniqueOrThrow({ where: { id: august.id } });
