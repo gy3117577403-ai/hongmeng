@@ -140,12 +140,12 @@ export function useDocumentOrientation(source: string) {
 
 export type DocumentOrientationController = ReturnType<typeof useDocumentOrientation>;
 
-export function DocumentOrientationControls({ orientation: o, pageCount = 1, disabled = false }: { orientation: DocumentOrientationController; pageCount?: number; disabled?: boolean }) {
+export function DocumentOrientationControls({ orientation: o, pageCount = 1, disabled = false, labelled = false }: { labelled?: boolean; orientation: DocumentOrientationController; pageCount?: number; disabled?: boolean }) {
   const [all, setAll] = useState(false);
   const blocked = disabled || o.saving || !o.ready;
   return <div className="document-orientation-controls" role="group" aria-label="文件阅读方向">
-    <button type="button" aria-label="向左旋转" title="向左旋转 90°" disabled={blocked} onClick={() => o.rotate(-90, pageCount, all)}>↺</button>
-    <button type="button" aria-label="向右旋转" title="向右旋转 90°" disabled={blocked} onClick={() => o.rotate(90, pageCount, all)}>↻</button>
+    <button type="button" aria-label="向左旋转" title="向左旋转 90°" disabled={blocked} onClick={() => o.rotate(-90, pageCount, all)}>{labelled ? '↺ 左转' : '↺'}</button>
+    <button type="button" aria-label="向右旋转" title="向右旋转 90°" disabled={blocked} onClick={() => o.rotate(90, pageCount, all)}>{labelled ? '↻ 右转' : '↻'}</button>
     {o.url && <button type="button" className={o.dirty && o.canSave ? 'orientation-save dirty' : 'orientation-save'} disabled={blocked || !o.canSave || !o.dirty} title={o.canSave ? '保存为该文件的公共默认方向' : '只读账号可临时旋转，不能保存公共方向'} onClick={() => void o.save()}>{o.saving ? '保存中…' : '保存方向'}</button>}
     <details className="viewer-more"><summary aria-label="方向设置">方向</summary><div>
       {pageCount > 1 && <label className="orientation-page-scope"><input type="checkbox" checked={all} disabled={blocked} onChange={event => setAll(event.target.checked)} />本次旋转应用到全部 {pageCount} 页</label>}

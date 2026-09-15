@@ -61,6 +61,7 @@ type PreviewGestureOptions = {
   initialFitMode?: Exclude<PreviewFitMode, 'manual'>;
   initialRotation?: number;
   scrollWheel?: boolean;
+  fitWidthFromTop?: boolean;
   controlledRotation?: number;
   memoryKey?: string;
 };
@@ -101,6 +102,7 @@ export function usePreviewGestures({
   initialFitMode = 'fit-window',
   initialRotation = 0,
   scrollWheel = false,
+  fitWidthFromTop = false,
   controlledRotation,
   memoryKey,
 }: PreviewGestureOptions): PreviewGestureController {
@@ -235,7 +237,7 @@ export function usePreviewGestures({
       scrollFrameRef.current = null;
       node.scrollTo({
         left: Math.max(0, (node.scrollWidth - node.clientWidth) / 2),
-        top: Math.max(0, (node.scrollHeight - node.clientHeight) / 2),
+        top: fitWidthFromTop && fitModeRef.current === 'fit-width' ? 0 : Math.max(0, (node.scrollHeight - node.clientHeight) / 2),
       });
     });
   }, [stageRef]);
