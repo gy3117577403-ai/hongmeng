@@ -30,10 +30,12 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hongmeng_ci?schema=public
       DAILY_PLAN_ENABLED: "true"
-      # Pin the official Quay image to avoid the observed Docker Hub pull denial.
-      CI_MINIO_IMAGE: quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+      # Prepared and digest-verified before the expensive application checks.
+      CI_MINIO_IMAGE: hongmeng-ci-minio:verified-a1a8bd4ac40a
     steps:
       - uses: actions/checkout@v4
+      - name: Prepare pinned object-storage test image
+        run: bash scripts/pull-ci-minio.sh
       - uses: actions/setup-node@v4
         with:
           node-version: 20
