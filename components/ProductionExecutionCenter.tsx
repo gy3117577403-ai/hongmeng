@@ -13,6 +13,8 @@ import ReportingRecoveryDialog from '@/components/ReportingRecoveryDialog';
 import { productionProcessProgress } from '@/lib/production-process-progress';
 import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
 import { EmployeeRealtimeHours } from '@/components/EmployeeRealtimeHours';
+import { ProductionWorkloadCards, ProductionWorkloadDrawer, type WorkloadView } from '@/components/ProductionWorkload';
+import type { ProductionWorkloadReport } from '@/lib/production-workload';
 import { canManageProductionControl, canAdjustProductionDates, type ProductionControlView } from '@/lib/production-control';
 
 
@@ -1436,6 +1438,7 @@ export default function ProductionExecutionCenter({
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const attainmentButtonRef = useRef<HTMLButtonElement | null>(null);
   const [attainmentOverviewOpen, setAttainmentOverviewOpen] = useState(false);
+  const [workloadDetail, setWorkloadDetail] = useState<{ data: ProductionWorkloadReport; view: WorkloadView } | null>(null);
   const [attainmentDetailMetric, setAttainmentDetailMetric] = useState<ProductionAttainmentMetric | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const insightsButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -3321,7 +3324,7 @@ export default function ProductionExecutionCenter({
             ref={attainmentButtonRef}
             type="button"
             className={`production-dispatch-metric-rate production-attainment-card ${attainmentOverviewOpen ? 'active' : ''}`.trim()}
-            aria-label="查看三种生产达成率"
+            aria-label="查看达成率总览"
             aria-expanded={attainmentOverviewOpen}
             onClick={() => setAttainmentOverviewOpen(value => !value)}
           >
@@ -3335,7 +3338,7 @@ export default function ProductionExecutionCenter({
           open={attainmentOverviewOpen}
           anchorRef={attainmentButtonRef}
           align="right"
-          width={640}
+          width={920}
           offset={6}
           className="production-attainment-picker-layer"
           role="dialog"
@@ -3349,7 +3352,7 @@ export default function ProductionExecutionCenter({
               <span><CheckCircle2 size={14} aria-hidden="true" />口径已拆分</span>
               <button type="button" aria-label="关闭达成率总览" onClick={() => setAttainmentOverviewOpen(false)}><X size={17} aria-hidden="true" /></button>
             </header>
-            <p><Info size={14} aria-hidden="true" />计划项看任务，成品数量看产出，员工工时包含已提交的生产、异常和其他工时。</p>
+            <p><Info size={14} aria-hidden="true" />计划项看任务，成品数量看产出；新增生产工时与人员能力按计划计算，无需等待考勤补齐。</p>
             <div className="production-attainment-picker-grid">
               <button type="button" className="batch" onClick={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('batch'); }}>
                 <span><ListChecks size={18} aria-hidden="true" />周计划达成率<ChevronDown size={14} aria-hidden="true" /></span>
@@ -3368,9 +3371,16 @@ export default function ProductionExecutionCenter({
               <EmployeeRealtimeHours mode="card" date={summary?.weekStartDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })}
                 onOpen={() => { setAttainmentOverviewOpen(false); setAttainmentDetailMetric('employee'); }} />
             </div>
+            <ProductionWorkloadCards week={summary?.weekStartDate} onOpen={(data, view) => {
+              setAttainmentOverviewOpen(false); setWorkloadDetail({ data, view });
+            }} />
             <footer><Info size={13} aria-hidden="true" />点击任一指标，查看公式、分子、分母和调整明细。<span>更新 {lastProductionLoadedTime}</span></footer>
           </section>
         </PortalMenu>
+
+        {workloadDetail && <ProductionWorkloadDrawer initial={workloadDetail.data} initialView={workloadDetail.view}
+          onClose={() => { setWorkloadDetail(null); window.requestAnimationFrame(() => attainmentButtonRef.current?.focus()); }}
+          onBack={() => { setWorkloadDetail(null); setAttainmentOverviewOpen(true); }} />}
 
         {attainmentDetailMetric === 'employee' && <EmployeeRealtimeHours mode="detail"
           date={summary?.weekStartDate || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })}
@@ -3688,7 +3698,7 @@ function ProductionAttainmentDrawer({
     <div className="production-attainment-drawer-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <aside ref={dialogRef} tabIndex={-1} className="production-attainment-drawer" role="dialog" aria-modal="true" aria-labelledby="production-attainment-detail-title">
         <header className="production-attainment-drawer-head">
-          <button type="button" onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />三项总览</button>
+          <button type="button" onClick={onBack}><ArrowLeft size={16} aria-hidden="true" />达成率总览</button>
           <div><small>{scopeText} · 数据更新 {updatedAt}</small><h2 id="production-attainment-detail-title">达成率计算明细</h2></div>
           <button type="button" aria-label="关闭达成率计算明细" onClick={onClose}><X size={20} aria-hidden="true" /></button>
         </header>

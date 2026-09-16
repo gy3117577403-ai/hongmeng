@@ -489,6 +489,13 @@ jobs:
             REALTIME_HOURS_QA_FIXTURE=artifacts/realtime-hours/release-fixture.json \
             REALTIME_HOURS_QA_OUTPUT=artifacts/realtime-hours/release-http.json \
             node scripts/smoke-realtime-hours.mjs
+          mkdir -p artifacts/production-workload
+          WORKLOAD_QA_ALLOW=disposable-workload-runtime node scripts/seed-production-workload-smoke.cjs > artifacts/production-workload/release-fixture.json
+          WORKLOAD_QA_ALLOW=disposable-workload-runtime \
+            WORKLOAD_QA_BASE=http://127.0.0.1:3000 \
+            WORKLOAD_QA_FIXTURE=artifacts/production-workload/release-fixture.json \
+            WORKLOAD_QA_OUTPUT=artifacts/production-workload/release-http.json \
+            node scripts/smoke-production-workload.mjs
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -841,6 +848,14 @@ jobs:
             REALTIME_HOURS_QA_FIXTURE=artifacts/realtime-hours/hangzhou-fixture.json \
             REALTIME_HOURS_QA_OUTPUT=artifacts/realtime-hours/hangzhou-http.json \
             node scripts/smoke-realtime-hours.mjs
+          mkdir -p artifacts/production-workload
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            WORKLOAD_QA_ALLOW=disposable-workload-runtime node scripts/seed-production-workload-smoke.cjs > artifacts/production-workload/hangzhou-fixture.json
+          WORKLOAD_QA_ALLOW=disposable-workload-runtime \
+            WORKLOAD_QA_BASE=http://127.0.0.1:3300 \
+            WORKLOAD_QA_FIXTURE=artifacts/production-workload/hangzhou-fixture.json \
+            WORKLOAD_QA_OUTPUT=artifacts/production-workload/hangzhou-http.json \
+            node scripts/smoke-production-workload.mjs
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
@@ -848,6 +863,13 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload production workload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-workload-${{ github.ref_name }}
+          path: artifacts/production-workload/*http.json
+          if-no-files-found: warn
       - name: Upload realtime hours acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

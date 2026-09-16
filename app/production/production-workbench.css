@@ -7191,7 +7191,8 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
 .production-attainment-picker-layer {
   z-index: 1320 !important;
   max-width: calc(100vw - 24px);
-  overflow: hidden;
+  overflow: auto;
+  max-height: calc(100dvh - 185px);
   padding: 0 !important;
   border: 1px solid #d9e0e8 !important;
   border-radius: 12px !important;

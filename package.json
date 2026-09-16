@@ -1,6 +1,6 @@
 {
   "name": "hongmeng-workorder-resource",
-  "version": "1.34.184",
+  "version": "1.34.185",
   "private": true,
   "scripts": {
     "pdfjs:assets": "node scripts/prepare-pdfjs-assets.mjs",
