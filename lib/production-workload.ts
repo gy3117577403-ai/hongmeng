@@ -44,6 +44,12 @@ export function workloadTotals(tasks: readonly WorkloadTask[]): WorkloadTotals {
 export const workloadCoverage = (capacity: number, demand: number, incomplete = false) => demand > 0 && !incomplete
   ? Math.round(capacity / demand * 1000) / 10 : null;
 
+/** Unknown demand can prove a minimum shortage, but can never prove spare capacity. */
+export function workloadCapacityBalance(capacity: { gap: number; surplus: number }, incomplete: boolean): { label: string; value: number | null } {
+  if (incomplete) return capacity.gap > 0 ? { label: '已知至少缺口', value: capacity.gap } : { label: '需求待补齐', value: null };
+  return { label: capacity.gap > 0 ? '缺口' : '余量', value: capacity.gap || capacity.surplus };
+}
+
 /** Reported quantities earn their standard labor immediately, independently of predecessor matching.
  * Setup/batch labor is apportioned once across the target quantity, never once per reporter. */
 export function reportedWorkloadMilliseconds(snapshot: {

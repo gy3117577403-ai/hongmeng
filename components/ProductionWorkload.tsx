@@ -3,12 +3,13 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AlertTriangle, ArrowLeft, ChevronDown, ChevronRight, Clock3, Info, Layers, ListChecks, RefreshCw, UsersRound, X } from 'lucide-react';
-import { workloadTotals, type ProductionWorkloadReport, type WorkloadTask } from '@/lib/production-workload';
+import { workloadTotals, workloadCapacityBalance, type ProductionWorkloadReport, type WorkloadTask } from '@/lib/production-workload';
 import styles from './ProductionWorkload.module.css';
 
 export type WorkloadView = 'plan' | 'remaining' | 'people' | 'capacity';
 const hours = (value: number) => (value / 3_600_000).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
 const percent = (value: number | null) => value === null ? '—' : `${value.toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%`;
+const capacityEquation = (capacity: number, demand: number, ratio: number | null, missing: number) => missing ? '待补标准后测算' : !demand ? '当前无待做工时' : `${hours(capacity)} ÷ ${hours(demand)} = ${percent(ratio)}`;
 const kindLabel = (task: WorkloadTask) => task.kind === 'wip' ? '半成品接续' : task.kind === 'carryover' ? '遗留任务' : '本周计划';
 function useWorkload(week: string | null | undefined, initial?: ProductionWorkloadReport) {
   const [data, setData] = useState<ProductionWorkloadReport | null>(initial || null);
@@ -38,6 +39,7 @@ function useWorkload(week: string | null | undefined, initial?: ProductionWorklo
 
 export function ProductionWorkloadCards({ week, onOpen }: { week?: string | null; onOpen: (data: ProductionWorkloadReport, view: WorkloadView) => void }) {
   const { data, error, loading, refresh } = useWorkload(week);
+  const balance = data ? workloadCapacityBalance(data.capacity, data.all.missingStandard > 0) : null;
   return <section className={styles.section} aria-label="新增生产工时与人员能力">
     <header className={styles.sectionHead}><strong>生产工时与人员能力</strong><span>按计划工序统计 · 无需等待考勤</span><button type="button" onClick={refresh} disabled={loading} aria-label="刷新生产工时"><RefreshCw size={14} /></button></header>
     {!week ? <p className={styles.message}>请选择一个生产周查看计划工时与人员能力。</p> : error ? <p className={styles.error} role="alert">{error}<button type="button" onClick={refresh}>重试</button></p> : !data ? <p className={styles.message} role="status">正在汇总本周计划、遗留工序及人员范围…</p> : <>
@@ -66,7 +68,7 @@ export function ProductionWorkloadCards({ week, onOpen }: { week?: string | null
           <span className={styles.cardFooter}><span>整周人员能力参考</span><em>人员范围 ›</em></span>
         </button>
       </div>
-      <button type="button" className={styles.capacityStrip} onClick={() => onOpen(data, 'capacity')}><span><Clock3 size={16} /><b>本周剩余人员能力</b></span><span>可用 <b>{hours(data.capacity.remaining)}h</b></span><span>覆盖 <b>{!data.all.remaining && !data.all.missingStandard ? '已完成' : percent(data.capacity.remainingCoverage)}</b></span><span>{data.all.missingStandard ? '已知需求缺口' : data.capacity.gap ? '缺口' : '余量'} <strong>{hours(data.capacity.gap || data.capacity.surplus)}h</strong></span><ChevronRight size={15} /></button>
+      <button type="button" className={styles.capacityStrip} onClick={() => onOpen(data, 'capacity')}><span><Clock3 size={16} /><b>本周剩余人员能力</b></span><span>可用 <b>{hours(data.capacity.remaining)}h</b></span><span>覆盖 <b>{!data.all.remaining && !data.all.missingStandard ? '已完成' : percent(data.capacity.remainingCoverage)}</b></span><span>{balance?.label} <strong>{balance?.value == null ? '待补标准' : `${hours(balance.value)}h`}</strong></span><ChevronRight size={15} /></button>
       {data.all.missingStandard > 0 && <p className={styles.warning}><AlertTriangle size={14} />{data.all.missingStandard} 道工序待补标准，当前工时为已知合计，覆盖率暂不作完整判断。</p>}
     </>}
   </section>;
@@ -77,6 +79,7 @@ export function ProductionWorkloadDrawer({ initial, initialView, onClose, onBack
 }) {
   const { data: refreshed, error, loading, refresh } = useWorkload(initial.weekStart, initial);
   const data = refreshed || initial;
+  const balance = workloadCapacityBalance(data.capacity, data.all.missingStandard > 0);
   const [view, setView] = useState(initialView);
   const [filter, setFilter] = useState('all');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -126,9 +129,9 @@ export function ProductionWorkloadDrawer({ initial, initialView, onClose, onBack
           <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>员工</th><th>班组 / 岗位</th><th>统计依据</th><th>天数</th><th>预计 h</th></tr></thead><tbody>{people.map(person => <tr key={person.id}><td><strong>{person.name}</strong><small>{person.employeeNo}</small></td><td>{person.team || '未分组'}<small>{person.position || '未填写岗位'}</small></td><td>{person.reason}</td><td>{person.days}</td><td>{hours(person.planned)}</td></tr>)}</tbody></table>{!people.length && <p className={styles.message}>当前分类没有人员。</p>}</div>
         </>}
         {view === 'capacity' && <>
-          <div className={styles.result}><div><small>本周剩余人员覆盖率</small><strong>{!data.all.remaining && !data.all.missingStandard ? '已完成' : percent(data.capacity.remainingCoverage)}</strong></div><div><small>{data.all.missingStandard ? '已知需求缺口' : data.capacity.gap ? '正常班次缺口' : '正常班次余量'}</small><b>{hours(data.capacity.gap || data.capacity.surplus)} 小时</b></div></div>
+          <div className={styles.result}><div><small>本周剩余人员覆盖率</small><strong>{!data.all.remaining && !data.all.missingStandard ? '已完成' : percent(data.capacity.remainingCoverage)}</strong></div><div><small>{balance.label}</small><b>{balance.value == null ? '补齐标准后测算' : `${hours(balance.value)} 小时`}</b></div></div>
           {data.all.missingStandard > 0 && <p className={styles.warning}>存在缺标准工序；下面需求只含已知工时，不能据此判定人员足够。</p>}
-          <div className={styles.calculations}><article><small>本周计划人员覆盖率</small><b>{hours(data.capacity.planned)} ÷ {hours(data.plan.planned)} = {percent(data.capacity.planCoverage)}</b><span>整周预计人员工时 / 本周计划总工时</span></article><article><small>当前待做覆盖参考</small><b>{hours(data.capacity.planned)} ÷ {hours(data.all.remaining)} = {!data.all.remaining && !data.all.missingStandard ? '已完成' : percent(data.capacity.outstandingCoverage)}</b><span>整周预计人员工时 / 当前待做总工时</span></article><article><small>本周剩余人员覆盖率</small><b>{hours(data.capacity.remaining)} ÷ {hours(data.all.remaining)} = {!data.all.remaining && !data.all.missingStandard ? '已完成' : percent(data.capacity.remainingCoverage)}</b><span>尚未过去的正常班次工时 / 当前待做总工时</span></article></div>
+          <div className={styles.calculations}><article><small>本周计划人员覆盖率</small><b>{capacityEquation(data.capacity.planned, data.plan.planned, data.capacity.planCoverage, data.plan.missingStandard)}</b><span>整周预计人员工时 / 本周计划总工时</span></article><article><small>当前待做覆盖参考</small><b>{capacityEquation(data.capacity.planned, data.all.remaining, data.capacity.outstandingCoverage, data.all.missingStandard)}</b><span>整周预计人员工时 / 当前待做总工时</span></article><article><small>本周剩余人员覆盖率</small><b>{capacityEquation(data.capacity.remaining, data.all.remaining, data.capacity.remainingCoverage, data.all.missingStandard)}</b><span>尚未过去的正常班次工时 / 当前待做总工时</span></article></div>
           <p className={styles.note}>正常班次按周一至周六 08:00—12:00、13:00—17:00，北京时间计算；已经过去的时间不再计入剩余能力。每人每天 8 小时，不折算 95%，不默认加入加班。</p>
           <p className={styles.note}>总工时覆盖是人员能力参考；缺料、关键工序及设备限制仍需结合生产安排判断。</p>
         </>}

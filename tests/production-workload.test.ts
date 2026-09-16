@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { reportedWorkloadMilliseconds, workloadStep, workloadTotals, workloadPeople, remainingNormalMilliseconds,
-  workloadCoverage, WORKLOAD_HOUR as H, type WorkloadTask, type WorkloadEmployeeInput } from '../lib/production-workload';
+  workloadCoverage, workloadCapacityBalance, WORKLOAD_HOUR as H, type WorkloadTask, type WorkloadEmployeeInput } from '../lib/production-workload';
 
 const step = (values: Partial<Parameters<typeof workloadStep>[0]> = {}) => workloadStep({ id: 's', name: '压接', position: 1, original: 100 * H, reported: 40 * H, ...values });
 const task = (steps: ReturnType<typeof step>[]): WorkloadTask => ({ id: 't', workOrderId: 'o', code: 'TEST', specification: 'TEST', customer: '', kind: 'plan', sourceWeek: '2026-09-14', routeVersion: 1, steps });
@@ -51,4 +51,10 @@ test('employment and effective policy dates adjust only planned working days', (
 test('team scoped personnel totals do not include another team', () => {
   const people = workloadPeople([employee(), employee({ id: 'b', team: '外组' })], '2026-09-14', new Date('2026-09-16T08:00:00+08:00'), new Set(['量产']));
   assert.equal(people.length, 1);
+});
+
+test('incomplete demand cannot turn apparent spare hours into a shortage or a sufficiency claim', () => {
+  assert.deepEqual(workloadCapacityBalance({ gap: 0, surplus: 20 * H }, true), { label: '需求待补齐', value: null });
+  assert.deepEqual(workloadCapacityBalance({ gap: 5 * H, surplus: 0 }, true), { label: '已知至少缺口', value: 5 * H });
+  assert.deepEqual(workloadCapacityBalance({ gap: 0, surplus: 20 * H }, false), { label: '余量', value: 20 * H });
 });
