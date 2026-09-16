@@ -4,6 +4,7 @@ import { chinaDateKey } from '@/lib/china-date';
 import { productionBatchWeekStartWindow, productionWeekDateBounds } from '@/lib/production-week';
 import { assertProductionScopeRead, productionTeamScopeWhere, type ProductionEntityScope } from '@/lib/production-access-scope';
 import { calculateTaskStandardMilliseconds } from '@/lib/daily-plan-domain';
+import { originalPlanTime, summarizeTimeComparison, type TaskTimeComparison } from '@/lib/production-time-comparison';
 import { reportedWorkloadMilliseconds, workloadStep, workloadTotals, workloadPeople, workloadCoverage,
   type ProductionWorkloadReport, type WorkloadTask } from '@/lib/production-workload';
 
@@ -28,7 +29,10 @@ export async function loadProductionWorkload(weekInput: string, scope: Productio
           { carryovers: { some: { targetWeekStartDate: { gte: window.gte, lt: window.lt }, status: { not: 'DISMISSED' } } } }] },
       select: { id: true, batchNo: true, quantity: true, weekStartDate: true, workOrderId: true,
         totalMillisecondsSnapshot: true, unitMillisecondsSnapshot: true, importedUnitMilliseconds: true,
-        planOrder: { select: { customerName: true, specification: true } },
+        planOrder: { select: { customerName: true, specification: true, planningUnitMilliseconds: true,
+          drawingLibraryItem: { select: { deletedAt: true, productTimeProfiles: {
+            where: { status: 'published' }, orderBy: { version: 'desc' }, take: 1,
+            select: { entries: { select: { unitMilliseconds: true } } } } } } } },
         workOrder: { select: { id: true, code: true, specification: true, customerName: true, deletedAt: true,
           processRoute: { select: { version: true, steps: { orderBy: { position: 'asc' },
             select: { id: true, processName: true, position: true, retiredAt: true, status: true, timeBasis: true,
@@ -135,6 +139,13 @@ export async function loadProductionWorkload(weekInput: string, scope: Productio
         specification: order?.specification || batch.planOrder.specification || '未填写规格', customer: batch.planOrder.customerName,
         sourceWeek: chinaDateKey(batch.weekStartDate), kind: chinaDateKey(batch.weekStartDate) === week.startKey ? 'plan' : 'carryover',
         routeVersion: order?.processRoute?.version ?? null, steps: [] };
+      const drawing = batch.planOrder.drawingLibraryItem;
+      const publishedUnit = drawing && !drawing.deletedAt ? drawing.productTimeProfiles[0]?.entries.reduce((n, e) => n + e.unitMilliseconds, 0) : null;
+      const originalPlan = originalPlanTime({ quantity: batch.quantity, batchUnit: batch.unitMillisecondsSnapshot,
+        orderUnit: batch.planOrder.planningUnitMilliseconds, publishedUnit, totalSnapshot: batch.totalMillisecondsSnapshot });
+      const comparison: TaskTimeComparison = { originalPlan: originalPlan.milliseconds, originalSource: originalPlan.source,
+        currentStandard: 0, missingSteps: 0, priorDeducted: 0, adjustedReported: 0, estimate: 0, movedOut: 0, executionBasis: 0 };
+      let activeStepCount = 0;
       for (const step of order?.processRoute?.steps || []) {
         const key = stepKey(order!.id, step.id), facts = fullFacts.get(key) || zero(), wip = wipFacts.get(key) || zero();
         const retired = step.retiredAt !== null || step.status === 'skipped';
@@ -144,13 +155,23 @@ export async function loadProductionWorkload(weekInput: string, scope: Productio
           timeBasis: step.timeBasis as 'per_unit' | 'per_batch', standardMillisecondsPerUnit: step.standardMillisecondsPerUnit!,
           setupMilliseconds: step.setupMilliseconds, unitsPerProduct: Math.max(1, step.unitsPerProduct),
         }, batch.quantity)) : 0;
+        if (!retired) {
+          activeStepCount += 1;
+          comparison.currentStandard += original;
+          comparison.priorDeducted += Math.min(original, Math.max(0, facts.before));
+          if (!valid) comparison.missingSteps += 1;
+        } else comparison.adjustedReported += facts.current;
         task.steps.push(workloadStep({ id: step.id, name: `${step.processName}${retired ? '（已调整）' : ''}`, position: step.position,
           original, before: facts.before, movedOut: movedByStep.get(key) || 0,
           reported: Math.max(0, facts.current - wip.current), pending: Math.max(0, facts.pending - wip.pending), missingStandard: !valid }));
       }
-      if (!task.steps.length) task.steps.push(workloadStep({ id: `${batch.id}:unbound`, name: '计划工时（待补工序）', position: 0,
+      if (!task.steps.length) { task.steps.push(workloadStep({ id: `${batch.id}:unbound`, name: '计划工时（待补工序）', position: 0,
         original: Number(batch.totalMillisecondsSnapshot || 0n) || (batch.unitMillisecondsSnapshot || batch.importedUnitMilliseconds || 0) * batch.quantity,
-        reported: 0, missingStandard: true }));
+        reported: 0, missingStandard: true })); comparison.estimate = task.steps[0].planned; }
+      if (!activeStepCount) comparison.missingSteps = Math.max(1, comparison.missingSteps);
+      comparison.movedOut = task.steps.reduce((n, s) => n + s.movedOut, 0);
+      comparison.executionBasis = task.steps.reduce((n, s) => n + s.planned, 0);
+      task.timeComparison = comparison;
       tasks.push(task);
     }
     for (const allocation of allocations) {
@@ -172,9 +193,11 @@ export async function loadProductionWorkload(weekInput: string, scope: Productio
     const plan = workloadTotals(tasks.filter(t => t.kind !== 'carryover'));
     const carryover = workloadTotals(tasks.filter(t => t.kind === 'carryover'));
     const all = workloadTotals(tasks);
+    const timeComparison = summarizeTimeComparison(tasks.filter(t => t.kind === 'plan').map(t => t.timeComparison!),
+      workloadTotals(tasks.filter(t => t.kind === 'wip')).planned);
     const people = workloadPeople(employees, week.startKey, now, allowedTeams);
     const planned = people.reduce((s, p) => s + p.planned, 0), remaining = people.reduce((s, p) => s + p.remaining, 0);
-    return { weekStart: week.startKey, weekEnd: week.endKey, calculatedAt: now.toISOString(), tasks, plan, carryover, all, people,
+    return { weekStart: week.startKey, weekEnd: week.endKey, calculatedAt: now.toISOString(), tasks, plan, carryover, all, people, timeComparison,
       capacity: { count: people.filter(p => p.included).length, excludedCount: people.filter(p => !p.included).length,
         planned, remaining, planCoverage: workloadCoverage(planned, plan.planned, plan.missingStandard > 0),
         outstandingCoverage: workloadCoverage(planned, all.remaining, all.missingStandard > 0),

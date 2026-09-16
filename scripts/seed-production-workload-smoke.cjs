@@ -4,6 +4,11 @@ async function seed(db) {
   if (process.env.WORKLOAD_QA_ALLOW !== 'disposable-workload-runtime') throw Error('Disposable runtime acknowledgement required');
   process.env.REALTIME_HOURS_QA_ALLOW = 'disposable-realtime-hours-runtime';
   const fixture = await createFixture(db);
+  // Independent original plans intentionally disagree with the 3h route standard.
+  for (const [index, unit] of [[0, 1800000], [1, 720000]]) {
+    await db.productionPlanBatch.update({ where: { id: fixture.orders[index].batchId },
+      data: { unitMillisecondsSnapshot: unit, totalMillisecondsSnapshot: BigInt(unit * 10), planTimeSource: 'manual' } });
+  }
   await db.attendanceRecord.deleteMany({ where: { employeeId: { in: fixture.employees.map(e => e.id) } } });
   const excluded = [];
   for (const [position, stream] of [['样品制作', 'sample'], ['组长', 'batch'], ['生产主管', 'batch']]) {

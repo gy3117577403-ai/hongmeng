@@ -1,4 +1,6 @@
 'use client';
+
+import { PlanningTimeComparison } from '@/components/ProductionWorkload';
 import type { ProductionPlanImportRow } from '@/lib/production-plan-import';
 import { productionPlanImportNeedsProductDecision, resolvePlanningImportTime, planningImportTimeSourceText } from '@/lib/planning-import-time';
 import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
@@ -2344,10 +2346,11 @@ export default function PlanningCenterShell({
                 <button className="import" type="button" onClick={event => openPlanningImport(event.currentTarget)}><Upload size={15} />导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button>
                 <em>{planDataAvailable
-                  ? <>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 个正常批次`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? planHoursText(selectedWeekTotalMilliseconds) : '工时待补'}{selectedWipContinuations.length ? ` ｜ 半成品续作 ${selectedWipContinuations.length} 项 · ${selectedWipQuantity.toLocaleString()} 件 · ${duration(selectedWipMilliseconds)}` : ''}</>
+                  ? <>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 个正常批次`} · {selectedWeekQuantity.toLocaleString()} 件 · 原始计划工时 {selectedWeekTotalMilliseconds ? planHoursText(selectedWeekTotalMilliseconds) : '工时待补'}{selectedWipContinuations.length ? ` ｜ 半成品续作 ${selectedWipContinuations.length} 项 · ${selectedWipQuantity.toLocaleString()} 件 · ${duration(selectedWipMilliseconds)}` : ''}</>
                   : '排产数据未获取'}</em>
               </div>
             </header>
+            {planDataAvailable && <PlanningTimeComparison week={selectedWeek?.weekStartDate} batchIds={baseScheduleRows.map(item => item.batch.id)} />}
             <WeekReconciliationBar
               className="planning-week-reconciliation"
               weekStartDate={selectedWeek?.weekStartDate}
@@ -2382,7 +2385,7 @@ export default function PlanningCenterShell({
             </section>
             <div ref={scheduleScrollRef} className="planning-table-scroll hm-scroll-region" tabIndex={0}>
               <table className="planning-table">
-                <thead><tr><th className="production-list-sequence">序号</th><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>生产资料</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>打印</th><th className="planning-control-note">备注</th><th className="planning-control-actions">操作</th></tr></thead>
+                <thead><tr><th className="production-list-sequence">序号</th><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>原始计划 · 单件 / 总工时</th><th>生产资料</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>打印</th><th className="planning-control-note">备注</th><th className="planning-control-actions">操作</th></tr></thead>
                 <tbody>{scheduleRows.map(({ order, batch }, rowIndex) => {
                   const flow = planningFlow(order, batch);
                   const processDisplay = planningProcessDisplay({

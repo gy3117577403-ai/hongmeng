@@ -2,6 +2,7 @@ import { chinaDateKey } from '@/lib/china-date';
 import { productionWeekDateValues } from '@/lib/production-week';
 import { policyForWorkDate, type AttainmentPolicyChange } from '@/lib/employee-attainment-policy';
 import { isEmployeeEmployedOnDate, isProductionDepartment } from '@/lib/production-workforce';
+import type { TaskTimeComparison, PlanTimeComparison } from '@/lib/production-time-comparison';
 
 export const WORKLOAD_HOUR = 3_600_000;
 export type WorkloadKind = 'plan' | 'carryover' | 'wip';
@@ -12,6 +13,7 @@ export type WorkloadStep = {
 export type WorkloadTask = {
   id: string; workOrderId: string | null; code: string; specification: string; customer: string;
   kind: WorkloadKind; sourceWeek: string; routeVersion: number | null; steps: WorkloadStep[];
+  timeComparison?: TaskTimeComparison;
 };
 export type WorkloadTotals = {
   count: number; planned: number; completed: number; remaining: number; pending: number;
@@ -118,6 +120,7 @@ export function workloadPeople(employees: readonly WorkloadEmployeeInput[], week
 export type ProductionWorkloadReport = {
   weekStart: string; weekEnd: string; calculatedAt: string; tasks: WorkloadTask[];
   plan: WorkloadTotals; carryover: WorkloadTotals; all: WorkloadTotals; people: WorkloadPerson[];
+  timeComparison: PlanTimeComparison;
   capacity: { count: number; excludedCount: number; planned: number; remaining: number;
     planCoverage: number | null; outstandingCoverage: number | null; remainingCoverage: number | null; gap: number; surplus: number };
 };
