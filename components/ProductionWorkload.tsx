@@ -6,6 +6,7 @@ import { AlertTriangle, ArrowLeft, ChevronDown, ChevronRight, Clock3, Info, Laye
 import { workloadTotals, workloadCapacityBalance, type ProductionWorkloadReport, type WorkloadTask } from '@/lib/production-workload';
 import styles from './ProductionWorkload.module.css';
 import { ProductionTimeComparison } from './ProductionTimeComparison';
+import { PlanningDetailDrawer } from './PlanningDetailDrawer';
 
 export type WorkloadView = 'plan' | 'remaining' | 'people' | 'capacity';
 const hours = (value: number) => (value / 3_600_000).toLocaleString('zh-CN', { maximumFractionDigits: 2 });
@@ -38,12 +39,16 @@ function useWorkload(week: string | null | undefined, initial?: ProductionWorklo
   return { data: data?.weekStart === week ? data : null, error, loading, refresh: () => setRevision(n => n + 1) };
 }
 
-export function PlanningTimeComparison({ week, batchIds }: { week?: string; batchIds: string[] }) {
+export function PlanningTimeComparison({ week, batchIds, inline = false }: { week?: string; batchIds: string[]; inline?: boolean }) {
   const { data, error, loading, refresh } = useWorkload(week);
-  return <div className={styles.planningComparison}>
+  const [open, setOpen] = useState(false);
+  return <div className={inline ? styles.planningInline : styles.planningComparison}>
     {error ? <p className={styles.error}>工时对照加载失败<button type="button" onClick={refresh}>重试</button></p>
-      : data ? <ProductionTimeComparison data={data} batchIds={batchIds} />
+      : data ? <ProductionTimeComparison data={data} batchIds={batchIds} inline={inline} onOpen={() => setOpen(true)} />
         : <p className={styles.message} role="status">{loading ? '正在核对计划与执行工时…' : '请选择生产周'}</p>}
+    {open && data && <PlanningDetailDrawer title="工时明细" subtitle={`${week} 所选正常批次 · 原始计划与当前工序标准`} onClose={() => setOpen(false)}>
+      <ProductionTimeComparison data={data} batchIds={batchIds} detailsOpen />
+    </PlanningDetailDrawer>}
   </div>;
 }
 

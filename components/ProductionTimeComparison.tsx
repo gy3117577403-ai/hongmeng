@@ -8,8 +8,8 @@ const hours = (n: number) => (n / 3600000).toLocaleString('zh-CN', { maximumFrac
 const signed = (n: number) => `${n > 0 ? '+' : ''}${hours(n)}`;
 const sourceText = { batch: '批次计划', order: '订单计划', published: '产品标准补算', total: '历史总工时', missing: '计划待补' };
 
-export function ProductionTimeComparison({ data, batchIds, compact = false, onOpen }: {
-  data: ProductionWorkloadReport; batchIds?: string[]; compact?: boolean; onOpen?: () => void;
+export function ProductionTimeComparison({ data, batchIds, compact = false, inline = false, detailsOpen = false, onOpen }: {
+  data: ProductionWorkloadReport; batchIds?: string[]; compact?: boolean; inline?: boolean; detailsOpen?: boolean; onOpen?: () => void;
 }) {
   const tasks = data.tasks.filter(t => t.kind === 'plan' && (!batchIds || batchIds.includes(t.id)));
   const rows = tasks.flatMap(t => t.timeComparison ? [t.timeComparison] : []);
@@ -19,6 +19,15 @@ export function ProductionTimeComparison({ data, batchIds, compact = false, onOp
   const difference = missingTasks ? null : c.difference;
   const sorted = [...tasks].sort((a, b) => Math.abs((b.timeComparison!.originalPlan || 0) - b.timeComparison!.currentStandard)
     - Math.abs((a.timeComparison!.originalPlan || 0) - a.timeComparison!.currentStandard));
+  if (inline) return <div className={styles.inlineComparison} aria-label="计划与执行工时对照">
+    <span>原始计划工时 <b>{hours(c.originalPlan)}</b> h</span>
+    <span>当前工序标准 <b>{hours(c.currentStandard)}</b> h</span>
+    <button className={difference === null ? styles.partial : styles.difference} type="button" onClick={onOpen}
+      title={difference === null ? '标准或计划未齐，暂不判断总差额' : '差额 = 原始计划 − 当前工序标准'}>
+      {difference === null ? '部分已知' : difference === 0 ? '总额一致' : `差额 ${signed(difference)} h`}
+    </button>
+    <button className={styles.inlineDetail} type="button" onClick={onOpen}>工时明细 ›</button>
+  </div>;
   return <section className={styles.comparison} aria-label="计划与执行工时对照">
     <div className={styles.comparisonValues}>
       <div><span>原始计划工时</span><strong>{hours(c.originalPlan)}<small>小时{c.missingPlanCount ? '（部分已知）' : ''}</small></strong><small>{c.count} 个正常批次 · 保留计划值</small></div>
@@ -30,7 +39,7 @@ export function ProductionTimeComparison({ data, batchIds, compact = false, onOp
         : `原始计划${difference > 0 ? '高于' : '低于'}当前工序标准 ${hours(Math.abs(difference))} 小时 · ${c.changedCount} 批有差额`}</span>
       {compact && <button type="button" onClick={onOpen}>查看差额与计算明细 ›</button>}
     </div>
-    {!compact && <details className={styles.comparisonDetails}>
+    {!compact && <details className={styles.comparisonDetails} open={detailsOpen || undefined}>
       <summary>查看差额与计算明细</summary>
       <p>差额 = 原始计划 − 当前工序标准。两列比较同一批次、同一数量的完整工时，不含遗留及半成品续作。差额仅提示标准需核对，不自动修改计划或报工。</p>
       {missingTasks > 0 && <p role="status">当前列表有 {missingTasks} 批未进入执行汇总，不能据此认定全表工时一致。</p>}

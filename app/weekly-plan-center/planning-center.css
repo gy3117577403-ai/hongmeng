@@ -4645,3 +4645,124 @@ main.planning-center-shell.hm-workbench-root {
 
 .planning-import-new-order { display:flex !important; align-items:center; gap:8px; font-size:12px; }
 .planning-import-new-order input { width:16px !important; height:16px; margin:0; }
+/* Planning workbench: four compact rows above one continuously scrolling table. */
+.planning-center-shell .planning-center-main.planning-compact-main {
+  display:flex;flex-direction:column;gap:6px;padding:8px 10px;height:100dvh;min-height:0;
+}
+.planning-compact-main > .planning-titlebar {flex:0 0 48px;grid-template-columns:34px 185px minmax(0,1fr) 34px;gap:6px;padding:4px 8px;box-shadow:none}
+.planning-compact-main .planning-title-copy{display:block}
+.planning-compact-main .planning-heading-line h1{font-size:21px;color:#10294b}
+.planning-compact-main .planning-navigation-trigger,.planning-compact-main .planning-navigation-trigger .hm-workbench-sidebar-button{width:32px;height:34px}
+.planning-compact-main .planning-titlebar>nav{height:36px;padding:2px;background:#f7f9fc}
+.planning-compact-main .planning-titlebar>nav button{height:32px;font-size:12px;gap:5px;padding:0 10px}
+.planning-compact-main .planning-weekbar {display:flex;align-items:center;justify-content:space-between;gap:6px;flex:0 0 48px;min-width:0;padding:3px 6px;border:1px solid #e0e8f1;border-radius:8px;background:#fff}
+.planning-center-shell .planning-week-switcher.compact {display:flex;flex:1;align-items:center;gap:5px;min-width:0;height:40px;padding:0;border:0;overflow:auto;background:none}
+.planning-center-shell .planning-week-switcher.compact>button{display:flex;align-items:center;gap:8px;flex:1 0 120px;min-width:0;min-height:38px;height:38px;padding:3px 9px;border:1px solid #e1e8f0;border-radius:6px;background:#fff;color:#3e5470;box-shadow:none}
+.planning-center-shell .planning-week-switcher.compact>button.history{flex:0 0 76px}
+.planning-center-shell .planning-week-switcher.compact>button.active{border-color:#a3c7ff;background:#f4f9ff;color:#1269d3}
+.planning-center-shell .planning-week-switcher.compact>button span{display:flex;flex-direction:column;gap:1px}
+.planning-center-shell .planning-week-switcher.compact>button strong{font-size:12px;line-height:15px}
+.planning-center-shell .planning-week-switcher.compact>button small{font-size:10px;line-height:12px;white-space:nowrap}
+.planning-center-shell .planning-week-switcher.compact>button b{font-size:18px;margin-left:auto}
+.planning-week-select{width:99px;height:36px;border:1px solid #e1e8f0;border-radius:6px;background:#fff;color:#38526e;font-size:11px}
+.planning-enter-production{display:flex;align-items:center;justify-content:center;white-space:nowrap;gap:4px;height:36px;padding:0 7px;border:1px solid #e1e8f0;border-radius:6px;color:#24415d;font-size:11px;text-decoration:none}
+.planning-context-actions{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.planning-context-chip{display:inline-flex;align-items:center;justify-content:center;gap:5px;white-space:nowrap;padding:0 8px;height:30px;font-size:11px!important;border:1px solid #e1e8ef;border-radius:6px;background:#f7f9fb;color:#50637a;cursor:pointer}
+.planning-context-chip.wip{background:#f6f1ff;border-color:#eadfff;color:#752ae5}
+.planning-context-chip.attention{background:#fff5e9;border-color:#ffecd5;color:#c35b05}
+.planning-context-chip.aligned{background:#eaf9f1;border-color:#d7f0e2;color:#088654}
+.planning-center-shell .planning-compact-main>.planning-toolbar{flex:0 0 44px;min-height:44px;display:flex;padding:3px 6px;gap:6px}
+.planning-compact-main .planning-search{flex:1;min-width:170px;height:34px}
+.planning-compact-main .planning-search input{font-size:12px}
+.planning-center-shell .planning-compact-main .planning-toolbar>select{width:106px;height:34px;font-size:12px;padding:0 6px}
+.planning-compact-main .planning-readiness-filter{width:108px;flex-shrink:0}
+.planning-compact-main .planning-readiness-trigger{height:34px;font-size:12px;padding:0 7px}
+.planning-compact-main .planning-toolbar-actions{display:flex;gap:6px;flex-shrink:0}
+.planning-compact-main .planning-toolbar-actions>.planning-secondary-action,.planning-compact-main .planning-toolbar-actions>.planning-primary-action{height:34px;min-height:34px;padding:0 9px;gap:5px;font-size:12px}
+.planning-compact-main .planning-toolbar-actions>.pool{background:#f3f8ff;border-color:#d7e7fa;color:#356b9f}
+.planning-transfer-menu{position:relative}
+.planning-transfer-menu>summary{display:flex;align-items:center;justify-content:center;gap:5px;height:34px;padding:0 9px;list-style:none;cursor:pointer;border:1px solid #ffe0c9;border-radius:6px;color:#d95e00;background:#fff9f5;font-size:12px}
+.planning-transfer-menu>summary::-webkit-details-marker{display:none}
+.planning-transfer-menu>div{position:absolute;top:40px;right:0;z-index:35;display:grid;min-width:160px;padding:5px;border:1px solid #dfe6ee;border-radius:8px;background:white;box-shadow:0 8px 24px #17304d22}
+.planning-transfer-menu button{padding:10px 12px;border:0;background:white;color:#2d4765;text-align:left;cursor:pointer;font-size:12px}
+.planning-transfer-menu button:hover{background:#fff2e6;color:#da5b00}
+.planning-compact-main>.planning-schedule-workspace{flex:1;min-height:0}
+.planning-compact-main .planning-schedule-board{min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.planning-compact-main .planning-inline-summary{display:flex;align-items:center;gap:18px;min-height:42px;flex:0 0 42px;padding:0 12px;border-bottom:1px solid #e2eaf3;background:#f5f9ff;overflow-x:auto}
+.planning-inline-count{display:flex;align-items:baseline;gap:5px;white-space:nowrap;flex-shrink:0;color:#50637f;font-size:12px}
+.planning-inline-count b{font-size:18px;color:#122d52}
+.planning-inline-count>span{padding:0 8px;color:#8392a6}
+.planning-inline-count>small{font-size:11px}
+.planning-compact-main .planning-schedule-board>.planning-table-scroll{min-height:0;flex:1;overscroll-behavior:contain;scrollbar-gutter:stable;overflow:auto}
+.planning-compact-main .compact-schedule-table{width:100%;min-width:1200px;table-layout:fixed;font-size:12px}
+.planning-compact-main .compact-schedule-table th{height:34px;padding:0 7px;font-size:11px;background:#f3f7fb;white-space:nowrap;z-index:2}
+.planning-compact-main .compact-schedule-table td{height:60px;min-width:0;padding:6px 7px;vertical-align:middle;line-height:1.45;border-color:#e9eef5}
+.planning-compact-main .compact-schedule-table tbody tr:nth-child(even){background:#fafcff}
+.planning-compact-main .compact-schedule-table tbody tr:hover{background:#fff9f3}
+.planning-compact-main .compact-schedule-table tbody tr:has(input:checked){background:#fff3e7}
+.planning-compact-main .compact-schedule-table .select-cell,.planning-compact-main .compact-schedule-table .production-list-sequence{min-width:0;width:30px;padding:0 4px;text-align:center}
+.planning-compact-main .compact-schedule-table .select-cell input{width:16px;height:16px;accent-color:#f97413}
+.planning-compact-main .compact-schedule-table .planning-product-link{width:100%;max-width:none;gap:2px;text-align:left}
+.planning-compact-main .compact-schedule-table .planning-product-link>strong{display:block;font-size:13px;line-height:1.35;white-space:normal;overflow-wrap:anywhere;overflow:visible;text-overflow:clip;color:#173253}
+.planning-compact-main .compact-schedule-table .planning-product-link>span{font-size:11px;line-height:1.3}
+.planning-compact-main .compact-schedule-table .planning-product-link>small{display:none}
+.planning-compact-main .compact-schedule-table td>small{font-size:10px;color:#8090a5}
+.planning-date-button{border:0;padding:2px 0;background:transparent;color:#405774;cursor:pointer;font-size:12px!important}
+.planning-date-button:hover{color:#e66b00;text-decoration:underline}
+.planning-compact-main .compact-schedule-table .planning-document-status{gap:3px}
+.planning-compact-main .compact-schedule-table .planning-document-status>span{padding:3px 5px;font-size:10px;white-space:nowrap}
+.planning-compact-main .compact-schedule-table .planning-sop-stage{font-size:10px;padding:2px 5px;line-height:14px;min-height:18px}
+.planning-compact-main .compact-schedule-table .planning-status,.planning-compact-main .compact-schedule-table .planning-flow-link{padding:4px 5px;min-height:27px;border-radius:5px;font-size:10px;display:inline-flex;justify-content:center;align-items:center;max-width:100%}
+.planning-compact-main .compact-schedule-table .planning-status strong,.planning-compact-main .compact-schedule-table .planning-flow-link strong{font-size:10px;white-space:normal}
+.planning-compact-main .compact-schedule-table .planning-material-warning,.planning-compact-main .compact-schedule-table .planning-status>small,.planning-compact-main .compact-schedule-table .planning-flow-link>small{display:none}
+.planning-compact-main .compact-schedule-table .planning-control-note{min-width:0;width:auto;max-width:none}
+.planning-compact-main .compact-schedule-table .production-note-button{border:0;background:transparent;padding:3px 0;min-height:32px;min-width:0;width:100%;text-align:left}
+.planning-compact-main .compact-schedule-table .production-note-summary strong{font-size:11px;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;white-space:normal;line-height:1.4}
+.planning-compact-main .compact-schedule-table .production-note-summary small{display:none}
+.planning-compact-main .compact-schedule-table .production-note-empty{font-size:11px;color:#99a5b3}
+.planning-compact-main .compact-schedule-table .planning-control-actions{width:78px;min-width:0;background:inherit;position:sticky;right:0}
+.planning-compact-main .compact-schedule-table th.planning-control-actions{z-index:3;background:#f3f7fb}
+.planning-compact-main .compact-schedule-table .planning-row-actions{gap:4px;display:flex;flex-wrap:nowrap}
+.planning-compact-main .compact-schedule-table .planning-row-actions button{width:28px;height:30px;padding:0;border-radius:6px;min-width:0;display:grid;place-items:center}
+.planning-scroll-footer{flex:0 0 32px;display:flex;align-items:center;gap:16px;padding:0 10px;border-top:1px solid #e0e8f1;background:white;color:#59708a;font-size:11px}
+.planning-scroll-footer b{color:#233d61}
+.planning-scroll-footer button{border:1px solid #dce6f1;border-radius:5px;padding:3px 8px;background:white;color:#375678;cursor:pointer;font-size:11px!important}
+.planning-scroll-footer small{margin-left:auto;color:#8496ab;font-size:10px}
+.planning-center-shell .planning-compact-main>.planning-selection-bar{position:static;flex-shrink:0;min-height:46px;width:100%;padding:5px 8px;border-radius:6px;box-shadow:none}
+.planning-center-shell .planning-compact-main>.planning-selection-bar>div{min-width:110px}
+.planning-center-shell .planning-compact-main>.planning-selection-bar button{font-size:11px;white-space:nowrap}
+.planning-center-shell .planning-compact-main>.planning-orders-view,.planning-center-shell .planning-compact-main>.planning-preparation-view,.planning-center-shell .planning-compact-main>.planning-history-view,.planning-center-shell .planning-compact-main>.planning-changes-view,.planning-center-shell .planning-compact-main>.planning-month-view{flex:1;min-height:0;overflow:auto}
+.planning-detail-info{display:grid;grid-template-columns:1fr 1fr;gap:20px 24px}
+.planning-detail-info>div{display:flex;flex-direction:column;gap:7px;min-width:0}
+.planning-detail-info>div>span{font-size:12px;color:#7a8da3}
+.planning-detail-info strong{font-size:14px;overflow-wrap:anywhere}
+.planning-detail-info small{font-size:12px;line-height:1.6;color:#7588a0}
+.planning-detail-info>nav{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:12px;border-top:1px solid #e4ebf3;padding-top:16px}
+.planning-detail-info a,.planning-detail-link{color:#d8660d;font-size:12px}
+.planning-detail-info button{border:1px solid #dae4ee;border-radius:6px;background:white;color:#395673;padding:7px 10px;cursor:pointer}
+.planning-detail-info .planning-print-status{display:flex;align-items:center;gap:12px}
+.planning-detail-info .planning-print-status small{display:block}
+.planning-detail-info .planning-print-materials{display:flex;gap:5px;font-size:11px;color:#148b68}
+.planning-detail-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.planning-carryover-list>article,.planning-wip-detail-list>article{padding:12px 0;display:flex;align-items:center;flex-wrap:wrap;gap:12px;border-bottom:1px solid #e6edf5;font-size:12px}
+.planning-carryover-list>article>span:first-child{flex:1;min-width:220px;display:flex;flex-direction:column;gap:5px}
+.planning-carryover-list strong{font-size:14px;overflow-wrap:anywhere}
+.planning-carryover-list em,.planning-carryover-list small{font-size:11px;font-style:normal;color:#7890a9}
+.planning-carryover-list a,.planning-carryover-list button{color:#d86815;font-size:12px}
+.planning-carryover-list button{border:1px solid #f0dccb;border-radius:5px;background:#fff9f3;padding:7px;cursor:pointer}
+.planning-wip-detail-list>article{align-items:stretch;flex-direction:column;gap:6px}
+.planning-detail-description{color:#7a8da3;font-size:12px;line-height:1.6}
+.planning-wip-detail-list{margin-bottom:20px}
+@media(max-width:1200px){
+ .planning-compact-main>.planning-titlebar{grid-template-columns:32px 170px minmax(0,1fr) 32px}
+ .planning-compact-main .planning-titlebar>nav button{padding:0 7px;font-size:11px}
+ .planning-compact-main .planning-weekbar{overflow-x:auto}
+ .planning-center-shell .planning-week-switcher.compact{min-width:650px}
+ .planning-compact-main .planning-toolbar-actions>.planning-secondary-action,.planning-compact-main .planning-toolbar-actions>.planning-primary-action{padding:0 6px;font-size:11px}
+ .planning-center-shell .planning-compact-main .planning-toolbar>select{width:90px}
+}
+.planning-compact-main .compact-schedule-table .planning-control-note{right:78px}
+.planning-center-shell .planning-week-switcher.compact>button.history{flex-basis:80px;gap:5px;padding:3px 7px}
+.planning-center-shell .planning-week-switcher.compact>button.history>span{min-width:40px;overflow:visible}
+.planning-center-shell .planning-compact-main .compact-schedule-table .planning-control-note{right:78px;width:110px;min-width:0;max-width:none}
+.planning-center-shell .planning-compact-main .compact-schedule-table .planning-control-actions{right:0;width:78px;min-width:0;max-width:none}

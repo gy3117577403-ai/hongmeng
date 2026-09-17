@@ -3,6 +3,7 @@
 import { AlertTriangle, CheckCircle2, ChevronDown, Link2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ProductionWeekReconciliationDTO } from '@/types';
+import { PlanningDetailDrawer } from './PlanningDetailDrawer';
 
 type ReconciliationResponse = {
   ok: boolean;
@@ -16,16 +17,19 @@ export function WeekReconciliationBar({
   checkExecutionEligibility = false,
   refreshSignature,
   className = '',
+  compact = false,
 }: {
   weekStartDate?: string | null;
   weekEndDate?: string | null;
   checkExecutionEligibility?: boolean;
   refreshSignature?: string | number | null;
   className?: string;
+  compact?: boolean;
 }) {
   const [data, setData] = useState<ProductionWeekReconciliationDTO | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     if (!weekStartDate) {
@@ -35,6 +39,7 @@ export function WeekReconciliationBar({
     }
     const controller = new AbortController();
     setLoading(true);
+    setData(null);
     setError('');
     const params = new URLSearchParams({ weekStart: weekStartDate });
     if (checkExecutionEligibility) params.set('checkExecution', '1');
@@ -59,6 +64,15 @@ export function WeekReconciliationBar({
   }, [checkExecutionEligibility, refreshSignature, weekStartDate]);
 
   if (!weekStartDate) return null;
+  if (compact) return <>
+    <button type="button" className={`planning-context-chip ${loading ? '' : data?.aligned ? 'aligned' : 'attention'}`} onClick={() => setOpen(true)} aria-haspopup="dialog">
+      {data?.aligned ? <CheckCircle2 size={14} /> : <Link2 size={14} />}
+      {loading ? '对账中…' : error ? '对账暂不可用' : data?.aligned ? '数据已对齐' : data ? `关联差异 ${data.differenceCount}` : '待对账'}
+    </button>
+    {open && <PlanningDetailDrawer title="生产周协同对账" subtitle={`${weekStartDate} 至 ${weekEndDate || ''}`} onClose={() => setOpen(false)}>
+      <WeekReconciliationBar weekStartDate={weekStartDate} weekEndDate={weekEndDate} checkExecutionEligibility={checkExecutionEligibility} refreshSignature={refreshSignature} />
+    </PlanningDetailDrawer>}
+  </>;
   if (loading && !data) {
     return <section className={`hm-week-reconciliation loading ${className}`.trim()} aria-live="polite">
       <Link2 size={15} aria-hidden="true" />

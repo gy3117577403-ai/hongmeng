@@ -1,0 +1,12 @@
+.drawer{position:fixed;inset:0;margin:0;padding:0;width:100vw;height:100dvh;max-width:none;max-height:none;border:0;background:transparent;color:#17304d;overflow:hidden}
+.drawer[open]{display:flex;justify-content:flex-end}
+.drawer::backdrop{background:rgba(27,45,70,.28)}
+.panel{width:min(780px,94vw);height:100%;background:#fff;box-shadow:-12px 0 40px #17304d24;display:flex;flex-direction:column;animation:enter .16s ease-out}
+.panel>header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:22px 24px;border-bottom:1px solid #e4ebf3;flex-shrink:0}
+.panel h2{font-size:20px;line-height:1.4;margin:0}
+.panel p{margin:6px 0 0;font-size:12px;color:#73859a}
+.panel>header button{display:grid;place-items:center;width:36px;height:36px;border:1px solid #dce5ef;border-radius:8px;background:white;cursor:pointer;color:#49617c}
+.body{padding:20px 24px;overflow:auto;min-height:0;flex:1;overscroll-behavior:contain}
+.body button:focus-visible,.body a:focus-visible,.panel>header button:focus-visible{outline:2px solid #ff790b;outline-offset:2px}
+@keyframes enter{from{transform:translateX(24px);opacity:.5}to{transform:translateX(0);opacity:1}}
+@media(prefers-reduced-motion:reduce){.panel{animation:none}}

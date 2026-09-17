@@ -174,7 +174,7 @@ test('WIP continuation is projected into planning, production execution and proc
 
   assert.match(planningApi, /loadWipContinuations/);
   assert.match(planningApi, /wipContinuations:\s*visibleWipContinuations/);
-  assert.match(planningUi, /className="planning-wip-branch"/);
+  assert.match(planningUi, /PlanningDetailDrawer title="半成品续作"/);
   assert.doesNotMatch(planningUi, /className="planning-wip-lane"/);
   assert.match(productionService, /serializeWipExecutionOrder/);
   assert.match(productionService, /includeSupersededHistory:\s*true/);
