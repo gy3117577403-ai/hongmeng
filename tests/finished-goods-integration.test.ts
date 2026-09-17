@@ -10,6 +10,47 @@ import { fgStock, physicalStock, type FgInput } from '../lib/finished-goods-doma
 const { createFixture } = require('../scripts/seed-finished-goods-smoke.cjs');
 const skip = process.env.RUN_DB_INTEGRATION !== '1';
 
+test('warehouse quantity columns use lifetime facts, distinct lots and preserve archived logistics', { skip }, async () => {
+  process.env.FINISHED_GOODS_QA_ALLOW = 'disposable-finished-goods-runtime';
+  const fixture = await createFixture(prisma, 2);
+  const id = fixture.lots[0].id;
+  const perform = (input: FgInput) => mutateFinishedGoods(input, fixture.user, randomUUID());
+  const lot = () => prisma.fgLot.findUniqueOrThrow({where:{id}});
+  const change = async (action: string, quantity: number) => perform({action,lotId:id,version:(await lot()).version,quantity,checked:true,reason:'数量口径验收'});
+  await change('RECEIVE',20);
+  const first = await perform({action:'QUICK_SHIP',lotId:id,version:(await lot()).version,quantity:5,checked:true,waybills:['ARCHIVED-'+fixture.marker]});
+  await prisma.fgShipment.update({where:{id:String(first.id)},data:{shippedAt:new Date('2020-01-01T01:00:00Z')}});
+  const second = await perform({action:'QUICK_SHIP',lotId:id,version:(await lot()).version,quantity:4,checked:true});
+  await change('HOLD',6);
+  await change('BLOCK',2);
+  const current = await loadFinishedGoods({q:fixture.lots[0].workOrderCode,date:fixture.date});
+  assert.equal(current.rows.length,1,'partial handovers must not duplicate a stock lot');
+  const row=current.rows[0];
+  assert.equal(row.pending,0); assert.equal(row.onHand,11); assert.equal(row.available,3);
+  assert.equal(row.held,6); assert.equal(row.blocked,2); assert.equal(row.shippedQuantity,9);
+  assert.equal(row.receivedQuantity,20); assert.ok(row.lastReceivedAt); assert.ok(row.lastShippedAt);
+  const history=await loadFinishedGoods({view:'history',scope:'all',q:fixture.lots[0].workOrderCode});
+  assert.equal(history.rows.length,2); assert.deepEqual(history.rows.map(r=>r.quantity).sort(),[4,5]);
+  assert.ok(history.rows.every(r=>r.shippedQuantity===9&&r.onHand===11));
+  const oldDate=await loadFinishedGoods({view:'stock',date:'2020-01-01',q:fixture.lots[0].workOrderCode});
+  assert.equal(oldDate.rows[0].shippedQuantity,9,'date filters cannot change lifetime shipped quantity');
+  await assert.rejects(change('QUICK_SHIP',4),/数量超过/);
+  assert.equal((await lot()).available,3);
+  const original=await prisma.fgShipment.findUniqueOrThrow({where:{id:String(first.id)}});
+  await perform({action:'SAVE_LOGISTICS',shipmentId:original.id,shipmentVersion:original.version,note:'只改备注'});
+  const updated=await prisma.fgShipment.findUniqueOrThrow({where:{id:original.id}});
+  assert.deepEqual(updated.waybills,original.waybills); assert.deepEqual(updated.shippedAt,original.shippedAt);
+  const secondLine=await prisma.fgShipmentLine.findFirstOrThrow({where:{shipmentId:String(second.id)}});
+  await perform({action:'RETURN',lineId:secondLine.id,quantity:2,reason:'退货独立实物',checked:true});
+  const returned=await loadFinishedGoods({view:'stock',q:fixture.lots[0].workOrderCode});
+  assert.equal(returned.rows.find(r=>r.lotId===id)!.shippedQuantity,9,'returns must not rewrite dispatch facts');
+  assert.equal(returned.rows.find(r=>r.sourceKind==='RETURN')!.onHand,2);
+  await change('UNRECEIVE',1);
+  const reversed=await loadFinishedGoods({view:'stock',q:fixture.lots[0].workOrderCode});
+  assert.equal(reversed.rows.find(r=>r.lotId===id)!.receivedQuantity,19);
+  assert.equal(reversed.rows.find(r=>r.lotId===id)!.pending,1);
+});
+
 test('finished goods simple operations preserve stock and dispense with external shipping paperwork', { skip }, async t => {
   process.env.FINISHED_GOODS_QA_ALLOW = 'disposable-finished-goods-runtime';
   const fixture = await createFixture(prisma, 8);

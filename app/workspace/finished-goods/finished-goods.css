@@ -25,7 +25,7 @@ main.fg-shell.hm-workbench-root.hm-workbench-root { --hm-shell-header:0px; paddi
 .fg-menu>label { display:flex; align-items:center; justify-content:space-between; padding:8px; font-size:12px; gap:8px; }
 .fg-menu>label>select,.fg-menu>label>input { max-width:125px; }
 .fg-table-scroll { border:0; border-radius:0; background:#fff; }
-.fg-table { width:1066px; min-width:1066px; font-size:13px; }
+.fg-table { width:100%; min-width:1200px; font-size:13px; }
 .fg-table th { height:32px; font-size:12px; padding:0 8px; background:#f1f6fb; }
 .fg-table td { height:32px; padding:0 8px; font-size:13px; }
 .fg-table td input,.fg-table td select { font-size:13px; height:26px; }
@@ -65,8 +65,35 @@ main.fg-shell.hm-workbench-root.hm-workbench-root { --hm-shell-header:0px; paddi
 .fg-detail-times>span { overflow-wrap:anywhere; }
 .fg-shell>.fg-notice { position:absolute; right:22px; top:137px; z-index:30; max-width:550px; margin:0; box-shadow:0 4px 14px #17304d14; }
 .fg-dialog .fg-notice { position:static; }
-/* Compact stock operations: quantities and waybills stay on the workbench. */
-.fg-table { width:1122px; min-width:1122px; }
+/* Quantity facts stay visible while specification receives all remaining width. */
+.fg-table { width:100%; min-width:1200px; }
+.fg-col-select { width:28px; }
+.fg-col-order { width:96px; }
+.fg-col-customer { width:100px; }
+.fg-col-pending { width:64px; }
+.fg-col-stock,.fg-col-shipped { width:70px; }
+.fg-col-process { width:82px; }
+.fg-col-received,.fg-col-dispatched { width:104px; }
+.fg-col-status { width:80px; }
+.fg-col-actions { width:160px; }
+.fg-table td { height:32px; padding:2px 6px; }
+.fg-table th { padding:0 6px; }
+.fg-table th:nth-child(n+5):nth-child(-n+8),.fg-table td:nth-child(n+5):nth-child(-n+8) { text-align:right; font-variant-numeric:tabular-nums; }
+.fg-table td.fg-spec-cell { white-space:normal; overflow:visible; }
+.fg-shell .fg-specification { white-space:normal; overflow:visible; text-overflow:clip; overflow-wrap:anywhere; line-height:1.45; font-size:13px; }
+.fg-table .fg-quantity button { display:block; width:100%; min-height:27px; border:0; border-radius:0; padding:0; background:none; text-align:right; font-size:13px; font-variant-numeric:tabular-nums; }
+.fg-quantity button small { display:block; font-size:10px; color:#7c8d9f; line-height:13px; }
+.fg-process-quantity { display:inline-flex; width:calc(100% - 16px); position:relative; align-items:center; }
+.fg-process-quantity .fg-inline-number { width:100%; border:1px solid #dfe8ef; background:#fff; padding:2px 4px; text-align:right; appearance:textfield; }
+.fg-process-quantity input::-webkit-inner-spin-button,.fg-process-quantity input::-webkit-outer-spin-button { appearance:none; margin:0; }
+.fg-process-quantity .fg-saved { position:absolute; right:0; top:-5px; background:#fff; }
+.fg-unit { display:inline; font-size:10px; margin-left:3px; color:#8494a4; }
+.fg-shell .fg-actions>button.fg-secondary { color:#71849a; }
+.fg-shell .fg-actions { flex-wrap:nowrap; }
+.fg-status.partial i { background:#ee9c22; }
+.fg-table .fg-status.partial { color:#ad690e; }
+.fg-dock-identity span { white-space:normal; overflow-wrap:anywhere; }
+.fg-comfortable .fg-table td { height:44px; }
 .fg-work-method { display:flex; align-items:center; gap:6px; white-space:nowrap; color:#64748b; font-size:12px; }
 .fg-work-method select { max-width:105px; }
 .fg-toolbar .fg-primary { margin-left:0; }

@@ -79,7 +79,8 @@ function logistics(input: FgInput, base?: FgShipment) {
   };
 }
 async function checkWaybillCustomer(tx: Tx, details: ReturnType<typeof logistics>, input: FgInput, shipmentId?: string): Promise<void> {
-  if (!details.waybills.length || details.method !== 'COURIER' || input.waybillChecked === true) return;
+  // Archived waybills remain intact but no longer block stock operations without waybill edits.
+  if (!('waybills' in input) || !details.waybills.length || details.method !== 'COURIER' || input.waybillChecked === true) return;
   const matches = await tx.fgShipment.findMany({
     where: { ...(shipmentId ? { id: { not: shipmentId } } : {}), customerName: { not: details.customerName }, status: { in: ['DRAFT', 'RESERVED', 'SHIPPED'] }, OR: details.waybills.map(waybill => ({ waybills: { array_contains: [waybill] } })) },
     select: { customerName: true }, take: 3,
@@ -420,7 +421,7 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
     if (allHistory && q) shipmentWhere.OR = [{ number: { contains: q, mode: 'insensitive' } }, { customerName: { contains: q, mode: 'insensitive' } }, { lines: { some: { lot: { OR: [{ workOrderCode: { contains: q.replace('·', '-'), mode: 'insensitive' } }, { specification: { contains: q, mode: 'insensitive' } }, { productName: { contains: q, mode: 'insensitive' } }] } } } }, { id: { in: waybillMatches.map(s => s.id) } }];
     const shipped = await tx.fgShipment.findMany({ where: shipmentWhere, include: shipmentInclude, orderBy: [{ shippedAt: 'desc' }, { id: 'asc' }], take: allHistory ? 20001 : undefined });
     if (shipped.length > 20000) throw new FinishedGoodsError('历史记录较多，请按日期范围查询');
-    const batchRows = await tx.fgDispatchBatch.findMany({ where: { businessDate: { in: [...new Set([date, workDate])] } }, include: { shipments: { include: { lines: true } } }, orderBy: { sequence: 'asc' } });
+    const batchRows = await tx.fgDispatchBatch.findMany({ where: { businessDate: { in: [...new Set([date, workDate])] } }, include: { shipments: { include: { lines: { include: { lot: { select: { unit: true } } } } } } }, orderBy: { sequence: 'asc' } });
     const cutover = await tx.fgCutover.findUnique({ where: { id: 'finished-goods-v2' } });
     const closedCount = await tx.fgLot.count({ where: { legacyClosedAt: { not: null }, legacyQuantity: { gt: 0 } } });
     const legacyLots = view === 'legacy' ? await tx.fgLot.findMany({ where: { legacyClosedAt: { not: null }, legacyQuantity: { gt: 0 } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] }) : [];
@@ -439,6 +440,7 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
       productName: lot.productName, specification: lot.specification, unit: lot.unit, customerName: lot.customerName, ownerType: lot.ownerType,
       sourceKind: lot.sourceKind, sourceQuantity: lot.sourceQuantity, location: lot.location, note: lot.note, openingReview: lot.openingReview,
       legacyClosedAt: lot.legacyClosedAt?.toISOString() || null, legacyQuantity: lot.legacyQuantity,
+      onHand: physicalStock(lot), shippedQuantity: 0, receivedQuantity: 0, receiptCount: 0, lastReceivedAt: null, lastShippedAt: null,
       version: lot.version, createdAt: lot.createdAt.toISOString(), receivedAt: lot.receivedAt?.toISOString() || null, status: '', blockedReason: block(lot),
       quantity: lot.available || lot.pending, returned: 0, carrier: '', waybills: [], method: 'COURIER', recipient: '', phone: '', address: '',
       boxes: 1, handoverName: '', batchId: '', batchNumber: '', shippedAt: null, holdDueDate: null, holdReason: '', otherDrafts: 0, shipmentLineCount: 1, shipmentNote: '', externalReference: '',
@@ -456,7 +458,10 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
     const legacyRows: FgRow[] = legacyLots.map(lot => ({ ...base(lot), quantity: lot.legacyQuantity, status: 'legacy', blockedReason: '' }));
     const receiptRows: FgRow[] = receipts.map(entry => ({ ...base(entry.lot), id: entry.id, quantity: Math.abs(entry.quantity), receivedAt: entry.createdAt.toISOString(), status: 'received', note: entry.reason, blockedReason: '' }));
     const commonFilter = (row: FgRow): boolean => (!q || [row.workOrderCode, fgShortWorkOrder(row.workOrderCode), row.productName, row.specification, row.customerName, row.location, row.shipmentNumber, row.waybills.join(' ')].join(' ').toLocaleLowerCase().includes(q)) && (!input.batchId || row.batchId === input.batchId);
-    let sourceRows = view === 'legacy' ? legacyRows : view === 'receipts' ? receiptRows : view === 'history' ? shippedRows : view === 'stock' || view === 'holds' ? stockRows : [...stockRows.filter(r => r.status !== 'opening' && r.status !== 'held'), ...shippedRows];
+    // The workbench is one row per source lot. History/batches retain every handover line.
+    const queueLots = new Map(stockRows.map(row => [row.lotId, row]));
+    for (const row of shippedRows) if (!queueLots.has(row.lotId)) queueLots.set(row.lotId, row);
+    let sourceRows = view === 'legacy' ? legacyRows : view === 'receipts' ? receiptRows : view === 'history' || filter === 'shipped' || filter === 'missing' ? shippedRows : view === 'stock' || view === 'holds' ? stockRows : view === 'batches' ? [...stockRows, ...shippedRows] : [...queueLots.values()];
     if (view === 'holds') sourceRows = sourceRows.filter(r => r.held > 0);
     if (view === 'stock' && input.date && input.scope === 'range') sourceRows = sourceRows.filter(r => r.receivedAt && new Date(r.receivedAt) >= start && new Date(r.receivedAt) < end);
     const matching = sourceRows.filter(commonFilter);
@@ -473,17 +478,40 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
         if (row.reserved > 0) counts.reserved++;
       }
     }
+    counts.shipped = shippedRows.filter(commonFilter).length;
+    counts.missing = shippedRows.filter(row => commonFilter(row) && row.method === 'COURIER' && !row.waybills.length).length;
     let rows = matching;
     if (filter !== 'all') rows = rows.filter(row => filter === 'processing' ? ['ready','pending','reserved'].includes(row.status) : filter === 'missing' ? row.status === 'shipped' && row.method === 'COURIER' && !row.waybills.length : filter === 'pending' ? row.status !== 'shipped' && row.pending > 0 && !row.openingReview : filter === 'ready' ? row.status !== 'shipped' && row.available > 0 && !row.blockedReason && !row.openingReview : filter === 'held' ? row.status !== 'shipped' && row.held > 0 : filter === 'blocked' ? row.status !== 'shipped' && (row.blocked > 0 || Boolean(row.blockedReason)) : row.status === filter);
     if (view === 'batches') rows.sort((a, b) => a.batchNumber.localeCompare(b.batchNumber) || a.workOrderCode.localeCompare(b.workOrderCode));
     else if (view === 'queue') { const rank: Record<string,number> = { pending:0,ready:1,reserved:1,shipped:2,blocked:4,restricted:4 }; rows.sort((a,b) => (rank[a.status] ?? 5)-(rank[b.status] ?? 5)); }
     const total = rows.length; const page = Math.max(1, Math.min(Math.ceil(total / pageSize) || 1, Math.trunc(input.page || 1)));
+    const pageRows = rows.slice((page - 1) * pageSize, page * pageSize);
+    const lotIds = [...new Set(pageRows.filter(row => !row.legacyClosedAt).map(row => row.lotId))];
+    // Lifetime quantity facts must not depend on the page's date or shipment filters.
+    const [actualLines, receiptFacts] = await Promise.all([
+      tx.fgShipmentLine.findMany({ where: { lotId: { in: lotIds }, shipment: { status: 'SHIPPED' } }, select: { lotId: true, quantity: true, shipment: { select: { shippedAt: true } } } }),
+      tx.fgLedger.groupBy({ by: ['lotId','kind'], where: { lotId: { in: lotIds }, kind: { in: ['RECEIVE','OPENING','RETURN','REWORK_RETURN','UNRECEIVE'] } }, _sum: { quantity: true }, _count: { _all: true }, _max: { createdAt: true } }),
+    ]);
+    const totals = new Map<string, { shipped: number; received: number; receipts: number; receivedAt: Date | null; shippedAt: Date | null }>();
+    const totalFor = (id: string) => { if (!totals.has(id)) totals.set(id, { shipped: 0, received: 0, receipts: 0, receivedAt: null, shippedAt: null }); return totals.get(id)!; };
+    for (const line of actualLines) { const sum = totalFor(line.lotId); sum.shipped += line.quantity; if (line.shipment.shippedAt && (!sum.shippedAt || line.shipment.shippedAt > sum.shippedAt)) sum.shippedAt = line.shipment.shippedAt; }
+    for (const fact of receiptFacts) { const sum = totalFor(fact.lotId); sum.received += (fact.kind === 'UNRECEIVE' ? -1 : 1) * (fact._sum.quantity || 0); if (fact.kind !== 'UNRECEIVE') { sum.receipts += fact._count._all; if (fact._max.createdAt && (!sum.receivedAt || fact._max.createdAt > sum.receivedAt)) sum.receivedAt = fact._max.createdAt; } }
+    for (const row of pageRows) {
+      const sum = totalFor(row.lotId);
+      row.shippedQuantity = sum.shipped;
+      row.receivedQuantity = sum.received + (row.sourceKind === 'ALLOCATION' && !row.legacyClosedAt ? row.sourceQuantity : 0);
+      row.receiptCount = sum.receipts;
+      row.lastReceivedAt = sum.receivedAt?.toISOString() || row.receivedAt;
+      row.lastShippedAt = sum.shippedAt?.toISOString() || null;
+    }
     const batchDTO = (b: typeof batchRows[number]) => {
       const actual = b.shipments.filter(s => s.status === 'SHIPPED');
-      return { id: b.id, number: b.number, businessDate: b.businessDate, sequence: b.sequence, name: b.name, carrier: b.carrier, note: b.note, closedAt: b.closedAt?.toISOString() || null, shipped: actual.length, draft: b.shipments.filter(s => ['DRAFT','RESERVED'].includes(s.status)).length, quantity: actual.flatMap(s => s.lines).reduce((sum,l) => sum + l.quantity,0), waybillCount: new Set(actual.flatMap(s => fgWaybills(s.waybills))).size, missingWaybill: actual.filter(s => s.method === 'COURIER' && !fgWaybills(s.waybills).length).length };
+      const quantities: Record<string, number> = {};
+      for (const line of actual.flatMap(s => s.lines)) quantities[line.lot.unit] = (quantities[line.lot.unit] || 0) + line.quantity;
+      return { id: b.id, number: b.number, businessDate: b.businessDate, sequence: b.sequence, name: b.name, carrier: b.carrier, note: b.note, closedAt: b.closedAt?.toISOString() || null, shipped: actual.length, draft: b.shipments.filter(s => ['DRAFT','RESERVED'].includes(s.status)).length, quantity: actual.flatMap(s => s.lines).reduce((sum,l) => sum + l.quantity,0), quantities, waybillCount: new Set(actual.flatMap(s => fgWaybills(s.waybills))).size, missingWaybill: actual.filter(s => s.method === 'COURIER' && !fgWaybills(s.waybills).length).length };
     };
     return {
-      rows: rows.slice((page - 1) * pageSize, page * pageSize), total, page, pageSize, date, counts,
+      rows: pageRows, total, page, pageSize, date, counts,
       stats: { pending: lots.reduce((s, l) => s + l.pending, 0), physical: lots.reduce((s, l) => s + physicalStock(l), 0),
         available: lots.reduce((s, l) => s + l.available, 0), reserved: lots.reduce((s, l) => s + l.reserved, 0), held: lots.reduce((s, l) => s + l.held, 0), blocked: lots.reduce((s, l) => s + l.blocked, 0),
         shipped: shippedRows.reduce((s, r) => s + r.quantity, 0), shipmentCount: shipped.length, batchCount: new Set(shipped.map(s => s.batchId).filter(Boolean)).size,

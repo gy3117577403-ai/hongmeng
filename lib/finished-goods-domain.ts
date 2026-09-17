@@ -58,8 +58,10 @@ export type FgRow = Stock & {
   address: string; boxes: number; handoverName: string; batchId: string; batchNumber: string; shippedAt: string | null;
   holdDueDate: string | null; holdReason: string; otherDrafts: number; shipmentLineCount: number; shipmentNote: string; externalReference: string;
   legacyClosedAt: string | null; legacyQuantity: number;
+  onHand: number; shippedQuantity: number; receivedQuantity: number; receiptCount: number;
+  lastReceivedAt: string | null; lastShippedAt: string | null;
 };
-export type FgBatchDTO = { id: string; number: string; businessDate: string; sequence: number; name: string; carrier: string; note: string; closedAt: string | null; shipped: number; draft: number; quantity: number; waybillCount: number; missingWaybill: number };
+export type FgBatchDTO = { id: string; number: string; businessDate: string; sequence: number; name: string; carrier: string; note: string; closedAt: string | null; shipped: number; draft: number; quantity: number; quantities: Record<string, number>; waybillCount: number; missingWaybill: number };
 export type FgWorkbench = {
   rows: FgRow[]; total: number; page: number; pageSize: number; date: string;
   counts: Record<string, number>; stats: { pending: number; physical: number; available: number; reserved: number; held: number; blocked: number; shipped: number; shipmentCount: number; batchCount: number; missingWaybill: number; holdDue: number };
