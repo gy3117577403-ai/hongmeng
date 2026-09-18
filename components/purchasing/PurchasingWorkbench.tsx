@@ -190,6 +190,7 @@ export default function PurchasingWorkbench({
   initialRecord,
   initialCreate = false,
   initialTask = "",
+  initialSource = "NORMAL",
 }: {
   user: CurrentUserDTO;
   initialData: PcWorkbench;
@@ -197,6 +198,7 @@ export default function PurchasingWorkbench({
   initialRecord: string;
   initialCreate?: boolean;
   initialTask?: string;
+  initialSource?: string;
 }) {
   const [task, setTask] = useState(initialTask);
   const [confirmDiscard, setConfirmDiscard] = useState<"form" | "push" | null>(
@@ -226,6 +228,7 @@ export default function PurchasingWorkbench({
     [search, setSearch] = useState(""),
     [query, setQuery] = useState("");
   const [filters, setFilters] = useState({
+      source: initialSource,
       settlement: "",
       urgency: "",
       supplierId: "",
@@ -782,6 +785,11 @@ export default function PurchasingWorkbench({
           version: r.version,
           quantity: Number(form["quantity:" + r.id]),
         }));
+      if (action === "RECEIVE") {
+        payload.accepted = form.accepted === "1";
+        payload.fitConfirmed = form.fitConfirmed === "1";
+        payload.continuityConfirmed = form.continuityConfirmed === "1";
+      }
       if (
         [
           "PAY",
@@ -894,8 +902,10 @@ export default function PurchasingWorkbench({
         )}
         {line &&
           all(["DRAFT", "RETURNED", "WITHDRAWN"]) &&
+          rows.every(r => !r.fixtureId) &&
           rows.length === 1 &&
           btn("EDIT_REQUEST", "修改并提交", true)}
+        {line && all(["RETURNED", "WITHDRAWN"]) && rows.some(r => !!r.fixtureId) && <a className="pc-primary" href="/workspace/quality-fixtures?view=plans">返回治具需求重新申购</a>}
         {line &&
           all(["PENDING", "DRAFT", "RETURNED"]) &&
           btn("WITHDRAW_LINES", "撤回申请")}
@@ -1003,6 +1013,11 @@ export default function PurchasingWorkbench({
             <span id="pc-nav-trigger" />
             采购工作台 <span>采购闭环管理</span>
           </h1>
+          <div className="pc-actions" style={{ marginTop: 10 }}>
+            <button aria-pressed={filters.source === "NORMAL"} onClick={() => changeFilter("source", "NORMAL")}>普通采购</button>
+            <button aria-pressed={filters.source === "FIXTURE"} onClick={() => changeFilter("source", "FIXTURE")}>治具申购</button>
+            {filters.source === "FIXTURE" && <a href="/workspace/quality-fixtures?view=fixtures">进入治具库 →</a>}
+          </div>
         </div>
         <div className="pc-actions">
           <button
@@ -1023,10 +1038,10 @@ export default function PurchasingWorkbench({
           )}
           <button
             className="pc-primary"
-            onClick={() => void open("SAVE_REQUEST")}
+            onClick={() => filters.source === "FIXTURE" ? window.location.assign("/workspace/quality-fixtures?view=plans") : void open("SAVE_REQUEST")}
           >
             <Plus size={17} />
-            发起请购
+            {filters.source === "FIXTURE" ? "从治具需求申购" : "发起请购"}
           </button>
         </div>
       </header>
@@ -2453,6 +2468,16 @@ export default function PurchasingWorkbench({
                     <Field label="收货人">{userSelect("receiverId")}</Field>
                     <Field label="仓库">{input("warehouse")}</Field>
                     <Field label="库位">{input("location")}</Field>
+                    {dialog.lines.some(l => !!l.fixtureId) && <>
+                      <Field label="治具验收状态">{select("fixtureDisposition", { HELD: "待组装 / 待验证", AVAILABLE: "已验证，可用入库" })}</Field>
+                      <Field label="验收说明">{input("acceptanceNote")}</Field>
+                      <Field label="实物验收">{select("accepted", { "": "请选择", "1": "已核对型号、数量及实物" })}</Field>
+                      {form.fixtureDisposition === "AVAILABLE" && <>
+                        <Field label="对插适配">{select("fitConfirmed", { "": "请选择", "1": "验证通过" })}</Field>
+                        <Field label="导通验证">{select("continuityConfirmed", { "": "请选择", "1": "验证通过" })}</Field>
+                      </>}
+                      <p className="pc-banner pc-wide">治具收货直接计入治具库；待组装、待验证库存不计入可用量。</p>
+                    </>}
                     {dialog.lines.map((l) => (
                       <Field
                         key={l.id}
@@ -2487,6 +2512,7 @@ export default function PurchasingWorkbench({
                     <Field label="退货数量">
                       {input("quantity", "number")}
                     </Field>
+                    {dialog.lines[0]?.fixtureId && <Field label="治具退货来源">{select("fixtureDisposition", { AVAILABLE: "可用库存", HELD: "待验证库存", REPAIR: "维修中库存" })}</Field>}
                     <div className="pc-banner pc-wide">
                       关联资金单仍在审批或尚有未付款余额时，需先在详情中撤回资金单或由财务关闭未付余额。已领用物品先退库。
                     </div>

@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import { assertFixturePrintReady, lockFixtureBusiness } from '@/lib/quality-fixture-service';
+import { FixtureError } from '@/lib/quality-fixture-domain';
 import { loadReportingWipSources, type ReportingWipSource } from '@/lib/reporting-source-context';
 import {
   Prisma,
@@ -41,6 +43,7 @@ export class WorkOrderQrServiceError extends Error {
 }
 
 export type WorkOrderTravelerSnapshot = {
+  documentApproval?: Awaited<ReturnType<typeof assertFixturePrintReady>>;
   documentOrientations?: Record<string, { revision: number; pageRotations: Record<string, number> }>;
   workOrderId: string;
   workOrderCode: string;
@@ -777,7 +780,38 @@ export async function loadWorkOrderTravelerPrintReadiness(input: {
   }
   const warningsByWorkOrder = await loadQualityWarningSnapshots(workOrderIds);
   const orderById = new Map(orders.map(order => [order.id, order]));
-  return workOrderIds.map(id => buildTravelerPrintReadiness(orderById.get(id)!, warningsByWorkOrder.get(id) || []));
+  return await Promise.all(workOrderIds.map(async id => {
+    const value = buildTravelerPrintReadiness(orderById.get(id)!, warningsByWorkOrder.get(id) || []);
+    try {
+      const approved = await requireApprovedDocuments(prisma, id);
+      const drawing = approved.drawingFiles[0];
+      if (printableSourceFormat(drawing.name, drawing.mimeType))
+        value.drawing = { ...readyCheck("受审图纸 " + approved.revision + " 可打印"), fileId: drawing.id, fileVersion: drawing.version, fileName: drawing.name, mimeType: drawing.mimeType };
+      else value.drawing = missingResourceResult("FIXTURE_DRAWING_FORMAT", "受审图纸格式不能打印，请上传 PDF 或图片并重新审核");
+      if (value.traveler.ready) value.traveler.message += "；" + approved.fixtureLabel + "（治具状态不拦打印）";
+    } catch (e) {
+      if (!(e instanceof WorkOrderQrServiceError)) throw e;
+      const blocked = missingResourceResult(e.code, e.message);
+      value.traveler = blocked; value.drawing = blocked; value.sop = blocked;
+      value.qualityWarning = { ...value.qualityWarning, ...blocked };
+    }
+    return value;
+  }));
+}
+
+async function requireApprovedDocuments(tx: Prisma.TransactionClient, workOrderId: string, previous?: WorkOrderTravelerSnapshot["documentApproval"]) {
+  try {
+    const approved = await assertFixturePrintReady(tx, workOrderId, previous?.packageId);
+    if (previous && previous.fingerprint !== approved.fingerprint) throw new FixtureError("资料审核版本已变化，请重新生成工单", "FIXTURE_CONFLICT", 409);
+    return approved;
+  } catch (e) {
+    if (e instanceof FixtureError) throw new WorkOrderQrServiceError(e.message, e.status, e.code);
+    throw e;
+  }
+}
+export async function validateWorkOrderPrintSnapshot(tx: Prisma.TransactionClient, snapshot: WorkOrderTravelerSnapshot) {
+  if (!snapshot.documentApproval) throw new WorkOrderQrServiceError("该历史打印任务尚无两级审核快照，请先审核生产资料并重新生成工单", 409, "FIXTURE_LEGACY_PRINT");
+  await requireApprovedDocuments(tx, snapshot.workOrderId, snapshot.documentApproval);
 }
 
 export async function createWorkOrderTravelerPrints(input: {
@@ -830,7 +864,7 @@ export async function createWorkOrderTravelerPrints(input: {
     warning.printLayoutVersion = 'ASPECT_V1';
     warning.printHeaderExtraMm = qualityPrintHeaderExtraMm({ productName: order.productName, specification: order.specification, workOrderCode: order.code, businessWorkOrderCode: order.businessCode });
   }
-  const snapshots = orderedOrders.map(order => ({
+  const snapshots: WorkOrderTravelerSnapshot[] = orderedOrders.map(order => ({
     ...createSnapshot(order, warningsByWorkOrder.get(order.id) || []),
     printRendering: {
       version: 'IMAGE_PRINT_V1' as const,
@@ -847,7 +881,7 @@ export async function createWorkOrderTravelerPrints(input: {
       if (!fileId) continue;
       const file = sourceFilesForOrientation.find(candidate => candidate.id === fileId);
       const setting = file ? displayByObject.get(file.objectKey) : null;
-      snapshot.documentOrientations[fileId] = { revision: setting?.revision || 0, pageRotations: (setting?.pageRotations || {}) as Record<string, number> };
+      snapshot.documentOrientations![fileId] = { revision: setting?.revision || 0, pageRotations: (setting?.pageRotations || {}) as Record<string, number> };
     }
   }
   if (requiresSop) {
@@ -858,18 +892,21 @@ export async function createWorkOrderTravelerPrints(input: {
       throw new WorkOrderQrServiceError(invalidSop.message, 409, invalidSop.code);
     }
   }
-  if (requiresDrawing) {
-    const invalidDrawing = orderedOrders
-      .map(order => materialReadiness(order, 'drawing'))
-      .find(readiness => !readiness.ready);
-    if (invalidDrawing) {
-      throw new WorkOrderQrServiceError(invalidDrawing.message, 409, invalidDrawing.code);
-    }
-  }
-
   return prisma.$transaction(async tx => {
+    await lockFixtureBusiness(tx);
     const records: WorkOrderTravelerPrintRecord[] = [];
     for (const snapshot of snapshots) {
+      const approved = await requireApprovedDocuments(tx, snapshot.workOrderId);
+      snapshot.documentApproval = approved;
+      const drawing = approved.drawingFiles[0];
+      if (requiresDrawing && !printableSourceFormat(drawing.name, drawing.mimeType))
+        throw new WorkOrderQrServiceError("受审图纸格式不支持打印，请上传 PDF 或图片后重新审核", 409, "QR_DRAWING_UNPRINTABLE");
+      snapshot.drawingFileId = drawing.id;
+      snapshot.drawingFileVersion = drawing.version;
+      snapshot.drawingFileName = drawing.name;
+      snapshot.drawingMimeType = drawing.mimeType;
+      const orientation = await tx.documentDisplaySetting.findUnique({ where: { objectKey: drawing.objectKey } });
+      snapshot.documentOrientations![drawing.id] = { revision: orientation?.revision || 0, pageRotations: (orientation?.pageRotations || {}) as Record<string, number> };
       const ticket = await tx.workOrderQrTicket.upsert({
         where: { workOrderId: snapshot.workOrderId },
         update: {
@@ -938,6 +975,7 @@ export async function createWorkOrderTravelerPrints(input: {
               printPhotoLayout: warning.printPhotoLayout,
               attachments: warning.attachments.map(photo => ({ id: photo.id, width: photo.imageWidth, height: photo.imageHeight, orientation: photo.imageOrientation, group: photo.printGroup, printIncluded: photo.printIncluded })),
             })),
+            documentApproval: snapshot.documentApproval,
             printRendering: snapshot.printRendering,
             documentOrientations: snapshot.documentOrientations,
           })).digest('hex'),
@@ -974,7 +1012,7 @@ export async function createWorkOrderTravelerPrints(input: {
       });
     }
     return records;
-  });
+  }, { maxWait: 30000, timeout: 60000 });
 }
 
 export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promise<WorkOrderTravelerPrintRecord[]> {
@@ -998,6 +1036,10 @@ export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promi
   return Promise.all(printIds.map(async id => {
     const print = printById.get(id)!;
     const snapshot = print.snapshot as unknown as WorkOrderTravelerSnapshot;
+    await prisma.$transaction(async tx => {
+      await lockFixtureBusiness(tx);
+      await validateWorkOrderPrintSnapshot(tx, snapshot);
+    }, { maxWait: 30000, timeout: 30000 });
     snapshot.qualityWarnings = await Promise.all((snapshot.qualityWarnings || []).map(async warning => {
       if (warning.employeePath !== undefined && warning.correctiveAction !== undefined) return warning;
       const revision = await prisma.internalQualityRiskRevision.findUnique({ where: { id: warning.revisionId }, select: { snapshot: true } });
@@ -1050,13 +1092,15 @@ export async function confirmWorkOrderTravelerPrints(input: {
         .filter((value): value is WorkOrderQrPrintMaterial => (PRINT_MATERIAL_ORDER as readonly WorkOrderQrPrintMaterial[]).includes(value as WorkOrderQrPrintMaterial))
     : [];
   return prisma.$transaction(async tx => {
+    await lockFixtureBusiness(tx);
     const prints = await tx.workOrderQrPrint.findMany({
       where: { id: { in: printIds } },
-      select: { id: true },
+      select: { id: true, snapshot: true },
     });
     if (prints.length !== printIds.length) {
       throw new WorkOrderQrServiceError('部分打印记录不存在，请重新生成', 404, 'QR_PRINT_NOT_FOUND');
     }
+    for (const print of prints) await validateWorkOrderPrintSnapshot(tx, print.snapshot as unknown as WorkOrderTravelerSnapshot);
     const items = await tx.workOrderQrPrintItem.findMany({
       where: {
         printId: { in: printIds },

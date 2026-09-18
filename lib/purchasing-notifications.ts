@@ -36,6 +36,7 @@ export const PC_PUSH_LABELS: Record<string, string> = {
   TEST: "推送连接测试",
 };
 type PushRecord = {
+  source?: string;
   id: string;
   version?: number;
   kind: "line" | "fund";
@@ -254,6 +255,7 @@ export async function enqueuePurchasingPush(
   if (fundEvent) {
     const funds = await tx.pcFund.findMany({ where: { id: { in: ids } } });
     records = funds.map((f) => ({
+      source: f.source,
       id: f.id,
       version: f.version,
       kind: "fund",
@@ -278,6 +280,7 @@ export async function enqueuePurchasingPush(
       include: { request: true },
     });
     records = lines.map((l) => ({
+      source: l.request.source,
       id: l.id,
       version: l.version,
       kind: "line",
@@ -345,6 +348,7 @@ export function buildPurchasingPush(
   const count = payload.records.length;
   let body = [
     `【杭连采购｜${PC_PUSH_LABELS[action] || "采购通知"}${urgency}】`,
+    payload.records.some(r => r.source === "FIXTURE") ? "来源：治具申购（独立采购台账）" : "来源：普通采购",
     `操作人：${compact(payload.actor, 30)}`,
     `共 ${count} ${payload.records[0]?.kind === "fund" ? "张资金单" : "项物品"}`,
     ...payload.records
@@ -547,7 +551,7 @@ export async function dispatchPurchasingPush(
         .filter((u) => u.employee?.isActive && u.employee.notificationEnabled)
         .map((u) => wecomIdentity(u.employee!));
       const path = records[0]
-        ? "/workspace/purchases?record=" + encodeURIComponent(records[0].id)
+        ? "/workspace/purchases?source=" + (records[0].source || "NORMAL") + "&record=" + encodeURIComponent(records[0].id)
         : "/workspace/purchases";
       const content = buildPurchasingPush(
         row.action,

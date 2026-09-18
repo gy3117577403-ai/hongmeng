@@ -3,6 +3,8 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { cleanDrawingText, serializeDrawingLibraryFile } from '@/lib/drawing-library';
 import { synchronizeDrawingLibraryWorkOrderStatus } from '@/lib/drawing-library-lifecycle';
 import { prisma } from '@/lib/prisma';
+import { assertFixtureDrawingMutable } from '@/lib/quality-fixture-service';
+import { FixtureError } from '@/lib/quality-fixture-domain';
 import { assertCommonDrawingFileLifecycleAllowed, SopRequestError } from '@/lib/sop';
 
 export const runtime = 'nodejs';
@@ -27,6 +29,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { fileId: st
     }
     if (!Object.keys(data).length) return NextResponse.json({ ok: false, error: '没有可更新字段' }, { status: 400 });
     const result = await prisma.$transaction(async tx => {
+      if (data.categoryId) await assertFixtureDrawingMutable(tx, old.libraryItemId, old.id);
       const file = await tx.drawingLibraryFile.update({
         where: { id: old.id },
         data,
@@ -59,6 +62,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { fileId: st
     return NextResponse.json({ ok: true, file: serializeDrawingLibraryFile(result.file), sync: result.sync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof FixtureError) return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });
     if (e instanceof SopRequestError) {
       return NextResponse.json(
         { ok: false, error: e.message, message: e.message, code: e.code, detail: e.detail },
@@ -80,6 +84,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { fileId: 
     if (!file) return NextResponse.json({ ok: false, error: '图纸资料文件不存在' }, { status: 404 });
     assertCommonDrawingFileLifecycleAllowed(file, 'delete');
     const sync = await prisma.$transaction(async tx => {
+      await assertFixtureDrawingMutable(tx, file.libraryItemId, file.id);
       await tx.drawingLibraryFile.update({ where: { id: file.id }, data: { deletedAt: new Date() } });
       await tx.drawingLibraryItem.update({ where: { id: file.libraryItemId }, data: { updatedAt: new Date() } });
       const workOrderSync = await synchronizeDrawingLibraryWorkOrderStatus(tx, file.libraryItemId);
@@ -97,6 +102,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { fileId: 
     return NextResponse.json({ ok: true, sync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof FixtureError) return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });
     if (e instanceof SopRequestError) {
       return NextResponse.json(
         { ok: false, error: e.message, message: e.message, code: e.code, detail: e.detail },

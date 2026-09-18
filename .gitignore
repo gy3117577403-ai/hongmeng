@@ -23,6 +23,8 @@ tmp/bulk-original-test/
 
 # Docker/local build artifacts
 .docker/
+output/quality-fixture-qa/
+fixture-*.log
 docker-compose.override.yml
 *.tar
 *.tmp

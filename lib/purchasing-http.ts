@@ -28,6 +28,7 @@ export function purchasingError(error: unknown) {
 }
 export function purchasingQuery(p: URLSearchParams): PcQuery {
   return {
+    source: p.get("source") === "FIXTURE" ? "FIXTURE" : "NORMAL",
     view: p.get("view") || "all",
     task: p.get("task") || "",
     q: p.get("q") || "",

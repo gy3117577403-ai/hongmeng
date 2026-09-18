@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { prisma } from '../lib/prisma';
+import { approvedDocumentFixture } from './helpers/approved-document-fixture';
 import {
   confirmWorkOrderTravelerPrints,
   createWorkOrderTravelerPrints,
@@ -73,6 +74,7 @@ test(
       include: { processRoute: { include: { steps: true } } },
     });
     assert.ok(order.processRoute);
+    const cleanupDocuments = await approvedDocumentFixture(order.id, actor.id);
 
     try {
       const first = await createWorkOrderTravelerPrints({
@@ -133,6 +135,7 @@ test(
       await prisma.workOrderProcessStep.deleteMany({ where: { routeId: order.processRoute.id } });
       await prisma.workOrderProcessRoute.delete({ where: { id: order.processRoute.id } });
       await prisma.workOrder.delete({ where: { id: order.id } });
+      await cleanupDocuments();
       await prisma.user.delete({ where: { id: actor.id } });
     }
   },
@@ -241,6 +244,7 @@ test(
       include: { processRoute: { include: { steps: true } } },
     });
     assert.ok(order.processRoute);
+    const cleanupDocuments = await approvedDocumentFixture(order.id, actor.id);
 
     try {
       const [previousTraveler] = await createWorkOrderTravelerPrints({
@@ -312,6 +316,7 @@ test(
       await prisma.workOrderProcessStep.deleteMany({ where: { routeId: order.processRoute.id } });
       await prisma.workOrderProcessRoute.delete({ where: { id: order.processRoute.id } });
       await prisma.workOrder.delete({ where: { id: order.id } });
+      await cleanupDocuments();
       await prisma.drawingLibraryFile.deleteMany({ where: { libraryItemId: libraryItem.id } });
       await prisma.drawingLibraryItem.delete({ where: { id: libraryItem.id } });
       await prisma.user.delete({ where: { id: actor.id } });

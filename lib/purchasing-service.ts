@@ -8,6 +8,8 @@ import {
 import { prisma } from "@/lib/prisma";
 import { createSystemNotification } from "@/lib/system-notifications";
 import { enqueuePurchasingPush } from "@/lib/purchasing-notifications";
+import { createFixturePurchase } from "@/lib/quality-fixture-service";
+import { fixtureAvailable } from "@/lib/quality-fixture-domain";
 import {
   PurchasingError,
   pcChoice,
@@ -347,6 +349,7 @@ async function saveRequest(tx: Tx, input: PcInput, a: PcActor) {
     : null;
   if (input.requestId && !r) throw new PurchasingError("申请不存在");
   if (r) {
+    if (r.source === "FIXTURE") conflict("治具申购的型号和需求依据不可改写；请作废退回记录后从治具需求重新申购");
     editableRequest(r, a);
     pcVersion(r.version, input.version);
     if (r.deletedAt || r.status === "VOID") conflict("已作废申请不能修改");
@@ -680,6 +683,12 @@ async function purchase(tx: Tx, input: PcInput, a: PcActor) {
     if (actual >= 50000 && !input.contractNumber && !p.contractLines.length)
       throw new PurchasingError(`${p.name}单项总额达到 500 元，请填写合同编号`);
     let itemId = pcText(e.itemId || p.itemId, "关联物资", 100, false);
+    if (p.fixtureId) {
+      const fixture = await tx.qfFixture.findUnique({ where: { id: p.fixtureId } });
+      if (!fixture || itemId !== fixture.itemId) conflict("治具采购必须入对应的治具物资，不能替换到其他物资台账");
+    } else if (itemId && await tx.qfFixture.findUnique({ where: { itemId } })) {
+      conflict("治具物资须从治具库发起专用申购，普通采购不能写入治具库存");
+    }
     if (itemId) {
       const material = await tx.pcItem.findUnique({ where: { id: itemId } });
       if (!material || material.unit !== p.unit || material.spec !== p.spec)
@@ -768,6 +777,8 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
       conflict("请先结清该采购的退款");
     ps.push(p);
   }
+  if (new Set(ps.map(p => p.request.source)).size !== 1)
+    throw new PurchasingError("治具申购与普通采购须分别申请资金");
   if (new Set(ps.map(pcFundingKey)).size !== 1)
     throw new PurchasingError(
       "所选记录需拆分：同一资金单须同结算方式、收款人、账户和币种；对公还须同供应商，月结须同账期",
@@ -807,6 +818,7 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
     throw new PurchasingError("本次金额过小，部分明细分摊为零，请减少所选明细");
   const f = await tx.pcFund.create({
     data: {
+      source: first.request.source,
       number: await serial(tx, first.settlement === "ADVANCE" ? "BX" : "FK"),
       status: offline ? "APPROVED" : "PENDING",
       settlement: first.settlement,
@@ -1093,9 +1105,12 @@ async function ledger(
   tx: Tx,
   stock: {
     id: string;
-    lineId: string;
+    lineId: string | null;
     onHand: number;
     issued: number;
+    reserved?: number;
+    held?: number;
+    repair?: number;
   },
   kind: string,
   quantity: number,
@@ -1107,7 +1122,7 @@ async function ledger(
 ) {
   const balance = stock.onHand + quantity,
     issued = stock.issued + issuedChange;
-  if (balance < 0 || issued < 0)
+  if (balance < (stock.reserved || 0) + (stock.held || 0) + (stock.repair || 0) || issued < 0)
     conflict("数量超过当前在库或已领用数量，请刷新核对");
   pcInt(balance, "结余数量", 0);
   pcInt(issued, "领用数量", 0);
@@ -1151,6 +1166,12 @@ async function receive(tx: Tx, input: PcInput, a: PcActor) {
       create: { lineId: p.id, itemId: p.itemId!, warehouse, location },
       update: {},
     });
+    const fixture = p.fixtureId ? await tx.qfFixture.findUnique({ where: { id: p.fixtureId } }) : null;
+    const disposition = fixture ? pcChoice(input.fixtureDisposition || "HELD", ["AVAILABLE", "HELD"], "治具验收状态") : "AVAILABLE";
+    if (fixture && input.accepted !== true) throw new PurchasingError("请核实对插件型号、数量和实物后确认验收");
+    if (fixture && disposition === "AVAILABLE" && (input.fitConfirmed !== true || input.continuityConfirmed !== true))
+      throw new PurchasingError("可用治具须完成对插适配与导通验证；未完成请选择待组装 / 待验证");
+    const acceptanceNote = fixture ? pcText(input.acceptanceNote, "验收说明", 1000) : "";
     const r = await tx.pcReceipt.create({
       data: {
         number,
@@ -1161,9 +1182,15 @@ async function receive(tx: Tx, input: PcInput, a: PcActor) {
         receiverId: receiver.id,
         receiver: receiver.name,
         actorId: a.id,
+        fixtureDisposition: disposition,
+        acceptanceNote,
       },
     });
     await ledger(tx, stock, "RECEIVE", q, r.id, "采购收货", receiver.name, a);
+    if (fixture && disposition === "HELD")
+      await tx.pcStockBalance.update({ where: { id: stock.id }, data: { held: { increment: q } } });
+    if (fixture) await tx.qfEvent.create({ data: { entityType: "STOCK", entityId: stock.id, action: "RECEIVE", actorId: a.id,
+      actorName: actorName(a), reason: acceptanceNote, snapshot: json({ receipt: r, fixtureId: fixture.id, quantity: q, disposition }) } });
     await tx.pcLine.update({
       where: { id: p.id },
       data: { receivedQty: { increment: q }, version: { increment: 1 } },
@@ -1182,6 +1209,8 @@ async function stockMove(tx: Tx, input: PcInput, a: PcActor) {
     where: { id: pcText(input.id, "库存记录", 100) },
   });
   if (!stock) throw new PurchasingError("库存记录不存在");
+  if (!stock.lineId || await tx.qfFixture.findUnique({ where: { itemId: stock.itemId } }))
+    throw new PurchasingError("请在治具库办理预留、领用、归还和盘点，保留治具全程履历");
   pcVersion(stock.version, input.version);
   const quantity = pcInt(input.quantity, "数量", 1, 1000000),
     reason = pcText(input.reason, "操作原因", 1000),
@@ -1221,7 +1250,7 @@ async function stockMove(tx: Tx, input: PcInput, a: PcActor) {
   await event(
     tx,
     "LINE",
-    stock.lineId,
+    stock.lineId!,
     String(input.action),
     a,
     { stockId: stock.id, quantity: delta, person },
@@ -1263,6 +1292,13 @@ async function returnGoods(tx: Tx, input: PcInput, a: PcActor) {
     if (!stock || stock.lineId !== p.id)
       throw new PurchasingError("退货库存与采购明细不匹配");
     pcVersion(stock.version, input.stockVersion);
+    if (p.fixtureId) {
+      const disposition = pcChoice(input.fixtureDisposition || "AVAILABLE", ["AVAILABLE", "HELD", "REPAIR"], "退货库存状态");
+      const limit = disposition === "HELD" ? stock.held : disposition === "REPAIR" ? stock.repair : fixtureAvailable(stock);
+      if (q > limit) conflict("退货数量超过所选状态库存，请先归还借用或释放预留");
+      if (disposition === "HELD") stock = await tx.pcStockBalance.update({ where: { id: stock.id }, data: { held: { decrement: q } } });
+      if (disposition === "REPAIR") stock = await tx.pcStockBalance.update({ where: { id: stock.id }, data: { repair: { decrement: q } } });
+    }
     if (q > stock.onHand || q > p.receivedQty - p.returnedQty)
       conflict("退货数量超过可退在库数量；已领用物品须先退库");
   } else if (q > p.quantity - p.receivedQty - p.cancelledQty)
@@ -1471,6 +1507,7 @@ export async function mutatePurchasing(
       let result: unknown;
       const action = pcText(input.action, "操作类型", 60);
       if (action === "SAVE_SETTINGS") result = await saveSettings(tx, input, a);
+      else if (action === "CREATE_FIXTURE_PURCHASE") result = await createFixturePurchase(tx, input, a);
       else if (action === "SAVE_REQUEST")
         result = await saveRequest(tx, input, a);
       else if (["APPROVE_LINES", "RETURN_LINES"].includes(action))
@@ -1574,7 +1611,7 @@ export async function mutatePurchasing(
         result = { id: f.id };
       } else throw new PurchasingError("不支持的采购操作");
       const saved = json(result);
-      await enqueuePurchasingPush(tx, input, result, a, operationKey);
+      await enqueuePurchasingPush(tx, action === "CREATE_FIXTURE_PURCHASE" ? { ...input, action: "SAVE_REQUEST", submit: true } : input, result, a, operationKey);
       await tx.pcOperation.create({
         data: {
           id: operationKey,

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../lib/prisma';
+import { approvedDocumentFixture } from './helpers/approved-document-fixture';
 import { createInternalQualityRiskRecord, parseInternalQualityRiskInput, transitionInternalQualityRiskWorkflow, updateInternalQualityRiskTask, archiveInternalQualityRisk, softDeleteInternalQualityRisk, permanentlyDeleteInternalQualityRisk, revokeInternalQualityRiskWarning } from '../lib/internal-quality-risks';
 import { qualityWarningEmployeePath, loadEmployeeQualityWarning } from '../lib/quality-warning-employee';
 import { startInternalQualityRiskRevision, materializeProductQualityWarningsForWorkOrders } from '../lib/internal-quality-risks';
@@ -18,6 +19,7 @@ test('quality v2 real assignment, review authorization, employee credential scop
   const product = await prisma.drawingLibraryItem.create({ data: { customerName: prefix, customerCode: prefix, productName: '验证产品', specification: prefix, libraryKey: prefix } });
   const order = await prisma.workOrder.create({ data: { code: `${prefix}-WO`, productName: '验证产品', stage: 'frontend', drawingLibraryItemId: product.id } });
   const ids: string[] = [];
+  const cleanupDocuments = await approvedDocumentFixture(order.id, quality.id);
   try {
     let report = await prisma.$transaction(tx => createInternalQualityRiskRecord(tx, parseInternalQualityRiskInput({ title: '真实异常事件', productIds: [product.id], ownerUserId: owner.id }), actor)); ids.push(report.id);
     await assert.rejects(prisma.$transaction(tx => transitionInternalQualityRiskWorkflow(tx, report.id, report.version, 'SUBMITTED', actor)), /实际问题/);
@@ -88,6 +90,7 @@ test('quality v2 real assignment, review authorization, employee credential scop
     assert.equal(archiveOnly.currentRevision!.published, false); assert.equal(archiveOnly.alerts.length, 0);
     assert.equal(await qualityWarningEmployeePath(archiveOnly.currentRevisionId!, order.id), null);
   } finally {
+    await cleanupDocuments();
     await prisma.workOrderQrPrint.deleteMany({ where: { ticket: { workOrderId: order.id } } });
     await prisma.workOrderQrTicket.deleteMany({ where: { workOrderId: order.id } });
     await prisma.workOrderProcessStep.deleteMany({ where: { route: { workOrderId: order.id } } });

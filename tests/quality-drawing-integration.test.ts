@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import {prisma} from '../lib/prisma';
+import {approvedDocumentFixture} from './helpers/approved-document-fixture';
 import {saveQuick,quickCommand,quickWarningsForOrders,quickDrawingOptions,quickDetail} from '../lib/quality-quick';
 import {createWorkOrderTravelerPrints,loadWorkOrderTravelerPrints} from '../lib/work-order-qr-service';
 
@@ -12,6 +13,7 @@ test('drawing warning without orders propagates to future orders, shares major p
   const prefix='QD-'+randomUUID(),user=await prisma.user.create({data:{username:prefix,passwordHash:'integration-only',displayName:prefix,laborRole:'ADMIN'}});
   const product=await prisma.drawingLibraryItem.create({data:{customerName:prefix,productName:'接线束',specification:'DRAWING-V1',libraryKey:prefix}});
   const actor={id:user.id,name:prefix,admin:true,manage:true},orders:string[]=[];let recordId='',riskId='';
+  const documentCleanups: (()=>Promise<void>)[] = [];
   async function order(suffix:string,linked=true){const o=await prisma.workOrder.create({data:{code:prefix+suffix,stage:'frontend',productName:'接线束',drawingLibraryItemId:linked?product.id:null,status:'processing',productionTargetQty:24,uncompletedQty:'24',completedQty:'0',processRoute:{create:{templateName:prefix,templateVersion:1,status:'in_progress',version:1,confirmedAt:new Date(),confirmedById:user.id,startedAt:new Date(),routeSource:'process_template',steps:{create:{processCode:'ASSEMBLY',processName:'装配',stageGroup:'frontend',position:1,sequenceGroup:1,standardSource:'integration_test',timeBasis:'per_unit',unitLabel:'套',standardMillisecondsPerUnit:3000,setupMilliseconds:0,unitsPerProduct:1,countsForEfficiency:true,inputQty:24,status:'current',startedAt:new Date()}}}}}});orders.push(o.id);return o;}
   try{
     const existing=await order('-existing');
@@ -33,6 +35,7 @@ test('drawing warning without orders propagates to future orders, shares major p
     const risk=await prisma.internalQualityRiskReport.create({data:{reportNo:prefix,title:'A级来源',status:'ARCHIVED',severity:'LOW',warningState:'ACTIVE',printPolicy:'REQUIRED',archivedAt:new Date()}});riskId=risk.id;
     const revision=await prisma.internalQualityRiskRevision.create({data:{reportId:risk.id,revisionNumber:1,published:true,archivedAt:new Date(),snapshot:{title:'A级来源',severity:'LOW',warningSummary:'保持原内部等级',printPolicy:'REQUIRED'},products:{create:{drawingLibraryItemId:product.id}}}});
     await prisma.internalQualityRiskReport.update({where:{id:risk.id},data:{currentRevisionId:revision.id}});
+    documentCleanups.push(await approvedDocumentFixture(future.id,user.id), await approvedDocumentFixture(unlinked.id,user.id));
     const packet=await createWorkOrderTravelerPrints({workOrderIds:[future.id,unlinked.id],userId:user.id,actor:prefix});
     assert.equal(packet.length,2);assert.deepEqual(packet[0].items.map(i=>i.material),['TRAVELER','QUALITY_WARNING']);assert.deepEqual(packet[1].items.map(i=>i.material),['TRAVELER']);
     const warnings=packet[0].snapshot.qualityWarnings;assert.equal(warnings.length,2);assert.equal(warnings[0].reportId,risk.id);assert.equal(warnings[1].reportId,r.id);
@@ -43,6 +46,7 @@ test('drawing warning without orders propagates to future orders, shares major p
     await prisma.workOrder.update({where:{id:future.id},data:{drawingLibraryItemId:null}});
     assert.equal((await quickWarningsForOrders([future.id])).size,0);
   }finally{
+    for(const cleanup of documentCleanups) await cleanup();
     if(recordId){await prisma.quickQualityActivity.deleteMany({where:{recordId}});await prisma.quickQualityWorkOrder.deleteMany({where:{recordId}});await prisma.quickQualityRecord.delete({where:{id:recordId}});}
     if(riskId){await prisma.qualityWarningEmployeeLink.deleteMany({where:{revision:{reportId:riskId}}});await prisma.internalQualityRiskReport.update({where:{id:riskId},data:{currentRevisionId:null}});await prisma.internalQualityRiskReport.delete({where:{id:riskId}});}
     await prisma.workOrder.deleteMany({where:{id:{in:orders}}});await prisma.drawingLibraryItem.delete({where:{id:product.id}});await prisma.user.delete({where:{id:user.id}});

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { loadWorkOrderTravelerPrints, WorkOrderQrServiceError } from '@/lib/work-order-qr-service';
 import { Readable } from 'node:stream';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { safeDisplayFilename } from '@/lib/filenames';
@@ -24,6 +25,7 @@ function asciiFilename(filename: string) {
 export async function GET(_req: NextRequest, { params }: { params: { printId: string } }) {
   try {
     await requireUser();
+    await loadWorkOrderTravelerPrints([params.printId]);
     const item = await prisma.workOrderQrPrintItem.findFirst({
       where: { printId: params.printId, material: 'SOP' },
       select: { fileId: true, print: { select: { snapshot: true } } },
@@ -66,6 +68,7 @@ export async function GET(_req: NextRequest, { params }: { params: { printId: st
         title: `${filename} SOP 打印版`,
       });
       const printFilename = normalizedPrintFilename(filename);
+      await loadWorkOrderTravelerPrints([params.printId]);
       return new Response(Buffer.from(packet.bytes), {
         headers: {
           'Content-Type': 'application/pdf',
@@ -91,7 +94,7 @@ export async function GET(_req: NextRequest, { params }: { params: { printId: st
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof PrintableDocumentError) {
+    if (error instanceof PrintableDocumentError || error instanceof WorkOrderQrServiceError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }
     console.error('load traveler SOP failed', error);

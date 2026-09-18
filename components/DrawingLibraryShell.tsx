@@ -1,4 +1,5 @@
 'use client';
+import { QualityFixtureStatus } from '@/components/quality-fixtures/QualityFixtureStatus';
 import {QuickPhotoViewer} from '@/components/quality-quick/QuickWarnings';
 import QuickQualityForm from '@/components/quality-quick/QuickQualityForm';
 import QuickWarningActions from '@/components/quality-quick/QuickWarningActions';
@@ -1122,6 +1123,7 @@ export function DrawingLibraryShell({
                 <div>
                   <span>当前资料</span>
                   <h1 title={selectedItem.specification}>{selectedItem.specification}</h1>
+                  <QualityFixtureStatus id={selectedItem.id} />
                   <p>
                     <b title={selectedItem.customerName}>{selectedItem.customerName}</b>
                     {hasText(selectedItem.productName) && <em title={selectedItem.productName || ''}>{selectedItem.productName}</em>}

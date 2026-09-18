@@ -172,6 +172,7 @@ export async function POST(req: NextRequest) {
     }
 
     const packet = await buildWorkOrderPrintPacket({ records, target, travelerImages, warningImages, sourceFiles });
+    await loadWorkOrderTravelerPrints(records.map(record => record.printId));
     return new Response(Buffer.from(packet.bytes), {
       headers: {
         'Content-Type': 'application/pdf',

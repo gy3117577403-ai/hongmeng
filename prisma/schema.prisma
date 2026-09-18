@@ -65,7 +65,8 @@ model FgLedger {
   actorId String
   actorName String
   createdAt DateTime @default(now())
-  lot FgLot @relation(fields:[lotId], references:[id], onDelete:Restrict)
+  lot       FgLot    @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
   @@index([lotId, createdAt])
   @@index([createdAt, kind])
   @@map("fg_ledger")
@@ -81,7 +82,8 @@ model FgHold {
   actorId String
   actorName String
   createdAt DateTime @default(now())
-  lot FgLot @relation(fields:[lotId], references:[id], onDelete:Restrict)
+  lot       FgLot    @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
   @@index([dueDate])
   @@map("fg_holds")
 }
@@ -111,7 +113,8 @@ model FgShipment {
   updatedAt DateTime @updatedAt
   lines FgShipmentLine[]
   attachments FgAttachment[]
-  batch FgDispatchBatch? @relation(fields:[batchId], references:[id], onDelete:Restrict)
+  batch             FgDispatchBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
+
   @@index([status, plannedDate])
   @@index([shippedAt])
   @@map("fg_shipments")
@@ -124,9 +127,10 @@ model FgShipmentLine {
   quantity Int
   returned Int @default(0)
   dailyItemId String?
-  shipment FgShipment @relation(fields:[shipmentId], references:[id], onDelete:Restrict)
-  lot FgLot @relation(fields:[lotId], references:[id], onDelete:Restrict)
+  shipment    FgShipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+  lot         FgLot      @relation(fields: [lotId], references: [id], onDelete: Restrict)
   returns FgReturn[]
+
   @@unique([shipmentId, lotId])
   @@index([lotId])
   @@map("fg_shipment_lines")
@@ -156,7 +160,8 @@ model FgReturn {
   reason String
   actorName String
   createdAt DateTime @default(now())
-  line FgShipmentLine @relation(fields:[lineId], references:[id], onDelete:Restrict)
+  line      FgShipmentLine @relation(fields: [lineId], references: [id], onDelete: Restrict)
+
   @@map("fg_returns")
 }
 
@@ -170,7 +175,8 @@ model FgRework {
   destination String
   actorName String
   createdAt DateTime @default(now())
-  lot FgLot @relation(fields:[lotId], references:[id], onDelete:Restrict)
+  lot         FgLot    @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
   @@map("fg_reworks")
 }
 
@@ -184,7 +190,8 @@ model FgAttachment {
   actorName String
   createdAt DateTime @default(now())
   deletedAt DateTime?
-  shipment FgShipment @relation(fields:[shipmentId], references:[id], onDelete:Restrict)
+  shipment     FgShipment @relation(fields: [shipmentId], references: [id], onDelete: Restrict)
+
   @@index([shipmentId, deletedAt])
   @@map("fg_attachments")
 }
@@ -914,6 +921,7 @@ model UserAccessGrant {
 }
 
 model WorkOrder {
+  fixtureBinding QfPlanBinding?
   quickQualityLinks            QuickQualityWorkOrder[]
   reportingSubmissions         ProcessReportSubmission[]
   id                           String                               @id @default(uuid())
@@ -3196,6 +3204,8 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
+  fixturePackages          QfPackage[]
+  fixtureBomFiles          QfBomFile[]
   quickQualityRecords      QuickQualityRecord[]
   id                       String                               @id @default(uuid())
   customerName             String                               @map("customer_name")
@@ -6865,10 +6875,10 @@ model MaterialLibraryPhoto {
   mediaLeaseUntil  DateTime? @map("media_lease_until")
   mediaError       String?   @map("media_error")
 
+  @@unique([sessionId, clientMutationId])
   @@index([sessionId, deletedAt, sortOrder, createdAt])
   @@index([materialItemId, deletedAt, isCover, createdAt])
   @@index([sha256, materialItemId])
-  @@unique([sessionId, clientMutationId])
   @@index([mediaStatus, mediaNextAt])
   @@map("material_library_photos")
 }
@@ -7015,6 +7025,7 @@ model PcOperation {
 }
 
 model PcRequest {
+  source        String    @default("NORMAL")
   id            String   @id @default(uuid())
   number        String   @unique
   status        String   @default("DRAFT")
@@ -7048,6 +7059,7 @@ model PcSupplier {
 }
 
 model PcItem {
+  fixture    QfFixture?
   id          String   @id @default(uuid())
   number      String   @unique
   name        String
@@ -7063,6 +7075,11 @@ model PcItem {
 }
 
 model PcLine {
+  fixtureId        String?
+  fixture          QfFixture?         @relation(fields: [fixtureId], references: [id], onDelete: Restrict)
+  fixturePackageId String?
+  fixturePackage   QfPackage?         @relation(fields: [fixturePackageId], references: [id], onDelete: Restrict)
+  fixtureBasis     Json?
   id              String   @id @default(uuid())
   requestId       String
   request         PcRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
@@ -7125,6 +7142,7 @@ model PcLine {
 }
 
 model PcFund {
+  source         String             @default("NORMAL")
   id              String   @id @default(uuid())
   number          String   @unique
   status          String   @default("PENDING")
@@ -7188,6 +7206,8 @@ model PcPayment {
 }
 
 model PcReceipt {
+  fixtureDisposition String   @default("AVAILABLE")
+  acceptanceNote     String   @default("")
   id         String   @id @default(uuid())
   number     String
   lineId     String
@@ -7206,14 +7226,18 @@ model PcReceipt {
 
 model PcStockBalance {
   id         String   @id @default(uuid())
-  lineId     String
-  line       PcLine   @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  lineId    String?
+  line      PcLine?           @relation(fields: [lineId], references: [id], onDelete: Restrict)
   itemId     String
   item       PcItem   @relation(fields: [itemId], references: [id], onDelete: Restrict)
   warehouse  String
   location   String
   onHand     Int      @default(0)
   issued     Int      @default(0)
+  held Int @default(0)
+  repair    Int               @default(0)
+  reserved Int @default(0)
+  holdings  QfHolding[]
   version    Int      @default(1)
   updatedAt  DateTime @updatedAt
   movements  PcStockMovement[]
@@ -7226,8 +7250,8 @@ model PcStockMovement {
   id          String   @id @default(uuid())
   stockId     String
   stock       PcStockBalance @relation(fields: [stockId], references: [id], onDelete: Restrict)
-  lineId      String
-  line        PcLine   @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  lineId    String?
+  line      PcLine?        @relation(fields: [lineId], references: [id], onDelete: Restrict)
   kind        String
   quantity    Int
   balance     Int
@@ -7366,4 +7390,171 @@ model PcEvent {
   createdAt  DateTime @default(now())
 
   @@index([entityType, entityId, createdAt])
+}
+
+model QfSettings {
+  id            String   @id @default("quality-fixtures")
+  ownerId             String
+  supervisorIds String[]
+  qualityIds    String[]
+  version              Int      @default(1)
+  updatedAt  DateTime @updatedAt
+}
+
+model QfPackage {
+  continuedWorkOrderIds String[] @default([])
+  planBindings QfPlanBinding[]
+  id         String   @id @default(uuid())
+  libraryItemId   String
+  libraryItem     DrawingLibraryItem @relation(fields: [libraryItemId], references: [id], onDelete: Restrict)
+  sequence                 Int
+  revision      String
+  needFixture     Boolean?
+  parallelCount   Int                @default(1)
+  spareCount      Int                @default(0)
+  status          String   @default("DRAFT")
+  version              Int      @default(1)
+  drawingFiles    Json
+  bomFileId       String?
+  bomFile         QfBomFile?         @relation(fields: [bomFileId], references: [id], onDelete: Restrict)
+  bomRows         Json
+  bomMapping      Json?
+  bomConfirmed    Boolean            @default(false)
+  fingerprint     String             @default("")
+  submittedById   String?
+  submittedByName String             @default("")
+  submittedAt                DateTime?
+  supervisorId    String?
+  supervisorName  String             @default("")
+  supervisorAt    DateTime?
+  qualityId       String?
+  qualityName     String             @default("")
+  qualityAt       DateTime?
+  reason     String   @default("")
+  createdById                String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  purchases       PcLine[]
+
+  @@unique([libraryItemId, sequence])
+  @@index([libraryItemId, status])
+  @@index([status, updatedAt])
+}
+
+model QfBomFile {
+  id         String   @id @default(uuid())
+  libraryItemId String
+  libraryItem   DrawingLibraryItem @relation(fields: [libraryItemId], references: [id], onDelete: Restrict)
+  name            String
+  objectKey    String   @unique
+  sha256           String
+  byteSize      Int
+  sheets        Json
+  uploadedById   String
+  createdAt  DateTime @default(now())
+  deletedAt    DateTime?
+  packages      QfPackage[]
+
+  @@index([libraryItemId, deletedAt])
+  @@index([libraryItemId, sha256])
+}
+
+model QfBomTemplate {
+  id         String   @id @default(uuid())
+  name       String   @unique
+  mapping     Json
+  updatedById String
+  updatedAt  DateTime @updatedAt
+}
+
+model QfConnector {
+  id         String   @id @default(uuid())
+  model               String
+  manufacturer   String                       @default("")
+  name String @default("")
+  createdAt  DateTime @default(now())
+  mappings     QfMapping[]
+
+  @@unique([model, manufacturer])
+}
+
+model QfFixture {
+  id         String   @id @default(uuid())
+  number      String   @unique
+  model               String
+  manufacturer   String                       @default("")
+  name            String
+  unit             String      @default("个")
+  itemId           String      @unique
+  item       PcItem   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  assemblyRequired Boolean     @default(false)
+  active      Boolean @default(true)
+  version              Int      @default(1)
+  createdAt  DateTime @default(now())
+  mappings         QfMapping[]
+  purchases        PcLine[]
+
+  @@unique([model, manufacturer])
+}
+
+model QfMapping {
+  id         String   @id @default(uuid())
+  connectorId     String
+  connector       QfConnector @relation(fields: [connectorId], references: [id], onDelete: Restrict)
+  fixtureId       String
+  fixture         QfFixture   @relation(fields: [fixtureId], references: [id], onDelete: Restrict)
+  scope           String      @default("")
+  evidence        String
+  active      Boolean @default(true)
+  preferred       Boolean     @default(true)
+  confirmedById   String
+  confirmedByName String
+  confirmedAt     DateTime    @default(now())
+  version              Int      @default(1)
+
+  @@index([connectorId, active])
+  @@index([fixtureId, active])
+}
+
+model QfHolding {
+  id         String   @id @default(uuid())
+  stockId     String
+  stock       PcStockBalance @relation(fields: [stockId], references: [id], onDelete: Restrict)
+  libraryItemId String
+  workOrderId   String         @default("")
+  person        String
+  reserved Int @default(0)
+  issued     Int      @default(0)
+  version              Int      @default(1)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([stockId, libraryItemId, workOrderId, person])
+  @@index([libraryItemId])
+  @@index([workOrderId])
+}
+
+model QfEvent {
+  id         String   @id @default(uuid())
+  entityType String
+  entityId   String
+  action     String
+  actorId    String
+  actorName  String
+  reason     String   @default("")
+  snapshot   Json
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+}
+
+model QfPlanBinding {
+  id         String   @id @default(uuid())
+  workOrderId  String   @unique
+  workOrder           WorkOrder                              @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  packageId    String
+  package QfPackage @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  selectedById String
+  selectedAt   DateTime @default(now())
+
+  @@index([packageId])
 }

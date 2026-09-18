@@ -1,4 +1,5 @@
 'use client';
+import { QualityFixtureStatus } from '@/components/quality-fixtures/QualityFixtureStatus';
 
 import { PlanningDetailDrawer } from '@/components/PlanningDetailDrawer';
 import { PlanningTimeComparison } from '@/components/ProductionWorkload';
@@ -2398,7 +2399,7 @@ export default function PlanningCenterShell({
                     <td title={`原计划 ${batch.plannedCompletionDate}`}>{batch.workOrderId && canAdjustProductionDates(user) ? <ProductionControlButton className="planning-date-button" workOrderId={batch.workOrderId} mode="adjust_date">{(batch.estimatedCompletionDate || batch.plannedCompletionDate).slice(5)}</ProductionControlButton> : <strong>{(batch.estimatedCompletionDate || batch.plannedCompletionDate).slice(5)}</strong>}</td>
                     <td><strong className={Boolean(order.customerDueDate) && (batch.estimatedCompletionDate || batch.plannedCompletionDate) > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate ? order.customerDueDate.slice(5) : '待确认'}</strong></td>
                     <td title={planTimeSourceText[batch.planTimeSource || "legacy"]}><strong>{planMinutesText(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
-                    <td><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><a className={`planning-sop-stage ${sopInfo.stage}`} href={drawingLibraryHref} onClick={rememberPlanningState} title={sopInfo.title} aria-label={`SOP 状态 ${sopInfo.label}，进入图纸档案`}><FlaskConical size={12} />{sopInfo.label}</a>{Boolean(order.qualityWarningCount) && <a className={`planning-warning-link severity-${order.highestQualityWarningSeverity?.toLowerCase()}`} href={`${drawingLibraryHref}#quality-warning`} onClick={rememberPlanningState} title={`${order.qualityWarningCount} 条已归档产品异常警示`}><ShieldAlert size={12} />警示 {order.qualityWarningCount}</a>}</div></td>
+                    <td><QualityFixtureStatus id={batch.workOrderId || order.drawingLibraryItemId} kind={batch.workOrderId ? "orders" : "products"} compact /><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><a className={`planning-sop-stage ${sopInfo.stage}`} href={drawingLibraryHref} onClick={rememberPlanningState} title={sopInfo.title} aria-label={`SOP 状态 ${sopInfo.label}，进入图纸档案`}><FlaskConical size={12} />{sopInfo.label}</a>{Boolean(order.qualityWarningCount) && <a className={`planning-warning-link severity-${order.highestQualityWarningSeverity?.toLowerCase()}`} href={`${drawingLibraryHref}#quality-warning`} onClick={rememberPlanningState} title={`${order.qualityWarningCount} 条已归档产品异常警示`}><ShieldAlert size={12} />警示 {order.qualityWarningCount}</a>}</div></td>
                     <td><div className="planning-material-control">
                       <span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常/缺料' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span>
                       {activeHold && <span className="planning-status status-frozen" title={activeHold.reason}><strong><LockKeyhole size={12} />生产冻结</strong><small>{activeHold.reason}</small></span>}
@@ -2642,6 +2643,7 @@ export default function PlanningCenterShell({
           >
             {productEntryMode === 'select' ? <>
               <label htmlFor="planning-product-search">选择图纸资料库产品 *</label>
+              {orderDraft.drawingLibraryItemId && <QualityFixtureStatus id={orderDraft.drawingLibraryItemId} />}
               <div className="planning-product-search">
                 <Search size={18} />
                 <input

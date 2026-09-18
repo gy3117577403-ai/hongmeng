@@ -179,6 +179,9 @@ export function pcFundingKey(p: {
   ]);
 }
 export type PcRow = {
+  source?: string;
+  fixtureId?: string | null;
+  fixturePackageId?: string | null;
   id: string;
   kind: string;
   number: string;

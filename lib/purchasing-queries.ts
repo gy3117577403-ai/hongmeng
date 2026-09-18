@@ -10,6 +10,7 @@ import {
 } from "@/lib/purchasing-domain";
 import type { PcActor } from "@/lib/purchasing-service";
 export type PcQuery = {
+  source?: string;
   view?: string;
   task?: string;
   lineTask?: Prisma.PcLineWhereInput;
@@ -48,6 +49,9 @@ type Plain<T> = T extends Date
 const plain = <T>(v: T): Plain<T> => JSON.parse(JSON.stringify(v));
 export function pcLineRow(p: Line): PcRow {
   return {
+    source: p.request.source,
+    fixtureId: p.fixtureId,
+    fixturePackageId: p.fixturePackageId,
     id: p.id,
     kind: "line",
     number: p.number,
@@ -89,6 +93,7 @@ function lineWhere(
   view = q.view || "all",
 ): Prisma.PcLineWhereInput {
   const and: Prisma.PcLineWhereInput[] = [{ request: { deletedAt: null } }];
+  and.push({ request: { source: q.source === "FIXTURE" ? "FIXTURE" : "NORMAL" } });
   if (q.lineTask) and.push(q.lineTask);
   if (view === "drafts")
     and.push({
@@ -168,7 +173,7 @@ function fundWhere(
   a: PcActor,
   view = q.view,
 ): Prisma.PcFundWhereInput {
-  const where: Prisma.PcFundWhereInput = {};
+  const where: Prisma.PcFundWhereInput = { source: q.source === "FIXTURE" ? "FIXTURE" : "NORMAL" };
   if (q.fundTask) where.AND = [q.fundTask];
   if (q.follow !== "history")
     where.status =
@@ -266,6 +271,7 @@ export async function loadPurchasing(
       (agg._sum.amountCents || 0) -
       (view === "finance" ? agg._sum.paidCents || 0 : 0);
     rows = fs.map((f) => ({
+      source: f.source,
       id: f.id,
       kind: "fund",
       number: f.number,
@@ -298,6 +304,7 @@ export async function loadPurchasing(
     }));
   } else if (view === "stock") {
     const where: Prisma.PcStockBalanceWhereInput = {
+      line: { request: { source: q.source === "FIXTURE" ? "FIXTURE" : "NORMAL", deletedAt: null } },
       ...(q.ids?.length ? { id: { in: q.ids } } : {}),
       ...(q.q
         ? {
@@ -322,9 +329,9 @@ export async function loadPurchasing(
     ]);
     total = count;
     rows = stocks.map((s) => ({
-      ...pcLineRow(s.line),
+      ...pcLineRow(s.line!),
       id: s.id,
-      lineId: s.lineId,
+      lineId: s.lineId || undefined,
       kind: "stock",
       version: s.version,
       number: s.item.number,
@@ -371,7 +378,7 @@ export async function loadPurchasing(
     PC_VIEWS.map(async (v) => {
       counts[v.id] =
         v.id === "stock"
-          ? await prisma.pcStockBalance.count()
+          ? await prisma.pcStockBalance.count({ where: { line: { request: { source: q.source === "FIXTURE" ? "FIXTURE" : "NORMAL", deletedAt: null } } } })
           : ["funds", "finance"].includes(v.id)
             ? await prisma.pcFund.count({
                 where: fundWhere({ ...q, ids: undefined }, a, v.id),
@@ -408,7 +415,7 @@ export async function purchasingDetail(id: string, a: PcActor) {
     where: { id },
     select: { lineId: true },
   });
-  if (stock) id = stock.lineId;
+  if (stock?.lineId) id = stock.lineId;
   const returned = await prisma.pcReturn.findUnique({
     where: { id },
     select: { lineId: true },

@@ -21,7 +21,8 @@ export async function GET(req: NextRequest) {
       );
     const book = new ExcelJS.Workbook();
     book.creator = a.displayName || a.username;
-    const sheet = book.addWorksheet("采购记录");
+    const sourceLabel = q.source === "FIXTURE" ? "治具申购" : "普通采购";
+    const sheet = book.addWorksheet(sourceLabel);
     const stock = q.view === "stock",
       fund = ["funds", "finance"].includes(q.view || "");
     sheet.columns = (
@@ -129,7 +130,7 @@ export async function GET(req: NextRequest) {
       headers: {
         "Content-Type":
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent("采购记录.xlsx")}`,
+        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(sourceLabel + "记录.xlsx")}`,
         "Cache-Control": "no-store",
       },
     });

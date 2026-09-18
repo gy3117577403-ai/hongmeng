@@ -102,6 +102,14 @@ try {
   assert.deepEqual([dimensions.width, dimensions.height], [640, 960]);
   results.push('shared work-order/library settings, cross-namespace permission boundary, concurrent-save conflict, EXIF plus user rotation');
 
+  // Explicit synthetic approval in this guarded disposable database; never grandfather business documents.
+  const actors = await db.user.findMany({ where: { username: { in: ['qa_orientation_editor', 'qa_orientation_admin', 'qa_orientation_business'] } } });
+  const actorId = name => actors.find(u => u.username === 'qa_orientation_' + name).id;
+  const drawingRow = await db.drawingLibraryFile.findUniqueOrThrow({ where: { id: imageFile.id } });
+  const document = { revision: 'QA', needFixture: false, drawingFiles: [{ id: drawingRow.id, name: drawingRow.originalName, version: drawingRow.version, sha256: drawingRow.sha256 || '', objectKey: drawingRow.objectKey, mimeType: drawingRow.mimeType }], bomFileId: null, bomRows: [], parallelCount: 1, spareCount: 0 };
+  const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => [k,canonical(v)])) : value;
+  const fingerprint = hash(JSON.stringify(canonical([document.revision, false, document.drawingFiles, null, [], null, 1, 0])));
+  await db.qfPackage.create({ data: { ...document, fingerprint, libraryItemId: item.id, sequence: 1, status: 'APPROVED', createdById: actorId('editor'), submittedById: actorId('editor'), submittedAt: new Date(), supervisorId: actorId('admin'), supervisorName: 'QA supervisor', supervisorAt: new Date(), qualityId: actorId('business'), qualityName: 'QA quality', qualityAt: new Date() } });
   const print = await expected('/api/work-order-qr/prints', 'admin', { workOrderIds: [workOrder.id], mode: 'CUSTOM', materials: ['SOP', 'DRAWING'], copies: 1 }, 'POST', 200);
   const printId = print.data.printIds[0];
   const snapshot = (await db.workOrderQrPrint.findUniqueOrThrow({ where: { id: printId } })).snapshot;

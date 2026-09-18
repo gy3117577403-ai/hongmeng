@@ -24,6 +24,7 @@ export const PLATFORM_NAVIGATION_GROUPS: PlatformNavigationGroup[] = [
     { href: '/workspace/weekly-processes', label: '周工序总览' },
   ] },
   { id: 'quality', label: '质量中心', items: [
+    { href: '/workspace/quality-fixtures', label: '资料审核与治具' },
     { href: '/workspace/quality', label: '质量管理' },
     { href: '/workspace/quality/data', label: '质量数据' },
     { href: '/workspace/quality-tasks', label: '我的质量任务' },

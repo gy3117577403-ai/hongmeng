@@ -1,4 +1,5 @@
 'use client';
+import { QualityFixtureStatus } from '@/components/quality-fixtures/QualityFixtureStatus';
 import ProcessQualityFields from '@/components/ProcessQualityFields';
 import ProcessStepPicker from '@/components/ProcessStepPicker';
 import { planMinutesText, planHoursText } from '@/lib/planning-time';
@@ -4033,6 +4034,7 @@ function ProductionDispatchRow({
           : <span className="production-dispatch-stage-dot" aria-hidden="true" />}
       </div>
       <div className="production-dispatch-product">
+        <QualityFixtureStatus id={order.id} kind="orders" compact />
         <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.carryover && <em className="carryover-badge" title={`原生产周 ${order.carryover.originalWeekStartDate}，订单与资料未复制`}>{order.carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' : '上周遗留'}</em>}{isWipContinuation && <em className="wip-continuation-badge" title={isWipHistoricalContinuation ? `半成品批次 ${wipContinuation?.lotNo} 在原目标周已完成的事实，未完成部分已属于新安排` : `半成品批次 ${wipContinuation?.lotNo}，仅显示目标周剩余工序和工时`}>{isWipHistoricalContinuation ? '半成品历史' : '半成品续作'}</em>}{isMovedOutSource && <em className="wip-continuation-badge moved-out" title="来源行只保留原订单和已报工事实，转出的剩余任务由目标周续作执行">{isFullyMovedOutSource ? '剩余已转出' : '部分已转出'}</em>}{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
         <button type="button" title={`${specText(order)}；进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
         <small title={`${order.productName || '品名待补充'}${order.businessCode ? ` · ${order.businessCode}` : ''}`}>{order.productName || '品名待补充'}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>

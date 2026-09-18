@@ -626,7 +626,7 @@ export default function HomeNotificationCommandCenter({
                   <div className="hm-hcc-message-copy">
                     <div><span className={`hm-hcc-priority ${item.priority.toLowerCase()}`}>{item.completedAt ? completionLabel(item) : priorityLabel(item)}</span><small>{BUSINESS_LABELS[item.businessCategory]}</small><time dateTime={item.completedAt || item.createdAt}><Clock3 />{elapsedTime(item.completedAt || item.createdAt)}</time></div>
                     <h3>{item.title}</h3>
-                    <p>{item.body || `来源：${item.sourceType === 'PURCHASING' ? '杭连采购' : item.sourceType || '系统协同'}`}</p>
+                    <p>{item.body || `来源：${item.sourceType === 'PURCHASING' ? '杭连采购' : item.sourceType === 'QUALITY_FIXTURE' ? '资料与治具审核' : item.sourceType || '系统协同'}`}</p>
                     {!item.completedAt && <p className="hm-inbox-message-origin">{item.requiresAction ? '需要你处理' : '协同进展 · 供你查看'}{item.actorName ? ` · ${item.actorName}` : ''}</p>}
                     {item.completedAt && <p className="hm-hcc-completion-note"><CheckCircle2 aria-hidden="true" />{completedTime(item.completedAt)} 完成 · {item.completionReason || completionLabel(item)}</p>}
                   </div>

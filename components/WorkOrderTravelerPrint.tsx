@@ -523,6 +523,7 @@ export default function WorkOrderTravelerPrint({
           <div className="traveler-order-main">
             <span>产品 / 规格</span><strong>{snapshot.specification || snapshot.productName}</strong>
             <small>{snapshot.customerName || '客户待维护'} · {snapshot.productName}</small>
+            {snapshot.documentApproval && <small>资料 {snapshot.documentApproval.revision} · 主管 {snapshot.documentApproval.supervisor} / 质量 {snapshot.documentApproval.quality} · {snapshot.documentApproval.fixtureLabel}</small>}
             <dl><div className="traveler-business-code"><dt>内部工单</dt><dd>{snapshot.businessWorkOrderCode || '待生成'}</dd></div><div><dt>生产数量</dt><dd>{snapshot.targetQty.toLocaleString()} {snapshot.unitLabel}</dd></div><div><dt>计划交期</dt><dd>{deliveryText(snapshot.deliveryDay)}</dd></div></dl>
           </div>
           <div className="traveler-qr">{qrImages[record.printId]

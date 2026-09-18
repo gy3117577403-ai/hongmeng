@@ -1,6 +1,7 @@
 'use client';
 
 import HomePurchasingShortcut from './HomePurchasingShortcut';
+import HomeQualityFixtureShortcut from './HomeQualityFixtureShortcut';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import Link from 'next/link';
@@ -758,6 +759,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         </header>
 
         <HomePurchasingShortcut />
+        <HomeQualityFixtureShortcut />
         <div className="hm-hcc-main-grid">
           <section
             ref={sceneRef}

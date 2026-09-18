@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { createFieldAbnormalTimeEvent } from '../lib/field-abnormal-time-service';
 import { prisma } from '../lib/prisma';
+import { approvedDocumentFixture } from './helpers/approved-document-fixture';
 import {
   confirmWorkOrderTravelerPrints,
   createWorkOrderTravelerPrints,
@@ -84,6 +85,7 @@ test(
       include: { processRoute: { include: { steps: true } } },
     });
     assert.ok(order.processRoute);
+    const cleanupDocuments = await approvedDocumentFixture(order.id, actor.id);
 
     try {
       const [print] = await createWorkOrderTravelerPrints({
@@ -163,6 +165,7 @@ test(
       });
       assert.deepEqual(after, before);
     } finally {
+      await cleanupDocuments();
       await prisma.abnormalTimeEvent.deleteMany({ where: { workOrderId: order.id } });
       await prisma.workOrderQrPrint.deleteMany({ where: { ticket: { workOrderId: order.id } } });
       await prisma.workOrderQrTicket.deleteMany({ where: { workOrderId: order.id } });
