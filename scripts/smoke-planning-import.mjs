@@ -35,7 +35,13 @@ async function preview(rows,week=date(14),old=false){
 const row=(spec,time,quantity=40)=>[date(0),prefix,'验收线束',spec,100,quantity,time,date(70),'','','','',''];
 const uploaded=await preview([row(prefix,2.125),row(`${prefix}-EMPTY`,'')]);
 assert.equal(uploaded.body.summary.invalidCount,0);assert.equal(uploaded.body.rows[0].timePreview.unitMilliseconds,127500);assert.equal(uploaded.body.rows[0].timePreview.totalMilliseconds,'5100000');assert.equal(uploaded.body.rows[1].timePreview.source,'missing');
-async function commit(preview,orders={},expected=200){return (await request('/api/planning/import/commit','POST',{batchId:preview.batchId,previewToken:preview.previewToken,orderDecisions:orders},expected)).body;}
+async function commit(preview,orders={},expected=200){return (await request('/api/planning/import/commit','POST',{batchId:preview.batchId,previewToken:preview.previewToken,orderDecisions:orders,fixtureDecisions:Object.fromEntries(preview.rows.map(row=>[row.rowNo,false]))},expected)).body;}
+if(uploaded.body.targetWeekStartDate>='2026-09-21'){
+  const missingChoice=await request('/api/planning/import/commit','POST',{batchId:uploaded.body.batchId,previewToken:uploaded.body.previewToken},409);
+  assert.match(missingChoice.body.error,/请选择是否需要治具/);
+  assert.equal((await request('/api/planning/orders?keyword='+encodeURIComponent(prefix))).body.orders.length,0);
+  checks.push('governed plan import requires fixture choice and a rejected commit leaves no partial orders');
+}
 const committed=await commit(uploaded.body);assert.equal(committed.summary.created,2);assert.deepEqual(await commit(uploaded.body),committed);
 const orders=(await request('/api/planning/orders?keyword='+encodeURIComponent(prefix))).body.orders;
 const order=orders.find(order=>order.specification===prefix);assert.ok(order);

@@ -62,9 +62,10 @@ async function preview(specification, customer, source, ref = '') {
 }
 const plan = await preview(fixture.historical.specification.toLowerCase(), fixture.marker + '杭州昆泰', fixture.marker + '-SO');
 assert.equal(plan.rows[0].productAction, 'reuse'); assert.equal(plan.rows[0].matchedDrawingLibraryItemId, fixture.historical.id);
-const committed = await request('/api/planning/import/commit', 'POST', { batchId: plan.batchId, previewToken: plan.previewToken });
+const fixtureDecisions = preview => Object.fromEntries(preview.rows.map(row => [row.rowNo, false]));
+const committed = await request('/api/planning/import/commit', 'POST', { batchId: plan.batchId, previewToken: plan.previewToken, fixtureDecisions: fixtureDecisions(plan) });
 assert.equal(committed.summary.createdProducts, 0); assert.equal(committed.summary.reusedProducts, 1);
-const repeated = await request('/api/planning/import/commit', 'POST', { batchId: plan.batchId, previewToken: plan.previewToken });
+const repeated = await request('/api/planning/import/commit', 'POST', { batchId: plan.batchId, previewToken: plan.previewToken, fixtureDecisions: fixtureDecisions(plan) });
 assert.deepEqual(repeated.summary, committed.summary);
 checks.push('next-week XLSX preview and commit reuse original archive; repeated commit is idempotent');
 const deleted = await preview(fixture.archived.specification, fixture.marker + '重庆易猫', fixture.marker + '-ARCHIVED-SO');
@@ -75,9 +76,9 @@ assert.equal(mismatched.rows[0].status, 'invalid');
 checks.push('explicit archive references must match customer and model');
 const ambiguous = await preview(fixture.marker + '-AMBIGUOUS', fixture.marker + '伽利略（天津）', fixture.marker + '-AMBIGUOUS-SO');
 assert.equal(ambiguous.rows[0].status, 'conflict'); assert.equal(ambiguous.rows[0].candidates.length, 2);
-await request('/api/planning/import/commit', 'POST', { batchId: ambiguous.batchId, previewToken: ambiguous.previewToken }, 409);
-await request('/api/planning/import/commit', 'POST', { batchId: ambiguous.batchId, previewToken: ambiguous.previewToken, decisions: { [ambiguous.rows[0].rowNo]: fixture.historical.id } }, 409);
-const chosen = await request('/api/planning/import/commit', 'POST', { batchId: ambiguous.batchId, previewToken: ambiguous.previewToken, decisions: { [ambiguous.rows[0].rowNo]: fixture.ambiguous[0].id } });
+await request('/api/planning/import/commit', 'POST', { batchId: ambiguous.batchId, previewToken: ambiguous.previewToken, fixtureDecisions: fixtureDecisions(ambiguous) }, 409);
+await request('/api/planning/import/commit', 'POST', { batchId: ambiguous.batchId, previewToken: ambiguous.previewToken, fixtureDecisions: fixtureDecisions(ambiguous), decisions: { [ambiguous.rows[0].rowNo]: fixture.historical.id } }, 409);
+const chosen = await request('/api/planning/import/commit', 'POST', { batchId: ambiguous.batchId, previewToken: ambiguous.previewToken, fixtureDecisions: fixtureDecisions(ambiguous), decisions: { [ambiguous.rows[0].rowNo]: fixture.ambiguous[0].id } });
 assert.equal(chosen.summary.createdProducts, 0);
 checks.push('ambiguous import requires an allowed explicit choice and rejects forged decisions');
 const page = await request('/api/drawing-library?paged=true&offset=0');
