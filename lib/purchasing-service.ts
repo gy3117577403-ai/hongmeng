@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { createSystemNotification } from "@/lib/system-notifications";
+import { enqueuePurchasingPush } from "@/lib/purchasing-notifications";
 import {
   PurchasingError,
   pcChoice,
@@ -147,7 +148,7 @@ async function notify(
     eventType: "PURCHASING_" + type,
     dedupeKey: `purchasing:${type}:${id}:${version}`,
     category: "TODO",
-    title,
+    title: "【杭连采购】" + title,
     sourceType: "PURCHASING",
     sourceId: id,
     actorId: a.id,
@@ -1573,6 +1574,7 @@ export async function mutatePurchasing(
         result = { id: f.id };
       } else throw new PurchasingError("不支持的采购操作");
       const saved = json(result);
+      await enqueuePurchasingPush(tx, input, result, a, operationKey);
       await tx.pcOperation.create({
         data: {
           id: operationKey,

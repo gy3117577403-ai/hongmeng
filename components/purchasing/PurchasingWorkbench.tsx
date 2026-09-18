@@ -10,6 +10,10 @@ import {
 import {
   ArrowDownToLine,
   Check,
+  Copy,
+  Maximize2,
+  Minimize2,
+  Bell,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -33,6 +37,14 @@ import {
 } from "@/lib/purchasing-domain";
 import type { PcDetail } from "@/lib/purchasing-queries";
 import type { CurrentUserDTO } from "@/types";
+
+import {
+  PurchaseToast,
+  PurchaseActions,
+  PurchaseConfirm,
+} from "./PurchaseFeedback";
+import PurchasePushPanel from "./PurchasePushPanel";
+import { purchasingNextStep } from "@/lib/purchasing-presentation";
 
 type LineDetail = Extract<PcDetail, { kind: "line" }>["record"];
 type FundDetail = Extract<PcDetail, { kind: "fund" }>["record"];
@@ -74,7 +86,7 @@ const blankLine = (): RequestLine => ({
   referenceUrl: "",
 });
 const titles: Record<string, string> = {
-  SAVE_REQUEST: "发起采购申请",
+  SAVE_REQUEST: "发起请购",
   EDIT_REQUEST: "修改采购申请",
   SAVE_SETTINGS: "采购流程设置",
   APPROVE_LINES: "通过采购审批",
@@ -157,6 +169,12 @@ function Facts({ children }: { children: ReactNode }) {
   return <dl className="pc-facts">{children}</dl>;
 }
 function Fact({ label, children }: { label: string; children: ReactNode }) {
+  const empty = (v: ReactNode): boolean =>
+    v == null ||
+    v === false ||
+    (typeof v === "string" && !v.trim()) ||
+    (Array.isArray(v) && v.every(empty));
+  if (empty(children)) return null;
   return (
     <div>
       <dt>{label}</dt>
@@ -170,12 +188,39 @@ export default function PurchasingWorkbench({
   initialData,
   initialView,
   initialRecord,
+  initialCreate = false,
+  initialTask = "",
 }: {
   user: CurrentUserDTO;
   initialData: PcWorkbench;
   initialView: string;
   initialRecord: string;
+  initialCreate?: boolean;
+  initialTask?: string;
 }) {
+  const [task, setTask] = useState(initialTask);
+  const [confirmDiscard, setConfirmDiscard] = useState<"form" | "push" | null>(
+    null,
+  );
+  const [expanded, setExpanded] = useState(false),
+    [pushOpen, setPushOpen] = useState(false);
+  const pushRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLElement>(null),
+    detailTrigger = useRef<HTMLElement | null>(null),
+    detailHistory = useRef<string[]>([]);
+  const formDirty = useRef(false),
+    pushDirty = useRef(false),
+    createOpened = useRef(false);
+  const closeMessage = useCallback(() => setMessage(""), []);
+  const closePush = () => {
+    if (pushDirty.current) setConfirmDiscard("push");
+    else setPushOpen(false);
+  };
+  const closeDetail = () => {
+    setActiveId("");
+    detailHistory.current = [];
+    requestAnimationFrame(() => detailTrigger.current?.focus());
+  };
   const [data, setData] = useState(initialData),
     [view, setView] = useState(initialView),
     [search, setSearch] = useState(""),
@@ -221,16 +266,22 @@ export default function PurchasingWorkbench({
     mutation = useRef<{ body: string; key: string } | null>(null),
     formRef = useRef<HTMLDivElement>(null),
     previousFocus = useRef<HTMLElement | null>(null);
+  const closeDialog = useCallback(() => {
+    if (busyRef.current || uploading) return;
+    if (formDirty.current) setConfirmDiscard("form");
+    else setDialog(null);
+  }, [uploading]);
   const params = useCallback(
     () =>
       new URLSearchParams({
         view,
+        task,
         q: query,
         ...filters,
         page: String(page),
         pageSize: "12",
       }),
-    [view, query, filters, page],
+    [view, task, query, filters, page],
   );
   const selectedRows = data.rows.filter((r) => selected.includes(r.id));
   const changeFilter = (key: keyof typeof filters, value: string) => {
@@ -284,6 +335,7 @@ export default function PurchasingWorkbench({
   }, [activeId, revision]);
   useEffect(() => {
     if (!dialog) return;
+    formDirty.current = false;
     previousFocus.current = document.activeElement as HTMLElement;
     const t = setTimeout(
       () =>
@@ -301,7 +353,7 @@ export default function PurchasingWorkbench({
     if (!dialog) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !busyRef.current) {
-        setDialog(null);
+        closeDialog();
         return;
       }
       if (e.key !== "Tab") return;
@@ -320,7 +372,57 @@ export default function PurchasingWorkbench({
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [dialog]);
+  }, [dialog, closeDialog]);
+  useEffect(() => {
+    if (initialCreate && !createOpened.current) {
+      createOpened.current = true;
+      void open("SAVE_REQUEST", []);
+    }
+    // Only process the initial shortcut once; later data refreshes must not reopen it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!activeId || dialog || pushOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeDetail();
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, dialog, pushOpen]);
+  useEffect(() => {
+    if (!pushOpen) return;
+    const previous = document.activeElement as HTMLElement;
+    pushDirty.current = false;
+    const timer = setTimeout(
+      () => pushRef.current?.querySelector<HTMLElement>("button")?.focus(),
+      0,
+    );
+    const handle = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      const nodes = Array.from(
+        pushRef.current?.querySelectorAll<HTMLElement>(
+          "button:not(:disabled),input:not(:disabled),a[href]",
+        ) || [],
+      );
+      if (e.shiftKey && document.activeElement === nodes[0]) {
+        e.preventDefault();
+        nodes.at(-1)?.focus();
+      } else if (!e.shiftKey && document.activeElement === nodes.at(-1)) {
+        e.preventDefault();
+        nodes[0]?.focus();
+      }
+    };
+    document.addEventListener("keydown", handle);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("keydown", handle);
+      previous?.focus();
+    };
+  }, [pushOpen]);
   const set = (key: string, value: string) =>
     setForm((p) => ({ ...p, [key]: value }));
   const input = (
@@ -354,6 +456,9 @@ export default function PurchasingWorkbench({
       ...Object.fromEntries(data.users.map((u) => [u.id, u.name])),
     });
   const openDetail = (id: string) => {
+    if (!activeId)
+      detailTrigger.current = document.activeElement as HTMLElement;
+    else if (activeId !== id) detailHistory.current.push(activeId);
     setActiveId(id);
     setDetailTab("overview");
   };
@@ -764,7 +869,7 @@ export default function PurchasingWorkbench({
       setError(e instanceof Error ? e.message : "导出失败");
     }
   }
-  const actions = (rows: PcRow[], compact = false) => {
+  const actions = (rows: PcRow[], compact = false, condensed = false) => {
     if (!rows.length) return null;
     const all = (s: string[]) => rows.every((r) => s.includes(r.status));
     const line = rows.every((r) => r.kind === "line"),
@@ -780,7 +885,7 @@ export default function PurchasingWorkbench({
       </button>
     );
     return (
-      <div className="pc-actions">
+      <PurchaseActions condensed={condensed}>
         {line && all(["PENDING"]) && data.permissions.approvePurchase && (
           <>
             {btn("APPROVE_LINES", "通过审批", true)}
@@ -852,7 +957,7 @@ export default function PurchasingWorkbench({
             {btn("VOID_LINES", "作废")}
           </>
         )}
-      </div>
+      </PurchaseActions>
     );
   };
   const line = detail?.kind === "line" ? detail.record : null,
@@ -893,7 +998,7 @@ export default function PurchasingWorkbench({
       />
       <header className="pc-top">
         <div>
-          <div className="pc-eyebrow">鸿蒙 · 采购与物资</div>
+          <div className="pc-eyebrow">杭连 · 采购与物资</div>
           <h1>
             <span id="pc-nav-trigger" />
             采购工作台 <span>采购闭环管理</span>
@@ -906,6 +1011,10 @@ export default function PurchasingWorkbench({
           >
             <RefreshCw size={16} />
           </button>
+          <button onClick={() => setPushOpen(true)}>
+            <Bell size={16} />
+            群推送
+          </button>
           {data.permissions.configure && (
             <button onClick={() => void open("SAVE_SETTINGS")}>
               <Settings size={15} />
@@ -917,7 +1026,7 @@ export default function PurchasingWorkbench({
             onClick={() => void open("SAVE_REQUEST")}
           >
             <Plus size={17} />
-            发起采购
+            发起请购
           </button>
         </div>
       </header>
@@ -937,15 +1046,7 @@ export default function PurchasingWorkbench({
           </button>
         </div>
       )}
-      {message && (
-        <div className="pc-success" role="status">
-          <Check size={17} />
-          {message}
-          <button onClick={() => setMessage("")} aria-label="关闭提示">
-            <X size={15} />
-          </button>
-        </div>
-      )}
+      <PurchaseToast message={message} close={closeMessage} />
       <div className="pc-layout">
         <aside className="pc-menu">
           <div className="pc-menu-label">工作队列</div>
@@ -955,6 +1056,7 @@ export default function PurchasingWorkbench({
               className={view === v.id ? "active" : ""}
               onClick={() => {
                 setView(v.id);
+                setTask("");
                 setPage(1);
                 setSelected([]);
                 setActiveId("");
@@ -997,6 +1099,25 @@ export default function PurchasingWorkbench({
             </div>
           </div>
           <div className="pc-filters">
+            {task && (
+              <button
+                className="pc-task-filter"
+                onClick={() => {
+                  setTask("");
+                  setPage(1);
+                  setSelected([]);
+                }}
+              >
+                {{
+                  approval: "待我审批",
+                  execution: "待我采购",
+                  finance: "待我付款",
+                  requests: "我的申请",
+                }[task] || "个人待办"}{" "}
+                <X size={14} aria-hidden="true" />
+                <span className="sr-only">清除个人筛选</span>
+              </button>
+            )}
             <label className="pc-search">
               <Search size={17} />
               <input
@@ -1309,15 +1430,53 @@ export default function PurchasingWorkbench({
         </section>
       </div>
       {activeId && (
-        <aside className="pc-detail" aria-label="采购记录详情">
+        <aside
+          ref={detailRef}
+          className={"pc-detail" + (expanded ? " pc-detail-expanded" : "")}
+          aria-label="采购记录详情"
+          tabIndex={-1}
+        >
           <header>
             <div>
-              <small>完整业务记录</small>
+              <small>{line?.number || fund?.number || "采购详情"}</small>
               <h2>{line?.name || fund?.number || "采购详情"}</h2>
             </div>
-            <button aria-label="关闭详情" onClick={() => setActiveId("")}>
-              <X size={20} />
-            </button>
+            <div className="pc-detail-tools">
+              {detailHistory.current.length > 0 && (
+                <button
+                  onClick={() => {
+                    const id = detailHistory.current.pop();
+                    if (id) {
+                      setActiveId(id);
+                      setDetailTab("overview");
+                    }
+                  }}
+                  aria-label="返回上一条记录"
+                >
+                  <ChevronLeft size={19} />
+                </button>
+              )}
+              <button
+                aria-label="复制采购编号"
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(line?.number || fund?.number || "")
+                    .then(() => setMessage("编号已复制"))
+                    .catch(() => setError("复制失败，请手动复制编号"));
+                }}
+              >
+                <Copy size={17} />
+              </button>
+              <button
+                aria-label={expanded ? "收起详情" : "展开详情"}
+                onClick={() => setExpanded((v) => !v)}
+              >
+                {expanded ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+              </button>
+              <button aria-label="关闭详情" onClick={closeDetail}>
+                <X size={20} />
+              </button>
+            </div>
           </header>
           {!detail ? (
             <div className="pc-empty">正在加载…</div>
@@ -1325,9 +1484,16 @@ export default function PurchasingWorkbench({
             <>
               <nav className="pc-detail-tabs">
                 {[
-                  ["overview", "业务详情"],
+                  ["overview", "业务概览"],
+                  ...(line
+                    ? [
+                        ["finance", "资金票据"],
+                        ["stock", "收货售后"],
+                      ]
+                    : []),
                   ["files", "附件凭证"],
                   ["history", "操作记录"],
+                  ["push", "推送记录"],
                 ].map(([id, label]) => (
                   <button
                     key={id}
@@ -1339,271 +1505,372 @@ export default function PurchasingWorkbench({
                 ))}
               </nav>
               <div className="pc-detail-body">
-                {detailTab === "overview" && line && (
-                  <>
-                    <div className="pc-detail-amount">
-                      <span>当前应付</span>
-                      <strong>
-                        {pcMoney(
-                          line.status === "ORDERED"
-                            ? line.payableCents
-                            : line.estimateCents,
-                        )}
-                      </strong>
-                      <span className="pc-badge">
-                        {line.completedAt ? "已完成" : PC_STATES[line.status]}
-                      </span>
-                    </div>
-                    <Facts>
-                      <Fact label="采购编号">{line.number}</Fact>
-                      <Fact label="申请 / 提交">
-                        {line.request.applicantName} /{" "}
-                        {line.request.submitterName}
-                      </Fact>
-                      <Fact label="物品规格">
-                        {line.spec} · {line.quantity} {line.unit}
-                      </Fact>
-                      <Fact label="需求日期">{line.needDate}</Fact>
-                      <Fact label="采购用途">{line.request.purpose}</Fact>
-                      <Fact label="关联工单">{line.request.workOrderCode}</Fact>
-                      <Fact label="供应商">{line.supplier?.name}</Fact>
-                      <Fact label="结算方式">
-                        {PC_SETTLEMENTS[line.settlement]}
-                      </Fact>
-                      <Fact label="收款人">{line.payee}</Fact>
-                      <Fact label="银行 / 账户">
-                        {line.bank} {line.account}
-                      </Fact>
-                      <Fact label="采购经办">{line.buyerName}</Fact>
-                      <Fact label="预计到货">{line.eta}</Fact>
-                      {line.settlement === "MONTHLY" && (
-                        <Fact label="月结账期">
-                          {line.cycle} · {line.dueDate} 到期
-                        </Fact>
-                      )}
-                      <Fact label="备注">{line.note || line.reason}</Fact>
-                    </Facts>
-                    {line.referenceUrl && (
-                      <a
-                        href={line.referenceUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="pc-text-btn"
-                      >
-                        查看采购参考链接 ↗
-                      </a>
-                    )}
-                    {line.status === "ORDERED" && (
-                      <div className="pc-metrics">
-                        <div>
-                          <small>已收 / 待收</small>
-                          <b>
-                            {line.receivedQty} /{" "}
-                            {line.quantity -
-                              line.receivedQty -
-                              line.cancelledQty}
-                          </b>
-                        </div>
-                        <div>
-                          <small>实际净付款</small>
-                          <b>{pcMoney(line.paidCents - line.refundedCents)}</b>
-                        </div>
-                        <div>
-                          <small>已关联发票</small>
-                          <b>{pcMoney(line.invoiceCents)}</b>
-                        </div>
-                      </div>
-                    )}
-                    <h3>
-                      关联资金单 <span>{line.allocations.length}</span>
-                    </h3>
-                    {!line.allocations.length && (
-                      <p className="pc-muted">
-                        尚未申请资金；登记采购后可单独发起。
-                      </p>
-                    )}
-                    {line.allocations.map((al) => (
-                      <button
-                        className="pc-related"
-                        key={al.id}
-                        onClick={() => openDetail(al.fundId)}
-                      >
-                        <b>
-                          {al.fund.number}{" "}
-                          <span>{PC_STATES[al.fund.status]}</span>
-                        </b>
-                        <small>
-                          分摊 {pcMoney(al.amountCents)} · 已付{" "}
-                          {pcMoney(al.paidCents)} ·{" "}
-                          {al.active ? "有效" : "已释放"}
-                        </small>
-                      </button>
-                    ))}
-                    <h3>收货与库存</h3>
-                    {line.receipts.map((r) => (
-                      <div className="pc-log" key={r.id}>
-                        <b>
-                          {r.date} · {r.quantity} {line.unit}
-                        </b>
-                        <small>
-                          {r.number} · 收货人 {r.receiver}
-                        </small>
-                      </div>
-                    ))}
-                    {line.balances.map((b) => (
-                      <div className="pc-log" key={b.id}>
-                        <b>
-                          {b.warehouse} / {b.location} · 在库 {b.onHand}
-                        </b>
-                        <small>
-                          {line.item?.number} · 已领用 {b.issued}
-                        </small>
-                        <div className="pc-actions">
-                          <button
-                            onClick={() =>
-                              void open("ISSUE", [
-                                {
-                                  ...rowFromLine(line),
-                                  id: b.id,
-                                  kind: "stock",
-                                  version: b.version,
-                                  onHand: b.onHand,
-                                  issued: b.issued,
-                                },
-                              ])
-                            }
-                          >
-                            领用
-                          </button>
-                          <button
-                            onClick={() =>
-                              void open("RESTOCK", [
-                                {
-                                  ...rowFromLine(line),
-                                  id: b.id,
-                                  kind: "stock",
-                                  version: b.version,
-                                  onHand: b.onHand,
-                                  issued: b.issued,
-                                },
-                              ])
-                            }
-                          >
-                            退库
-                          </button>
-                        </div>
-                        <details>
-                          <summary>查看库存流水</summary>
-                          {b.movements.map((m) => (
-                            <p key={m.id}>
-                              {time(m.createdAt)} ·{" "}
-                              {eventNames[m.kind] || m.kind}{" "}
-                              {m.quantity > 0 ? "+" : ""}
-                              {m.quantity} · 结存 {m.balance}
-                              <small>
-                                {m.person} {m.reason} · {m.actorName}
-                              </small>
-                            </p>
-                          ))}
-                        </details>
-                      </div>
-                    ))}
-                    <h3>退货与退款</h3>
-                    {line.returns.length === 0 && (
-                      <p className="pc-muted">暂无退货记录</p>
-                    )}
-                    {line.returns.map((r) => (
-                      <div className="pc-log" key={r.id}>
-                        <b>
-                          {r.number} · {r.quantity} {line.unit}
-                        </b>
-                        <small>
-                          {r.kind === "STOCK" ? "在库退货" : "未入库退货"} ·
-                          冲减 {pcMoney(r.amountCents)} · {r.reason}
-                        </small>
-                        <p>
-                          应退 {pcMoney(r.refundDueCents)} / 公司到账{" "}
-                          {pcMoney(r.companyReceivedCents)}
-                        </p>
-                        {r.refundedCents > r.companyReceivedCents && (
-                          <p className="pc-warning">
-                            个人已收待归还{" "}
-                            {pcMoney(r.refundedCents - r.companyReceivedCents)}
-                          </p>
-                        )}
-                        {data.permissions.finance && (
-                          <div className="pc-actions">
-                            {r.refundDueCents > r.refundedCents && (
-                              <button
-                                onClick={() =>
-                                  void open("REFUND", [rowFromLine(line)], {
-                                    returnId: r.id,
-                                  })
-                                }
-                              >
-                                确认退款到账
-                              </button>
-                            )}
-                            {r.refundedCents > r.companyReceivedCents && (
-                              <button
-                                onClick={() =>
-                                  void open(
-                                    "REFUND_HANDOVER",
-                                    [rowFromLine(line)],
-                                    { returnId: r.id },
-                                  )
-                                }
-                              >
-                                确认归还公司
-                              </button>
-                            )}
+                {["overview", "finance", "stock"].includes(detailTab) &&
+                  line && (
+                    <>
+                      {detailTab === "overview" && (
+                        <>
+                          <div className="pc-next-step">
+                            <strong>
+                              {line.completedAt
+                                ? "采购已完成"
+                                : PC_STATES[line.status]}
+                            </strong>
+                            <p>{purchasingNextStep(line)}</p>
+                            <span>
+                              {line.urgency === "CRITICAL"
+                                ? "特急"
+                                : line.urgency === "URGENT"
+                                  ? "紧急"
+                                  : "普通"}{" "}
+                              · 经办：{line.buyerName || "待指定"}
+                            </span>
                           </div>
-                        )}
-                      </div>
-                    ))}
-                    <h3>合同与发票</h3>
-                    {line.contractLines.map((c) => (
-                      <a
-                        key={c.id}
-                        className="pc-related"
-                        href={"/workspace/purchases/contracts/" + c.contractId}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <b>
-                          {c.contract.number} · 第 {c.contract.revision} 版 ↗
-                        </b>
-                        <small>打开、打印或下载 PDF</small>
-                      </a>
-                    ))}
-                    {line.invoiceLines.map((i) => (
-                      <div key={i.id} className="pc-log">
-                        <b>
-                          {i.invoice.number} ·{" "}
-                          {i.invoice.kind === "CREDIT" ? "红冲" : "发票"}
-                        </b>
-                        <small>
-                          本项关联 {pcMoney(i.amountCents)} · {i.invoice.date}
-                        </small>
-                      </div>
-                    ))}
-                    {line.request.lines.length > 1 && (
-                      <>
-                        <h3>同一申请的其他物品</h3>
-                        {line.request.lines
-                          .filter((l) => l.id !== line.id)
-                          .map((l) => (
+                          <div className="pc-detail-amount">
+                            <span>
+                              {line.status === "ORDERED"
+                                ? "净应付金额"
+                                : "预估金额"}
+                            </span>
+                            <strong>
+                              {pcMoney(
+                                line.status === "ORDERED"
+                                  ? line.payableCents
+                                  : line.estimateCents,
+                              )}
+                            </strong>
+                            <span className="pc-badge">
+                              {line.completedAt
+                                ? "已完成"
+                                : PC_STATES[line.status]}
+                            </span>
+                          </div>
+                          {line.status === "ORDERED" && (
+                            <div className="pc-metrics">
+                              <div>
+                                <small>已收 / 待收</small>
+                                <b>
+                                  {line.receivedQty} /{" "}
+                                  {line.quantity -
+                                    line.receivedQty -
+                                    line.cancelledQty}
+                                </b>
+                              </div>
+                              <div>
+                                <small>实际净付款</small>
+                                <b>
+                                  {pcMoney(line.paidCents - line.refundedCents)}
+                                </b>
+                              </div>
+                              <div>
+                                <small>已关联发票</small>
+                                <b>{pcMoney(line.invoiceCents)}</b>
+                              </div>
+                            </div>
+                          )}
+                          {line.status === "ORDERED" && (
+                            <div className="pc-progress-grid">
+                              <div>
+                                <small>采购金额</small>
+                                <b>{pcMoney(line.actualCents)}</b>
+                              </div>
+                              <div>
+                                <small>未付 / 待退</small>
+                                <b>
+                                  {pcMoney(
+                                    Math.max(
+                                      0,
+                                      line.payableCents -
+                                        line.paidCents +
+                                        line.refundedCents,
+                                    ),
+                                  )}{" "}
+                                  /{" "}
+                                  {pcMoney(
+                                    line.returns.reduce(
+                                      (n, r) =>
+                                        n +
+                                        r.refundDueCents -
+                                        r.companyReceivedCents,
+                                      0,
+                                    ),
+                                  )}
+                                </b>
+                              </div>
+                            </div>
+                          )}
+
+                          <Facts>
+                            <Fact label="采购编号">{line.number}</Fact>
+                            <Fact label="申请 / 提交">
+                              {line.request.applicantName} /{" "}
+                              {line.request.submitterName}
+                            </Fact>
+                            <Fact label="物品规格">
+                              {line.spec} · {line.quantity} {line.unit}
+                            </Fact>
+                            <Fact label="需求日期">{line.needDate}</Fact>
+                            <Fact label="采购用途">{line.request.purpose}</Fact>
+                            <Fact label="关联工单">
+                              {line.request.workOrderCode}
+                            </Fact>
+                            <Fact label="供应商">{line.supplier?.name}</Fact>
+                            <Fact label="结算方式">
+                              {PC_SETTLEMENTS[line.settlement]}
+                            </Fact>
+                            <Fact label="采购经办">{line.buyerName}</Fact>
+                            <Fact label="预计到货">{line.eta}</Fact>
+                            {line.settlement === "MONTHLY" && (
+                              <Fact label="月结账期">
+                                {line.cycle} · {line.dueDate} 到期
+                              </Fact>
+                            )}
+                            <Fact label="备注">{line.note || line.reason}</Fact>
+                          </Facts>
+                          {line.referenceUrl && (
+                            <a
+                              href={line.referenceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="pc-text-btn"
+                            >
+                              查看采购参考链接 ↗
+                            </a>
+                          )}
+                        </>
+                      )}
+                      {detailTab === "finance" && (
+                        <>
+                          <Facts>
+                            {" "}
+                            <Fact label="收款人">{line.payee}</Fact>
+                            <Fact label="银行 / 账户">
+                              {line.bank} {line.account}
+                            </Fact>
+                          </Facts>
+                          <h3>
+                            关联资金单 <span>{line.allocations.length}</span>
+                          </h3>
+                          {!line.allocations.length && (
+                            <p className="pc-muted">
+                              尚未申请资金；登记采购后可单独发起。
+                            </p>
+                          )}
+                          {line.allocations.map((al) => (
                             <button
                               className="pc-related"
-                              key={l.id}
-                              onClick={() => openDetail(l.id)}
+                              key={al.id}
+                              onClick={() => openDetail(al.fundId)}
                             >
-                              {l.name} · {PC_STATES[l.status]}
+                              <b>
+                                {al.fund.number}{" "}
+                                <span>{PC_STATES[al.fund.status]}</span>
+                              </b>
+                              <small>
+                                分摊 {pcMoney(al.amountCents)} · 已付{" "}
+                                {pcMoney(al.paidCents)} ·{" "}
+                                {al.active ? "有效" : "已释放"}
+                              </small>
                             </button>
                           ))}
-                      </>
-                    )}
-                  </>
+                        </>
+                      )}
+                      {detailTab === "stock" && (
+                        <>
+                          <h3>收货与库存</h3>
+                          {!line.receipts.length && (
+                            <p className="pc-muted">
+                              尚未收货。登记采购后可分批办理，月结无需等待付款。
+                            </p>
+                          )}
+                          {line.receipts.map((r) => (
+                            <div className="pc-log" key={r.id}>
+                              <b>
+                                {r.date} · {r.quantity} {line.unit}
+                              </b>
+                              <small>
+                                {r.number} · 收货人 {r.receiver}
+                              </small>
+                            </div>
+                          ))}
+                          {line.balances.map((b) => (
+                            <div className="pc-log" key={b.id}>
+                              <b>
+                                {b.warehouse} / {b.location} · 在库 {b.onHand}
+                              </b>
+                              <small>
+                                {line.item?.number} · 已领用 {b.issued}
+                              </small>
+                              <div className="pc-actions">
+                                <button
+                                  onClick={() =>
+                                    void open("ISSUE", [
+                                      {
+                                        ...rowFromLine(line),
+                                        id: b.id,
+                                        kind: "stock",
+                                        version: b.version,
+                                        onHand: b.onHand,
+                                        issued: b.issued,
+                                      },
+                                    ])
+                                  }
+                                >
+                                  领用
+                                </button>
+                                <button
+                                  onClick={() =>
+                                    void open("RESTOCK", [
+                                      {
+                                        ...rowFromLine(line),
+                                        id: b.id,
+                                        kind: "stock",
+                                        version: b.version,
+                                        onHand: b.onHand,
+                                        issued: b.issued,
+                                      },
+                                    ])
+                                  }
+                                >
+                                  退库
+                                </button>
+                              </div>
+                              <details>
+                                <summary>查看库存流水</summary>
+                                {b.movements.map((m) => (
+                                  <p key={m.id}>
+                                    {time(m.createdAt)} ·{" "}
+                                    {eventNames[m.kind] || m.kind}{" "}
+                                    {m.quantity > 0 ? "+" : ""}
+                                    {m.quantity} · 结存 {m.balance}
+                                    <small>
+                                      {m.person} {m.reason} · {m.actorName}
+                                    </small>
+                                  </p>
+                                ))}
+                              </details>
+                            </div>
+                          ))}
+                          <h3>退货与退款</h3>
+                          {line.returns.length === 0 && (
+                            <p className="pc-muted">暂无退货记录</p>
+                          )}
+                          {line.returns.map((r) => (
+                            <div className="pc-log" key={r.id}>
+                              <b>
+                                {r.number} · {r.quantity} {line.unit}
+                              </b>
+                              <small>
+                                {r.kind === "STOCK" ? "在库退货" : "未入库退货"}{" "}
+                                · 冲减 {pcMoney(r.amountCents)} · {r.reason}
+                              </small>
+                              <p>
+                                应退 {pcMoney(r.refundDueCents)} / 公司到账{" "}
+                                {pcMoney(r.companyReceivedCents)}
+                              </p>
+                              {r.refundedCents > r.companyReceivedCents && (
+                                <p className="pc-warning">
+                                  个人已收待归还{" "}
+                                  {pcMoney(
+                                    r.refundedCents - r.companyReceivedCents,
+                                  )}
+                                </p>
+                              )}
+                              {data.permissions.finance && (
+                                <div className="pc-actions">
+                                  {r.refundDueCents > r.refundedCents && (
+                                    <button
+                                      onClick={() =>
+                                        void open(
+                                          "REFUND",
+                                          [rowFromLine(line)],
+                                          {
+                                            returnId: r.id,
+                                          },
+                                        )
+                                      }
+                                    >
+                                      确认退款到账
+                                    </button>
+                                  )}
+                                  {r.refundedCents > r.companyReceivedCents && (
+                                    <button
+                                      onClick={() =>
+                                        void open(
+                                          "REFUND_HANDOVER",
+                                          [rowFromLine(line)],
+                                          { returnId: r.id },
+                                        )
+                                      }
+                                    >
+                                      确认归还公司
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </>
+                      )}
+                      {detailTab === "finance" && (
+                        <>
+                          <h3>合同与发票</h3>
+                          {!line.contractLines.length &&
+                            !line.invoiceLines.length && (
+                              <p className="pc-muted">暂无合同或发票记录。</p>
+                            )}
+                          {line.contractLines.map((c) => (
+                            <a
+                              key={c.id}
+                              className="pc-related"
+                              href={
+                                "/workspace/purchases/contracts/" + c.contractId
+                              }
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <b>
+                                {c.contract.number} · 第 {c.contract.revision}{" "}
+                                版 ↗
+                              </b>
+                              <small>打开、打印或下载 PDF</small>
+                            </a>
+                          ))}
+                          {line.invoiceLines.map((i) => (
+                            <div key={i.id} className="pc-log">
+                              <b>
+                                {i.invoice.number} ·{" "}
+                                {i.invoice.kind === "CREDIT" ? "红冲" : "发票"}
+                              </b>
+                              <small>
+                                本项关联 {pcMoney(i.amountCents)} ·{" "}
+                                {i.invoice.date}
+                              </small>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                      {detailTab === "overview" &&
+                        line.request.lines.length > 1 && (
+                          <>
+                            <h3>同一申请的其他物品</h3>
+                            {line.request.lines
+                              .filter((l) => l.id !== line.id)
+                              .map((l) => (
+                                <button
+                                  className="pc-related"
+                                  key={l.id}
+                                  onClick={() => openDetail(l.id)}
+                                >
+                                  {l.name} · {PC_STATES[l.status]}
+                                </button>
+                              ))}
+                          </>
+                        )}
+                    </>
+                  )}
+                {detailTab === "push" && (
+                  <PurchasePushPanel record={activeId} />
                 )}
                 {detailTab === "overview" && fund && (
                   <>
@@ -1726,21 +1993,55 @@ export default function PurchasingWorkbench({
                   ))}
               </div>
               <footer>
-                {line && actions([rowFromLine(line)])}
+                {line && actions([rowFromLine(line)], false, true)}
                 {fund &&
-                  actions([
-                    {
-                      id: fund.id,
-                      version: fund.version,
-                      kind: "fund",
-                      status: fund.status,
-                      paidCents: fund.paidCents,
-                    } as PcRow,
-                  ])}
+                  actions(
+                    [
+                      {
+                        id: fund.id,
+                        version: fund.version,
+                        kind: "fund",
+                        status: fund.status,
+                        paidCents: fund.paidCents,
+                      } as PcRow,
+                    ],
+                    false,
+                    true,
+                  )}
               </footer>
             </>
           )}
         </aside>
+      )}
+      {pushOpen && (
+        <div
+          className="pc-overlay"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") closePush();
+          }}
+        >
+          <div
+            ref={pushRef}
+            className="pc-dialog pc-push-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="采购群推送设置"
+          >
+            <header>
+              <h2>群推送与发送记录</h2>
+              <button aria-label="关闭推送设置" onClick={closePush}>
+                <X size={21} />
+              </button>
+            </header>
+            <div className="pc-dialog-body">
+              <PurchasePushPanel
+                onDirty={(v) => {
+                  pushDirty.current = v;
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
       {dialog && (
         <div className="pc-overlay">
@@ -1750,6 +2051,9 @@ export default function PurchasingWorkbench({
             aria-modal="true"
             aria-labelledby="pc-dialog-title"
             ref={formRef}
+            onChangeCapture={() => {
+              formDirty.current = true;
+            }}
           >
             <header>
               <div>
@@ -1763,7 +2067,7 @@ export default function PurchasingWorkbench({
               <button
                 aria-label="关闭操作窗口"
                 disabled={busy || uploading}
-                onClick={() => setDialog(null)}
+                onClick={closeDialog}
               >
                 <X size={21} />
               </button>
@@ -2323,10 +2627,7 @@ export default function PurchasingWorkbench({
                     ? "附件上传中"
                     : "关闭窗口不会提交业务操作"}
               </span>
-              <button
-                disabled={busy || uploading}
-                onClick={() => setDialog(null)}
-              >
+              <button disabled={busy || uploading} onClick={closeDialog}>
                 取消
               </button>
               {requestForm && (
@@ -2345,12 +2646,22 @@ export default function PurchasingWorkbench({
                 {busy
                   ? "保存中…"
                   : requestForm
-                    ? "提交采购申请"
+                    ? "提交请购申请"
                     : "确认" + (formAction === "PAY" ? "登记付款" : "保存")}
               </button>
             </footer>
           </div>
         </div>
+      )}
+      {confirmDiscard && (
+        <PurchaseConfirm
+          cancel={() => setConfirmDiscard(null)}
+          confirm={() => {
+            if (confirmDiscard === "form") setDialog(null);
+            else setPushOpen(false);
+            setConfirmDiscard(null);
+          }}
+        />
       )}
     </main>
   );

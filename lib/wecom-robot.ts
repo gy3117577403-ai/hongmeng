@@ -156,10 +156,11 @@ export async function sendWeComRobotText(options: {
     throw new WeComRobotError(WECOM_POLICY_BLOCK_REASON, { status: 403, code: 'WECOM_SOURCE_BLOCKED' });
   }
   assertTextSize(options.content);
-  const webhook = parseWebhookUrl(options.webhookUrl ?? process.env.WECOM_ROBOT_WEBHOOK_URL);
+  const purchasing = options.source.sourceType === 'PURCHASING';
+  const webhook = parseWebhookUrl(options.webhookUrl ?? (purchasing ? process.env.PURCHASING_WECOM_WEBHOOK_URL : process.env.WECOM_ROBOT_WEBHOOK_URL));
   const mentionedMobiles = [...new Set((options.mentionedMobiles || []).map(toWeComMentionMobile).filter((item): item is string => Boolean(item)))];
   const mentionedUserIds = [...new Set((options.mentionedUserIds || []).map(toWeComMentionUserId).filter((item): item is string => Boolean(item)))];
-  if (!mentionedMobiles.length && !mentionedUserIds.length) {
+  if (!purchasing && !mentionedMobiles.length && !mentionedUserIds.length) {
     throw new WeComRobotError('没有可用于企业微信提醒的手机号', {
       status: 400,
       code: 'WECOM_MENTION_MOBILE_MISSING',

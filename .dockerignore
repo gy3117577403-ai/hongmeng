@@ -18,3 +18,4 @@ output
 config/*.local.json
 *.zip
 *.bundle
+*.tmp

@@ -53,6 +53,11 @@ const entry = async (id) => {
 const unauth = await fetch(base + "/api/purchases");
 assert.equal(unauth.status, 401);
 checks.push("login-required");
+for (const path of ["/api/purchases/summary", "/api/purchases/notifications"]) {
+  assert.equal((await fetch(base + path)).status, 401);
+}
+assert.equal((await fetch(base + "/api/internal/purchasing-outbox", { method: "POST" })).status, 404);
+checks.push("private-summary-notifications-worker");
 const initial = await api("/api/purchases");
 await op({
   action: "SAVE_SETTINGS",
@@ -298,6 +303,18 @@ const view = await fetch(base + "/workspace/purchases", {
 assert.equal(view.status, 200);
 assert.match(await view.text(), /采购工作台/);
 checks.push("authenticated-workbench");
+const summary = await api("/api/purchases/summary");
+for (const [task, target] of [["approval", "approval"], ["execution", "execution"], ["finance", "finance"], ["requests", "all"]]) {
+  const queue = await api("/api/purchases?view=" + target + "&task=" + task);
+  assert.equal(summary[task], queue.total, task + " home count must match linked queue");
+}
+const push = await api("/api/purchases/notifications?record=" + id);
+assert.ok(push.rows.some(row => row.action === "SAVE_REQUEST"));
+assert.ok(push.rows.every(row => row.recordIds.includes(id)));
+assert.equal("webhook" in push, false);
+assert.equal("webhookEncrypted" in push, false);
+assert.equal("payload" in push.rows[0], false);
+checks.push("home-linked-counts-and-private-outbox-history");
 const output = process.env.PURCHASING_QA_OUTPUT || "purchasing-http.json";
 await mkdir(dirname(output), { recursive: true });
 await writeFile(

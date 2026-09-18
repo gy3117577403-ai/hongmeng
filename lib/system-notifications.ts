@@ -100,7 +100,7 @@ export function notificationBusinessCategory(
   const source = String(input.sourceType || '').toLowerCase();
   if (includesNotificationToken(source, ['internal_quality_risk', 'issue_major_approval', 'quality'])) return 'QUALITY';
   if (includesNotificationToken(source, ['process_route', 'process_time', 'product_time', 'process_reporting'])) return 'PROCESS';
-  if (includesNotificationToken(source, ['warehouse', 'material', 'procurement', 'stock'])) return 'MATERIAL';
+  if (includesNotificationToken(source, ['warehouse', 'material', 'procurement', 'purchasing', 'stock'])) return 'MATERIAL';
   if (includesNotificationToken(source, ['production', 'work_order', 'weekly_plan', 'planning'])) return 'PRODUCTION';
 
   const value = notificationSearchText(input);

@@ -29,6 +29,7 @@ export function purchasingError(error: unknown) {
 export function purchasingQuery(p: URLSearchParams): PcQuery {
   return {
     view: p.get("view") || "all",
+    task: p.get("task") || "",
     q: p.get("q") || "",
     urgency: p.get("urgency") || "",
     settlement: p.get("settlement") || "",

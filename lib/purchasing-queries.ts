@@ -11,6 +11,9 @@ import {
 import type { PcActor } from "@/lib/purchasing-service";
 export type PcQuery = {
   view?: string;
+  task?: string;
+  lineTask?: Prisma.PcLineWhereInput;
+  fundTask?: Prisma.PcFundWhereInput;
   q?: string;
   urgency?: string;
   settlement?: string;
@@ -86,6 +89,7 @@ function lineWhere(
   view = q.view || "all",
 ): Prisma.PcLineWhereInput {
   const and: Prisma.PcLineWhereInput[] = [{ request: { deletedAt: null } }];
+  if (q.lineTask) and.push(q.lineTask);
   if (view === "drafts")
     and.push({
       status: "DRAFT",
@@ -165,6 +169,7 @@ function fundWhere(
   view = q.view,
 ): Prisma.PcFundWhereInput {
   const where: Prisma.PcFundWhereInput = {};
+  if (q.fundTask) where.AND = [q.fundTask];
   if (q.follow !== "history")
     where.status =
       view === "finance" ? { in: ["APPROVED", "PARTIAL"] } : "PENDING";
@@ -186,7 +191,8 @@ function fundWhere(
   if (q.mine) and.push({ OR: [{ actorId: a.id }, { payeeUserId: a.id }] });
   if (q.urgency)
     and.push({ allocations: { some: { line: { urgency: q.urgency } } } });
-  if (and.length) where.AND = and;
+  if (and.length)
+    where.AND = [...(Array.isArray(where.AND) ? where.AND : []), ...and];
   if (q.from || q.to)
     where.createdAt = {
       ...(q.from ? { gte: new Date(pcDate(q.from) + "T00:00:00+08:00") } : {}),
@@ -221,6 +227,7 @@ export async function loadPurchasing(
       orderBy: { name: "asc" },
     }),
   ]);
+  q = { ...q, ...purchasingTaskFilters(q.task, a.id, settings) };
   const permission = (
     key: "purchaseApproverIds" | "fundApproverIds" | "financeIds" | "buyerIds",
   ) => settings?.[key].includes(a.id) || false;
@@ -591,4 +598,63 @@ export async function purchasingContract(id: string) {
   const c = await prisma.pcContract.findUnique({ where: { id } });
   if (!c) throw new PurchasingError("合同不存在", "PURCHASING_NOT_FOUND", 404);
   return plain(c);
+}
+
+function purchasingTaskFilters(
+  task: string | undefined,
+  id: string,
+  s: {
+    purchaseApproverIds: string[];
+    buyerIds: string[];
+    financeIds: string[];
+  } | null,
+): Pick<PcQuery, "lineTask" | "fundTask"> {
+  if (task === "approval")
+    return {
+      lineTask: s?.purchaseApproverIds.includes(id)
+        ? { status: "PENDING" }
+        : { id: "__no_task__" },
+    };
+  if (task === "execution")
+    return {
+      lineTask: s?.buyerIds.includes(id)
+        ? {
+            completedAt: null,
+            OR: [{ status: "APPROVED" }, { status: "ORDERED", buyerId: id }],
+          }
+        : { id: "__no_task__" },
+    };
+  if (task === "finance")
+    return {
+      fundTask: s?.financeIds.includes(id)
+        ? { status: { in: ["APPROVED", "PARTIAL"] } }
+        : { id: "__no_task__" },
+    };
+  if (task === "requests")
+    return {
+      lineTask: { request: { OR: [{ applicantId: id }, { submitterId: id }] } },
+    };
+  return {};
+}
+export async function purchasingHomeSummary(a: PcActor) {
+  const s = await prisma.pcSettings.findUnique({ where: { id: "purchasing" } });
+  const count = (task: string, view: string) =>
+    prisma.pcLine.count({
+      where: lineWhere(
+        { task, view, ...purchasingTaskFilters(task, a.id, s) },
+        a,
+      ),
+    });
+  const [approval, execution, finance, requests] = await Promise.all([
+    count("approval", "approval"),
+    count("execution", "execution"),
+    prisma.pcFund.count({
+      where: fundWhere(
+        { view: "finance", ...purchasingTaskFilters("finance", a.id, s) },
+        a,
+      ),
+    }),
+    count("requests", "all"),
+  ]);
+  return { approval, execution, finance, requests };
 }

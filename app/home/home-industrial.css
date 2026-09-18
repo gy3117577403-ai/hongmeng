@@ -71,7 +71,7 @@ main.hm-home-industrial.hm-workbench-root {
   height: 100dvh;
   min-height: 680px !important;
   display: grid;
-  grid-template-rows: 88px minmax(0, 1fr) 132px;
+  grid-template-rows: 88px auto minmax(0, 1fr) 132px;
   gap: 0;
   padding: 0;
   overflow: hidden;
@@ -361,7 +361,7 @@ main.hm-home-industrial.hm-workbench-root {
   main.hm-home-industrial.hm-workbench-root { --hm-shell-rail: 112px; }
   .hm-home-industrial.hm-hcc-root > .hm-platform-sidebar:not(.expanded) :is(.hm-platform-home, .hm-platform-side-nav a, .hm-platform-sidebar-footer a) { gap: 7px; padding: 0 6px; }
   .hm-home-industrial.hm-hcc-root > .hm-platform-sidebar:not(.expanded) .hm-platform-side-nav { padding-right: 5px; padding-left: 5px; }
-  .hm-home-industrial .hm-hcc-frame { grid-template-rows: 88px minmax(0,1fr) 128px; }
+  .hm-home-industrial .hm-hcc-frame { grid-template-rows: 88px auto minmax(0,1fr) 128px; }
   .hm-home-industrial .hm-hcc-welcome-bar { grid-template-columns: 44px minmax(175px,.85fr) minmax(170px,1fr) auto; gap: 10px; padding: 0 18px; }
   .hm-home-industrial .hm-hcc-top-meta { gap: 6px; }
   .hm-home-industrial .hm-hcc-date { min-width: 0; }
@@ -403,7 +403,7 @@ main.hm-home-industrial.hm-workbench-root {
 }
 
 @media (max-height: 850px) and (min-width: 1101px) {
-  .hm-home-industrial .hm-hcc-frame { min-height: 680px !important; grid-template-rows: 78px minmax(0,1fr) 115px; }
+  .hm-home-industrial .hm-hcc-frame { min-height: 680px !important; grid-template-rows: 78px auto minmax(0,1fr) 115px; }
   .hm-home-industrial .hm-hcc-operations { grid-template-rows: 74px minmax(0,1fr) auto; }
   .hm-home-industrial .hm-hcc-inbox { grid-template-rows: 74px 83px minmax(0,1fr); }
   .hm-home-industrial .hm-hcc-section-heading { min-height: 0; padding-top: 8px; padding-bottom: 6px; }
@@ -426,7 +426,7 @@ main.hm-home-industrial.hm-workbench-root {
   main.hm-home-industrial.hm-workbench-root { --hm-shell-rail: 72px; height: auto; min-height: 100dvh; overflow: visible; }
   .hm-home-industrial.hm-hcc-root > .hm-platform-sidebar:not(.expanded) :is(.hm-platform-home, .hm-platform-side-nav a, .hm-platform-sidebar-footer a) { justify-content: center; gap: 0; padding: 0; }
   .hm-home-industrial.hm-hcc-root > .hm-platform-sidebar:not(.expanded) :is(.hm-platform-home b, .hm-platform-side-nav a span, .hm-platform-sidebar-footer a span) { display: none; }
-  .hm-home-industrial .hm-hcc-frame { height: auto; min-height: 100dvh !important; grid-template-rows: auto auto auto; overflow: visible; }
+  .hm-home-industrial .hm-hcc-frame { height: auto; min-height: 100dvh !important; grid-template-rows: auto auto auto auto; overflow: visible; }
   .hm-home-industrial .hm-hcc-welcome-bar { min-height: 94px; grid-template-columns: 44px minmax(0,1fr) auto; gap: 10px 16px; padding: 16px 22px; }
   .hm-home-industrial .hm-hcc-search-launch { grid-column: 1 / -1; grid-row: 2; }
   .hm-home-industrial .hm-hcc-alert { grid-column: 1 / -1; grid-row: 2; }
@@ -564,3 +564,9 @@ main.hm-home-industrial.hm-workbench-root {
   .hm-home-industrial .hm-industrial-backdrop, .hm-home-industrial .hm-industrial-machine { transform: none; }
   .hm-home-industrial .hm-hcc-node:hover, .hm-home-industrial .hm-hcc-node:focus-within { transform: none; }
 }
+
+.hm-purchase-shortcut { display:flex; align-items:center; gap:22px; margin:0 0 14px; padding:12px 18px; border:1px solid #f3dfcc; border-radius:15px; background:linear-gradient(110deg,#fff9f0,#ffffffef); box-shadow:0 3px 14px #b0784210; flex-shrink:0; }
+.hm-purchase-title { display:flex; align-items:center; gap:9px; color:#a54e16; white-space:nowrap; text-decoration:none; font-size:14px; }.hm-purchase-counts { display:flex; align-items:center; flex:1; justify-content:space-evenly; gap:12px; }.hm-purchase-counts > a { display:flex; gap:7px; align-items:baseline; text-decoration:none; color:#677384; font-size:12px; min-height:30px; padding:5px; }.hm-purchase-counts b { color:#283c50; font-size:18px; }.hm-purchase-counts small { color:#7c8a98; font-size:10px; }.hm-purchase-create { display:flex; align-items:center; gap:6px; padding:9px 13px; background:#ed7118; color:white; border-radius:9px; white-space:nowrap; text-decoration:none; font-size:12px; }
+@media(max-width:1000px) { .hm-purchase-shortcut { flex-wrap:wrap; gap:10px; }.hm-purchase-counts { order:3; flex-basis:100%; }.hm-purchase-create { margin-left:auto; } }
+
+.hm-home-industrial .hm-purchase-shortcut { min-height: 58px; margin: 0 18px 10px; align-self: start; }

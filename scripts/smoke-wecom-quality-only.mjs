@@ -67,7 +67,7 @@ try {
     cookies[key] = login.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
   }
   const settings = (await request('read notification policy', 'admin', '/api/integrations/wecom/robot')).data;
-  assert.equal(settings.policy.automaticScope, 'QUALITY_ONLY');
+  assert.equal(settings.policy.automaticScope, 'QUALITY_AND_PURCHASING');
   assert.equal(settings.policy.manualTest, 'ADMIN_CONFIRMED_ONLY');
   await request('test requires administrator', 'owner', '/api/integrations/wecom/robot', 'POST', { confirmed: true }, 403);
   await request('test requires explicit confirmation', 'admin', '/api/integrations/wecom/robot', 'POST', {}, 400);

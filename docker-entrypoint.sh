@@ -171,6 +171,10 @@ server_pid=$!
       /api/internal/quality-risk-outbox; then
       maintenance_failed_step=quality_notification_outbox
     elif ! run_maintenance_step \
+      purchasing_notification_outbox \
+      /api/internal/purchasing-outbox; then
+      maintenance_failed_step=purchasing_notification_outbox
+    elif ! run_maintenance_step \
       material_photo_media \
       /api/internal/material-photo-media; then
       maintenance_failed_step=material_photo_media

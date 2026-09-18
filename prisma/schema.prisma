@@ -6965,6 +6965,42 @@ model PcSettings {
   updatedAt           DateTime @updatedAt
 }
 
+model PcPushConfig {
+  id                String   @id @default("purchasing")
+  enabled           Boolean  @default(true)
+  webhookEncrypted  String   @default("")
+  origin            String   @default("")
+  version           Int      @default(1)
+  updatedAt         DateTime @updatedAt
+}
+
+model PcNotification {
+  id              String   @id @default(uuid())
+  dedupeKey       String   @unique
+  action          String
+  recordIds       String[]
+  recipientIds    String[]
+  payload         Json
+  state           String   @default("PENDING")
+  attempts        Int      @default(0)
+  availableAt     DateTime @default(now())
+  leaseToken      String?
+  lastError       String   @default("")
+  content         String   @default("")
+  sentAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([state, availableAt])
+  @@index([createdAt])
+  @@index([recordIds], type: Gin)
+}
+
+model PcPushClock {
+  id            String   @id
+  lastAttemptAt DateTime
+}
+
 model PcSequence {
   id    String @id
   value Int    @default(0)

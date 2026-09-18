@@ -672,7 +672,7 @@ test(
         const deliveries = await prisma.processRouteChangeOutbox.findMany({ where: { id: { in: eventRows.map(row => row.id) } } });
         assert.ok(deliveries.every(row => row.channel === 'IN_APP' && row.status === 'SENT'));
         const cancelled = await prisma.processRouteChangeOutbox.findMany({ where: { id: { in: legacyRows.slice(0, 3).map(row => row.id) } } });
-        assert.ok(cancelled.every(row => row.status === 'CANCELLED' && row.lastError?.includes('仅质量管理')));
+        assert.ok(cancelled.every(row => row.status === 'CANCELLED' && row.lastError?.includes('仅保留站内通知')));
         const history = await prisma.processRouteChangeOutbox.findUniqueOrThrow({ where: { id: legacyRows[3].id } });
         assert.equal(history.status, 'SENT'); assert.equal(history.attempts, 8);
         const expectedKeys = [...eventRows, ...legacyRows.slice(0, 3)].map(row => `route-change:${row.dedupeKey}`);

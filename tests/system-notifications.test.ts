@@ -26,6 +26,7 @@ test('home notification command center classifies the affected business area', (
   assert.equal(notificationBusinessCategory({ sourceType: 'internal_quality_risk', title: '质量异常待接单' }), 'QUALITY');
   assert.equal(notificationBusinessCategory({ sourceType: 'process_route_change', title: '工艺变更待确认' }), 'PROCESS');
   assert.equal(notificationBusinessCategory({ sourceType: 'WAREHOUSE_MATERIAL_TASK', title: '物料到货待检验' }), 'MATERIAL');
+  assert.equal(notificationBusinessCategory({ sourceType: 'PURCHASING', title: '资金待审批' }), 'MATERIAL');
   assert.equal(notificationBusinessCategory({ targetRoute: '/production?view=exceptions', title: '生产进度偏差' }), 'PRODUCTION');
   assert.equal(notificationBusinessCategory({ category: 'ACCOUNT', title: '账号授权已更新' }), 'SYSTEM');
 });
