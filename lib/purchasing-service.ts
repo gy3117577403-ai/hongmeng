@@ -222,6 +222,7 @@ async function refreshLine(tx: Tx, id: string) {
     p.returns.map((r) => r.refundDueCents - r.companyReceivedCents),
   );
   const done = pcComplete({ ...p, refundOpen });
+  if (done) await closeTodo(tx, id);
   if (done !== Boolean(p.completedAt))
     await tx.pcLine.update({
       where: { id },
@@ -396,6 +397,7 @@ async function saveRequest(tx: Tx, input: PcInput, a: PcActor) {
       if (!["DRAFT", "RETURNED", "WITHDRAWN"].includes(p.status))
         conflict("仅草稿、已撤回或退回的明细可以修改");
       pcVersion(p.version, e.version);
+      await closeTodo(tx, p.id);
       const next = await tx.pcLine.update({
         where: { id: p.id },
         data: {
@@ -446,16 +448,20 @@ async function saveRequest(tx: Tx, input: PcInput, a: PcActor) {
   });
   if (submit) {
     const s = await settings(tx);
-    await notify(
-      tx,
-      "REQUEST",
-      r.id,
-      r.version + 1,
-      `${applicant.name}提交采购申请 ${r.number}（${changed.length}项）`,
-      s.purchaseApproverIds,
-      a,
-      "approval",
-    );
+    for (const id of changed) {
+      const p = await tx.pcLine.findUniqueOrThrow({ where: { id } });
+      await closeTodo(tx, id);
+      await notify(
+        tx,
+        "REQUEST",
+        id,
+        p.version,
+        `${applicant.name}提交采购 ${p.number} · ${p.name}`,
+        s.purchaseApproverIds,
+        a,
+        "approval",
+      );
+    }
   }
   const duplicates = submit
     ? await tx.pcLine.findMany({
@@ -502,22 +508,22 @@ async function approveLines(tx: Tx, input: PcInput, a: PcActor) {
       { before: p, after },
       reason,
     );
-    requests.add(p.requestId);
-  }
-  for (const id of requests) {
-    await refreshRequest(tx, id);
-    const r = await tx.pcRequest.findUniqueOrThrow({ where: { id } });
+    await closeTodo(tx, p.id);
     await notify(
       tx,
       reject ? "RETURNED" : "APPROVED",
-      id,
-      r.version,
-      reject ? `${r.number}有采购项退回修改` : `${r.number}采购审批通过`,
-      reject ? [r.applicantId, r.submitterId] : s.buyerIds,
+      p.id,
+      after.version,
+      reject
+        ? `${p.number} · ${p.name}退回修改`
+        : `${p.number} · ${p.name}审批通过，待采购`,
+      reject ? [p.request.applicantId, p.request.submitterId] : s.buyerIds,
       a,
       reject ? "approval" : "execution",
     );
+    requests.add(p.requestId);
   }
+  for (const id of requests) await refreshRequest(tx, id);
   return { count: es.length };
 }
 async function withdrawLines(tx: Tx, input: PcInput, a: PcActor) {
@@ -564,6 +570,7 @@ async function withdrawLines(tx: Tx, input: PcInput, a: PcActor) {
       { before: p, after },
       reason,
     );
+    await closeTodo(tx, p.id);
     await refreshRequest(tx, p.requestId);
   }
   return { count: es.length };
@@ -723,16 +730,19 @@ async function purchase(tx: Tx, input: PcInput, a: PcActor) {
     updated.push(after);
   }
   if (input.contractNumber) await createContract(tx, updated, input, a);
-  await notify(
-    tx,
-    "PURCHASE",
-    updated[0].requestId,
-    updated[0].version,
-    `${updated.length} 项采购已登记，可跟进收货与付款`,
-    updated.map((p) => p.request.applicantId),
-    a,
-    "execution",
-  );
+  for (const p of updated) {
+    await closeTodo(tx, p.id);
+    await notify(
+      tx,
+      "PURCHASE",
+      p.id,
+      p.version,
+      `${p.number} · ${p.name}已登记，待跟进收货、付款与票据`,
+      [p.request.applicantId, p.request.submitterId, p.buyerId || a.id],
+      a,
+      "execution",
+    );
+  }
   return { count: updated.length, ids: updated.map((p) => p.id) };
 }
 async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {

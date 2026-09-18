@@ -463,18 +463,108 @@ test(
         assert.equal(results.total, 0);
       },
     );
-    await t.test('draft edits allocate unique line numbers and void keeps historical records', async () => {
-        const value={name:marker+' 草稿',spec:'M8',unit:'件',quantity:2,estimateCents:1000,needDate:date};
-        const first=await run({action:'SAVE_REQUEST',submit:false,purpose:marker,lines:[value,value]});
-        const requestId=String(first.id);
-        const append=async()=>{const req=await prisma.pcRequest.findUniqueOrThrow({where:{id:requestId},include:{lines:{where:{status:'DRAFT'}}}});await run({action:'SAVE_REQUEST',requestId,version:req.version,purpose:marker,submit:false,lines:[...req.lines,value]});};
-        await append();await append();
-        const req=await prisma.pcRequest.findUniqueOrThrow({where:{id:requestId},include:{lines:true}});
-        assert.equal(req.lines.length,4);assert.equal(new Set(req.lines.map(l=>l.number)).size,4);
-        await run({action:'VOID_LINES',entries:req.lines.map(l=>({id:l.id,version:l.version})),reason:'验收作废'});
-        assert.equal((await prisma.pcRequest.findUniqueOrThrow({where:{id:requestId}})).status,'VOID');
-        assert.equal(await prisma.pcLine.count({where:{requestId,status:'VOID'}}),4);
-    });
+    await t.test(
+      "draft edits allocate unique line numbers and void keeps historical records",
+      async () => {
+        const value = {
+          name: marker + " 草稿",
+          spec: "M8",
+          unit: "件",
+          quantity: 2,
+          estimateCents: 1000,
+          needDate: date,
+        };
+        const first = await run({
+          action: "SAVE_REQUEST",
+          submit: false,
+          purpose: marker,
+          lines: [value, value],
+        });
+        const requestId = String(first.id);
+        const append = async () => {
+          const req = await prisma.pcRequest.findUniqueOrThrow({
+            where: { id: requestId },
+            include: { lines: { where: { status: "DRAFT" } } },
+          });
+          await run({
+            action: "SAVE_REQUEST",
+            requestId,
+            version: req.version,
+            purpose: marker,
+            submit: false,
+            lines: [...req.lines, value],
+          });
+        };
+        await append();
+        await append();
+        const req = await prisma.pcRequest.findUniqueOrThrow({
+          where: { id: requestId },
+          include: { lines: true },
+        });
+        assert.equal(req.lines.length, 4);
+        assert.equal(new Set(req.lines.map((l) => l.number)).size, 4);
+        await run({
+          action: "VOID_LINES",
+          entries: req.lines.map((l) => ({ id: l.id, version: l.version })),
+          reason: "验收作废",
+        });
+        assert.equal(
+          (
+            await prisma.pcRequest.findUniqueOrThrow({
+              where: { id: requestId },
+            })
+          ).status,
+          "VOID",
+        );
+        assert.equal(
+          await prisma.pcLine.count({ where: { requestId, status: "VOID" } }),
+          4,
+        );
+      },
+    );
+    await t.test(
+      "partial decisions leave unrelated line todos active and completion closes only its own todo",
+      async () => {
+        const ids = await create(2);
+        const pending = (id: string, type?: string) =>
+          prisma.systemNotificationRecipient.count({
+            where: {
+              userId: actor.id,
+              completedAt: null,
+              notification: {
+                sourceType: "PURCHASING",
+                sourceId: id,
+                ...(type ? { eventType: "PURCHASING_" + type } : {}),
+              },
+            },
+          });
+        assert.equal(await pending(ids[0], "REQUEST"), 1);
+        assert.equal(await pending(ids[1], "REQUEST"), 1);
+        await approve([ids[0]]);
+        await run({
+          action: "RETURN_LINES",
+          entries: [await entry(ids[1])],
+          reason: "单独退回第二项",
+        });
+        assert.equal(
+          await pending(ids[0], "APPROVED"),
+          1,
+          "another line being returned must not finish the buyer task",
+        );
+        assert.equal(await pending(ids[1], "RETURNED"), 1);
+        assert.equal(await pending(ids[0], "REQUEST"), 0);
+        await purchase([ids[0]]);
+        assert.equal(await pending(ids[0], "APPROVED"), 0);
+        assert.equal(await pending(ids[0], "PURCHASE"), 1);
+        await receive(ids[0], 10);
+        const f = await fundFor([ids[0]], 10000);
+        await fundAction("APPROVE_FUNDS", String(f.id));
+        await payment(String(f.id), 10000);
+        await invoice(ids[0], 10000);
+        assert.equal(await pending(ids[0]), 0);
+        assert.equal(await pending(ids[1], "RETURNED"), 1);
+      },
+    );
     await prisma.$disconnect();
   },
 );
