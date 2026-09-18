@@ -561,6 +561,7 @@ export async function dispatchPurchasingPush(
         data: {
           state: "SENDING",
           leaseToken: lease,
+          updatedAt: now,
           attempts: { increment: 1 },
           content,
           lastError: "",
