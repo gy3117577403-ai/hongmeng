@@ -122,6 +122,19 @@ test("fixture documents, independent review, procurement and physical inventory 
     await assert.rejects(print, /审核|停用/);
     await assert.rejects(() => confirmWorkOrderTravelerPrints({ printIds: [latestPrint.printId], userId: planner.id, actor: planner.username }), /审核|停用/);
   });
+  await t.test("late approval cannot replace a newer reviewed revision, including after revocation", async () => {
+    const draft = (revision: string) => qf({ action: "SAVE_PACKAGE", libraryItemId: product.id, revision, needFixture: false, drawingFileIds: [product.files[0].id] });
+    const older = await draft("C-early");
+    await qf({ action: "SUBMIT", ...await versionInput(older.id) }); await review(older.id, supervisor);
+    const newer = await draft("D-current");
+    await qf({ action: "SUBMIT", ...await versionInput(newer.id) }); await review(newer.id, supervisor); await review(newer.id, quality);
+    await assert.rejects(() => review(older.id, quality), /更新的资料版本/);
+    assert.equal((await assertFixturePrintReady(prisma, order.id)).packageId, newer.id);
+    await qf({ action: "REVOKE", ...await versionInput(newer.id), reason: "核对新版本适用范围" }, quality);
+    await assert.rejects(() => review(older.id, quality), /更新的资料版本/);
+    await qf({ action: "RETURN", ...await versionInput(older.id), reason: "已有更新版本，旧稿停止审批" }, quality);
+    assert.equal((await packageRow(older.id)).status, "RETURNED");
+  });
   await t.test("library replenishment and repair retain SKU identity and immutable reviewed drawings", async () => {
     await assert.rejects(() => prisma.$transaction(tx => assertFixtureDrawingMutable(tx, product.id, product.files[0].id)), /不能删除/);
     const replenishment = { action: "CREATE_FIXTURE_PURCHASE", fixtureId: m.fixtureId, quantity: 2, estimateCents: 2000, needDate: date, reason: "公共治具库补充备用" };

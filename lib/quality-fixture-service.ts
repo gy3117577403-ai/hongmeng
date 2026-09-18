@@ -185,6 +185,8 @@ async function review(tx: Tx, input: PcInput, a: PcActor) {
   if (p.submittedById === a.id || (p.status === "QUALITY" && p.supervisorId === a.id)) denied("上传人不能自审，主管与质量复审须由不同账号完成");
   const approve = input.action === "APPROVE";
   if (approve) {
+    if (await tx.qfPackage.count({ where: { libraryItemId: p.libraryItemId, sequence: { gt: p.sequence }, qualityAt: { not: null } } }))
+      conflict("已有更新的资料版本完成质量复审，不能再批准这份旧稿。请退回旧稿，或基于所需资料新建修订版本。");
     const ids = (p.drawingFiles as unknown as DrawingEvidence[]).map(f => f.id);
     const ownsDrawing = await tx.drawingLibraryFile.count({ where: { id: { in: ids }, uploadedById: a.id } });
     const ownsBom = p.bomFileId && await tx.qfBomFile.count({ where: { id: p.bomFileId, uploadedById: a.id } });

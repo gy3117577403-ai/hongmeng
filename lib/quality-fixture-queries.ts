@@ -30,6 +30,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
       fixturePackages: { orderBy: { sequence: "desc" } }, fixtureBomFiles: { where: { deletedAt: null }, orderBy: { createdAt: "desc" }, select: { id: true, name: true, createdAt: true, byteSize: true, sha256: true } } } }) : null;
   const chosen = product?.fixturePackages.find(p => p.id === query.get("package")) || product?.fixturePackages[0] || null;
   const approved = product?.fixturePackages.find(p => p.status === "APPROVED") || null;
+  const newerReviewed = chosen ? product?.fixturePackages.find(p => p.sequence > chosen.sequence && p.qualityAt !== null)?.revision || null : null;
   const [readiness, packageEvents, workOrders, bom] = await Promise.all([
     fixtureReadiness(prisma, chosen),
     chosen ? prisma.qfEvent.findMany({ where: { entityType: "PACKAGE", entityId: chosen.id }, orderBy: { createdAt: "desc" } }) : [],
@@ -40,7 +41,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
     fixtures: fixtures.map(f => ({ ...f, available: f.item.balances.reduce((n, b) => n + fixtureAvailable(b), 0),
       onHand: f.item.balances.reduce((n, b) => n + b.onHand, 0), held: f.item.balances.reduce((n, b) => n + b.held, 0),
       reserved: f.item.balances.reduce((n, b) => n + b.reserved, 0), issued: f.item.balances.reduce((n, b) => n + b.issued, 0) })),
-    fixtureTotal, eventRows, product, chosen, approved, readiness, packageEvents, workOrders, bom,
+    fixtureTotal, eventRows, product, chosen, approved, newerReviewed, readiness, packageEvents, workOrders, bom,
     canConfigure: !settings || settings.ownerId === actor.id || actor.laborRole === "ADMIN",
     canReview: !!chosen && chosen.submittedById !== actor.id && (chosen.status === "SUPERVISOR" ? settings?.supervisorIds.includes(actor.id) :
       chosen.status === "QUALITY" && chosen.supervisorId !== actor.id ? settings?.qualityIds.includes(actor.id) : false),
