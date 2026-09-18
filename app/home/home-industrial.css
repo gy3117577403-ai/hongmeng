@@ -72,11 +72,16 @@ main.hm-home-industrial.hm-workbench-root {
   min-height: 680px !important;
   display: grid;
   grid-template-rows: 88px auto minmax(0, 1fr) 132px;
+  grid-template-areas: "welcome" "shortcuts" "workspace" "insights";
   gap: 0;
   padding: 0;
   overflow: hidden;
   background: #f7faff;
 }
+.hm-home-industrial .hm-hcc-welcome-bar { grid-area: welcome; }
+.hm-home-industrial .hm-hcc-shortcuts { grid-area: shortcuts; min-width: 0; display: grid; gap: 8px; padding: 0 18px 10px; }
+.hm-home-industrial .hm-hcc-main-grid { grid-area: workspace; }
+.hm-home-industrial .hm-hcc-insight-bar { grid-area: insights; }
 .hm-home-industrial .hm-hcc-welcome-bar {
   grid-template-columns: 44px minmax(190px, .85fr) minmax(230px, 1.2fr) auto;
   gap: 20px;
@@ -404,6 +409,8 @@ main.hm-home-industrial.hm-workbench-root {
 
 @media (max-height: 850px) and (min-width: 1101px) {
   .hm-home-industrial .hm-hcc-frame { min-height: 680px !important; grid-template-rows: 78px auto minmax(0,1fr) 115px; }
+  .hm-home-industrial .hm-hcc-main-grid { overflow-y: auto; overscroll-behavior: contain; }
+  .hm-home-industrial :is(.hm-hcc-operations, .hm-hcc-inbox) { min-height: 660px; }
   .hm-home-industrial .hm-hcc-operations { grid-template-rows: 74px minmax(0,1fr) auto; }
   .hm-home-industrial .hm-hcc-inbox { grid-template-rows: 74px 83px minmax(0,1fr); }
   .hm-home-industrial .hm-hcc-section-heading { min-height: 0; padding-top: 8px; padding-bottom: 6px; }
@@ -569,4 +576,4 @@ main.hm-home-industrial.hm-workbench-root {
 .hm-purchase-title { display:flex; align-items:center; gap:9px; color:#a54e16; white-space:nowrap; text-decoration:none; font-size:14px; }.hm-purchase-counts { display:flex; align-items:center; flex:1; justify-content:space-evenly; gap:12px; }.hm-purchase-counts > a { display:flex; gap:7px; align-items:baseline; text-decoration:none; color:#677384; font-size:12px; min-height:30px; padding:5px; }.hm-purchase-counts b { color:#283c50; font-size:18px; }.hm-purchase-counts small { color:#7c8a98; font-size:10px; }.hm-purchase-create { display:flex; align-items:center; gap:6px; padding:9px 13px; background:#ed7118; color:white; border-radius:9px; white-space:nowrap; text-decoration:none; font-size:12px; }
 @media(max-width:1000px) { .hm-purchase-shortcut { flex-wrap:wrap; gap:10px; }.hm-purchase-counts { order:3; flex-basis:100%; }.hm-purchase-create { margin-left:auto; } }
 
-.hm-home-industrial .hm-purchase-shortcut { min-height: 58px; margin: 0 18px 10px; align-self: start; }
+.hm-home-industrial .hm-purchase-shortcut { min-height: 58px; margin: 0; align-self: start; }

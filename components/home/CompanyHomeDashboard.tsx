@@ -758,8 +758,10 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
           )}
         </header>
 
-        <HomePurchasingShortcut />
-        <HomeQualityFixtureShortcut />
+        <section className="hm-hcc-shortcuts" aria-label="业务快捷入口">
+          <HomePurchasingShortcut />
+          <HomeQualityFixtureShortcut />
+        </section>
         <div className="hm-hcc-main-grid">
           <section
             ref={sceneRef}
