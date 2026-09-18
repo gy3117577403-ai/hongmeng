@@ -99,6 +99,14 @@ jobs:
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_finished_goods_ci'
           npx prisma migrate deploy
           npx tsx --test --test-concurrency=1 tests/finished-goods-integration.test.ts
+      - name: Purchasing PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_purchasing_ci?schema=public
+        run: |
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_purchasing_ci'
+          npx prisma migrate deploy
+          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts
       - name: Issue work order PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -474,6 +482,14 @@ jobs:
             DRAWING_LIBRARY_QA_FIXTURE=artifacts/drawing-library-v134146/release-fixture.json \
             DRAWING_LIBRARY_QA_OUTPUT=artifacts/drawing-library-v134146/release-http.json \
             node scripts/smoke-drawing-library.mjs
+          mkdir -p artifacts/purchasing
+          docker exec -i -e PURCHASING_QA_ALLOW=disposable-purchasing-runtime hongmeng-release-smoke node \
+            < scripts/seed-purchasing-smoke.cjs > artifacts/purchasing/release-fixture.json
+          PURCHASING_QA_ALLOW=disposable-purchasing-runtime \
+            SMOKE_BASE_URL=http://127.0.0.1:3000 \
+            PURCHASING_QA_FIXTURE=artifacts/purchasing/release-fixture.json \
+            PURCHASING_QA_OUTPUT=artifacts/purchasing/release-http.json \
+            node scripts/smoke-purchasing.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime hongmeng-release-smoke node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/release-fixture.json
@@ -832,6 +848,14 @@ jobs:
             DRAWING_LIBRARY_QA_FIXTURE=artifacts/drawing-library-v134146/mirror-fixture.json \
             DRAWING_LIBRARY_QA_OUTPUT=artifacts/drawing-library-v134146/mirror-http.json \
             node scripts/smoke-drawing-library.mjs
+          mkdir -p artifacts/purchasing
+          docker exec -i -e PURCHASING_QA_ALLOW=disposable-purchasing-runtime "$app_name" node \
+            < scripts/seed-purchasing-smoke.cjs > artifacts/purchasing/hangzhou-fixture.json
+          PURCHASING_QA_ALLOW=disposable-purchasing-runtime \
+            SMOKE_BASE_URL=http://127.0.0.1:3300 \
+            PURCHASING_QA_FIXTURE=artifacts/purchasing/hangzhou-fixture.json \
+            PURCHASING_QA_OUTPUT=artifacts/purchasing/hangzhou-http.json \
+            node scripts/smoke-purchasing.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime "$app_name" node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/hangzhou-fixture.json
@@ -877,6 +901,13 @@ jobs:
           name: realtime-hours-${{ github.ref_name }}
           path: artifacts/realtime-hours/*http.json
           if-no-files-found: warn
+      - name: Upload purchasing acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: purchasing-${{ github.ref_name }}
+          path: artifacts/purchasing/*-http.json
+          if-no-files-found: ignore
       - name: Upload finished goods acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

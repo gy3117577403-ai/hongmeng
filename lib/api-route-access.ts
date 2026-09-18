@@ -738,6 +738,7 @@ export function canAccessApiRoute(
 ): boolean | null {
   // Authentication and forced password changes are enforced by requireUser.
   if (/^\/api\/finished-goods(?:\/|$)/.test(String(pathname).split('?')[0])) return true;
+  if (/^\/api\/purchases(?:\/|$)/.test(String(pathname).split('?')[0])) return true;
   const rule = apiRouteAccessRule(pathname);
   if (!rule) return null;
   const normalizedMethod = String(method || 'GET').toUpperCase();

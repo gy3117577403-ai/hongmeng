@@ -112,6 +112,7 @@ export function routeAccessRule(pathname: string): RouteAccessRule | null {
 export function canAccessAppRoute(access: AppAccess, pathname: string): boolean {
   // Finished goods is shared by every authenticated user; page access still requires login.
   if (/^\/workspace\/finished-goods(?:\/|$)/.test(normalizedPath(pathname))) return true;
+  if (/^\/workspace\/purchases(?:\/|$)/.test(normalizedPath(pathname))) return true;
   const rule = routeAccessRule(pathname);
   if (!rule) return false;
   const modules = new Set(access.modules);

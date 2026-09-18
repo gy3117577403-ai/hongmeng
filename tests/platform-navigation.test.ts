@@ -22,7 +22,7 @@ test('HR deep links and report branches retain their owning navigation entry', (
 
 test('quality-data-only access retains its leaf plus the shared finished goods workspace', () => {
   const groups = platformNavigationForUser({ access: { modules: ['QUALITY_DATA'], capabilities: [] } as never, canAccessDailyPlans: false, canAccessWeeklyProcesses: false });
-  assert.deepEqual(groups.map(group => [group.id, group.items.map(item => item.label)]), [['quality', ['质量数据']], ['materials', ['成品仓']]]);
+  assert.deepEqual(groups.map(group => [group.id, group.items.map(item => item.label)]), [['quality', ['质量数据']], ['materials', ['成品仓', '物品采购']]]);
 });
 
 test('daily and weekly planning flags still filter navigation in addition to route capabilities', () => {

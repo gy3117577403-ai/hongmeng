@@ -32,6 +32,7 @@ export const PLATFORM_NAVIGATION_GROUPS: PlatformNavigationGroup[] = [
   { id: 'materials', label: '物料与仓储', items: [
     { href: '/workspace/finished-goods', label: '成品仓' },
     { href: '/workspace/procurement', label: '物料跟进' },
+    { href: '/workspace/purchases', label: '物品采购' },
     { href: '/workspace/warehouse', label: '仓库管理', modeSwitchable: true },
     { href: '/workspace/wip', label: '半成品仓' },
     { href: '/workspace/material-library', label: '物料库' },

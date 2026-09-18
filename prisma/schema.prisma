@@ -6952,3 +6952,382 @@ model QuickQualityActivity {
   @@unique([recordId, version])
   @@map("quick_quality_activities")
 }
+
+// Independent procurement records. No legacy purchase data is imported.
+model PcSettings {
+  id                  String   @id @default("purchasing")
+  ownerId             String
+  purchaseApproverIds String[]
+  fundApproverIds     String[]
+  financeIds          String[]
+  buyerIds            String[]
+  version             Int      @default(1)
+  updatedAt           DateTime @updatedAt
+}
+
+model PcSequence {
+  id    String @id
+  value Int    @default(0)
+}
+
+model PcOperation {
+  id          String   @id
+  actorId     String
+  payloadHash String
+  result      Json
+  createdAt   DateTime @default(now())
+}
+
+model PcRequest {
+  id            String   @id @default(uuid())
+  number        String   @unique
+  status        String   @default("DRAFT")
+  applicantId   String
+  applicantName String
+  submitterId   String
+  submitterName String
+  purpose       String   @default("")
+  workOrderId   String?
+  workOrderCode String   @default("")
+  version       Int      @default(1)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  lines         PcLine[]
+
+  @@index([status, createdAt])
+  @@index([applicantId, createdAt])
+}
+
+model PcSupplier {
+  id         String   @id @default(uuid())
+  name       String   @unique
+  payee      String   @default("")
+  bank       String   @default("")
+  account    String   @default("")
+  contact    String   @default("")
+  phone      String   @default("")
+  updatedAt  DateTime @updatedAt
+  lines      PcLine[]
+}
+
+model PcItem {
+  id          String   @id @default(uuid())
+  number      String   @unique
+  name        String
+  spec        String
+  unit        String
+  category    String
+  materialId  String?
+  createdAt   DateTime @default(now())
+  lines       PcLine[]
+  balances    PcStockBalance[]
+
+  @@index([name, spec])
+}
+
+model PcLine {
+  id              String   @id @default(uuid())
+  requestId       String
+  request         PcRequest @relation(fields: [requestId], references: [id], onDelete: Restrict)
+  number          String   @unique
+  name            String
+  spec            String
+  unit            String
+  category        String
+  urgency         String   @default("NORMAL")
+  needDate        String
+  quantity        Int
+  estimateCents   Int
+  actualCents     Int      @default(0)
+  payableCents    Int      @default(0)
+  reservedCents   Int      @default(0)
+  paidCents       Int      @default(0)
+  refundedCents   Int      @default(0)
+  invoiceCents    Int      @default(0)
+  receivedQty     Int      @default(0)
+  returnedQty     Int      @default(0)
+  cancelledQty    Int      @default(0)
+  status          String   @default("DRAFT")
+  reason          String   @default("")
+  note            String   @default("")
+  referenceUrl    String   @default("")
+  supplierId      String?
+  supplier        PcSupplier? @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  itemId          String?
+  item            PcItem?  @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  settlement      String   @default("CORPORATE")
+  payee           String   @default("")
+  payeeUserId      String?
+  bank            String   @default("")
+  account         String   @default("")
+  currency        String   @default("CNY")
+  cycle           String   @default("")
+  dueDate         String   @default("")
+  eta             String   @default("")
+  buyerId         String   @default("")
+  buyerName       String   @default("")
+  approvedById    String?
+  approvedAt      DateTime?
+  orderedAt       DateTime?
+  completedAt     DateTime?
+  version         Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  allocations     PcFundAllocation[]
+  receipts        PcReceipt[]
+  returns         PcReturn[]
+  invoiceLines    PcInvoiceLine[]
+  contractLines   PcContractLine[]
+  balances        PcStockBalance[]
+  movements       PcStockMovement[]
+
+  @@index([status, createdAt])
+  @@index([supplierId, settlement])
+  @@index([requestId])
+  @@index([completedAt])
+}
+
+model PcFund {
+  id              String   @id @default(uuid())
+  number          String   @unique
+  status          String   @default("PENDING")
+  settlement      String
+  supplierId      String?
+  payee           String
+  payeeUserId      String?
+  bank            String
+  account         String
+  currency        String   @default("CNY")
+  cycle           String   @default("")
+  dueDate         String   @default("")
+  originalCents   Int
+  amountCents     Int
+  paidCents       Int      @default(0)
+  adjustment      String   @default("NONE")
+  reason          String   @default("")
+  accountChanged  Boolean  @default(false)
+  snapshot        Json
+  actorId         String
+  actorName       String
+  approvedById    String?
+  approvedAt      DateTime?
+  version         Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  allocations     PcFundAllocation[]
+  payments        PcPayment[]
+
+  @@index([status, createdAt])
+  @@index([payeeUserId])
+}
+
+model PcFundAllocation {
+  id          String @id @default(uuid())
+  fundId      String
+  lineId      String
+  amountCents Int
+  paidCents   Int    @default(0)
+  active      Boolean @default(true)
+  fund        PcFund @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  line        PcLine @relation(fields: [lineId], references: [id], onDelete: Restrict)
+
+  @@unique([fundId, lineId])
+  @@index([lineId, active])
+}
+
+model PcPayment {
+  id          String   @id @default(uuid())
+  fundId      String
+  fund        PcFund   @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  amountCents Int
+  date        String
+  source      String
+  reference   String
+  actorId     String
+  actorName   String
+  createdAt   DateTime @default(now())
+
+  @@index([fundId])
+}
+
+model PcReceipt {
+  id         String   @id @default(uuid())
+  number     String
+  lineId     String
+  line       PcLine   @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  stockId    String
+  quantity   Int
+  date       String
+  receiverId String
+  receiver   String
+  actorId    String
+  createdAt  DateTime @default(now())
+
+  @@index([lineId])
+  @@index([number])
+}
+
+model PcStockBalance {
+  id         String   @id @default(uuid())
+  lineId     String
+  line       PcLine   @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  itemId     String
+  item       PcItem   @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  warehouse  String
+  location   String
+  onHand     Int      @default(0)
+  issued     Int      @default(0)
+  version    Int      @default(1)
+  updatedAt  DateTime @updatedAt
+  movements  PcStockMovement[]
+
+  @@unique([lineId, warehouse, location])
+  @@index([itemId])
+}
+
+model PcStockMovement {
+  id          String   @id @default(uuid())
+  stockId     String
+  stock       PcStockBalance @relation(fields: [stockId], references: [id], onDelete: Restrict)
+  lineId      String
+  line        PcLine   @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  kind        String
+  quantity    Int
+  balance     Int
+  sourceId    String
+  reason      String   @default("")
+  person      String   @default("")
+  actorId     String
+  actorName   String
+  createdAt   DateTime @default(now())
+
+  @@index([stockId, createdAt])
+  @@index([lineId, createdAt])
+}
+
+model PcReturn {
+  id                   String   @id @default(uuid())
+  number               String   @unique
+  lineId               String
+  line                 PcLine   @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  stockId              String?
+  kind                 String
+  quantity             Int
+  amountCents          Int
+  refundDueCents       Int
+  refundedCents        Int      @default(0)
+  companyReceivedCents Int      @default(0)
+  reason               String
+  date                 String
+  destination          String
+  actorId              String
+  actorName            String
+  version              Int      @default(1)
+  createdAt            DateTime @default(now())
+  refunds              PcRefund[]
+
+  @@index([lineId])
+}
+
+model PcRefund {
+  id          String   @id @default(uuid())
+  returnId    String
+  returned    PcReturn @relation(fields: [returnId], references: [id], onDelete: Restrict)
+  amountCents Int
+  kind        String
+  destination String
+  date        String
+  reference   String
+  actorId     String
+  actorName   String
+  createdAt   DateTime @default(now())
+
+  @@index([returnId])
+}
+
+model PcContract {
+  id          String   @id @default(uuid())
+  number      String
+  revision    Int      @default(1)
+  supplier    String
+  purchaser   String
+  terms       String
+  taxNote     String
+  amountCents Int
+  snapshot    Json
+  actorId     String
+  actorName   String
+  createdAt   DateTime @default(now())
+  lines       PcContractLine[]
+
+  @@unique([number, revision])
+}
+
+model PcContractLine {
+  id          String @id @default(uuid())
+  contractId  String
+  lineId      String
+  amountCents Int
+  contract    PcContract @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  line        PcLine @relation(fields: [lineId], references: [id], onDelete: Restrict)
+
+  @@unique([contractId, lineId])
+  @@index([lineId])
+}
+
+model PcInvoice {
+  id          String   @id @default(uuid())
+  number      String   @unique
+  supplierId  String
+  kind        String   @default("NORMAL")
+  amountCents Int
+  date        String
+  actorId     String
+  actorName   String
+  createdAt   DateTime @default(now())
+  lines       PcInvoiceLine[]
+}
+
+model PcInvoiceLine {
+  id          String @id @default(uuid())
+  invoiceId   String
+  lineId      String
+  amountCents Int
+  invoice     PcInvoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  line        PcLine @relation(fields: [lineId], references: [id], onDelete: Restrict)
+
+  @@unique([invoiceId, lineId])
+  @@index([lineId])
+}
+
+model PcAttachment {
+  id           String   @id @default(uuid())
+  entityType   String   @default("STAGED")
+  entityId     String   @default("")
+  originalName String
+  objectKey    String   @unique
+  contentType  String
+  size         Int
+  actorId      String
+  actorName    String
+  createdAt    DateTime @default(now())
+  deletedAt    DateTime?
+  deleteReason String   @default("")
+
+  @@index([entityType, entityId, deletedAt])
+}
+
+model PcEvent {
+  id         String   @id @default(uuid())
+  entityType String
+  entityId   String
+  action     String
+  reason     String   @default("")
+  actorId    String
+  actorName  String
+  snapshot   Json
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId, createdAt])
+}
