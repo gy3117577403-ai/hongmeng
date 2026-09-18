@@ -34,18 +34,18 @@ export async function POST(req: NextRequest) {
     const actor = await requireUser();
     if (Number(req.headers.get("content-length") || 0) > 51 * 1024 * 1024) throw new FixtureError("上传文件超过大小限制");
     const form = await req.formData(), file = form.get("file"), kind = String(form.get("kind") || ""), libraryItemId = String(form.get("product") || "");
-    if (!(file instanceof File) || !["bom", "drawing"].includes(kind)) throw new FixtureError("请选择图纸或 Excel BOM 文件");
+    if (!(file instanceof File) || !["bom", "drawing", "sop"].includes(kind)) throw new FixtureError("请选择图纸或 Excel BOM 文件");
     if (!await prisma.drawingLibraryItem.findFirst({ where: { id: libraryItemId, deletedAt: null } })) throw new FixtureError("产品档案不存在");
     if (file.size > (kind === "bom" ? 10 : 50) * 1024 * 1024) throw new FixtureError(kind === "bom" ? "BOM 不能超过 10 MB" : "图纸不能超过 50 MB");
     const body = Buffer.from(await file.arrayBuffer());
     const sheets = kind === "bom" ? readFixtureBom(body, file.name) : null;
-    if (kind === "drawing") {
+    if (kind === "drawing" || kind === "sop") {
       const error = validateFileContent(file.name, file.type, file.size, body);
       if (error) throw new FixtureError(error);
       if (!/\.(pdf|png|jpe?g|webp)$/i.test(file.name)) throw new FixtureError("生产图纸请上传 PDF、PNG、JPG 或 WebP，便于审核和打印");
     }
-    const image = kind === "drawing" && file.type.startsWith("image/") ? await inspectMediaImage(body, file.type) : null;
-    if (kind === "drawing" && file.type.startsWith("image/") && !image) throw new FixtureError("图片无效或像素过大");
+    const image = kind !== "bom" && file.type.startsWith("image/") ? await inspectMediaImage(body, file.type) : null;
+    if (kind !== "bom" && file.type.startsWith("image/") && !image) throw new FixtureError("图片无效或像素过大");
     key = "quality-fixtures/" + libraryItemId + "/" + kind + "/" + randomUUID() + "-" + safeFilename(file.name);
     const sha256 = createHash("sha256").update(body).digest("hex"), mime = file.type || (kind === "bom" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/pdf");
     await putObject({ key, body, contentType: mime, originalName: file.name });
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
         const saved = await tx.qfBomFile.create({ data: { libraryItemId, name: file.name, objectKey: key, sha256, byteSize: file.size, sheets: qfJson(sheets), uploadedById: actor.id } });
         return { id: saved.id, name: saved.name, sheets, mapping: inferBomMapping(sheets!) };
       }
-      const category = await tx.resourceCategory.findFirst({ where: { code: "drawing" } });
+      const category = await tx.resourceCategory.findFirst({ where: { code: kind } });
       if (!category) throw new FixtureError("图纸分类未初始化");
       // Share the archive uploader's lock so file version numbers remain unique.
       await tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtext($1))", "drawing-library:" + libraryItemId + ":" + category.id);

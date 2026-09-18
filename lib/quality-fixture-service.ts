@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { Prisma, type QfPackage } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requiresDocumentReview } from "@/lib/quality-fixture-scope";
 import { createSystemNotification } from "@/lib/system-notifications";
 import type { PcActor } from "@/lib/purchasing-service";
 import { pcChoice, pcDate, pcIds, pcInt, pcRecord, pcText, pcVersion, type PcInput } from "@/lib/purchasing-domain";
-import { confirmBomRows, fixtureAvailable, fixtureKey, fixtureRequirements, scanBom, FixtureError,
+import { confirmBomRows, fixtureAvailable, fixtureRequirements, scanBom, FixtureError,
   type BomMapping, type BomRow, type BomSheet, type DrawingEvidence } from "@/lib/quality-fixture-domain";
 
 type Tx = Prisma.TransactionClient;
@@ -15,11 +16,11 @@ function canonical(value: unknown): unknown {
 }
 export function documentFingerprint(input: {
   revision: string; needFixture: boolean | null; drawingFiles: unknown; bomFileId: string | null;
-  bomRows: unknown; bomMapping?: unknown; parallelCount: number; spareCount: number;
+  bomRows: unknown; bomMapping?: unknown; parallelCount: number; spareCount: number; sopFiles?: unknown;
 }) {
   return createHash("sha256").update(JSON.stringify(canonical([
     input.revision, input.needFixture, input.drawingFiles, input.bomFileId, input.bomRows,
-    input.bomMapping ?? null, input.parallelCount, input.spareCount,
+    input.bomMapping ?? null, input.parallelCount, input.spareCount, input.sopFiles ?? [],
   ]))).digest("hex");
 }
 export const qfJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -30,9 +31,9 @@ const nowDate = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/S
 export const lockFixtureBusiness = (tx: Tx) => tx.$executeRawUnsafe("SELECT pg_advisory_xact_lock(hashtextextended('hongmeng-purchasing-v1',0))");
 export async function assertFixtureDrawingMutable(tx: Tx, libraryItemId: string, fileId: string) {
   await lockFixtureBusiness(tx);
-  const packages = await tx.qfPackage.findMany({ where: { libraryItemId, status: { not: "DRAFT" } }, select: { drawingFiles: true } });
-  if (packages.some(p => (p.drawingFiles as unknown as DrawingEvidence[]).some(f => f.id === fileId)))
-    conflict("该图纸已进入资料审核履历，不能删除或移动分类。请上传新版本并重新审核。");
+  const packages = await tx.qfPackage.findMany({ where: { libraryItemId, status: { not: "DRAFT" } }, select: { drawingFiles: true, sopFiles: true } });
+  if (packages.some(p => [...p.drawingFiles as unknown as DrawingEvidence[], ...p.sopFiles as unknown as DrawingEvidence[]].some(f => f.id === fileId)))
+    conflict("该文件已进入资料审核履历，不能删除或移动分类。请上传新版本并重新审核。");
 }
 async function event(tx: Tx, a: PcActor, type: string, id: string, action: string, snapshot: unknown, reason = "") {
   await tx.qfEvent.create({ data: { entityType: type, entityId: id, action, actorId: a.id, actorName: actorName(a), snapshot: qfJson(snapshot), reason } });
@@ -72,9 +73,11 @@ async function getPackage(tx: Tx, id: unknown, version?: unknown) {
   if (version !== undefined) pcVersion(p.version, version);
   return p;
 }
-export async function assertPackageFiles(tx: Tx, p: QfPackage) {
-  const evidence = p.drawingFiles as unknown as DrawingEvidence[];
-  if (!Array.isArray(evidence) || !evidence.length || p.needFixture === null) conflict("图纸或治具选项尚未完整");
+export async function assertPackageFiles(tx: Tx, p: QfPackage, requireSop = false) {
+  const drawings = p.drawingFiles as unknown as DrawingEvidence[], sops = p.sopFiles as unknown as DrawingEvidence[];
+  if (!Array.isArray(drawings) || !drawings.length || p.needFixture === null) conflict("图纸或治具选项尚未完整");
+  if (requireSop && (!Array.isArray(sops) || !sops.length)) conflict("请补齐本版本 SOP，再完成主管初审和质量复审");
+  const evidence = [...drawings, ...(Array.isArray(sops) ? sops : [])];
   const files = await tx.drawingLibraryFile.findMany({ where: { id: { in: evidence.map(f => f.id) }, libraryItemId: p.libraryItemId, deletedAt: null } });
   if (files.length !== evidence.length || evidence.some(e => !files.some(f => f.id === e.id && f.objectKey === e.objectKey && f.version === e.version && (f.sha256 || "") === e.sha256)))
     conflict("审核所引用图纸已移除或发生变化，请重新提交资料");
@@ -89,12 +92,12 @@ export async function fixtureReadiness(tx: Tx, p: QfPackage | null, workOrderId 
   if (!p.needFixture) return { label: "无需治具", missing: 0, unmatched: 0, groups: [], unmatchedRows: [] };
   const needs = fixtureRequirements(p.bomRows as unknown as BomRow[], p.parallelCount, p.spareCount);
   const mappings = await tx.qfMapping.findMany({ where: { active: true, preferred: true, fixture: { active: true },
-    connector: { OR: needs.map(n => ({ model: n.model, manufacturer: n.manufacturer })) } },
+    connector: { model: { in: needs.map(n => n.model) } } },
     include: { connector: true, fixture: { include: { item: { include: { balances: { include: { holdings: true } } } } } } }, orderBy: { confirmedAt: "desc" } });
-  const unmatchedRows = needs.filter(n => !mappings.some(m => fixtureKey(m.connector.model, m.connector.manufacturer) === n.key));
+  const unmatchedRows = needs.filter(n => !mappings.some(m => m.connector.model === n.model));
   const grouped = new Map<string, { fixture: typeof mappings[number]["fixture"]; perUnit: number; models: string[]; mappingIds: string[] }>();
   for (const need of needs) {
-    const matches = mappings.filter(m => fixtureKey(m.connector.model, m.connector.manufacturer) === need.key);
+    const matches = mappings.filter(m => m.connector.model === need.model);
     if (matches.length !== 1) { if (matches.length > 1) unmatchedRows.push(need); continue; }
     const m = matches[0];
     if ((m.fixture.unit === "套") !== (need.unit === "套")) { unmatchedRows.push(need); continue; }
@@ -107,7 +110,7 @@ export async function fixtureReadiness(tx: Tx, p: QfPackage | null, workOrderId 
     const assigned = g.fixture.item.balances.flatMap(b => b.holdings)
       .filter(h => h.libraryItemId === p.libraryItemId && h.workOrderId === workOrderId)
       .reduce((n, h) => n + h.reserved + h.issued, 0);
-    const open = await tx.pcLine.findMany({ where: { fixtureId: g.fixture.id, fixturePackageId: p.id, status: { in: ["PENDING", "APPROVED", "ORDERED"] }, request: { deletedAt: null } } });
+    const open = await tx.pcLine.findMany({ where: { fixtureId: g.fixture.id, fixturePackage: { libraryItemId: p.libraryItemId }, status: { in: ["PENDING", "APPROVED", "ORDERED"] }, request: { deletedAt: null } } });
     const incoming = open.reduce((n, l) => n + Math.max(0, l.quantity - l.receivedQty - l.cancelledQty), 0);
     return { fixtureId: g.fixture.id, number: g.fixture.number, model: g.fixture.model, name: g.fixture.name, unit: g.fixture.unit,
       assemblyRequired: g.fixture.assemblyRequired, required, available, assigned, incoming, shortage: Math.max(0, required - available - assigned),
@@ -118,24 +121,28 @@ export async function fixtureReadiness(tx: Tx, p: QfPackage | null, workOrderId 
     missing, unmatched: unmatchedRows.length, groups, unmatchedRows };
 }
 export async function assertFixturePrintReady(tx: Tx, workOrderId: string, expectedPackageId?: string) {
-  const wo = await tx.workOrder.findUnique({ where: { id: workOrderId }, select: { id: true, code: true, drawingLibraryItemId: true, fixtureBinding: true } });
+  const wo = await tx.workOrder.findUnique({ where: { id: workOrderId }, select: { id: true, code: true, drawingLibraryItemId: true, fixtureBinding: true, documentReviewRequired: true, weekStartDate: true } });
+  if (wo && !requiresDocumentReview(wo)) return null;
   if (!wo?.drawingLibraryItemId) conflict((wo?.code || "工单") + "尚未关联产品图纸资料，请先补齐并完成两级审核");
   if (!await tx.drawingLibraryItem.findFirst({ where: { id: wo!.drawingLibraryItemId!, deletedAt: null } })) conflict("产品图纸档案已归档");
   if (expectedPackageId && wo!.fixtureBinding && expectedPackageId !== wo!.fixtureBinding.packageId) conflict("计划指定资料版本已变化，请重新生成工单");
   const p = expectedPackageId
     ? await tx.qfPackage.findUnique({ where: { id: expectedPackageId } })
     : wo!.fixtureBinding ? await tx.qfPackage.findUnique({ where: { id: wo!.fixtureBinding.packageId } })
-      : await tx.qfPackage.findFirst({ where: { libraryItemId: wo!.drawingLibraryItemId!, status: "APPROVED" }, orderBy: { sequence: "desc" } });
+      : await tx.qfPackage.findFirst({ where: { libraryItemId: wo!.drawingLibraryItemId! }, orderBy: { sequence: "desc" } });
   if (!p || p.libraryItemId !== wo!.drawingLibraryItemId || !(p.status === "APPROVED" || (p.status === "SUPERSEDED" && p.continuedWorkOrderIds.includes(workOrderId))))
     conflict(wo!.code + "适用资料未完成主管初审和质量复审，或该版本已停用");
   if (!p.supervisorId || !p.qualityId || p.supervisorId === p.qualityId || p.submittedById === p.supervisorId || p.submittedById === p.qualityId)
     conflict("资料审核签名无效，请重新完成独立两级审核");
-  await assertPackageFiles(tx, p);
+  // New orders must not reuse approval during the asynchronous source-sync window.
+  if (!wo!.fixtureBinding && p.sourceSignature && p.sourceSignature !== await (await import("@/lib/quality-fixture-sync")).currentDocumentSignature(tx, p.libraryItemId))
+    conflict("图纸、SOP 或治具要求已有更新，请完成新版两级审核后打印");
+  await assertPackageFiles(tx, p, true);
   const readiness = await fixtureReadiness(tx, p, workOrderId);
   return { packageId: p.id, revision: p.revision, sequence: p.sequence, fingerprint: p.fingerprint,
     supervisor: p.supervisorName, supervisorAt: p.supervisorAt?.toISOString(), quality: p.qualityName, qualityAt: p.qualityAt?.toISOString(),
     needFixture: p.needFixture, bomFileId: p.bomFileId, fixtureLabel: readiness.label,
-    drawingFiles: p.drawingFiles as unknown as DrawingEvidence[] };
+    drawingFiles: p.drawingFiles as unknown as DrawingEvidence[], sopFiles: p.sopFiles as unknown as DrawingEvidence[] };
 }
 async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   const libraryItemId = pcText(input.libraryItemId, "产品档案", 100);
@@ -146,7 +153,11 @@ async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   const ids = Array.isArray(input.drawingFileIds) && input.drawingFileIds.length ? pcIds(input.drawingFileIds, "图纸") : [];
   const files = await tx.drawingLibraryFile.findMany({ where: { id: { in: ids }, libraryItemId, deletedAt: null, category: { code: "drawing" } }, orderBy: { id: "asc" } });
   if (files.length !== ids.length) throw new FixtureError("所选图纸不存在或不属于该产品");
-  const need = typeof input.needFixture === "boolean" ? input.needFixture : null;
+  const sopIds = Array.isArray(input.sopFileIds) ? input.sopFileIds as string[] : null;
+  const sops = await tx.drawingLibraryFile.findMany({ where: { libraryItemId, deletedAt: null, category: { code: "sop" }, ...(sopIds ? { id: { in: sopIds } } : { isCurrent: true }) }, orderBy: { id: "asc" } });
+  if (sopIds && sops.length !== new Set(sopIds).size) throw new FixtureError("所选 SOP 不存在或不属于该产品");
+  const need = typeof input.needFixture === "boolean" ? input.needFixture : product.fixtureRequired;
+  await tx.drawingLibraryItem.update({ where: { id: libraryItemId }, data: { fixtureRequired: need } });
   const bomFileId = need && input.bomFileId ? pcText(input.bomFileId, "BOM", 100) : null;
   const bom = bomFileId ? await tx.qfBomFile.findFirst({ where: { id: bomFileId, libraryItemId, deletedAt: null } }) : null;
   if (bomFileId && !bom) throw new FixtureError("BOM 不存在或不属于该产品");
@@ -157,6 +168,8 @@ async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   const values = { revision: pcText(input.revision, "图纸版本", 40), needFixture: need,
     parallelCount: pcInt(input.parallelCount ?? 1, "同时测试产品数量", 1, 1000), spareCount: pcInt(input.spareCount ?? 0, "每种对插件备用数量", 0, 10000),
     drawingFiles: qfJson(files.map(f => ({ id: f.id, name: f.displayName || f.originalName, version: f.version, sha256: f.sha256 || "", objectKey: f.objectKey, mimeType: f.mimeType }))),
+    sopFiles: qfJson(sops.map(f => ({ id: f.id, name: f.displayName || f.originalName, version: f.version, sha256: f.sha256 || "", objectKey: f.objectKey, mimeType: f.mimeType }))),
+    sourceSignature: await (await import("@/lib/quality-fixture-sync")).currentDocumentSignature(tx, libraryItemId),
     bomFileId, bomMapping: mapping ? qfJson(mapping) : Prisma.JsonNull, bomRows: qfJson(rows), bomConfirmed: !!confirmed, status: "DRAFT", reason: "" };
   const fingerprint = documentFingerprint({ ...values, bomMapping: mapping });
   let p: QfPackage;
@@ -168,10 +181,10 @@ async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   await event(tx, a, "PACKAGE", p.id, "SAVE", { before: old, after: p });
   return p;
 }
-async function submitPackage(tx: Tx, input: PcInput, a: PcActor) {
+export async function submitPackage(tx: Tx, input: PcInput, a: PcActor) {
   const p = await getPackage(tx, input.id, input.version), s = await settings(tx);
   if (p.status !== "DRAFT") conflict("请先建立资料修订草稿，再提交主管初审");
-  await assertPackageFiles(tx, p);
+  await assertPackageFiles(tx, p, true);
   if (!s.supervisorIds.some(id => id !== a.id) || !s.qualityIds.some(id => id !== a.id)) conflict("负责人设置无法完成独立审核，请配置上传人以外的主管和质量人员");
   const result = await tx.qfPackage.update({ where: { id: p.id }, data: { status: "SUPERVISOR", version: { increment: 1 }, submittedById: a.id, submittedByName: actorName(a), submittedAt: new Date() } });
   await event(tx, a, "PACKAGE", p.id, "SUBMIT", result);
@@ -187,14 +200,14 @@ async function review(tx: Tx, input: PcInput, a: PcActor) {
   if (approve) {
     if (await tx.qfPackage.count({ where: { libraryItemId: p.libraryItemId, sequence: { gt: p.sequence }, qualityAt: { not: null } } }))
       conflict("已有更新的资料版本完成质量复审，不能再批准这份旧稿。请退回旧稿，或基于所需资料新建修订版本。");
-    const ids = (p.drawingFiles as unknown as DrawingEvidence[]).map(f => f.id);
+    const ids = [...p.drawingFiles as unknown as DrawingEvidence[], ...p.sopFiles as unknown as DrawingEvidence[]].map(f => f.id);
     const ownsDrawing = await tx.drawingLibraryFile.count({ where: { id: { in: ids }, uploadedById: a.id } });
     const ownsBom = p.bomFileId && await tx.qfBomFile.count({ where: { id: p.bomFileId, uploadedById: a.id } });
-    if (ownsDrawing || ownsBom) denied("不能审核自己上传的图纸或 BOM，请由其他指定审核人员处理");
+    if (ownsDrawing || ownsBom) denied("不能审核自己上传的图纸、SOP 或 BOM，请由其他指定审核人员处理");
     if (input.confirmed !== true) throw new FixtureError("请确认已核对图纸、资料完整性和连接器清单");
   }
   const reason = pcText(input.reason, "退回意见", 2000, !approve);
-  if (approve) await assertPackageFiles(tx, p);
+  if (approve) await assertPackageFiles(tx, p, true);
   const next = !approve ? "RETURNED" : p.status === "SUPERVISOR" ? "QUALITY" : "APPROVED";
   if (next === "APPROVED") await tx.qfPackage.updateMany({ where: { libraryItemId: p.libraryItemId, status: "APPROVED", id: { not: p.id } }, data: { status: "SUPERSEDED", version: { increment: 1 } } });
   const result = await tx.qfPackage.update({ where: { id: p.id }, data: { status: next, reason, version: { increment: 1 },
@@ -207,24 +220,36 @@ async function review(tx: Tx, input: PcInput, a: PcActor) {
   return { id: result.id, version: result.version };
 }
 async function saveMapping(tx: Tx, input: PcInput, a: PcActor) {
-  const model = pcText(input.connectorModel, "产品连接器完整型号", 200), manufacturer = pcText(input.connectorManufacturer, "制造商", 100, false);
+  const previous = input.mappingId ? await tx.qfMapping.findUnique({ where: { id: pcText(input.mappingId, "配对", 100) } }) : null;
+  if (input.mappingId && !previous?.active) conflict("该配对已变更或删除，请刷新");
+  if (previous) { pcVersion(previous.version, input.mappingVersion); await tx.qfMapping.update({ where: { id: previous.id }, data: { active: false, preferred: false, version: { increment: 1 } } }); }
+  const model = pcText(input.connectorModel, "连接器型号", 200), manufacturer = "";
   const connector = await tx.qfConnector.upsert({ where: { model_manufacturer: { model, manufacturer } }, create: { model, manufacturer, name: pcText(input.connectorName, "连接器名称", 200, false) }, update: {} });
-  const evidence = pcText(input.evidence, "对插规格确认依据", 1000);
+  const evidence = pcText(input.evidence, "对插规格确认依据", 1000, false) || "人工确认连接器与对插型号";
+  let createdFixture = false;
   let fixture = input.fixtureId ? await tx.qfFixture.findUnique({ where: { id: pcText(input.fixtureId, "对插件", 100) } }) : null;
   if (input.fixtureId && !fixture?.active) throw new FixtureError("所选对插件不存在或已停用");
   if (!fixture) {
-    const mateModel = pcText(input.model, "对插件完整型号", 200), maker = pcText(input.manufacturer, "对插件制造商", 100, false);
-    fixture = await tx.qfFixture.findUnique({ where: { model_manufacturer: { model: mateModel, manufacturer: maker } } });
+    const mateModel = pcText(input.model, "对插型号", 200), maker = "";
+    fixture = await tx.qfFixture.findFirst({ where: { model: mateModel }, orderBy: { createdAt: "asc" } });
     if (!fixture) {
-      const number = await qfSerial(tx, "TJ"), name = pcText(input.name, "对插件名称", 200), unit = pcChoice(input.unit || "个", ["个", "套", "件"], "单位");
+      const number = await qfSerial(tx, "TJ"), name = pcText(input.name || mateModel, "对插件名称", 200), unit = pcChoice(input.unit || "个", ["个", "套", "件"], "单位");
       const item = await tx.pcItem.create({ data: { number, name, spec: mateModel, unit, category: "导通治具" } });
       fixture = await tx.qfFixture.create({ data: { number, name, model: mateModel, manufacturer: maker, itemId: item.id, unit, assemblyRequired: input.assemblyRequired === true } });
+      createdFixture = true;
     }
   }
   if (!fixture.active) conflict("该对插件已停用，请先核对状态");
-  await tx.qfMapping.updateMany({ where: { connectorId: connector.id, active: true, preferred: true }, data: { preferred: false, version: { increment: 1 } } });
+  await tx.qfMapping.updateMany({ where: { connector: { model }, active: true, preferred: true }, data: { active: false, preferred: false, version: { increment: 1 } } });
   const mapping = await tx.qfMapping.create({ data: { connectorId: connector.id, fixtureId: fixture.id, evidence, scope: pcText(input.scope, "适用范围", 1000, false), confirmedById: a.id, confirmedByName: actorName(a) } });
-  await event(tx, a, "MAPPING", mapping.id, "CONFIRM_SPECIFICATION", { connector, fixture, mapping });
+  const quantity = pcInt(input.initialQuantity ?? 0, "初始数量", 0, 1000000);
+  if (quantity && !createdFixture) conflict("已有对插型号共用现有库存，请通过数量调整补充，不要重复初始化");
+  if (quantity) {
+    const stock = await tx.pcStockBalance.create({ data: { itemId: fixture.itemId, warehouse: "治具库", location: "默认", onHand: quantity } });
+    await tx.pcStockMovement.create({ data: { stockId: stock.id, kind: "FIXTURE_OPENING", quantity, balance: quantity, sourceId: mapping.id,
+      reason: "人工登记现有治具数量", person: actorName(a), actorId: a.id, actorName: actorName(a) } });
+  }
+  await event(tx, a, "MAPPING", mapping.id, previous ? "EDIT_MAPPING" : "CONFIRM_SPECIFICATION", { previous, connector, fixture, mapping, initialQuantity: quantity });
   return { id: mapping.id, fixtureId: fixture.id };
 }
 export async function createFixturePurchase(tx: Tx, input: PcInput, a: PcActor) {
@@ -279,9 +304,39 @@ export async function mutateQualityFixture(input: PcInput, a: PcActor, key: unkn
         update: { supervisorIds: supervisors, qualityIds: qualities, version: { increment: 1 } } });
       await event(tx, a, "SETTINGS", "quality-fixtures", action, { before: old, after: result });
     } else if (action === "SAVE_PACKAGE") result = await savePackage(tx, input, a);
+    else if (action === "SET_REQUIREMENT") {
+      if (typeof input.needFixture !== "boolean") throw new FixtureError("请选择需要或无需治具");
+      result = await (await import("@/lib/quality-fixture-sync")).setFixtureRequirement(tx, pcIds(input.productIds, "产品"), input.needFixture, a);
+    }
     else if (action === "SUBMIT") result = await submitPackage(tx, input, a);
     else if (action === "APPROVE" || action === "RETURN") result = await review(tx, input, a);
     else if (action === "SAVE_MAPPING") result = await saveMapping(tx, input, a);
+    else if (action === "DELETE_MAPPING") {
+      const mapping = await tx.qfMapping.findUnique({ where: { id: pcText(input.id, "配对", 100) } });
+      if (!mapping?.active) conflict("该配对已删除，请刷新");
+      pcVersion(mapping.version, input.version);
+      result = await tx.qfMapping.update({ where: { id: mapping.id }, data: { active: false, preferred: false, version: { increment: 1 } } });
+      await event(tx, a, "MAPPING", mapping.id, action, { before: mapping, after: result });
+    } else if (action === "SET_QUANTITY") {
+      const fixture = await tx.qfFixture.findUnique({ where: { id: pcText(input.fixtureId, "对插型号", 100) }, include: { item: { include: { balances: true } } } });
+      if (!fixture?.active) conflict("对插型号不存在或已停用");
+      const total = fixture.item.balances.reduce((n, b) => n + b.onHand, 0);
+      if (Number(input.expectedOnHand) !== total) conflict("库存已变化，请刷新后调整");
+      const quantity = pcInt(input.quantity, "在库数量", 0, 1000000), delta = quantity - total;
+      if (-delta > fixture.item.balances.reduce((n, b) => n + fixtureAvailable(b), 0)) conflict("不能减少已预留、待验证或维修中的库存，请先核对占用");
+      let remaining = Math.abs(delta);
+      const balances = delta > 0 ? [await tx.pcStockBalance.create({ data: { itemId: fixture.itemId, warehouse: "治具库", location: "默认" } })] : fixture.item.balances;
+      for (const b of balances) {
+        const change = delta > 0 ? remaining : -Math.min(remaining, fixtureAvailable(b));
+        if (!change) continue;
+        const updated = await tx.pcStockBalance.update({ where: { id: b.id }, data: { onHand: { increment: change }, version: { increment: 1 } } });
+        await tx.pcStockMovement.create({ data: { stockId: b.id, kind: "FIXTURE_ADJUST", quantity: change, balance: updated.onHand,
+          sourceId: fixture.id, reason: "人工盘点调整", person: actorName(a), actorId: a.id, actorName: actorName(a) } });
+        remaining -= Math.abs(change);
+      }
+      result = { fixtureId: fixture.id, before: total, after: quantity };
+      await event(tx, a, "FIXTURE", fixture.id, action, result);
+    }
     else if (action === "REVOKE" || action === "CONTINUE_OLD_VERSION") {
       const p = await getPackage(tx, input.id, input.version);
       await responsible(tx, a, "qualityIds");

@@ -5,6 +5,7 @@ const nextConfig={
   poweredByHeader:false,
   compress:true,
   experimental:{
+    instrumentationHook:true,
     serverActions:{bodySizeLimit:'50mb'},
     optimizePackageImports:['lucide-react'],
   },

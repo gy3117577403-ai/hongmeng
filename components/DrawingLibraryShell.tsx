@@ -1,4 +1,5 @@
 'use client';
+import FixtureRequirementControl from '@/components/quality-fixtures/FixtureRequirementControl';
 import { QualityFixtureStatus } from '@/components/quality-fixtures/QualityFixtureStatus';
 import {QuickPhotoViewer} from '@/components/quality-quick/QuickWarnings';
 import QuickQualityForm from '@/components/quality-quick/QuickQualityForm';
@@ -36,7 +37,7 @@ type DrawingLibraryForm = {
   remark: string;
 };
 
-type DrawingFilter = 'all' | 'complete' | 'recent' | 'anomaly';
+type DrawingFilter = 'fixture_pending' | 'review_scope' | 'all' | 'complete' | 'recent' | 'anomaly';
 type SopFilter = 'all' | 'unset' | SopStageDTO | 'missing_drawing';
 type SopMetadataForm = { sopStage: SopStageDTO; drawingStatus: SopDrawingStatusDTO; remark: string };
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
@@ -1123,7 +1124,7 @@ export function DrawingLibraryShell({
                 <div>
                   <span>当前资料</span>
                   <h1 title={selectedItem.specification}>{selectedItem.specification}</h1>
-                  <QualityFixtureStatus id={selectedItem.id} />
+                  <FixtureRequirementControl productId={selectedItem.id} /><QualityFixtureStatus id={selectedItem.id} />
                   <p>
                     <b title={selectedItem.customerName}>{selectedItem.customerName}</b>
                     {hasText(selectedItem.productName) && <em title={selectedItem.productName || ''}>{selectedItem.productName}</em>}

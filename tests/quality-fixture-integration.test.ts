@@ -25,7 +25,9 @@ test("fixture documents, independent review, procurement and physical inventory 
   const product = await prisma.drawingLibraryItem.create({ data: { customerName: marker, productName: "导通测试产品", specification: marker + "-SPEC", libraryKey: marker,
     files: { create: { categoryId: category.id, originalName: "受审图纸.pdf", mimeType: "application/pdf", size: 10, objectKey: "integration/" + marker, sha256: "test-hash", uploadedById: planner.id } } },
     include: { files: true } });
-  const order = await prisma.workOrder.create({ data: {
+  const sopCategory = await prisma.resourceCategory.upsert({ where: { code: "sop" }, create: { code: "sop", name: "SOP", sortOrder: 2 }, update: {} });
+  await prisma.drawingLibraryFile.create({ data: { libraryItemId: product.id, categoryId: sopCategory.id, originalName: "reviewed-sop.pdf", mimeType: "application/pdf", size: 10, objectKey: "integration/" + marker + "/sop", uploadedById: planner.id } });
+  const order = await prisma.workOrder.create({ data: { weekStartDate: new Date("2026-09-21T00:00:00+08:00"),
     code: marker, customerName: marker, productName: "导通测试", specification: product.specification, drawingLibraryItemId: product.id,
     stage: "frontend", status: "processing", processName: "cut", productionTargetQty: 100, uncompletedQty: "100", completedQty: "0", planType: "managed_plan", planActive: true,
     processRoute: { create: { templateName: "导通工序", templateVersion: 1, status: "in_progress", version: 1, confirmedAt: new Date(), confirmedById: planner.id,
@@ -59,13 +61,15 @@ test("fixture documents, independent review, procurement and physical inventory 
   await qf({ action: "SAVE_MAPPING", connectorModel: marker + "-C2", fixtureId: m.fixtureId, evidence: "同针位规格确认" });
   const readiness = await fixtureReadiness(prisma, await packageRow(p.id));
   assert.equal(readiness.groups.length, 1); assert.equal(readiness.groups[0].required, 7, "shared SKU aggregates connector demand, spare once, ignores order quantity");
-  assert.equal((await assertFixturePrintReady(prisma, order.id)).fixtureLabel, "治具缺 7");
+  assert.equal((await assertFixturePrintReady(prisma, order.id))!.fixtureLabel, "治具缺 7");
   let lineId = "";
   await t.test("duplicate and concurrent fixture purchasing cannot over-cover the shortage", async () => {
     const request = { action: "CREATE_FIXTURE_PURCHASE", packageId: p.id, version: (await packageRow(p.id)).version, fixtureId: m.fixtureId, quantity: 7, estimateCents: 7000, needDate: date };
     const key = randomUUID();
     const r = await pc(request, planner, key); lineId = r.lineIds[0];
     assert.deepEqual(await pc(request, planner, key), r);
+    const sameProductNewVersion = { ...await packageRow(p.id), id: randomUUID() };
+    assert.equal((await fixtureReadiness(prisma, sameProductNewVersion)).groups[0].incoming, 7, "pending purchase is shared by product across document revisions");
     await assert.rejects(() => pc(request, planner), /最多新增 0/);
     const results = await Promise.allSettled([pc({ ...request, quantity: 1 }, planner), pc({ ...request, quantity: 1 }, planner)]);
     assert.equal(results.filter(r => r.status === "fulfilled").length, 0);
@@ -112,11 +116,12 @@ test("fixture documents, independent review, procurement and physical inventory 
     const old = await packageRow(p.id);
     const draft = await qf({ action: "SAVE_PACKAGE", id: old.id, version: old.version, libraryItemId: product.id, revision: "B", needFixture: false, drawingFileIds: [product.files[0].id] });
     assert.notEqual(draft.id, old.id); assert.equal(draft.bomFileId, null); assert.equal(draft.reason, "");
-    assert.equal((await assertFixturePrintReady(prisma, order.id)).packageId, old.id);
+    assert.equal((await assertFixturePrintReady(prisma, order.id))!.packageId, old.id);
     await qf({ action: "SUBMIT", ...await versionInput(draft.id) }); await review(draft.id, supervisor); await review(draft.id, quality);
     await assert.rejects(() => loadWorkOrderTravelerPrints([oldPrint.printId]), /停用/);
     await qf({ action: "CONTINUE_OLD_VERSION", ...await versionInput(old.id), workOrderIds: [order.id], reason: "已投产旧批次保留适用范围" }, quality);
     assert.equal((await loadWorkOrderTravelerPrints([oldPrint.printId])).length, 1);
+    await qf({ action: "BIND_WORK_ORDERS", packageId: draft.id, workOrderIds: [order.id] });
     const [latestPrint] = await print(); assert.equal(latestPrint.snapshot.documentApproval?.needFixture, false);
     await qf({ action: "REVOKE", ...await versionInput(draft.id), reason: "图纸数据复核" }, quality);
     await assert.rejects(print, /审核|停用/);
@@ -129,7 +134,8 @@ test("fixture documents, independent review, procurement and physical inventory 
     const newer = await draft("D-current");
     await qf({ action: "SUBMIT", ...await versionInput(newer.id) }); await review(newer.id, supervisor); await review(newer.id, quality);
     await assert.rejects(() => review(older.id, quality), /更新的资料版本/);
-    assert.equal((await assertFixturePrintReady(prisma, order.id)).packageId, newer.id);
+    await qf({ action: "BIND_WORK_ORDERS", packageId: newer.id, workOrderIds: [order.id] });
+    assert.equal((await assertFixturePrintReady(prisma, order.id))!.packageId, newer.id);
     await qf({ action: "REVOKE", ...await versionInput(newer.id), reason: "核对新版本适用范围" }, quality);
     await assert.rejects(() => review(older.id, quality), /更新的资料版本/);
     await qf({ action: "RETURN", ...await versionInput(older.id), reason: "已有更新版本，旧稿停止审批" }, quality);

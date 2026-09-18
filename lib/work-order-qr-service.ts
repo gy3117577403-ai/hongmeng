@@ -1,3 +1,4 @@
+import { requiresDocumentReview } from "@/lib/quality-fixture-scope";
 import crypto from 'node:crypto';
 import { assertFixturePrintReady, lockFixtureBusiness } from '@/lib/quality-fixture-service';
 import { FixtureError } from '@/lib/quality-fixture-domain';
@@ -784,10 +785,15 @@ export async function loadWorkOrderTravelerPrintReadiness(input: {
     const value = buildTravelerPrintReadiness(orderById.get(id)!, warningsByWorkOrder.get(id) || []);
     try {
       const approved = await requireApprovedDocuments(prisma, id);
+      if (!approved) return value;
       const drawing = approved.drawingFiles[0];
       if (printableSourceFormat(drawing.name, drawing.mimeType))
         value.drawing = { ...readyCheck("受审图纸 " + approved.revision + " 可打印"), fileId: drawing.id, fileVersion: drawing.version, fileName: drawing.name, mimeType: drawing.mimeType };
       else value.drawing = missingResourceResult("FIXTURE_DRAWING_FORMAT", "受审图纸格式不能打印，请上传 PDF 或图片并重新审核");
+      const sop = approved.sopFiles[0];
+      value.sop = printableSourceFormat(sop.name, sop.mimeType)
+        ? { ...readyCheck("受审 SOP " + approved.revision + " 可打印"), fileId: sop.id, fileVersion: sop.version, fileName: sop.name, mimeType: sop.mimeType }
+        : missingResourceResult("FIXTURE_SOP_FORMAT", "受审 SOP 格式不能打印");
       if (value.traveler.ready) value.traveler.message += "；" + approved.fixtureLabel + "（治具状态不拦打印）";
     } catch (e) {
       if (!(e instanceof WorkOrderQrServiceError)) throw e;
@@ -802,7 +808,7 @@ export async function loadWorkOrderTravelerPrintReadiness(input: {
 async function requireApprovedDocuments(tx: Prisma.TransactionClient, workOrderId: string, previous?: WorkOrderTravelerSnapshot["documentApproval"]) {
   try {
     const approved = await assertFixturePrintReady(tx, workOrderId, previous?.packageId);
-    if (previous && previous.fingerprint !== approved.fingerprint) throw new FixtureError("资料审核版本已变化，请重新生成工单", "FIXTURE_CONFLICT", 409);
+    if (previous && approved && previous.fingerprint !== approved.fingerprint) throw new FixtureError("资料审核版本已变化，请重新生成工单", "FIXTURE_CONFLICT", 409);
     return approved;
   } catch (e) {
     if (e instanceof FixtureError) throw new WorkOrderQrServiceError(e.message, e.status, e.code);
@@ -810,7 +816,10 @@ async function requireApprovedDocuments(tx: Prisma.TransactionClient, workOrderI
   }
 }
 export async function validateWorkOrderPrintSnapshot(tx: Prisma.TransactionClient, snapshot: WorkOrderTravelerSnapshot) {
-  if (!snapshot.documentApproval) throw new WorkOrderQrServiceError("该历史打印任务尚无两级审核快照，请先审核生产资料并重新生成工单", 409, "FIXTURE_LEGACY_PRINT");
+  if (!snapshot.documentApproval) {
+    if (!await requireApprovedDocuments(tx, snapshot.workOrderId)) return;
+    throw new WorkOrderQrServiceError("此工单适用新审核规则，请使用批准资料重新生成打印任务", 409, "FIXTURE_LEGACY_PRINT");
+  }
   await requireApprovedDocuments(tx, snapshot.workOrderId, snapshot.documentApproval);
 }
 
@@ -886,6 +895,7 @@ export async function createWorkOrderTravelerPrints(input: {
   }
   if (requiresSop) {
     const invalidSop = orderedOrders
+      .filter(order => !requiresDocumentReview(order))
       .map(order => materialReadiness(order, 'sop'))
       .find(readiness => !readiness.ready);
     if (invalidSop) {
@@ -898,6 +908,7 @@ export async function createWorkOrderTravelerPrints(input: {
     for (const snapshot of snapshots) {
       const approved = await requireApprovedDocuments(tx, snapshot.workOrderId);
       snapshot.documentApproval = approved;
+      if (approved) {
       const drawing = approved.drawingFiles[0];
       if (requiresDrawing && !printableSourceFormat(drawing.name, drawing.mimeType))
         throw new WorkOrderQrServiceError("受审图纸格式不支持打印，请上传 PDF 或图片后重新审核", 409, "QR_DRAWING_UNPRINTABLE");
@@ -907,6 +918,14 @@ export async function createWorkOrderTravelerPrints(input: {
       snapshot.drawingMimeType = drawing.mimeType;
       const orientation = await tx.documentDisplaySetting.findUnique({ where: { objectKey: drawing.objectKey } });
       snapshot.documentOrientations![drawing.id] = { revision: orientation?.revision || 0, pageRotations: (orientation?.pageRotations || {}) as Record<string, number> };
+      const sop = approved.sopFiles[0];
+      if (requiresSop && !printableSourceFormat(sop.name, sop.mimeType))
+        throw new WorkOrderQrServiceError("受审 SOP 格式不支持打印，请上传 PDF 或图片后重新审核", 409, "QR_SOP_UNPRINTABLE");
+      snapshot.sopFileId = sop.id; snapshot.sopFileVersion = sop.version; snapshot.sopFileName = sop.name; snapshot.sopMimeType = sop.mimeType;
+      const sopOrientation = await tx.documentDisplaySetting.findUnique({ where: { objectKey: sop.objectKey } });
+      snapshot.documentOrientations![sop.id] = { revision: sopOrientation?.revision || 0, pageRotations: (sopOrientation?.pageRotations || {}) as Record<string, number> };
+      await tx.qfPlanBinding.upsert({ where: { workOrderId: snapshot.workOrderId }, create: { workOrderId: snapshot.workOrderId, packageId: approved.packageId, selectedById: input.userId }, update: {} });
+      }
       const ticket = await tx.workOrderQrTicket.upsert({
         where: { workOrderId: snapshot.workOrderId },
         update: {

@@ -30,6 +30,7 @@ export type ProductionPlanImportInput = {
 };
 
 export type ProductionPlanImportCandidate = {
+  fixtureRequired?: boolean | null;
   id: string;
   customerCode?: string | null;
   libraryKey: string;

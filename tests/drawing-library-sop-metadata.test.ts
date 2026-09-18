@@ -9,6 +9,7 @@ function itemFixture(overrides: Partial<DrawingLibraryItemWithFiles> = {}): Draw
   const now = new Date('2026-08-22T02:00:00.000Z');
   return {
     id: 'item-1',
+    fixtureRequired: null,
     customerName: '测试客户',
     customerCode: '10001',
     productName: '测试线束',

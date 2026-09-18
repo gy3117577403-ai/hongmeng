@@ -1,3 +1,4 @@
+import { fixturePlanScope } from '@/lib/quality-fixture-scope';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
@@ -62,6 +63,7 @@ export async function GET(req: NextRequest) {
     const items = await prisma.drawingLibraryItem.findMany({
       where: {
         deletedAt: null,
+        ...(["fixture_pending", "review_scope"].includes(filter) ? { AND: [fixturePlanScope], ...(filter === "fixture_pending" ? { fixtureRequired: null } : {}) } : {}),
         ...(keyword
           ? {
               OR: [

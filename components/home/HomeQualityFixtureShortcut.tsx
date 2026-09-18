@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import HomeQuickAction from "./HomeQuickAction";
 import { ShieldCheck, ArrowUpRight } from "lucide-react";
 import { useEffect, useState } from "react";
 export default function HomeQualityFixtureShortcut() {
@@ -10,7 +11,8 @@ export default function HomeQualityFixtureShortcut() {
     void refresh(); window.addEventListener("focus", refresh);
     return () => { live = false; window.removeEventListener("focus", refresh); };
   }, []);
-  return <div className="hm-purchase-shortcut"><Link className="hm-purchase-title" href="/workspace/quality-fixtures"><ShieldCheck size={19} /><strong>资料与治具</strong><ArrowUpRight size={15} /></Link>
-    <div className="hm-purchase-counts">{([["supervisor","待我初审","/workspace/quality-fixtures?view=review"],["quality","待我复审","/workspace/quality-fixtures?view=review"],["draft","资料待完善","/workspace/quality-fixtures?view=plans"],["purchasing","治具采购待处理","/workspace/purchases?source=FIXTURE"]] as const).map(([k,label,href]) => <Link key={k} href={href}><span>{label}</span><b>{data ? data[k] : "—"}</b><small>{data ? "项" : "待更新"}</small></Link>)}</div>
-    <Link className="hm-purchase-create" href="/workspace/quality-fixtures?view=plans">准备生产资料</Link></div>;
+  return <HomeQuickAction label="资料与治具" count={data ? data.supervisor + data.quality + data.draft : null} icon={<ShieldCheck size={16} />}>
+    <div className="hm-quick-items">{([["supervisor","待我初审","review&status=SUPERVISOR&mine=1"],["quality","待我复审","review&status=QUALITY&mine=1"],["draft","待补资料","review&status=MISSING"],["purchasing","治具采购待处理","purchases"]] as const).map(([k,label,view]) => <Link key={k} href={view === "purchases" ? "/workspace/purchases?source=FIXTURE" : "/workspace/quality-fixtures?view=" + view}><span>{label}</span><b>{data ? data[k] : "—"}</b></Link>)}</div>
+    <Link className="hm-quick-primary" href="/workspace/quality-fixtures?view=plans">进入治具准备<ArrowUpRight size={15}/></Link>
+  </HomeQuickAction>;
 }

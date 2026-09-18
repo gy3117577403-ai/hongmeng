@@ -758,10 +758,6 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
           )}
         </header>
 
-        <section className="hm-hcc-shortcuts" aria-label="业务快捷入口">
-          <HomePurchasingShortcut />
-          <HomeQualityFixtureShortcut />
-        </section>
         <div className="hm-hcc-main-grid">
           <section
             ref={sceneRef}
@@ -773,7 +769,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
           >
             <header className="hm-hcc-section-heading">
               <div className="hm-hcc-title-group"><h1 id="hm-hcc-operations-title">生产协同总览</h1><small>{data.error ? '数据待更新' : '协同工作台'}</small><p>全流程协同 · 看清进度 · 按期交付</p></div>
-              <div className="hm-hcc-scene-controls">
+              <div className="hm-hcc-scene-controls"><HomePurchasingShortcut /><HomeQualityFixtureShortcut />
                 <button type="button" onClick={toggleMotion} aria-pressed={quietMotion} aria-label={quietMotion ? '开启标准动效' : '开启安静模式'}>{quietMotion ? <Play size={14} /> : <Pause size={14} />}<span>{quietMotion ? '安静模式' : '标准动效'}</span></button>
                 {selectedModule && <button type="button" onClick={clearModule}><X size={14} /><span>总览</span></button>}
               </div>

@@ -1,3 +1,5 @@
+import { DOCUMENT_REVIEW_START } from '@/lib/quality-fixture-scope';
+import { lockFixtureBusiness } from '@/lib/quality-fixture-service';
 import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -31,6 +33,7 @@ type CommitBody = {
   previewToken?: string;
   decisions?: Record<string, string>;
   orderDecisions?: Record<string, string>;
+  fixtureDecisions?: Record<string, boolean>;
 };
 
 type ImportResult = {
@@ -78,7 +81,7 @@ async function loadCandidate(
   const item = await tx.drawingLibraryItem.findUnique({
     where: { id },
     select: {
-      id: true, libraryKey: true, customerName: true, customerCode: true, productName: true, specification: true, deletedAt: true,
+      fixtureRequired: true, id: true, libraryKey: true, customerName: true, customerCode: true, productName: true, specification: true, deletedAt: true,
       _count: { select: { files: { where: { deletedAt: null, isCurrent: true, category: { code: 'drawing' } } } } },
       files: { where: { deletedAt: null, isCurrent: true, category: { code: 'sop' } }, select: { id: true }, take: 1 },
       productTimeProfiles: {
@@ -94,6 +97,7 @@ async function loadCandidate(
     productName: item.productName,
     specification: item.specification,
     deletedAt: item.deletedAt?.toISOString() || null,
+    fixtureRequired: item.fixtureRequired,
     drawingFileCount: item._count.files,
     sopFileCount: item.files.length,
     productTimeVersion: item.productTimeProfiles[0]?.version || null,
@@ -167,8 +171,11 @@ async function commitBatch(
   decisions: Record<string, string>,
   orderDecisions: Record<string, string>,
   userId: string,
+  fixtureDecisions: Record<string, boolean>,
 ): Promise<CommitResult> {
   return prisma.$transaction(async tx => {
+    await lockFixtureBusiness(tx);
+    const fixtureChoices = new Map<string, boolean>();
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-plan-import:${batchId}`}))`;
     const importBatch = await tx.productionPlanImportBatch.findUnique({ where: { id: batchId } });
     if (!importBatch) throw new Error('导入预检记录不存在，请重新上传文件');
@@ -263,6 +270,17 @@ async function commitBatch(
         product = { item: requireActiveDrawing(linked), action: 'reuse' };
       } else {
         product = await resolveProduct(tx, row, decisions[String(row.rowNo)]);
+      }
+      if (targetWeekStartDate >= DOCUMENT_REVIEW_START) {
+        const saved = await tx.drawingLibraryItem.findUniqueOrThrow({ where: { id: product.item.id }, select: { fixtureRequired: true } });
+        const choice = fixtureDecisions[String(row.rowNo)] ?? saved.fixtureRequired;
+        if (typeof choice !== "boolean") throw new Error(`第 ${row.rowNo} 行请选择是否需要治具；无需治具不需填写理由`);
+        if (fixtureChoices.has(product.item.id) && fixtureChoices.get(product.item.id) !== choice) throw new Error(`第 ${row.rowNo} 行与同产品其他行的治具选择不一致`);
+        fixtureChoices.set(product.item.id, choice);
+        if (saved.fixtureRequired !== choice) {
+          await tx.drawingLibraryItem.update({ where: { id: product.item.id }, data: { fixtureRequired: choice } });
+          await tx.qfEvent.create({ data: { entityType: "PRODUCT", entityId: product.item.id, action: "SET_FIXTURE_REQUIREMENT", actorId: userId, actorName: "计划导入", snapshot: { before: saved.fixtureRequired, after: choice } } });
+        }
       }
       if (product.action === 'reuse') reusedProducts += 1;
       if (product.action === 'restore') restoredProducts += 1;
@@ -412,7 +430,7 @@ async function commitBatch(
       where: { id: importBatch.id },
       data: {
         status: 'completed',
-        decisions: { products: decisions, orders: orderDecisions } as unknown as Prisma.InputJsonValue,
+        decisions: { products: decisions, orders: orderDecisions, fixtures: fixtureDecisions } as unknown as Prisma.InputJsonValue,
         resultData: result as unknown as Prisma.InputJsonValue,
         errorMessage: null,
         committedAt: new Date(),
@@ -452,7 +470,7 @@ export async function POST(req: NextRequest) {
     }
     const decisions = body.decisions && typeof body.decisions === 'object' ? body.decisions : {};
     const orderDecisions = body.orderDecisions && typeof body.orderDecisions === 'object' ? body.orderDecisions : {};
-    const result = await commitBatch(batchId, previewToken, decisions, orderDecisions, user.id);
+    const result = await commitBatch(batchId, previewToken, decisions, orderDecisions, user.id, body.fixtureDecisions || {});
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

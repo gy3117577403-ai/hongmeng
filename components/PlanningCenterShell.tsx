@@ -1,4 +1,5 @@
 'use client';
+import FixtureRequirementControl from '@/components/quality-fixtures/FixtureRequirementControl';
 import { QualityFixtureStatus } from '@/components/quality-fixtures/QualityFixtureStatus';
 
 import { PlanningDetailDrawer } from '@/components/PlanningDetailDrawer';
@@ -52,6 +53,7 @@ import {
   Fragment,
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -344,6 +346,7 @@ type PlanningImportHistoryRecord = {
 };
 
 type PlanningImportDialog = {
+  fixtureDecisions?: Record<string, boolean>;
   orderDecisions?: Record<string, string>;
   importAsNew?: boolean;
   step: 'upload' | 'preview' | 'complete' | 'history';
@@ -686,6 +689,10 @@ export default function PlanningCenterShell({
   const [priority, setPriority] = useState<'all' | ProductionPlanPriority>('all');
   const [readinessFilters, setReadinessFilters] = useState<PlanningReadinessFilter[]>([]);
   const [readinessOpen, setReadinessOpen] = useState(false);
+  const [documentFilter, setDocumentFilter] = useState("");
+  const [documentBadges, setDocumentBadges] = useState<Record<string, {status:string;needFixture:boolean|null;fixtureLabel:string;legacy:boolean}>>({});
+  const [documentBadgeError, setDocumentBadgeError] = useState(false);
+  const [fixtureBulkRows, setFixtureBulkRows] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -1118,12 +1125,38 @@ export default function PlanningCenterShell({
     const word = keyword.trim().toLocaleLowerCase();
     return !word || [order.customerName, order.salesperson || '', order.productName, order.specification, order.sopRemark || ''].some(value => value.toLocaleLowerCase().includes(word));
   }), [allBatches, customer, keyword, priority]);
+  const documentBatchIds = allBatches.map(row => row.batch.id).sort().join(",");
+  useEffect(() => {
+    let active = true;
+    const update = async () => {
+      try {
+        const ids = documentBatchIds.split(",").filter(Boolean), result: typeof documentBadges = {};
+        for (let i = 0; i < ids.length; i += 100) {
+          const r = await fetch("/api/quality-fixtures?kind=batches&badges=" + encodeURIComponent(ids.slice(i, i + 100).join(",")), {cache:"no-store"});
+          const j = await r.json(); if (!r.ok || !j.ok) throw new Error();
+          for (const b of j.data) result[b.id] = b;
+        }
+        if (active) { setDocumentBadges(result); setDocumentBadgeError(false); }
+      } catch { if (active) setDocumentBadgeError(true); }
+    };
+    void update(); window.addEventListener("quality-fixture-updated", update); window.addEventListener("focus", update);
+    return () => {active = false; window.removeEventListener("quality-fixture-updated", update); window.removeEventListener("focus", update);};
+  }, [documentBatchIds]);
+  const documentOptions = [["SUPERVISOR","待主管初审"],["QUALITY","待质量复审"],["MISSING","资料待补齐"],["UNKNOWN","治具未选择"],["SHORT","治具待准备"]];
+  const matchesDocument = useCallback((id: string, filter: string) => {
+    if (!filter) return true;
+    const b = documentBadges[id]; if (!b || b.legacy) return false;
+    if (filter === "MISSING") return ["DRAFT","UNSET","RETURNED"].includes(b.status);
+    if (filter === "UNKNOWN") return b.needFixture === null;
+    if (filter === "SHORT") return b.needFixture === true && /缺|待匹配|BOM|待确认/.test(b.fixtureLabel);
+    return b.status === filter;
+  }, [documentBadges]);
   const baseScheduleRows = useMemo(() => baseOpenScheduleRows.filter(({ batch }) => (
     Boolean(selectedWeekStartDate) && batch.weekStartDate === selectedWeekStartDate
   )), [baseOpenScheduleRows, selectedWeekStartDate]);
   const scheduleRows = useMemo(() => baseScheduleRows.filter(({ order, batch }) => (
-    matchesPlanningReadiness(order, batch, readinessFilters)
-  )), [baseScheduleRows, readinessFilters]);
+    matchesPlanningReadiness(order, batch, readinessFilters) && matchesDocument(batch.id, documentFilter)
+  )), [baseScheduleRows, readinessFilters, matchesDocument, documentFilter]);
   const selectedWipContinuations = useMemo(() => {
     const word = keyword.trim().toLocaleLowerCase('zh-CN');
     return wipContinuations.filter(item => {
@@ -1167,8 +1200,8 @@ export default function PlanningCenterShell({
       && (!periods || item.batch.weekStartDate === periods.next.weekStartDate)
   )), [baseOpenScheduleRows, periods]);
   const preparationRows = useMemo(() => basePreparationRows.filter(({ order, batch }) => (
-    matchesPlanningReadiness(order, batch, readinessFilters)
-  )), [basePreparationRows, readinessFilters]);
+    matchesPlanningReadiness(order, batch, readinessFilters) && matchesDocument(batch.id, documentFilter)
+  )), [basePreparationRows, readinessFilters, matchesDocument, documentFilter]);
   const baseHistoryRows = useMemo(() => allBatches.filter(({ order, batch }) => {
     if (!periods || batch.weekEndDate >= periods.current.weekStartDate) return false;
     if (customer && order.customerName !== customer) return false;
@@ -1196,7 +1229,7 @@ export default function PlanningCenterShell({
     }
     return result;
   }, [baseFilteredOrders, basePreparationRows, baseScheduleRows, view]);
-  const readinessLabel = readinessFilters.length === 0
+  const readinessLabel = documentFilter ? documentOptions.find(o => o[0] === documentFilter)?.[1] || '资料状态' : readinessFilters.length === 0
     ? '准备状态'
     : readinessFilters.length === 1
       ? readinessOptions.find(option => option.id === readinessFilters[0])?.label || '准备状态'
@@ -2054,7 +2087,7 @@ export default function PlanningCenterShell({
         preview: body,
         orderDecisions: {},
         result: null,
-        decisions: {},
+        decisions: {}, fixtureDecisions: {},
         loading: false,
       } : current);
     } catch (reason) {
@@ -2075,6 +2108,7 @@ export default function PlanningCenterShell({
           batchId: importDialog.preview.batchId,
           previewToken: importDialog.preview.previewToken,
           decisions: importDialog.decisions,
+          fixtureDecisions: importDialog.fixtureDecisions || {},
           orderDecisions: importDialog.orderDecisions || {},
         }),
       });
@@ -2245,9 +2279,9 @@ export default function PlanningCenterShell({
             {readinessOpen && <div className="planning-readiness-popover" role="dialog" aria-label="准备状态筛选">
               <header>
                 <div><strong>准备状态</strong><span>快速找出需要处理的计划</span></div>
-                {readinessFilters.length > 0 && <button type="button" onClick={() => persistReadinessFilters([])}>清除</button>}
+                {readinessFilters.length > 0 && <button type="button" onClick={() => {persistReadinessFilters([]);setDocumentFilter("");}}>清除</button>}
               </header>
-              <div className="planning-readiness-options">
+              <div className="planning-document-filters"><strong>资料审核与治具</strong><select aria-label="资料审核与治具筛选" disabled={view === "orders"} value={documentFilter} onChange={e => setDocumentFilter(e.target.value)}><option value="">全部资料状态</option>{documentOptions.map(([value,label]) => <option key={value} value={value}>{label} {documentBadgeError ? "待刷新" : (view === "preparation" ? basePreparationRows : baseScheduleRows).filter(r => matchesDocument(r.batch.id,value)).length}</option>)}</select>{documentBadgeError && <small>资料状态读取失败，请刷新重试</small>}</div><div className="planning-readiness-options">
                 {readinessOptions.map(option => {
                   const orderLevelAvailable = orderLevelReadinessFilters([option.id]).length > 0;
                   const unavailable = view === 'orders' && !orderLevelAvailable;
@@ -2358,7 +2392,7 @@ export default function PlanningCenterShell({
             </div>
             <div ref={scheduleScrollRef} className="planning-table-scroll hm-scroll-region" tabIndex={0} aria-label="计划明细连续滚动列表">
               <table className="planning-table compact-schedule-table">
-                <colgroup>{[30, 30, undefined, 64, 76, 76, 120, 102, 78, 80, 90, 110, 78].map((width, i) => <col key={i} style={width ? { width } : undefined} />)}</colgroup>
+                <colgroup>{[30, 30, undefined, 64, 76, 76, 110, 152, 78, 80, 90, 110, 78].map((width, i) => <col key={i} style={width ? { width } : undefined} />)}</colgroup>
                 <thead><tr><th className="production-list-sequence">序号</th><th className="select-cell">选择</th><th>订单 / 规格</th><th>排产数量</th><th>内部完成</th><th>客户交期</th><th>原始计划工时</th><th>生产资料</th><th>仓库</th><th>工艺</th><th>流程状态</th><th className="planning-control-note">备注</th><th className="planning-control-actions">操作</th></tr></thead>
                 <tbody>{scheduleRows.map(({ order, batch }, rowIndex) => {
                   const flow = planningFlow(order, batch);
@@ -2399,7 +2433,7 @@ export default function PlanningCenterShell({
                     <td title={`原计划 ${batch.plannedCompletionDate}`}>{batch.workOrderId && canAdjustProductionDates(user) ? <ProductionControlButton className="planning-date-button" workOrderId={batch.workOrderId} mode="adjust_date">{(batch.estimatedCompletionDate || batch.plannedCompletionDate).slice(5)}</ProductionControlButton> : <strong>{(batch.estimatedCompletionDate || batch.plannedCompletionDate).slice(5)}</strong>}</td>
                     <td><strong className={Boolean(order.customerDueDate) && (batch.estimatedCompletionDate || batch.plannedCompletionDate) > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate ? order.customerDueDate.slice(5) : '待确认'}</strong></td>
                     <td title={planTimeSourceText[batch.planTimeSource || "legacy"]}><strong>{planMinutesText(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
-                    <td><QualityFixtureStatus id={batch.workOrderId || order.drawingLibraryItemId} kind={batch.workOrderId ? "orders" : "products"} compact /><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><a className={`planning-sop-stage ${sopInfo.stage}`} href={drawingLibraryHref} onClick={rememberPlanningState} title={sopInfo.title} aria-label={`SOP 状态 ${sopInfo.label}，进入图纸档案`}><FlaskConical size={12} />{sopInfo.label}</a>{Boolean(order.qualityWarningCount) && <a className={`planning-warning-link severity-${order.highestQualityWarningSeverity?.toLowerCase()}`} href={`${drawingLibraryHref}#quality-warning`} onClick={rememberPlanningState} title={`${order.qualityWarningCount} 条已归档产品异常警示`}><ShieldAlert size={12} />警示 {order.qualityWarningCount}</a>}</div></td>
+                    <td><QualityFixtureStatus id={batch.id} kind="batches" compact /><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><a className={`planning-sop-stage ${sopInfo.stage}`} href={drawingLibraryHref} onClick={rememberPlanningState} title={sopInfo.title} aria-label={`SOP 状态 ${sopInfo.label}，进入图纸档案`}><FlaskConical size={12} />{sopInfo.label}</a>{Boolean(order.qualityWarningCount) && <a className={`planning-warning-link severity-${order.highestQualityWarningSeverity?.toLowerCase()}`} href={`${drawingLibraryHref}#quality-warning`} onClick={rememberPlanningState} title={`${order.qualityWarningCount} 条已归档产品异常警示`}><ShieldAlert size={12} />警示 {order.qualityWarningCount}</a>}</div></td>
                     <td><div className="planning-material-control">
                       <span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常/缺料' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span>
                       {activeHold && <span className="planning-status status-frozen" title={activeHold.reason}><strong><LockKeyhole size={12} />生产冻结</strong><small>{activeHold.reason}</small></span>}
@@ -2643,7 +2677,7 @@ export default function PlanningCenterShell({
           >
             {productEntryMode === 'select' ? <>
               <label htmlFor="planning-product-search">选择图纸资料库产品 *</label>
-              {orderDraft.drawingLibraryItemId && <QualityFixtureStatus id={orderDraft.drawingLibraryItemId} />}
+              {orderDraft.drawingLibraryItemId && <><FixtureRequirementControl productId={orderDraft.drawingLibraryItemId} /><QualityFixtureStatus id={orderDraft.drawingLibraryItemId} /></>}
               <div className="planning-product-search">
                 <Search size={18} />
                 <input
@@ -2894,18 +2928,19 @@ export default function PlanningCenterShell({
           </div>
           <div className="planning-import-rule"><ShieldCheck /><span><strong>原资料保护已开启</strong><small>复用/恢复只绑定原图纸库，不复制、不覆盖图纸、SOP、工时和产品资料。</small></span></div>
           <div className="planning-import-table hm-scroll-region">
-            <table><thead><tr><th>行</th><th>订单 / 产品</th><th>本周数量</th><th>计划工时</th><th>订单处理</th><th>档案处理</th><th>预检结果</th></tr></thead><tbody>{importDialog.preview.rows.map(row => {
+            {importDialog.targetWeekStartDate >= "2026-09-21" && <div className="planning-fixture-bulk"><button type="button" disabled={!fixtureBulkRows.length} onClick={() => setImportDialog(current => { if (!current) return current; const choices = {...current.fixtureDecisions}; const selected = current.preview?.rows.filter(r => fixtureBulkRows.includes(r.rowNo)) || []; for (const row of current.preview?.rows || []) if (selected.some(r => r.rowNo === row.rowNo || (r.input && row.input && r.input.specification === row.input.specification && r.input.customerName === row.input.customerName))) choices[String(row.rowNo)] = false; return {...current,fixtureDecisions:choices}; })}>所选 {fixtureBulkRows.length} 行设为无需治具</button><small>同一产品的选择同步到关联计划，无需填写理由。</small></div>}<table><thead><tr><th>选择 / 行</th><th>订单 / 产品</th><th>本周数量</th><th>计划工时</th><th>订单处理</th><th>档案处理</th><th>是否需要治具</th><th>预检结果</th></tr></thead><tbody>{importDialog.preview.rows.map(row => {
               const selectedOrder = row.orderCandidates?.find(order => order.id === importDialog.orderDecisions?.[String(row.rowNo)]);
               const productId = selectedOrder?.drawingLibraryItemId || importDialog.decisions[String(row.rowNo)] || row.matchedDrawingLibraryItemId;
               const selectedProduct = row.candidates.find(item => item.id === productId);
               const time = row.input ? resolvePlanningImportTime({ imported: row.input.planningUnitMilliseconds, published: selectedOrder ? selectedOrder.productUnitMilliseconds : selectedProduct?.productUnitMilliseconds, order: selectedOrder?.planningUnitMilliseconds || (row.timePreview?.source === 'order' ? row.timePreview.unitMilliseconds : null), quantity: row.input.plannedQuantity }) : null;
               return <tr className={`status-${row.status}`} key={row.rowNo}>
-              <td>{row.rowNo}</td>
+              <td>{importDialog.targetWeekStartDate >= "2026-09-21" && row.input && !["duplicate","skipped","invalid"].includes(row.status) && <input type="checkbox" aria-label={`选择第 ${row.rowNo} 行治具设置`} checked={fixtureBulkRows.includes(row.rowNo)} onChange={e => setFixtureBulkRows(v => e.target.checked ? [...v,row.rowNo] : v.filter(n => n !== row.rowNo))}/>} {row.rowNo}</td>
               <td><strong>{row.input?.specification || '-'}</strong><small>{row.input ? `${row.input.customerName} · ${row.input.sourceIdentity === 'generated' ? '自动生成订单标识' : row.input.sourceOrderNo + '-' + row.input.sourceLineNo}` : '空行/说明行'}</small></td>
               <td>{row.input?.plannedQuantity?.toLocaleString() || '-'}</td>
               <td>{time?.unitMilliseconds ? <><strong>{Number((time.unitMilliseconds / 60000).toFixed(3))} 分/件</strong><small>合计 {Number((Number(time.totalMilliseconds) / 60000).toFixed(3)).toLocaleString()} 分钟</small></> : <strong>待维护</strong>}<small>{time && planningImportTimeSourceText[time.source]}</small></td>
               <td>{row.requiresOrderDecision ? <select aria-label={`第 ${row.rowNo} 行订单处理`} value={importDialog.orderDecisions?.[String(row.rowNo)] || ''} onChange={event => setImportDialog(current => current ? { ...current, orderDecisions: { ...current.orderDecisions, [String(row.rowNo)]: event.target.value } } : current)}><option value="">请选择订单处理</option><option value="new">作为独立新订单</option><option value="skip">跳过本行</option>{row.orderCandidates?.map(order => <option key={order.id} value={order.id} disabled={order.batchWeekStartDates.includes(importDialog.targetWeekStartDate) || (order.remainingQuantity ?? 0) < (row.input?.plannedQuantity || 0)}>{order.orderDate} · {order.sourceOrderNo} · 剩余未排 {order.remainingQuantity}{order.batchWeekStartDates.includes(importDialog.targetWeekStartDate) ? '（本周已排）' : ''}</option>)}</select> : <span>{row.status === 'duplicate' ? '重复跳过' : row.existingPlanOrderId ? '关联原订单' : row.input ? '新订单' : '—'}</span>}</td>
               <td>{row.status === 'conflict' ? <select aria-label={`第 ${row.rowNo} 行选择图纸库`} value={importDialog.decisions[String(row.rowNo)] || ''} onChange={event => setImportDialog(current => current ? { ...current, decisions: { ...current.decisions, [String(row.rowNo)]: event.target.value } } : current)}><option value="">请选择原档案</option>{row.candidates.map(candidate => <option value={candidate.id} key={candidate.id}>{candidate.specification} · 图{candidate.drawingFileCount}/SOP{candidate.sopFileCount}{candidate.productTimeVersion ? `/V${candidate.productTimeVersion}` : ''}{candidate.deletedAt ? ' · 已归档' : ''}</option>)}</select> : <span className={`product-action action-${row.productAction}`}>{row.productAction === 'reuse' ? '复用原档案' : row.productAction === 'restore' ? '恢复原档案' : row.productAction === 'create' ? '新建空档案' : '不处理'}</span>}</td>
+              <td>{importDialog.targetWeekStartDate < "2026-09-21" || !row.input || ["duplicate", "skipped", "invalid"].includes(row.status) ? <small>沿用原规则</small> : <select aria-label={`第 ${row.rowNo} 行是否需要治具`} value={String(importDialog.fixtureDecisions?.[String(row.rowNo)] ?? selectedProduct?.fixtureRequired ?? "")} onChange={event => { const value = event.target.value === "true"; setImportDialog(current => { if (!current) return current; const choices = { ...current.fixtureDecisions }; for (const other of current.preview?.rows || []) { const otherId = current.decisions[String(other.rowNo)] || other.matchedDrawingLibraryItemId; if (other.rowNo === row.rowNo || (productId ? otherId === productId : other.input?.specification === row.input?.specification && other.input?.customerName === row.input?.customerName)) choices[String(other.rowNo)] = value; } return { ...current, fixtureDecisions: choices }; }); }}><option value="" disabled>请选择</option><option value="true">需要治具</option><option value="false">无需治具</option></select>}</td>
               <td><span>{row.status === 'ready' ? row.warning || '校验通过' : row.status === 'duplicate' ? row.reason : row.status === 'skipped' ? row.reason : row.status === 'conflict' ? '选择一个原档案后可导入' : row.reason}</span></td>
             </tr>; })}</tbody></table>
           </div>

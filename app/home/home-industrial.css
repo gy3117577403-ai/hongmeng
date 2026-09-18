@@ -71,8 +71,8 @@ main.hm-home-industrial.hm-workbench-root {
   height: 100dvh;
   min-height: 680px !important;
   display: grid;
-  grid-template-rows: 88px auto minmax(0, 1fr) 132px;
-  grid-template-areas: "welcome" "shortcuts" "workspace" "insights";
+  grid-template-rows: 88px minmax(0, 1fr) 132px;
+  grid-template-areas: "welcome" "workspace" "insights";
   gap: 0;
   padding: 0;
   overflow: hidden;
@@ -366,7 +366,7 @@ main.hm-home-industrial.hm-workbench-root {
   main.hm-home-industrial.hm-workbench-root { --hm-shell-rail: 112px; }
   .hm-home-industrial.hm-hcc-root > .hm-platform-sidebar:not(.expanded) :is(.hm-platform-home, .hm-platform-side-nav a, .hm-platform-sidebar-footer a) { gap: 7px; padding: 0 6px; }
   .hm-home-industrial.hm-hcc-root > .hm-platform-sidebar:not(.expanded) .hm-platform-side-nav { padding-right: 5px; padding-left: 5px; }
-  .hm-home-industrial .hm-hcc-frame { grid-template-rows: 88px auto minmax(0,1fr) 128px; }
+  .hm-home-industrial .hm-hcc-frame { grid-template-rows: 88px minmax(0,1fr) 128px; }
   .hm-home-industrial .hm-hcc-welcome-bar { grid-template-columns: 44px minmax(175px,.85fr) minmax(170px,1fr) auto; gap: 10px; padding: 0 18px; }
   .hm-home-industrial .hm-hcc-top-meta { gap: 6px; }
   .hm-home-industrial .hm-hcc-date { min-width: 0; }
@@ -408,7 +408,7 @@ main.hm-home-industrial.hm-workbench-root {
 }
 
 @media (max-height: 850px) and (min-width: 1101px) {
-  .hm-home-industrial .hm-hcc-frame { min-height: 680px !important; grid-template-rows: 78px auto minmax(0,1fr) 115px; }
+  .hm-home-industrial .hm-hcc-frame { min-height: 680px !important; grid-template-rows: 78px minmax(0,1fr) 115px; }
   .hm-home-industrial .hm-hcc-main-grid { overflow-y: auto; overscroll-behavior: contain; }
   .hm-home-industrial :is(.hm-hcc-operations, .hm-hcc-inbox) { min-height: 660px; }
   .hm-home-industrial .hm-hcc-operations { grid-template-rows: 74px minmax(0,1fr) auto; }
@@ -433,7 +433,7 @@ main.hm-home-industrial.hm-workbench-root {
   main.hm-home-industrial.hm-workbench-root { --hm-shell-rail: 72px; height: auto; min-height: 100dvh; overflow: visible; }
   .hm-home-industrial.hm-hcc-root > .hm-platform-sidebar:not(.expanded) :is(.hm-platform-home, .hm-platform-side-nav a, .hm-platform-sidebar-footer a) { justify-content: center; gap: 0; padding: 0; }
   .hm-home-industrial.hm-hcc-root > .hm-platform-sidebar:not(.expanded) :is(.hm-platform-home b, .hm-platform-side-nav a span, .hm-platform-sidebar-footer a span) { display: none; }
-  .hm-home-industrial .hm-hcc-frame { height: auto; min-height: 100dvh !important; grid-template-rows: auto auto auto auto; overflow: visible; }
+  .hm-home-industrial .hm-hcc-frame { height: auto; min-height: 100dvh !important; grid-template-rows: auto auto auto; overflow: visible; }
   .hm-home-industrial .hm-hcc-welcome-bar { min-height: 94px; grid-template-columns: 44px minmax(0,1fr) auto; gap: 10px 16px; padding: 16px 22px; }
   .hm-home-industrial .hm-hcc-search-launch { grid-column: 1 / -1; grid-row: 2; }
   .hm-home-industrial .hm-hcc-alert { grid-column: 1 / -1; grid-row: 2; }
@@ -577,3 +577,11 @@ main.hm-home-industrial.hm-workbench-root {
 @media(max-width:1000px) { .hm-purchase-shortcut { flex-wrap:wrap; gap:10px; }.hm-purchase-counts { order:3; flex-basis:100%; }.hm-purchase-create { margin-left:auto; } }
 
 .hm-home-industrial .hm-purchase-shortcut { min-height: 58px; margin: 0; align-self: start; }
+
+/* Compact task entries float above the workspace without changing its geometry. */
+.hm-quick-trigger b{display:inline-flex;align-items:center;justify-content:center;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#fff0e3;color:#cc5307;font-size:11px}
+.hm-quick-glass{position:fixed;z-index:500;width:340px;max-width:calc(100vw - 24px);max-height:calc(100vh - 140px);overflow:auto;padding:16px;border:1px solid rgba(255,255,255,.9);border-radius:18px;background:rgba(255,255,255,.9);backdrop-filter:blur(22px);box-shadow:0 18px 60px #24375126;color:#253950}
+.hm-quick-glass header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.hm-quick-glass header button{display:grid;place-items:center;border:0;border-radius:8px;background:#f1f4f8;width:32px;height:32px}
+.hm-quick-items{display:grid;grid-template-columns:1fr 1fr;gap:8px}.hm-quick-items a{display:flex;align-items:center;justify-content:space-between;padding:14px 10px;border:1px solid #e6ebf1;border-radius:10px;background:#ffffffa6;text-decoration:none;color:#53657b;font-size:13px}.hm-quick-items b{font-size:19px;color:#20354a}.hm-quick-items a:hover{border-color:#f6bc91;background:#fff6ee}
+.hm-quick-primary{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:12px;padding:11px;background:#f57516;border-radius:10px;color:#fff;text-decoration:none;font-size:14px}.hm-quick-trigger:focus-visible,.hm-quick-glass a:focus-visible{outline:3px solid #f6bc91;outline-offset:2px}
+@media(max-width:1100px){.hm-home-industrial .hm-hcc-scene-controls{flex-wrap:wrap;justify-content:flex-end}.hm-home-industrial .hm-hcc-scene-controls button{padding:0 7px;font-size:11px}.hm-home-industrial .hm-hcc-title-group small{display:none}}

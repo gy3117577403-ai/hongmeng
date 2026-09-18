@@ -30,7 +30,7 @@ async function main() {
   const product = await prisma.drawingLibraryItem.upsert({ where: { libraryKey: "QF-UI-ACCEPTANCE" }, update: {}, create: { customerName: "本地验收客户", productName: "多芯连接线组件", specification: "HL-DT-2409-A", libraryKey: "QF-UI-ACCEPTANCE" } });
   const wo = await prisma.workOrder.upsert({ where: { code: "QF-UI-240919" }, update: {}, create: { code: "QF-UI-240919", customerName: product.customerName,
     productName: product.productName!, specification: product.specification, drawingLibraryItemId: product.id, stage: "frontend", status: "processing", processName: "导通",
-    productionTargetQty: 100, uncompletedQty: "100", completedQty: "0", planType: "managed_plan", planActive: true,
+    weekStartDate: new Date("2026-09-21T00:00:00+08:00"), productionTargetQty: 100, uncompletedQty: "100", completedQty: "0", planType: "managed_plan", planActive: true,
     processRoute: { create: { templateName: "验收导通工序", templateVersion: 1, status: "in_progress", version: 1, confirmedAt: new Date(), confirmedById: users[0].id,
       steps: { create: { processCode: "QF-CHECK", processName: "导通测试", stageGroup: "frontend", position: 1, sequenceGroup: 1, standardSource: "qa_fixture",
         timeBasis: "per_unit", unitLabel: "件", standardMillisecondsPerUnit: 30000, inputQty: 100, status: "current" } } } } } });

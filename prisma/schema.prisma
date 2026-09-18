@@ -921,6 +921,7 @@ model UserAccessGrant {
 }
 
 model WorkOrder {
+  documentReviewRequired Boolean? @map("document_review_required")
   fixtureBinding QfPlanBinding?
   quickQualityLinks            QuickQualityWorkOrder[]
   reportingSubmissions         ProcessReportSubmission[]
@@ -3204,6 +3205,7 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
+  fixtureRequired Boolean? @map("fixture_required")
   fixturePackages          QfPackage[]
   fixtureBomFiles          QfBomFile[]
   quickQualityRecords      QuickQualityRecord[]
@@ -3519,6 +3521,7 @@ model ProductionPlanOrder {
 }
 
 model ProductionPlanBatch {
+  documentReviewRequired Boolean? @map("document_review_required")
   id                            String                    @id @default(uuid())
   planOrderId                   String                    @map("plan_order_id")
   batchNo                       Int                       @map("batch_no")
@@ -7401,6 +7404,11 @@ model QfSettings {
   updatedAt  DateTime @updatedAt
 }
 
+model QfSyncQueue {
+  libraryItemId String @id
+  updatedAt DateTime @default(now())
+}
+
 model QfPackage {
   continuedWorkOrderIds String[] @default([])
   planBindings QfPlanBinding[]
@@ -7415,6 +7423,8 @@ model QfPackage {
   status          String   @default("DRAFT")
   version              Int      @default(1)
   drawingFiles    Json
+  sopFiles        Json     @default("[]")
+  sourceSignature String   @default("")
   bomFileId       String?
   bomFile         QfBomFile?         @relation(fields: [bomFileId], references: [id], onDelete: Restrict)
   bomRows         Json

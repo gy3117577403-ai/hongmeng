@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       prisma.drawingLibraryItem.findMany({
         where: { OR: [{ id: { in: matching.filter(item => item.kind === 'product').map(item => item.id) } }, { id: { in: libraryRefs } }, { libraryKey: { in: libraryRefs } }, { productionPlanOrders: { some: { sourceOrderNo: { in: sourceOrderNumbers } } } }] },
         select: {
-          id: true, libraryKey: true, customerName: true, customerCode: true, productName: true, specification: true, deletedAt: true,
+          fixtureRequired: true, id: true, libraryKey: true, customerName: true, customerCode: true, productName: true, specification: true, deletedAt: true,
           _count: {
             select: {
               files: { where: { deletedAt: null, isCurrent: true, category: { code: 'drawing' } } },
@@ -163,7 +163,8 @@ export async function POST(req: NextRequest) {
       productName: item.productName,
       specification: item.specification,
       deletedAt: item.deletedAt?.toISOString() || null,
-      drawingFileCount: item._count.files,
+      fixtureRequired: item.fixtureRequired,
+    drawingFileCount: item._count.files,
       sopFileCount: item.files.length,
       productTimeVersion: item.productTimeProfiles[0]?.version || null,
       productUnitMilliseconds: item.productTimeProfiles[0]?.entries.length ? productTimeTotalMilliseconds(item.productTimeProfiles[0].entries) : null,
