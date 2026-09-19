@@ -7437,9 +7437,11 @@ model QfPackage {
   supervisorId    String?
   supervisorName  String             @default("")
   supervisorAt    DateTime?
+  supervisorAsAdmin Boolean @default(false)
   qualityId       String?
   qualityName     String             @default("")
   qualityAt       DateTime?
+  qualityAsAdmin Boolean @default(false)
   reason     String   @default("")
   createdById                String
   createdAt  DateTime @default(now())

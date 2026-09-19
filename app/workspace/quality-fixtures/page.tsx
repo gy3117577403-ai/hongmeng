@@ -3,6 +3,7 @@ import { loadQualityFixtures } from "@/lib/quality-fixture-queries";
 import QualityFixtureWorkbench from "@/components/quality-fixtures/QualityFixtureWorkbench";
 import "../purchases/purchases.css";
 import "./quality-fixtures.css";
+import "./quality-fixture-reading.css";
 export const dynamic = "force-dynamic";
 export default async function Page({ searchParams }: { searchParams?: Record<string, string> }) {
   const user = await requirePageAccess("/workspace/quality-fixtures");

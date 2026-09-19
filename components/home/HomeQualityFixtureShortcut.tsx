@@ -12,7 +12,7 @@ export default function HomeQualityFixtureShortcut() {
     return () => { live = false; window.removeEventListener("focus", refresh); };
   }, []);
   return <HomeQuickAction label="资料与治具" count={data ? data.supervisor + data.quality + data.draft : null} icon={<ShieldCheck size={16} />}>
-    <div className="hm-quick-items">{([["supervisor","待我初审","review&status=SUPERVISOR&mine=1"],["quality","待我复审","review&status=QUALITY&mine=1"],["draft","待补资料","review&status=MISSING"],["purchasing","治具采购待处理","purchases"]] as const).map(([k,label,view]) => <Link key={k} href={view === "purchases" ? "/workspace/purchases?source=FIXTURE" : "/workspace/quality-fixtures?view=" + view}><span>{label}</span><b>{data ? data[k] : "—"}</b></Link>)}</div>
+    <div className="hm-quick-items">{([["supervisor","待主管审核","review&status=SUPERVISOR&mine=1"],["quality","待品质审核","review&status=QUALITY&mine=1"],["draft","待补资料","review&status=MISSING"],["purchasing","治具采购待处理","purchases"]] as const).map(([k,label,view]) => <Link key={k} href={view === "purchases" ? "/workspace/purchases?source=FIXTURE" : "/workspace/quality-fixtures?view=" + view}><span>{label}</span><b>{data ? data[k] : "—"}</b></Link>)}</div>
     <Link className="hm-quick-primary" href="/workspace/quality-fixtures?view=plans">进入治具准备<ArrowUpRight size={15}/></Link>
   </HomeQuickAction>;
 }

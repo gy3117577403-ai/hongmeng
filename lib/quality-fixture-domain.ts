@@ -4,9 +4,33 @@ export class FixtureError extends PurchasingError {
   constructor(message: string, code = "FIXTURE_INVALID", status = 400) { super(message, code, status); }
 }
 export const QF_STATUS: Record<string, string> = {
-  DRAFT: "待完善", SUPERVISOR: "待主管初审", QUALITY: "待质量复审",
+  DRAFT: "待完善", REVIEWING: "待双方审核", SUPERVISOR: "待主管审核", QUALITY: "待品质审核",
   APPROVED: "资料已审核", RETURNED: "已退回", REVOKED: "已撤销", SUPERSEDED: "已替代",
 };
+export const QF_REVIEW_STATUSES = ["REVIEWING", "SUPERVISOR", "QUALITY"];
+export type QfReviewRole = "SUPERVISOR" | "QUALITY";
+type ReviewSignatures = {
+  status: string; submittedById?: string | null;
+  supervisorId?: string | null; supervisorAt?: Date | string | null; supervisorAsAdmin?: boolean;
+  qualityId?: string | null; qualityAt?: Date | string | null; qualityAsAdmin?: boolean;
+};
+export function fixtureReviewRoles(p: ReviewSignatures | null, actor: { id: string; laborRole?: string },
+  settings: { supervisorIds: string[]; qualityIds: string[] } | null, ownsEvidence = false): QfReviewRole[] {
+  if (!p || !QF_REVIEW_STATUSES.includes(p.status)) return [];
+  const admin = actor.laborRole === "ADMIN";
+  if (!admin && (ownsEvidence || p.submittedById === actor.id)) return [];
+  return (["SUPERVISOR", "QUALITY"] as const).filter(role => role === "SUPERVISOR"
+    ? !p.supervisorAt && (admin || !!settings?.supervisorIds.includes(actor.id) && p.qualityId !== actor.id)
+    : !p.qualityAt && (admin || !!settings?.qualityIds.includes(actor.id) && p.supervisorId !== actor.id));
+}
+// Authorization is captured at signing time so later account changes cannot rewrite history.
+export function fixtureSignaturesValid(p: ReviewSignatures): boolean {
+  if (!p.supervisorId || !p.qualityId || !p.supervisorAt || !p.qualityAt) return false;
+  if (p.supervisorId === p.submittedById && !p.supervisorAsAdmin) return false;
+  if (p.qualityId === p.submittedById && !p.qualityAsAdmin) return false;
+  if (p.supervisorId === p.qualityId && !p.supervisorAsAdmin && !p.qualityAsAdmin) return false;
+  return true;
+}
 export type BomCell = { text: string; error?: string };
 export type BomSheet = { name: string; rows: BomCell[][] };
 export type BomMapping = {

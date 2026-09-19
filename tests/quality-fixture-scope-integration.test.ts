@@ -14,6 +14,7 @@ test("plan cohort, existing drawings and SOP, fixture-only queue and simple inve
   const command = async (input: PcInput, actor = planner) => await mutateQualityFixture(input, actor, randomUUID()) as any;
   const setting = await prisma.qfSettings.findUnique({ where: { id: "quality-fixtures" } });
   await command({ action: "SAVE_SETTINGS", version: setting?.version, supervisorIds: [supervisor.id], qualityIds: [quality.id] });
+  for (const person of users) { await prisma.user.update({ where: { id: person.id }, data: { laborRole: "EMPLOYEE" } }); person.laborRole = "EMPLOYEE"; }
   const categories = await Promise.all(["drawing", "sop"].map(code => prisma.resourceCategory.upsert({ where: { code }, create: { code, name: code, sortOrder: 0 }, update: {} })));
   const product = await prisma.drawingLibraryItem.create({ data: { libraryKey: marker, customerName: marker, specification: marker, files: { create: categories.map(c => ({ categoryId: c.id, originalName: c.code + ".pdf", mimeType: "application/pdf", objectKey: marker + "/" + c.code, size: 10, uploadedById: planner.id })) } }, include: { files: true } });
   const unrelated = await prisma.drawingLibraryItem.create({ data: { libraryKey: marker + "-unused", customerName: marker, specification: marker + "-unused", fixtureRequired: true } });
@@ -39,9 +40,8 @@ test("plan cohort, existing drawings and SOP, fixture-only queue and simple inve
   });
   await t.test("no fixture hides BOM/preparation but still requires two independent drawing and SOP approvals", async () => {
     await command({ action: "SET_REQUIREMENT", productIds: [product.id], needFixture: false });
-    let p = await latest(); assert.equal(p.status, "SUPERVISOR"); assert.equal(p.bomFileId, null);
+    let p = await latest(); assert.equal(p.status, "REVIEWING"); assert.equal(p.bomFileId, null);
     assert.equal((await loadQualityFixtures(new URLSearchParams({ view: "plans", q: marker }), planner)).total, 0);
-    await assert.rejects(() => command({ action: "APPROVE", id: p.id, version: p.version, confirmed: true }, quality), /主管/);
     await command({ action: "APPROVE", id: p.id, version: p.version, confirmed: true }, supervisor);
     await assert.rejects(() => assertFixturePrintReady(prisma, fresh.id), /初审|复审|审核/);
     p = await latest(); await command({ action: "APPROVE", id: p.id, version: p.version, confirmed: true }, quality);
@@ -55,7 +55,7 @@ test("plan cohort, existing drawings and SOP, fixture-only queue and simple inve
     await prisma.drawingLibraryFile.create({ data: { libraryItemId: product.id, categoryId: categories[1].id, originalName: "sop-v2.pdf", version: "V2", mimeType: "application/pdf", size: 20, objectKey: marker + "/sop-v2", uploadedById: planner.id } });
     await assert.rejects(() => assertFixturePrintReady(prisma, fresh.id), /更新|审核/);
     await processFixtureSyncQueue(200);
-    const next = await latest(); assert.notEqual(next.id, before.id); assert.equal(next.status, "SUPERVISOR");
+    const next = await latest(); assert.notEqual(next.id, before.id); assert.equal(next.status, "REVIEWING");
     assert.equal((await prisma.qfPackage.findUniqueOrThrow({ where: { id: before.id } })).status, "APPROVED");
     await assert.rejects(() => assertFixturePrintReady(prisma, fresh.id), /初审|复审|审核/);
     const empty = await loadQualityFixtures(new URLSearchParams({ view: "review", q: "no-match-" + marker, product: product.id }), planner);

@@ -5,8 +5,8 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { GlassNotice } from "@/components/GlassNotice";
 import styles from "./QualityFixtureStatus.module.css";
 
-export default function FixtureRequirementControl({ productId, initialValue, initialStatus, compact = false, disabled = false, week = '', onSaved }: {
-  productId: string; initialValue?: boolean | null; initialStatus?: string; compact?: boolean; disabled?: boolean; week?: string; onSaved?: (value: boolean) => Promise<void> | void;
+export default function FixtureRequirementControl({ productId, initialValue, initialStatus, compact = false, inline = false, disabled = false, week = '', onSaved }: {
+  productId: string; initialValue?: boolean | null; initialStatus?: string; compact?: boolean; inline?: boolean; disabled?: boolean; week?: string; onSaved?: (value: boolean) => Promise<void> | void;
 }) {
   const [value, setValue] = useState<boolean | null>(initialValue ?? null), [status, setStatus] = useState(initialStatus || ''), [busy, setBusy] = useState(initialValue === undefined);
   const [error, setError] = useState(''), [message, setMessage] = useState(''), [pending, setPending] = useState<boolean | null>(null);
@@ -45,15 +45,18 @@ export default function FixtureRequirementControl({ productId, initialValue, ini
     finally { saving.current = false; if (identity.current === target) setBusy(false); }
   }
   const suffix = week ? '&week=' + encodeURIComponent(week) : '';
-  return <section className={styles.requirement} aria-label="产品治具要求">
-    <div><strong>是否需要治具</strong><small>{disabled ? '历史版本只读，请切回当前版本修改' : '同一产品的计划共用此选择'}</small></div>
-    <div role="group" aria-label="选择是否需要治具">{[true, false].map(need => <button key={String(need)} type="button" aria-pressed={value === need} disabled={busy || disabled} onClick={() => {
+  function choose(need: boolean) {
       if (need === value) return;
-      if (['SUPERVISOR', 'QUALITY', 'APPROVED', 'SUPERSEDED'].includes(status)) setPending(need); else void change(need);
-    }}>{need ? '需要治具' : '无需治具'}</button>)}</div>
-    {value === null && <small>待选择</small>}
-    {!compact && <>{value === true && <Link href={'/workspace/quality-fixtures?view=plans&product=' + productId + suffix}>BOM 与治具准备 →</Link>}<Link href={'/workspace/quality-fixtures?view=review&product=' + productId + suffix}>资料审核与履历 →</Link></>}
+      if (['REVIEWING', 'SUPERVISOR', 'QUALITY', 'APPROVED', 'SUPERSEDED'].includes(status)) setPending(need); else void change(need);
+  }
+  return <section className={inline ? styles.inlineRequirement : styles.requirement} aria-label="产品治具要求">
+    {inline ? <label title={disabled ? '历史版本只读' : '产品的全部计划共用此选择'}>治具<select aria-label="是否需要治具" value={value === null ? '' : String(value)} disabled={busy || disabled} onChange={e => choose(e.target.value === 'true')}><option value="" disabled>待选择</option><option value="true">需要治具</option><option value="false">无需治具</option></select></label> : <>
+      <div><strong>是否需要治具</strong><small>{disabled ? '历史版本只读，请切回当前版本修改' : '同一产品的计划共用此选择'}</small></div>
+      <div role="group" aria-label="选择是否需要治具">{[true, false].map(need => <button key={String(need)} type="button" aria-pressed={value === need} disabled={busy || disabled} onClick={() => choose(need)}>{need ? '需要治具' : '无需治具'}</button>)}</div>
+      {value === null && <small>待选择</small>}
+      {!compact && <>{value === true && <Link href={'/workspace/quality-fixtures?view=plans&product=' + productId + suffix}>BOM 与治具准备 →</Link>}<Link href={'/workspace/quality-fixtures?view=review&product=' + productId + suffix}>资料审核与履历 →</Link></>}
+    </>}
     <GlassNotice message={error || message} error={!!error} close={error ? clearError : clearMessage} />
-    <ConfirmDialog open={pending !== null} title="变更当前产品的治具要求？" description={`将改为${pending ? '需要治具' : '无需治具'}，并生成新资料版本重新进行主管初审、质量复审。现有图纸和 SOP 沿用，历史审核、已发工单引用及采购库存记录保留。`} confirmLabel="确认变更" busy={busy} onCancel={() => { if (!busy) setPending(null); }} onConfirm={() => { if (pending !== null) void change(pending); }} />
+    <ConfirmDialog open={pending !== null} title="变更当前产品的治具要求？" description={`将改为${pending ? '需要治具' : '无需治具'}，并生成新资料版本重新由主管、品质审核，两项都通过后可打印。现有图纸和 SOP 沿用，历史审核、已发工单引用及采购库存记录保留。`} confirmLabel="确认变更" busy={busy} onCancel={() => { if (!busy) setPending(null); }} onConfirm={() => { if (pending !== null) void change(pending); }} />
   </section>;
 }

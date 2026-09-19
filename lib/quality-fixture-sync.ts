@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { fixturePlanScope } from "@/lib/quality-fixture-scope";
-import { documentFingerprint, lockFixtureBusiness, qfJson, submitPackage, assertPackageFiles } from "@/lib/quality-fixture-service";
+import { documentFingerprint, lockFixtureBusiness, qfJson, submitPackage, assertPackageFiles, pendingReviewers } from "@/lib/quality-fixture-service";
 import type { PcActor } from "@/lib/purchasing-service";
 import { FixtureError } from "@/lib/quality-fixture-domain";
 
@@ -44,10 +44,10 @@ export async function syncProductDocuments(tx: Tx, libraryItemId: string, actor?
     : await tx.qfPackage.create({ data: { ...values, fingerprint, libraryItemId, sequence: (last?.sequence || 0) + 1, createdById: a.id } });
   await tx.qfEvent.create({ data: { entityType: "PACKAGE", entityId: p.id, action: "SYNC_PLAN_DOCUMENTS", actorId: a.id,
     actorName: a.displayName || a.username, snapshot: qfJson({ signature: source.signature, drawingCount: source.drawingFiles.length, sopCount: source.sopFiles.length }) } });
-  const settings = await tx.qfSettings.findUnique({ where: { id: "quality-fixtures" } });
   let complete = true;
   try { await assertPackageFiles(tx, p, true); } catch { complete = false; }
-  if (complete && owner && settings?.supervisorIds.some(id => id !== a.id) && settings.qualityIds.some(id => id !== a.id))
+  const recipients = complete && owner ? await pendingReviewers(tx, { ...p, status: "REVIEWING", submittedById: a.id }) : [];
+  if (complete && owner && ["SUPERVISOR", "QUALITY"].every(role => recipients.some(r => r.roles.some(v => v === role))))
     await submitPackage(tx, { id: p.id, version: p.version }, a);
   return await tx.qfPackage.findUnique({ where: { id: p.id } });
 }

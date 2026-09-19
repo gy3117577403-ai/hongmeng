@@ -8,6 +8,7 @@ import { loadPurchasing } from "../lib/purchasing-queries";
 import { createWorkOrderTravelerPrints, loadWorkOrderTravelerPrints, confirmWorkOrderTravelerPrints, loadWorkOrderTravelerPrintReadiness } from "../lib/work-order-qr-service";
 import { confirmBomRows, inferBomMapping, scanBom, fixtureAvailable } from "../lib/quality-fixture-domain";
 import type { PcInput } from "../lib/purchasing-domain";
+import { loadFixtureReviewQueue, loadQualityFixtures, qualityFixtureBadges } from "../lib/quality-fixture-queries";
 
 test("fixture documents, independent review, procurement and physical inventory close the real database loop", { skip: process.env.RUN_DB_INTEGRATION !== "1" }, async t => {
   const marker = "QF-" + randomUUID().slice(0, 8), date = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
@@ -19,6 +20,7 @@ test("fixture documents, independent review, procurement and physical inventory 
   const pc = async (input: PcInput, actor: PcActor = buyer, key = randomUUID()) => await mutatePurchasing(input, actor, key) as any;
   const s = await prisma.qfSettings.findUnique({ where: { id: "quality-fixtures" } });
   await qf({ action: "SAVE_SETTINGS", version: s?.version, supervisorIds: [supervisor.id], qualityIds: [quality.id] });
+  for (const person of [planner, supervisor, quality]) { await prisma.user.update({ where: { id: person.id }, data: { laborRole: "EMPLOYEE" } }); person.laborRole = "EMPLOYEE"; }
   const ps = await prisma.pcSettings.findUnique({ where: { id: "purchasing" } });
   await pc({ action: "SAVE_SETTINGS", version: ps?.version, reason: "独立测试库采购验收", purchaseApproverIds: [buyer.id], buyerIds: [buyer.id], fundApproverIds: [buyer.id], financeIds: [buyer.id] });
   const category = await prisma.resourceCategory.upsert({ where: { code: "drawing" }, create: { code: "drawing", name: "原图", sortOrder: 1 }, update: {} });
@@ -42,14 +44,13 @@ test("fixture documents, independent review, procurement and physical inventory 
   const mapping = inferBomMapping(bomSheets), rows = confirmBomRows(scanBom(bomSheets, mapping), scanBom(bomSheets, mapping));
   let p = await qf({ action: "SAVE_PACKAGE", libraryItemId: product.id, revision: "A", needFixture: true, drawingFileIds: [product.files[0].id],
     bomFileId: bom.id, bomMapping: mapping, bomRows: rows, bomConfirmed: true, parallelCount: 2, spareCount: 1 });
-  await t.test("all formal print stages require independent supervisor then quality approval", async () => {
-    await assert.rejects(print, /初审|复审/);
+  await t.test("all formal print stages require both approvals when the supervisor signs first", async () => {
+    await assert.rejects(print, /审核/);
     await qf({ action: "SUBMIT", ...await versionInput(p.id) });
-    await assert.rejects(() => review(p.id, quality), /主管/);
     await assert.rejects(() => review(p.id, planner), /主管|自审/);
     await review(p.id, supervisor);
-    await assert.rejects(print, /初审|复审/);
-    await assert.rejects(() => review(p.id, supervisor), /质量|自审/);
+    await assert.rejects(print, /审核/);
+    await assert.rejects(() => review(p.id, supervisor), /品质|自审/);
     await review(p.id, quality);
     const [printed] = await print();
     assert.equal(printed.snapshot.documentApproval?.fixtureLabel, "2 项待匹配");
@@ -155,6 +156,105 @@ test("fixture documents, independent review, procurement and physical inventory 
     await qf({ action: "STOCK", kind: "REPAIRED", ...await stockEntry(), quantity: 2, reason: "维修返回待验证" });
     b = await prisma.pcStockBalance.findUniqueOrThrow({ where: { id: stockId } }); assert.equal(b.repair, 0); assert.equal(b.held, 5);
     await assert.rejects(() => qf({ action: "STOCK", kind: "VERIFY", id: b.id, version: b.version, quantity: 1, reason: "未确认导通" }), /导通|验证/);
+  });
+  await prisma.$disconnect();
+});
+
+test("parallel document reviews, admin signatures, concurrent actions and revision boundaries", { skip: process.env.RUN_DB_INTEGRATION !== "1" }, async t => {
+  const marker = "QFP-" + randomUUID().slice(0, 8);
+  const people = await Promise.all(["admin", "planner", "supervisor", "quality", "outsider"].map((name, i) => prisma.user.create({data:{username:marker+name,displayName:name,passwordHash:"test-only",laborRole:i===0?"ADMIN":"EMPLOYEE"}})));
+  const [admin, planner, supervisor, quality, outsider] = people;
+  const command = async (input: PcInput, actor: PcActor = planner, key = randomUUID()) => await mutateQualityFixture(input, actor, key) as any;
+  const settings = await prisma.qfSettings.findUnique({where:{id:"quality-fixtures"}});
+  await command({action:"SAVE_SETTINGS",version:settings?.version,supervisorIds:[supervisor.id],qualityIds:[quality.id]},admin);
+  const categories = await Promise.all(["drawing","sop"].map(code=>prisma.resourceCategory.upsert({where:{code},create:{code,name:code,sortOrder:1},update:{}})));
+  async function prepare(owner: PcActor = planner) {
+    const key=marker+randomUUID().slice(0,6);
+    const product=await prisma.drawingLibraryItem.create({data:{libraryKey:key,customerName:marker,specification:key,fixtureRequired:false,
+      files:{create:categories.map(c=>({categoryId:c.id,originalName:c.code+".pdf",mimeType:"application/pdf",size:10,objectKey:key+"/"+c.code,uploadedById:owner.id}))}},include:{files:true}});
+    const wo=await prisma.workOrder.create({data:{code:key,productName:key,stage:"frontend",drawingLibraryItemId:product.id,weekStartDate:new Date("2026-09-21T00:00:00+08:00")}});
+    const draft=await command({action:"SAVE_PACKAGE",libraryItemId:product.id,revision:"A",needFixture:false,drawingFileIds:[product.files.find(f => f.categoryId === categories[0].id)!.id]},owner);
+    await command({action:"SUBMIT",id:draft.id,version:draft.version},owner);
+    return {product,wo,id:draft.id};
+  }
+  const row=(id:string)=>prisma.qfPackage.findUniqueOrThrow({where:{id}});
+  const approval=async(id:string,role:string,actor:PcActor,extra:PcInput={})=>command({action:"APPROVE",id,version:(await row(id)).version,reviewRole:role,confirmed:true,...extra},actor);
+  async function pending(id:string) {return await prisma.systemNotificationRecipient.findMany({where:{notification:{sourceType:"QUALITY_FIXTURE",sourceId:id},completedAt:null},select:{userId:true}});}
+  await t.test("quality can sign first; both queues and notifications start together; one signature never permits printing",async()=>{
+    const p=await prepare();
+    assert.equal((await row(p.id)).status,"REVIEWING");
+    for(const [actor,role] of [[supervisor,"SUPERVISOR"],[quality,"QUALITY"]] as const){
+      assert.deepEqual((await loadFixtureReviewQueue(actor)).roles.get(p.id),[role]);
+      const q=await loadQualityFixtures(new URLSearchParams({product:p.product.id,status:role,mine:"1"}),actor);
+      assert.equal(q.product?.id,p.product.id);assert.deepEqual(q.reviewRoles,[role]);
+      assert.ok((await pending(p.id)).some(r=>r.userId===actor.id));
+    }
+    await assert.rejects(()=>approval(p.id,"QUALITY",outsider),/无权/);
+    await assert.rejects(()=>approval(p.id,"SUPERVISOR",planner),/自审/);
+    await assert.rejects(()=>approval(p.id,"QUALITY",quality,{confirmed:false}),/确认已核对/);
+    await approval(p.id,"QUALITY",quality);
+    const first=await row(p.id);assert.equal(first.status,"SUPERVISOR");assert.equal(first.qualityId,quality.id);assert.equal(first.supervisorId,null);
+    await assert.rejects(()=>assertFixturePrintReady(prisma,p.wo.id),/审核|初审|复审/);
+    assert.equal((await qualityFixtureBadges([p.wo.id],"orders"))[0].printAllowed,false);
+    assert.ok((await pending(p.id)).some(r=>r.userId===supervisor.id));
+    assert.ok(!(await pending(p.id)).some(r=>r.userId===quality.id));
+    await assert.rejects(()=>approval(p.id,"QUALITY",quality),/已完成|无权/);
+    await approval(p.id,"SUPERVISOR",supervisor);
+    assert.equal((await row(p.id)).status,"APPROVED");assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
+    assert.equal((await qualityFixtureBadges([p.wo.id],"orders"))[0].printAllowed,true);
+  });
+  await t.test("administrator can sign both own-uploaded roles separately and retains signed authority after demotion",async()=>{
+    const p=await prepare(admin);
+    const q=await loadQualityFixtures(new URLSearchParams({product:p.product.id}),admin);
+    assert.deepEqual(q.reviewRoles,["SUPERVISOR","QUALITY"]);
+    await assert.rejects(()=>command({action:"APPROVE",id:p.id,version:(q.chosen!).version,confirmed:true},admin),/请选择/);
+    const v=(await row(p.id)).version,key=randomUUID(),input={action:"APPROVE",id:p.id,version:v,reviewRole:"QUALITY",confirmed:true};
+    const result=await command(input,admin,key);assert.deepEqual(await command(input,admin,key),result);
+    assert.equal((await row(p.id)).supervisorId,null);
+    await assert.rejects(()=>assertFixturePrintReady(prisma,p.wo.id),/审核|初审|复审/);
+    await approval(p.id,"SUPERVISOR",admin);
+    const approved=await row(p.id);assert.equal(approved.supervisorId,admin.id);assert.equal(approved.qualityId,admin.id);assert.equal(approved.supervisorAsAdmin,true);assert.equal(approved.qualityAsAdmin,true);
+    await prisma.user.update({where:{id:admin.id},data:{laborRole:"EMPLOYEE"}});
+    assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
+    await prisma.user.update({where:{id:admin.id},data:{laborRole:"ADMIN"}});
+    const events=await prisma.qfEvent.findMany({where:{entityType:"PACKAGE",entityId:p.id,action:"APPROVE"}});
+    assert.equal(events.length,2);assert.deepEqual(events.map(e=>(e.snapshot as any).reviewRole).sort(),["QUALITY","SUPERVISOR"]);
+  });
+  await t.test("concurrent signatures cannot lose a review; stale clients must refresh before confirming the remaining role",async()=>{
+    const p=await prepare(),version=(await row(p.id)).version;
+    const results=await Promise.allSettled([[supervisor,"SUPERVISOR"],[quality,"QUALITY"]].map(([actor,reviewRole])=>command({action:"APPROVE",id:p.id,version,reviewRole,confirmed:true},actor as PcActor)));
+    assert.equal(results.filter(r=>r.status==="fulfilled").length,1);assert.equal(results.filter(r=>r.status==="rejected").length,1);
+    const partial=await row(p.id);await approval(p.id,partial.supervisorAt?"QUALITY":"SUPERVISOR",partial.supervisorAt?quality:supervisor);
+    assert.equal((await row(p.id)).status,"APPROVED");assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
+  });
+  await t.test("return after either first signature blocks print and a revision starts with two fresh reviews",async()=>{
+    const p=await prepare();await approval(p.id,"QUALITY",quality);
+    await assert.rejects(async()=>command({action:"RETURN",id:p.id,version:(await row(p.id)).version,reviewRole:"SUPERVISOR",reason:""},supervisor),/退回意见/);
+    await command({action:"RETURN",id:p.id,version:(await row(p.id)).version,reviewRole:"SUPERVISOR",reason:"SOP 端子方向需核对"},supervisor);
+    const returned=await row(p.id);assert.equal(returned.status,"RETURNED");assert.equal(returned.qualityId,quality.id);
+    await assert.rejects(()=>assertFixturePrintReady(prisma,p.wo.id),/审核|初审|复审/);
+    const revised=await command({action:"SAVE_PACKAGE",id:p.id,version:returned.version,libraryItemId:p.product.id,revision:"B",needFixture:false,drawingFileIds:[p.product.files.find(f => f.categoryId === categories[0].id)!.id]});
+    assert.notEqual(revised.id,p.id);assert.equal(revised.supervisorAt,null);assert.equal(revised.qualityAt,null);
+    await command({action:"SUBMIT",id:revised.id,version:revised.version});
+    await approval(revised.id,"SUPERVISOR",supervisor);await assert.rejects(()=>assertFixturePrintReady(prisma,p.wo.id),/审核|初审|复审/);
+    await approval(revised.id,"QUALITY",quality);assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
+  });
+  await t.test("ordinary configured reviewers still cannot approve evidence they uploaded",async()=>{
+    const p=await prepare(quality);
+    await assert.rejects(()=>approval(p.id,"QUALITY",quality),/自审/);
+    assert.deepEqual((await loadFixtureReviewQueue(quality)).roles.get(p.id),[]);
+    await approval(p.id,"QUALITY",admin);await approval(p.id,"SUPERVISOR",supervisor);
+    assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
+  });
+  await t.test("administrator defaults work with no configured reviewer assignments",async()=>{
+    const current=await prisma.qfSettings.findUniqueOrThrow({where:{id:"quality-fixtures"}});
+    await command({action:"SAVE_SETTINGS",version:current.version,supervisorIds:[],qualityIds:[]},admin);
+    const p=await prepare(admin);
+    assert.deepEqual((await loadFixtureReviewQueue(admin)).roles.get(p.id),["SUPERVISOR","QUALITY"]);
+    await approval(p.id,"SUPERVISOR",admin);
+    await assert.rejects(()=>assertFixturePrintReady(prisma,p.wo.id),/审核/);
+    await approval(p.id,"QUALITY",admin);
+    assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
   });
   await prisma.$disconnect();
 });

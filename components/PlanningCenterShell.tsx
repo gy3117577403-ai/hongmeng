@@ -1142,13 +1142,15 @@ export default function PlanningCenterShell({
     void update(); window.addEventListener("quality-fixture-updated", update); window.addEventListener("focus", update);
     return () => {active = false; window.removeEventListener("quality-fixture-updated", update); window.removeEventListener("focus", update);};
   }, [documentBatchIds]);
-  const documentOptions = [["SUPERVISOR","待主管初审"],["QUALITY","待质量复审"],["MISSING","资料待补齐"],["UNKNOWN","治具未选择"],["SHORT","治具待准备"]];
+  const documentOptions = [["SUPERVISOR","待主管审核"],["QUALITY","待品质审核"],["MISSING","资料待补齐"],["UNKNOWN","治具未选择"],["SHORT","治具待准备"]];
   const matchesDocument = useCallback((id: string, filter: string) => {
     if (!filter) return true;
     const b = documentBadges[id]; if (!b || b.legacy) return false;
     if (filter === "MISSING") return ["DRAFT","UNSET","RETURNED"].includes(b.status);
     if (filter === "UNKNOWN") return b.needFixture === null;
     if (filter === "SHORT") return b.needFixture === true && /缺|待匹配|BOM|待确认/.test(b.fixtureLabel);
+    if (filter === "SUPERVISOR") return ["REVIEWING", "SUPERVISOR"].includes(b.status);
+    if (filter === "QUALITY") return ["REVIEWING", "QUALITY"].includes(b.status);
     return b.status === filter;
   }, [documentBadges]);
   const baseScheduleRows = useMemo(() => baseOpenScheduleRows.filter(({ batch }) => (

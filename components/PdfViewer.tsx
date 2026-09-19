@@ -38,6 +38,7 @@ type PdfViewerProps = {
   fileId: string;
   title: string;
   dashboardMode?: boolean;
+  initialFitMode?: 'fit-width' | 'fit-window';
   contentUrl?: string;
   downloadUrl?: string;
   viewUrl?: string;
@@ -57,6 +58,7 @@ function PdfFileViewer({
   fileId,
   title,
   dashboardMode = false,
+  initialFitMode = 'fit-window',
   contentUrl,
   downloadUrl,
   viewUrl,
@@ -76,7 +78,7 @@ function PdfFileViewer({
 
   return (
     <DocumentPreviewFrame orientation={orientation} fullscreen={fullscreen} title={title} onClose={() => setFullscreen(false)}>
-      <PdfCanvas orientation={orientation} source={source} title={title} dashboardMode={dashboardMode} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page ?? orientation.page} onPageChange={changePage} readingMode={readingMode} onAddToToc={onAddToToc} onTocSuggestions={onTocSuggestions} onCopyPageLink={onCopyPageLink} fullscreen={fullscreen} onFullscreen={() => setFullscreen(true)} onClose={() => setFullscreen(false)} />
+      <PdfCanvas orientation={orientation} source={source} title={title} dashboardMode={dashboardMode} initialFitMode={initialFitMode} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page ?? orientation.page} onPageChange={changePage} readingMode={readingMode} onAddToToc={onAddToToc} onTocSuggestions={onTocSuggestions} onCopyPageLink={onCopyPageLink} fullscreen={fullscreen} onFullscreen={() => setFullscreen(true)} onClose={() => setFullscreen(false)} />
     </DocumentPreviewFrame>
   );
 }
@@ -86,6 +88,7 @@ function PdfCanvas({
   source,
   title,
   dashboardMode = false,
+  initialFitMode = 'fit-window',
   downloadUrl,
   viewUrl,
   fullscreen = false,
@@ -102,6 +105,7 @@ function PdfCanvas({
   source: string;
   title: string;
   dashboardMode?: boolean;
+  initialFitMode?: 'fit-width' | 'fit-window';
   downloadUrl: string;
   viewUrl: string;
   fullscreen?: boolean;
@@ -144,7 +148,9 @@ function PdfCanvas({
     resetKey: `${source}|${reloadKey}`,
     controlledRotation: orientation.draft[pageNo] || 0,
     memoryKey: `${orientation.key}|${pageNo}`,
-    initialFitMode: 'fit-window',
+    initialFitMode,
+    fitWidthFromTop: initialFitMode === 'fit-width',
+    wheelRequiresModifier: initialFitMode === 'fit-width',
     scrollWheel: dashboardMode,
   });
   const setReadingPage = orientation.setPage;
@@ -388,6 +394,7 @@ function PdfCanvas({
             <button type="button" aria-label="缩小" title="缩小" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)}>−</button>
             <span className="viewer-zoom-value" aria-live="polite">{Math.round(gestures.zoom * 100)}%</span>
             <button type="button" aria-label="放大" title="放大" disabled={loading} onClick={() => gestures.zoomBy(1.15)}>＋</button>
+            {initialFitMode === 'fit-width' && <button className={gestures.fitMode === 'fit-width' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适宽</button>}
             <button className={gestures.fitMode === 'fit-window' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>整页</button>
 
             {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}

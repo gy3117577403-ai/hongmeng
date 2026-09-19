@@ -62,6 +62,7 @@ type PreviewGestureOptions = {
   initialRotation?: number;
   scrollWheel?: boolean;
   fitWidthFromTop?: boolean;
+  wheelRequiresModifier?: boolean;
   controlledRotation?: number;
   memoryKey?: string;
 };
@@ -103,6 +104,7 @@ export function usePreviewGestures({
   initialRotation = 0,
   scrollWheel = false,
   fitWidthFromTop = false,
+  wheelRequiresModifier = false,
   controlledRotation,
   memoryKey,
 }: PreviewGestureOptions): PreviewGestureController {
@@ -240,7 +242,7 @@ export function usePreviewGestures({
         top: fitWidthFromTop && fitModeRef.current === 'fit-width' ? 0 : Math.max(0, (node.scrollHeight - node.clientHeight) / 2),
       });
     });
-  }, [stageRef]);
+  }, [fitWidthFromTop, stageRef]);
 
   const applyFitMode = useCallback((mode: Exclude<PreviewFitMode, 'manual'>): void => {
     const nextZoom = previewFitZoom(mode, rotatedPreviewSize(contentSize, rotationRef.current), viewportSize);
@@ -315,6 +317,7 @@ export function usePreviewGestures({
     const node = stageRef.current;
     if (!node) return undefined;
     const wheel = (event: WheelEvent): void => {
+      if (wheelRequiresModifier && !event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       wheelDeltaRef.current += event.deltaY;
       wheelPointRef.current = { x: event.clientX, y: event.clientY };
@@ -335,7 +338,7 @@ export function usePreviewGestures({
       wheelFrameRef.current = null;
       wheelDeltaRef.current = 0;
     };
-  }, [applyManualZoom, applyScrollZoom, pointFromClient, scrollWheel, stageRef]);
+  }, [applyManualZoom, applyScrollZoom, pointFromClient, scrollWheel, stageRef, wheelRequiresModifier]);
 
   useEffect(() => {
     if (contentSize.width <= 0 || contentSize.height <= 0 || viewportSize.width <= 0 || viewportSize.height <= 0) return;
@@ -364,14 +367,20 @@ export function usePreviewGestures({
       panRef.current = memory.pan; setPan(memory.pan);
       const node = stageRef.current;
       window.requestAnimationFrame(() => node?.scrollTo({ left: memory.left, top: memory.top }));
-    } else applyFitMode(memory.fitMode);
+    } else {
+      applyFitMode(memory.fitMode);
+      // A fit-width document can still be scrolled vertically. Restore that reading
+      // position after React applies the fitted stage dimensions.
+      const node = stageRef.current;
+      window.requestAnimationFrame(() => node?.scrollTo({ left: memory.left, top: memory.top }));
+    }
   }, [applyFitMode, commitZoom, contentSize.width, memoryKey, stageRef, viewportSize.width]);
 
   useEffect(() => {
     if (!memoryKey) return;
     const node = stageRef.current;
     const save = () => {
-      if (restoredMemory.current !== memoryKey) return;
+      if (restoredMemory.current !== memoryKey || !node?.isConnected) return;
       viewMemories.set(memoryKey, { zoom: zoomRef.current, fitMode: fitModeRef.current, pan: panRef.current, left: node?.scrollLeft || 0, top: node?.scrollTop || 0 });
       if (viewMemories.size > 300) viewMemories.delete(viewMemories.keys().next().value as string);
     };

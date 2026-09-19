@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { fixtureReadiness, assertPackageFiles } from "@/lib/quality-fixture-service";
-import { fixtureAvailable } from "@/lib/quality-fixture-domain";
+import { fixtureAvailable, fixtureReviewRoles, fixtureSignaturesValid, QF_REVIEW_STATUSES } from "@/lib/quality-fixture-domain";
 import type { PcActor } from "@/lib/purchasing-service";
 import type { Prisma } from "@prisma/client";
 import { fixturePlanScope, requiresDocumentReview } from "@/lib/quality-fixture-scope";
@@ -8,13 +8,35 @@ import { drawingPlanWeekScope, planWeekStart } from "@/lib/drawing-plan-week";
 type Plain<T> = T extends Date ? string : T extends Array<infer U> ? Plain<U>[] : T extends object ? { [K in keyof T]: Plain<T[K]> } : T;
 const plain = <T>(v: T): Plain<T> => JSON.parse(JSON.stringify(v));
 
+export async function loadFixtureReviewQueue(actor: PcActor) {
+  const [settings, latest] = await Promise.all([
+    prisma.qfSettings.findUnique({ where: { id: "quality-fixtures" } }),
+    prisma.qfPackage.findMany({ where: { libraryItem: fixturePlanScope }, distinct: ["libraryItemId"], orderBy: [{ libraryItemId: "asc" }, { sequence: "desc" }] }),
+  ]);
+  const fileIds = latest.flatMap(p => [...p.drawingFiles as unknown as {id:string}[], ...p.sopFiles as unknown as {id:string}[]].map(f => f.id));
+  const [files, boms] = actor.laborRole === "ADMIN" ? [[], []] : await Promise.all([
+    prisma.drawingLibraryFile.findMany({ where: { id: { in: fileIds }, uploadedById: actor.id }, select: { id: true } }),
+    prisma.qfBomFile.findMany({ where: { id: { in: latest.flatMap(p => p.bomFileId ? [p.bomFileId] : []) }, uploadedById: actor.id }, select: { id: true } }),
+  ]);
+  const owned = new Set([...files, ...boms].map(f => f.id));
+  const roles = new Map(latest.map(p => [p.id, fixtureReviewRoles(p, actor, settings,
+    !!p.bomFileId && owned.has(p.bomFileId) || [...p.drawingFiles as unknown as {id:string}[], ...p.sopFiles as unknown as {id:string}[]].some(f => owned.has(f.id)))]));
+  return { settings, latest, roles };
+}
+
+export function matchesFixtureReviewStatus(p: {status:string; supervisorAt: unknown; qualityAt: unknown}, status: string) {
+  if (status === "SUPERVISOR") return QF_REVIEW_STATUSES.includes(p.status) && !p.supervisorAt;
+  if (status === "QUALITY") return QF_REVIEW_STATUSES.includes(p.status) && !p.qualityAt;
+  return status === "PENDING" ? p.status !== "APPROVED" : status === "MISSING" ? ["DRAFT", "RETURNED"].includes(p.status) : p.status === status;
+}
+
 export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor) {
   const search = (query.get("q") || "").trim().slice(0, 120), page = Math.max(1, Math.floor(Number(query.get("page")) || 1));
   const view = query.get("view") || "review", status = query.get("status") || "";
   const weekText = query.get("week") || "";
   const weekScope = weekText ? drawingPlanWeekScope(planWeekStart(weekText), true) : {};
   const searchScope: Prisma.DrawingLibraryItemWhereInput = search ? {OR:[{specification:{contains:search,mode:"insensitive"}},{customerName:{contains:search,mode:"insensitive"}},{libraryKey:{contains:search,mode:"insensitive"}}]} : {};
-  const latest = await prisma.qfPackage.findMany({ where: { libraryItem: fixturePlanScope }, distinct: ["libraryItemId"], orderBy: [{ libraryItemId: "asc" }, { sequence: "desc" }], select: { id: true, libraryItemId: true, status: true, submittedById:true, supervisorId:true } });
+  const { latest, roles: queueRoles } = await loadFixtureReviewQueue(actor);
   const preparationAll = view === "plans" ? await prisma.drawingLibraryItem.findMany({where:{AND:[fixturePlanScope,weekScope,searchScope],fixtureRequired:true},include:{fixturePackages:{orderBy:{sequence:"desc"},take:1}}}) : [];
   const preparationStates = await Promise.all(preparationAll.map(async p => {
     const readiness=await fixtureReadiness(prisma,p.fixturePackages[0] || null);
@@ -22,13 +44,13 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
     return {id:p.id,specification:p.specification,customerName:p.customerName,status:p.fixturePackages[0]?.status || "UNSET",bomConfirmed:!!p.fixturePackages[0]?.bomConfirmed,state,readiness};
   }));
   const preparationStatus=query.get("prepStatus") || "";
-  const where: Prisma.DrawingLibraryItemWhereInput = { AND: [fixturePlanScope,weekScope,searchScope, ...(query.get("mine") === "1" ? [{id:{in:latest.filter(p=>p.submittedById !== actor.id && (p.status !== "QUALITY" || p.supervisorId !== actor.id)).map(p=>p.libraryItemId)}}] : []), ...(view === "plans" && preparationStatus ? [{id:{in:preparationStates.filter(p=>p.state===preparationStatus).map(p=>p.id)}}] : [])],
+  const where: Prisma.DrawingLibraryItemWhereInput = { AND: [fixturePlanScope,weekScope,searchScope, ...(query.get("mine") === "1" ? [{id:{in:latest.filter(p=>{ const roles=queueRoles.get(p.id) || []; return status === "SUPERVISOR" || status === "QUALITY" ? roles.includes(status) : roles.length > 0; }).map(p=>p.libraryItemId)}}] : []), ...(view === "plans" && preparationStatus ? [{id:{in:preparationStates.filter(p=>p.state===preparationStatus).map(p=>p.id)}}] : [])],
     ...(view === "plans" ? { fixtureRequired: true } : {}),
-    ...(status ? { id: { in: latest.filter(p => status === "PENDING" ? p.status !== "APPROVED" : status === "MISSING" ? ["DRAFT","RETURNED"].includes(p.status) : p.status === status).map(p => p.libraryItemId) } } : {}),
+    ...(status ? { id: { in: latest.filter(p => matchesFixtureReviewStatus(p, status)).map(p => p.libraryItemId) } } : {}),
     ...(search ? { OR: [{ specification: { contains: search, mode: "insensitive" } }, { customerName: { contains: search, mode: "insensitive" } }, { libraryKey: { contains: search, mode: "insensitive" } }] } : {}) };
   const [settings, users, templates, products, total, statusCounts, fixtures, fixtureTotal, eventRows] = await Promise.all([
     prisma.qfSettings.findUnique({ where: { id: "quality-fixtures" } }),
-    prisma.user.findMany({ where: { isActive: true, accountStatus: "ACTIVE" }, select: { id: true, username: true, displayName: true }, orderBy: { displayName: "asc" } }),
+    prisma.user.findMany({ where: { isActive: true, accountStatus: "ACTIVE" }, select: { id: true, username: true, displayName: true, laborRole: true }, orderBy: { displayName: "asc" } }),
     prisma.qfBomTemplate.findMany({ orderBy: { name: "asc" } }),
     prisma.drawingLibraryItem.findMany({ where, include: { fixturePackages: { orderBy: { sequence: "desc" }, take: 1 } }, orderBy: { updatedAt: "desc" }, skip: (page - 1) * 30, take: 30 }),
     prisma.drawingLibraryItem.count({ where }),
@@ -49,7 +71,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
       fixturePackages: { orderBy: { sequence: "desc" } }, fixtureBomFiles: { where: { deletedAt: null }, orderBy: { createdAt: "desc" }, select: { id: true, name: true, createdAt: true, byteSize: true, sha256: true } } } }) : null;
   const chosen = product?.fixturePackages.find(p => p.id === query.get("package")) || product?.fixturePackages[0] || null;
   const approved = product?.fixturePackages.find(p => p.status === "APPROVED") || null;
-  const newerReviewed = chosen ? product?.fixturePackages.find(p => p.sequence > chosen.sequence && p.qualityAt !== null)?.revision || null : null;
+  const newerReviewed = chosen ? product?.fixturePackages.find(p => p.sequence > chosen.sequence && p.supervisorAt !== null && p.qualityAt !== null)?.revision || null : null;
   const [readiness, packageEvents, workOrders, bom] = await Promise.all([
     fixtureReadiness(prisma, chosen),
     chosen ? prisma.qfEvent.findMany({ where: { entityType: "PACKAGE", entityId: chosen.id }, orderBy: { createdAt: "desc" } }) : [],
@@ -63,9 +85,10 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
       reserved: f.item.balances.reduce((n, b) => n + b.reserved, 0), issued: f.item.balances.reduce((n, b) => n + b.issued, 0) })),
     fixtureTotal, eventRows, product, chosen, approved, newerReviewed, readiness, packageEvents, workOrders, bom,
     canConfigure: !settings || settings.ownerId === actor.id || actor.laborRole === "ADMIN",
-    canReview: !ownsEvidence && !!chosen && chosen.submittedById !== actor.id && (chosen.status === "SUPERVISOR" ? settings?.supervisorIds.includes(actor.id) :
-      chosen.status === "QUALITY" && chosen.supervisorId !== actor.id ? settings?.qualityIds.includes(actor.id) : false),
-    canQuality: settings?.qualityIds.includes(actor.id) || false });
+    canReview: fixtureReviewRoles(chosen, actor, settings, ownsEvidence).length > 0,
+    reviewRoles: fixtureReviewRoles(chosen, actor, settings, ownsEvidence),
+    isAdmin: actor.laborRole === "ADMIN",
+    canQuality: actor.laborRole === "ADMIN" || settings?.qualityIds.includes(actor.id) || false });
 }
 export type QfWorkbench = Awaited<ReturnType<typeof loadQualityFixtures>>;
 
@@ -83,7 +106,7 @@ export async function qualityFixtureBadges(ids: string[], kind: string) {
     const available = packages.filter(p => p.libraryItemId === productId);
     const binding = order?.fixtureBinding || batch?.workOrder?.fixtureBinding;
     const p = binding ? packages.find(p => p.id === binding.packageId) : available[0];
-    let printAllowed = !!p && (p.status === "APPROVED" || (p.status === "SUPERSEDED" && p.continuedWorkOrderIds.includes(batch?.workOrderId || id)));
+    let printAllowed = !!p && fixtureSignaturesValid(p) && (p.status === "APPROVED" || (p.status === "SUPERSEDED" && p.continuedWorkOrderIds.includes(batch?.workOrderId || id)));
     if (printAllowed && p) { try {
       await assertPackageFiles(prisma, p, true);
       if (!binding && p.sourceSignature && p.sourceSignature !== await (await import("@/lib/quality-fixture-sync")).currentDocumentSignature(prisma,p.libraryItemId)) printAllowed = false;

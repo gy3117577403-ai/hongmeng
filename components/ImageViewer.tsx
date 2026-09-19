@@ -109,6 +109,7 @@ function ImageCanvas({
   const displaySource = reloadKey > 0 ? `${source}${source.includes('?') ? '&' : '?'}reload=${reloadKey}` : source;
   const gestures = usePreviewGestures({
     fitWidthFromTop: paperMode,
+    wheelRequiresModifier: paperMode && initialFitMode === 'fit-width',
     stageRef,
     contentSize: naturalSize,
     viewportSize: box,
