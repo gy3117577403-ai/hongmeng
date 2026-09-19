@@ -2423,3 +2423,14 @@
   .hm-drawing-workbench .drawing-quality-warning-body { grid-template-columns: 210px minmax(0,1fr); }
   .hm-drawing-workbench .drawing-quality-warning-controls { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
+.hm-drawing-workbench .hm-drawing-query{display:flex;flex-wrap:wrap;gap:8px;min-height:0;align-items:center}.hm-drawing-workbench .hm-drawing-query>.plan-week-filter{flex:none;flex-wrap:wrap}.hm-drawing-workbench .plan-week-filter>small{flex-basis:100%;text-align:center}.hm-drawing-workbench .hm-drawing-query .hm-drawing-search-field{flex:1;min-width:160px}.hm-drawing-workbench .hm-drawing-command-actions{margin-left:auto}.hm-drawing-workbench .hm-drawing-customer-filter{min-width:150px;max-width:200px}.hm-drawing-workbench .hm-drawing-status-filter{min-width:90px}.hm-drawing-workbench .hm-confirm-dialog{background:rgba(255,255,255,.94);backdrop-filter:blur(20px)}
+
+.hm-drawing-workbench .hm-drawing-query{flex:0 0 auto}
+.hm-drawing-workbench .hm-drawing-query>.plan-week-filter{max-width:294px;gap:4px}
+.hm-drawing-workbench .hm-drawing-query>.plan-week-filter:has(input){width:294px}
+.hm-drawing-workbench .hm-drawing-query>.plan-week-filter select{width:102px;min-width:0;padding:0 5px}
+.hm-drawing-workbench .hm-drawing-query>.plan-week-filter input{width:128px;min-width:0;padding:0 3px}
+.hm-drawing-workbench .hm-drawing-query>.plan-week-filter button{width:24px;min-width:24px;padding:0}
+.hm-drawing-workbench .hm-drawing-query .hm-drawing-customer-filter{flex:0 1 150px;min-width:130px}
+.hm-drawing-workbench .hm-drawing-query .hm-drawing-status-filter{flex:0 0 86px;min-width:0}
+.hm-drawing-workbench .hm-drawing-query .hm-drawing-result-count{flex:0 0 40px;min-width:0;padding:0 6px}

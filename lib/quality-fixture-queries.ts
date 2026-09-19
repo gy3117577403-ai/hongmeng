@@ -4,6 +4,7 @@ import { fixtureAvailable } from "@/lib/quality-fixture-domain";
 import type { PcActor } from "@/lib/purchasing-service";
 import type { Prisma } from "@prisma/client";
 import { fixturePlanScope, requiresDocumentReview } from "@/lib/quality-fixture-scope";
+import { drawingPlanWeekScope, planWeekStart } from "@/lib/drawing-plan-week";
 type Plain<T> = T extends Date ? string : T extends Array<infer U> ? Plain<U>[] : T extends object ? { [K in keyof T]: Plain<T[K]> } : T;
 const plain = <T>(v: T): Plain<T> => JSON.parse(JSON.stringify(v));
 
@@ -11,8 +12,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
   const search = (query.get("q") || "").trim().slice(0, 120), page = Math.max(1, Math.floor(Number(query.get("page")) || 1));
   const view = query.get("view") || "review", status = query.get("status") || "";
   const weekText = query.get("week") || "";
-  const week = /^\d{4}-\d{2}-\d{2}$/.test(weekText) ? new Date(weekText+"T00:00:00+08:00") : null;
-  const weekScope: Prisma.DrawingLibraryItemWhereInput = week && Number.isFinite(week.getTime()) ? {OR:[{productionPlanOrders:{some:{deletedAt:null,batches:{some:{deletedAt:null,weekStartDate:week,documentReviewRequired:true}}}}},{workOrders:{some:{deletedAt:null,planActive:true,weekStartDate:week,documentReviewRequired:true}}}]} : {};
+  const weekScope = weekText ? drawingPlanWeekScope(planWeekStart(weekText), true) : {};
   const searchScope: Prisma.DrawingLibraryItemWhereInput = search ? {OR:[{specification:{contains:search,mode:"insensitive"}},{customerName:{contains:search,mode:"insensitive"}},{libraryKey:{contains:search,mode:"insensitive"}}]} : {};
   const latest = await prisma.qfPackage.findMany({ where: { libraryItem: fixturePlanScope }, distinct: ["libraryItemId"], orderBy: [{ libraryItemId: "asc" }, { sequence: "desc" }], select: { id: true, libraryItemId: true, status: true, submittedById:true, supervisorId:true } });
   const preparationAll = view === "plans" ? await prisma.drawingLibraryItem.findMany({where:{AND:[fixturePlanScope,weekScope,searchScope],fixtureRequired:true},include:{fixturePackages:{orderBy:{sequence:"desc"},take:1}}}) : [];
@@ -42,7 +42,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
   const preparationCounts = preparationStates.reduce((result,p)=>{result[p.state]=(result[p.state] || 0)+1;return result;},{} as Record<string,number>);
   const requestedProduct = query.get("product");
   const requestedExists = requestedProduct ? await prisma.drawingLibraryItem.findFirst({ where: { AND: [where, { id: requestedProduct }] }, select: { id: true } }) : null;
-  const productId = requestedProduct ? requestedExists?.id : products[0]?.id;
+  const productId = requestedExists?.id || products[0]?.id;
   const product = productId ? await prisma.drawingLibraryItem.findFirst({ where: { AND: [where, { id: productId }] },
     include: { files: { where: { deletedAt: null, isCurrent: true, category: { code: { in: ["drawing", "sop"] } } }, include: { category: { select: { code: true } } }, orderBy: { createdAt: "desc" } },
       productionPlanOrders: { where: { deletedAt: null }, select: { sourceOrderNo: true, batches: { where: { deletedAt: null, documentReviewRequired: true }, select: { id: true, weekStartDate: true, quantity: true } } } },

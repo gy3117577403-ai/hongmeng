@@ -2,6 +2,7 @@ import { DrawingLibraryShell } from '@/components/DrawingLibraryShell';
 import { prisma } from '@/lib/prisma';
 import { isVisibleDrawingLibraryItem, serializeDrawingLibraryItem } from '@/lib/drawing-library';
 import { requirePageAccess } from '@/lib/page-access';
+import { drawingPlanWeekScope, planWeekStart } from '@/lib/drawing-plan-week';
 import './drawing-library-workbench.css';
 
 const includeFiles = {
@@ -35,22 +36,24 @@ const includeFiles = {
 };
 
 type DrawingLibraryPageProps = {
-  searchParams?: { itemId?: string | string[] };
+  searchParams?: { itemId?: string | string[]; week?: string };
 };
 
 export default async function DrawingLibraryPage({ searchParams }: DrawingLibraryPageProps) {
   const requestedItemId = Array.isArray(searchParams?.itemId) ? searchParams?.itemId[0] : searchParams?.itemId;
+  let week = '';
+  try { if (searchParams?.week) week = planWeekStart(searchParams.week); } catch { /* Invalid URL filters fall back to all weeks. */ }
   const next = requestedItemId ? `/drawing-library?itemId=${encodeURIComponent(requestedItemId)}` : '/drawing-library';
   const user = await requirePageAccess('/drawing-library', next);
 
   const [items, requestedItem, categories] = await Promise.all([
     prisma.drawingLibraryItem.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...(week ? { AND: [drawingPlanWeekScope(week)] } : {}) },
       include: includeFiles,
       orderBy: [{ customerName: 'asc' }, { specification: 'asc' }],
       take: 600,
     }),
-    requestedItemId
+    requestedItemId && !week
       ? prisma.drawingLibraryItem.findFirst({
           where: { id: requestedItemId, deletedAt: null },
           include: includeFiles,
@@ -83,6 +86,7 @@ export default async function DrawingLibraryPage({ searchParams }: DrawingLibrar
       ]}
       categories={categories.map(category => ({ id: category.id, name: category.name, code: category.code, sortOrder: category.sortOrder }))}
       requestedItemId={requestedItemId || ''}
+      initialWeek={week}
     />
   );
 }

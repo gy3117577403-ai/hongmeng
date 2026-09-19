@@ -8,5 +8,5 @@ export default async function Page({ searchParams }: { searchParams?: Record<str
   const user = await requirePageAccess("/workspace/quality-fixtures");
   const q = new URLSearchParams(searchParams || {});
   const data = await loadQualityFixtures(q, user);
-  return <QualityFixtureWorkbench user={user} initialData={data} initialView={q.get("view") || "review"} initialStatus={q.get("status") || ""} />;
+  return <QualityFixtureWorkbench user={user} initialData={data} initialView={q.get("view") || "review"} initialStatus={q.get("status") || ""} initialWeek={q.get("week") || ""} initialQuery={searchParams} />;
 }

@@ -380,7 +380,7 @@ function PdfCanvas({
           <strong>{title}</strong>
         </div>
         <div className="viewer-controls">
-          <DocumentOrientationControls orientation={orientation} pageCount={pageCount} disabled={loading} />
+          {!dashboardMode && <DocumentOrientationControls orientation={orientation} pageCount={pageCount} disabled={loading} />}
           {dashboardMode ? <>
             <button type="button" aria-label="上一页" title="上一页" disabled={pageNo <= 1 || loading} onClick={() => goToPage(pageNo - 1)}>‹</button>
             <label className="page-jump dashboard-page-jump" title="输入页码跳转"><input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} /><span>/ {pageCount || '-'}</span></label>
@@ -388,10 +388,10 @@ function PdfCanvas({
             <button type="button" aria-label="缩小" title="缩小" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)}>−</button>
             <span className="viewer-zoom-value" aria-live="polite">{Math.round(gestures.zoom * 100)}%</span>
             <button type="button" aria-label="放大" title="放大" disabled={loading} onClick={() => gestures.zoomBy(1.15)}>＋</button>
-            <button className={gestures.fitMode === 'fit-height' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-height')}>适高</button>
+            <button className={gestures.fitMode === 'fit-window' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>整页</button>
 
             {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
-            <details className="viewer-more"><summary aria-label="更多预览操作" title="更多预览操作">更多</summary><div><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适应宽度</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>适应整页</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={loading} onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={openSystem}>系统打开</button></div></details>
+            <details className="viewer-more"><summary aria-label="更多预览操作" title="更多预览操作">更多</summary><div><DocumentOrientationControls orientation={orientation} pageCount={pageCount} disabled={loading} /><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适应宽度</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>适应整页</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={loading} onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={openSystem}>系统打开</button></div></details>
           </> : <>
           <button type="button" disabled={pageNo <= 1 || loading} onClick={() => goToPage(pageNo - 1)}>上一页</button>
           <label className="page-jump" title="输入页码跳转"><input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} /><span>/ {pageCount || '-'}</span></label>

@@ -177,6 +177,7 @@ export type ProductConnectorParameterBindingDTO = {
 
 export type DrawingLibraryItemDTO = {
   id: string;
+  planBatchCount?: number;
   customerName: string;
   customerCode?: string | null;
   productName?: string | null;

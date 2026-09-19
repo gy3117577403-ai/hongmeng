@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { fixturePlanScope } from "@/lib/quality-fixture-scope";
 import { documentFingerprint, lockFixtureBusiness, qfJson, submitPackage, assertPackageFiles } from "@/lib/quality-fixture-service";
 import type { PcActor } from "@/lib/purchasing-service";
+import { FixtureError } from "@/lib/quality-fixture-domain";
 
 type Tx = Prisma.TransactionClient;
 export async function currentDocumentSource(tx: Tx, libraryItemId: string) {
@@ -73,10 +74,11 @@ export async function processFixtureSyncQueue(limit = 30) {
   return { processed, pending: processed === limit };
 }
 
-export async function setFixtureRequirement(tx: Tx, ids: string[], need: boolean, actor: PcActor) {
+export async function setFixtureRequirement(tx: Tx, ids: string[], need: boolean, actor: PcActor, expected?: boolean | null) {
   await lockFixtureBusiness(tx);
   const products = await tx.drawingLibraryItem.findMany({ where: { id: { in: ids }, deletedAt: null }, select: { id: true, fixtureRequired: true } });
   if (products.length !== ids.length) throw new Error("所选产品不存在或已归档");
+  if (expected !== undefined && products.some(p => p.fixtureRequired !== expected)) throw new FixtureError('治具要求已被其他人更新，请刷新后重新选择', 'FIXTURE_CONFLICT', 409);
   for (const p of products) {
     await tx.drawingLibraryItem.update({ where: { id: p.id }, data: { fixtureRequired: need } });
     if (p.fixtureRequired !== need) await tx.qfEvent.create({ data: { entityType: "PRODUCT", entityId: p.id, action: "SET_FIXTURE_REQUIREMENT",

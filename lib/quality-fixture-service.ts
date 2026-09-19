@@ -75,7 +75,8 @@ async function getPackage(tx: Tx, id: unknown, version?: unknown) {
 }
 export async function assertPackageFiles(tx: Tx, p: QfPackage, requireSop = false) {
   const drawings = p.drawingFiles as unknown as DrawingEvidence[], sops = p.sopFiles as unknown as DrawingEvidence[];
-  if (!Array.isArray(drawings) || !drawings.length || p.needFixture === null) conflict("图纸或治具选项尚未完整");
+  if (p.needFixture === null) conflict("请先选择是否需要治具");
+  if (!Array.isArray(drawings) || !drawings.length) conflict("请先上传受审图纸");
   if (requireSop && (!Array.isArray(sops) || !sops.length)) conflict("请补齐本版本 SOP，再完成主管初审和质量复审");
   const evidence = [...drawings, ...(Array.isArray(sops) ? sops : [])];
   const files = await tx.drawingLibraryFile.findMany({ where: { id: { in: evidence.map(f => f.id) }, libraryItemId: p.libraryItemId, deletedAt: null } });
@@ -306,7 +307,8 @@ export async function mutateQualityFixture(input: PcInput, a: PcActor, key: unkn
     } else if (action === "SAVE_PACKAGE") result = await savePackage(tx, input, a);
     else if (action === "SET_REQUIREMENT") {
       if (typeof input.needFixture !== "boolean") throw new FixtureError("请选择需要或无需治具");
-      result = await (await import("@/lib/quality-fixture-sync")).setFixtureRequirement(tx, pcIds(input.productIds, "产品"), input.needFixture, a);
+      if (input.expectedNeedFixture !== undefined && input.expectedNeedFixture !== null && typeof input.expectedNeedFixture !== 'boolean') throw new FixtureError('治具要求校验参数无效');
+      result = await (await import("@/lib/quality-fixture-sync")).setFixtureRequirement(tx, pcIds(input.productIds, "产品"), input.needFixture, a, input.expectedNeedFixture as boolean | null | undefined);
     }
     else if (action === "SUBMIT") result = await submitPackage(tx, input, a);
     else if (action === "APPROVE" || action === "RETURN") result = await review(tx, input, a);

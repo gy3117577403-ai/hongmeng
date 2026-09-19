@@ -1,4 +1,5 @@
 import { fixturePlanScope } from '@/lib/quality-fixture-scope';
+import { drawingPlanWeekScope, planWeekStart } from '@/lib/drawing-plan-week';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
@@ -18,7 +19,7 @@ import { DrawingLibraryResolutionError, findDrawingProductCandidates, lockDrawin
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function itemInclude() {
+function itemInclude(week = '') {
   return {
     files: {
       where: { deletedAt: null },
@@ -31,9 +32,9 @@ function itemInclude() {
       orderBy: [{ createdAt: 'desc' as const }],
     },
     productionPlanOrders: {
-      where: { deletedAt: null },
-      select: { id: true },
-      take: 1,
+      where: { deletedAt: null, ...(week ? { status: { not: 'cancelled' } } : {}) },
+      select: { id: true, batches: { where: { deletedAt: null, releaseState: { notIn: ['cancelled', 'archived'] }, ...(week ? { weekStartDate: new Date(`${week}T00:00:00+08:00`) } : {}) }, select: { id: true } } },
+      ...(week ? {} : { take: 1 }),
     },
     productDataRecords: {
       where: { status: 'PUBLISHED' },
@@ -55,6 +56,9 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = req.nextUrl.searchParams.get('keyword')?.trim() || '';
     const filter = req.nextUrl.searchParams.get('filter') || 'all';
+    let week = '';
+    try { if (req.nextUrl.searchParams.get('week')) week = planWeekStart(req.nextUrl.searchParams.get('week')!); }
+    catch { return NextResponse.json({ ok: false, error: '计划周日期无效' }, { status: 400 }); }
     const paged = req.nextUrl.searchParams.get('paged') === 'true';
     const offset = Number(req.nextUrl.searchParams.get('offset') || 0);
     if (!Number.isSafeInteger(offset) || offset < 0) return NextResponse.json({ ok: false, error: '分页参数无效' }, { status: 400 });
@@ -63,7 +67,8 @@ export async function GET(req: NextRequest) {
     const items = await prisma.drawingLibraryItem.findMany({
       where: {
         deletedAt: null,
-        ...(["fixture_pending", "review_scope"].includes(filter) ? { AND: [fixturePlanScope], ...(filter === "fixture_pending" ? { fixtureRequired: null } : {}) } : {}),
+        AND: [...(week ? [drawingPlanWeekScope(week)] : []), ...(["fixture_pending", "review_scope"].includes(filter) ? [fixturePlanScope] : [])],
+        ...(filter === 'fixture_pending' ? { fixtureRequired: null } : {}),
         ...(keyword
           ? {
               OR: [
@@ -95,7 +100,7 @@ export async function GET(req: NextRequest) {
             }
           : {}),
       },
-      include: itemInclude(),
+      include: itemInclude(week),
       orderBy: filter === 'recent' ? [{ updatedAt: 'desc' }, { id: 'asc' }] : [{ customerName: 'asc' }, { specification: 'asc' }, { id: 'asc' }],
       take: paged ? 201 : 600,
       skip: paged ? offset : 0,
@@ -103,7 +108,7 @@ export async function GET(req: NextRequest) {
     const hasMore = paged && items.length > 200;
     if (hasMore) items.pop();
 
-    const requestedItem = requestedItemId
+    const requestedItem = requestedItemId && !week
       ? await prisma.drawingLibraryItem.findFirst({
           where: { id: requestedItemId, deletedAt: null },
           include: itemInclude(),
@@ -112,10 +117,10 @@ export async function GET(req: NextRequest) {
     const mergedItems = requestedItem && !items.some(item => item.id === requestedItem.id)
       ? [requestedItem, ...items]
       : items;
-    const serialized = mergedItems.map(item => serializeDrawingLibraryItem(item, categories));
+    const serialized = mergedItems.map(item => ({ ...serializeDrawingLibraryItem(item, categories), ...(week ? { planBatchCount: item.productionPlanOrders.reduce((n, order) => n + order.batches.length, 0) } : {}) }));
     const filtered = serialized.filter((item, index) => {
       const rawItem = mergedItems[index];
-      if (rawItem.id === requestedItemId) return true;
+      if (!week && rawItem.id === requestedItemId) return true;
       if (filter === 'anomaly') return !!drawingLibraryItemAnomalyReason(rawItem);
       if (!isVisibleDrawingLibraryItem(rawItem)) return false;
       if (filter === 'incomplete') return !item.isComplete;

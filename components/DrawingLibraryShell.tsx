@@ -1,5 +1,7 @@
 'use client';
 import FixtureRequirementControl from '@/components/quality-fixtures/FixtureRequirementControl';
+import { PlanWeekFilter } from '@/components/PlanWeekFilter';
+import { planWeekLabel } from '@/lib/drawing-plan-week';
 import { QualityFixtureStatus } from '@/components/quality-fixtures/QualityFixtureStatus';
 import {QuickPhotoViewer} from '@/components/quality-quick/QuickWarnings';
 import QuickQualityForm from '@/components/quality-quick/QuickQualityForm';
@@ -37,7 +39,7 @@ type DrawingLibraryForm = {
   remark: string;
 };
 
-type DrawingFilter = 'fixture_pending' | 'review_scope' | 'all' | 'complete' | 'recent' | 'anomaly';
+type DrawingFilter = 'fixture_pending' | 'review_scope' | 'missing_drawing' | 'missing_sop' | 'all' | 'complete' | 'recent' | 'anomaly';
 type SopFilter = 'all' | 'unset' | SopStageDTO | 'missing_drawing';
 type SopMetadataForm = { sopStage: SopStageDTO; drawingStatus: SopDrawingStatusDTO; remark: string };
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
@@ -113,6 +115,10 @@ const warningPrintPolicyLabels: Record<DrawingQualityWarning['printPolicy'], str
 const emptyForm: DrawingLibraryForm = { customerName: '', productName: '', specification: '', remark: '' };
 const filterOptions: Array<[DrawingFilter, string]> = [
   ['all', '全部'],
+  ['missing_drawing', '缺图纸'],
+  ['missing_sop', '缺 SOP'],
+  ['fixture_pending', '治具未选择'],
+  ['review_scope', '生效审核资料'],
   ['recent', '最近更新'],
   ['complete', '资料完整'],
   ['anomaly', '异常数据'],
@@ -205,12 +211,14 @@ export function DrawingLibraryShell({
   initialCustomers,
   categories,
   requestedItemId,
+  initialWeek = '',
 }: {
   user: CurrentUserDTO;
   initialItems: DrawingLibraryItemDTO[];
   initialCustomers: DrawingLibraryCustomerDTO[];
   categories: ResourceCategoryDTO[];
   requestedItemId: string;
+  initialWeek?: string;
 }) {
   const canManageDrawing = user.access.capabilities.includes('ENGINEERING:CREATE')
     || user.access.capabilities.includes('ENGINEERING:UPDATE')
@@ -223,6 +231,10 @@ export function DrawingLibraryShell({
   const [items, setItems] = useState(initialItems);
   const [customers, setCustomers] = useState(initialCustomers);
   const [keyword, setKeyword] = useState('');
+  const [week, setWeek] = useState(initialWeek);
+  const [filtersRestored, setFiltersRestored] = useState(false);
+  const listScrollRef = useRef<HTMLDivElement>(null);
+  const restoredScrollKey = useRef('');
   const [filter, setFilter] = useState<DrawingFilter>('all');
   const [sopFilter, setSopFilter] = useState<SopFilter>('all');
   const [customer, setCustomer] = useState('全部客户');
@@ -305,9 +317,44 @@ export function DrawingLibraryShell({
   const activeStructuredCount = activeStructuredRecords.length + activeConnectorParameters.length;
   const showStructuredPreview = activeStructuredCount > 0 && (previewMode === 'structured' || !selectedFile);
   const isSopCategory = activeCategory?.code === 'sop';
-  const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户' || sopFilter !== 'all';
+  const hasActiveFilters = !!week || !!keyword.trim() || filter !== 'all' || customer !== '全部客户' || sopFilter !== 'all';
   const activeFilterLabel = filterOptions.find(([key]) => key === filter)?.[1] || '全部';
   const visibleFileCount = useMemo(() => visibleItems.reduce((total, item) => total + item.fileCount, 0), [visibleItems]);
+  const scrollKey = 'drawing-list-scroll:' + JSON.stringify([week, keyword, filter, customer, sopFilter]);
+  useEffect(() => {
+    if (!filtersRestored || loading || !visibleItems.length || restoredScrollKey.current === scrollKey) return;
+    restoredScrollKey.current = scrollKey;
+    try { if (listScrollRef.current) listScrollRef.current.scrollTop = Number(sessionStorage.getItem(scrollKey)) || 0; } catch { /* Storage may be unavailable. */ }
+  }, [filtersRestored, loading, visibleItems.length, scrollKey]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const savedFilter = params.get('libraryFilter') as DrawingFilter;
+    const savedSop = params.get('sop') as SopFilter;
+    if (filterOptions.some(([key]) => key === savedFilter)) setFilter(savedFilter);
+    if (sopFilterOptions.some(([key]) => key === savedSop)) setSopFilter(savedSop);
+    if (params.get('customer')) setCustomer(params.get('customer')!);
+    setFiltersRestored(true);
+  }, []);
+  useEffect(() => {
+    if (!filtersRestored) return;
+    const url = new URL(window.location.href);
+    for (const [key, value] of [['week', week], ['keyword', keyword], ['libraryFilter', filter === 'all' ? '' : filter], ['customer', customer === '全部客户' ? '' : customer], ['sop', sopFilter === 'all' ? '' : sopFilter]]) {
+      if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
+    }
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [week, keyword, filter, customer, sopFilter, filtersRestored]);
+
+  function changeWeek(next: string) {
+    requestPreviewLeave(() => {
+      loadControllerRef.current?.abort();
+      const url = new URL(window.location.href);
+      url.searchParams.delete('itemId'); url.searchParams.delete('fileId');
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      setLoading(true); setWeek(next); setSelectedId(''); setItems([]); setCustomers([]); setCustomer('全部客户');
+      setMissingReference(null); setReferenceResolving(false);
+    });
+  }
 
   useEffect(() => {
     if (selectedItem && selectedItem.id !== selectedId) setSelectedId(selectedItem.id);
@@ -361,7 +408,7 @@ export function DrawingLibraryShell({
       }
     }
 
-    if (!targetItemId) {
+    if (!targetItemId || (week && !items.some(item => item.id === targetItemId))) {
       setReferenceResolving(false);
       return;
     }
@@ -405,7 +452,6 @@ export function DrawingLibraryShell({
           const directItem = data.item as DrawingLibraryItemDTO;
           setMissingReference(null);
           setItems(current => current.some(item => item.id === directItem.id) ? current : [directItem, ...current]);
-          setCustomer('全部客户');
           setSelectedId(directItem.id);
           setReferenceResolving(false);
           setMsg('');
@@ -423,7 +469,6 @@ export function DrawingLibraryShell({
 
     setMissingReference(null);
     setReferenceResolving(false);
-    setCustomer('全部客户');
     setSelectedId(targetItem.id);
     if (targetFileId) {
       const targetFile = targetItem.files.find(file => file.id === targetFileId) || null;
@@ -435,7 +480,7 @@ export function DrawingLibraryShell({
         setMsg('图纸文件不存在或已删除。');
       }
     }
-  }, [canManageDrawing, items, keyword]);
+  }, [canManageDrawing, items, keyword, week]);
 
   useEffect(() => {
     if (selectedFile && selectedFile.id !== selectedFileId) setSelectedFileId(selectedFile.id);
@@ -507,8 +552,9 @@ export function DrawingLibraryShell({
       const params = new URLSearchParams();
       if (keyword.trim()) params.set('keyword', keyword.trim());
       params.set('filter', filter);
+      if (week) params.set('week', week);
       const requestedItemId = new URLSearchParams(window.location.search).get('itemId') || '';
-      if (requestedItemId) params.set('itemId', requestedItemId);
+      if (requestedItemId && !week) params.set('itemId', requestedItemId);
       params.set('paged', 'true');
       const collected = new Map<string, DrawingLibraryItemDTO>();
       let offset = 0;
@@ -535,7 +581,7 @@ export function DrawingLibraryShell({
       setCustomer(current => current !== '全部客户' && !nextItems.some(item => item.customerName === current) ? '全部客户' : current);
       setSelectedId(current => {
         if (nextItems.some(item => item.id === current)) return current;
-        if (requestedItemId && !nextItems.some(item => item.id === requestedItemId)) return '';
+        if (!week && requestedItemId && !nextItems.some(item => item.id === requestedItemId)) return '';
         return nextItems[0]?.id || '';
       });
     } catch (reason) {
@@ -543,7 +589,7 @@ export function DrawingLibraryShell({
     } finally {
       if (loadControllerRef.current === controller) setLoading(false);
     }
-  }, [filter, keyword]);
+  }, [filter, keyword, week]);
 
   const openPdfOverlayEditor = useCallback(async () => {
     if (!selectedItem || !selectedFile || activeCategory?.code !== 'sop') {
@@ -651,7 +697,6 @@ export function DrawingLibraryShell({
   useEffect(() => {
     if (skipInitialServerReloadRef.current) {
       skipInitialServerReloadRef.current = false;
-      return;
     }
     const timer = window.setTimeout(() => { void loadData(); }, 260);
     return () => {
@@ -668,6 +713,7 @@ export function DrawingLibraryShell({
   function clearFilters() {
     requestPreviewLeave(() => {
       setKeyword('');
+      setWeek('');
       setFilter('all');
       setCustomer('全部客户');
       setSopFilter('all');
@@ -994,6 +1040,7 @@ export function DrawingLibraryShell({
             </span>
           </label>
 
+          <PlanWeekFilter value={week} onChange={changeWeek} />
           <label className="hm-drawing-customer-filter">
             <span>客户</span>
             <select className="hm-workbench-input" value={customer} onChange={event => { const value = event.target.value; requestPreviewLeave(() => setCustomer(value)); }}>
@@ -1041,10 +1088,10 @@ export function DrawingLibraryShell({
         <section className={`drawing-workspace ${qualityWarningMode ? 'quality-warning-mode' : ''}`.trim()}>
           <aside className="drawing-browser" aria-label="图纸规格结果">
             <div className="drawing-panel-head">
-              <div><strong>规格结果</strong><span>{customer === '全部客户' ? '全部客户' : customer}</span></div>
+              <div><strong>规格结果</strong><span>{week ? planWeekLabel(week) : customer === '全部客户' ? '全部客户' : customer}</span></div>
               <b>{visibleItems.length}</b>
             </div>
-            <div className="drawing-list hm-scroll-region" tabIndex={0} aria-label={`图纸规格结果，共 ${visibleItems.length} 项`}>
+            <div ref={listScrollRef} onScroll={event => { if (restoredScrollKey.current === scrollKey) { try { sessionStorage.setItem(scrollKey, String(event.currentTarget.scrollTop)); } catch { /* Optional position memory. */ } } }} className="drawing-list hm-scroll-region" tabIndex={0} aria-label={`图纸规格结果，共 ${visibleItems.length} 项`}>
               {visibleItems.map(item => (
                 <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" aria-pressed={selectedItem?.id === item.id} onClick={() => { void chooseItem(item); }}>
                   <div className="drawing-spec-title-line">
@@ -1055,7 +1102,7 @@ export function DrawingLibraryShell({
                   <p title={`${item.customerName} · ${item.productName || '未设置品名'}`}>{item.customerName} · {item.productName || '未设置品名'}</p>
                   <footer>
                     <em>{item.fileCount ? item.completenessText : '待上传'}</em>
-                    <span>{item.fileCount ? `${item.fileCount} 个文件` : '档案已建立'}</span>
+                    <span>{week && item.planBatchCount ? `${item.planBatchCount} 批计划 · ` : ''}{item.fileCount ? `${item.fileCount} 个文件` : '档案已建立'}</span>
                     <time dateTime={item.updatedAt || undefined}>{dt(item.updatedAt)}</time>
                   </footer>
                 </button>
@@ -1063,7 +1110,7 @@ export function DrawingLibraryShell({
               {!visibleItems.length && (
                 <div className="drawing-result-empty">
                   <Search aria-hidden="true" />
-                  <strong>{hasActiveFilters ? '没有符合条件的资料' : '资料库中还没有图纸资料'}</strong>
+                  <strong>{loading ? '正在加载计划资料…' : hasActiveFilters ? '没有符合条件的资料' : '资料库中还没有图纸资料'}</strong>
                   <p>{hasActiveFilters ? '尝试清除关键词、客户或状态筛选。' : canManageDrawing ? '新增资料或使用批量导入建立长期图纸档案。' : '当前资料库中还没有可查看的资料。'}</p>
                   {(hasActiveFilters || canManageDrawing) && <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增资料'}</button>}
                 </div>
@@ -1112,7 +1159,7 @@ export function DrawingLibraryShell({
             ) : (
               <div className="drawing-empty-state">
                 <FileImage aria-hidden="true" />
-                <strong>{hasActiveFilters ? '当前筛选下没有可预览资料' : '选择一个规格开始查看'}</strong>
+                <strong>{loading ? '正在加载计划资料…' : hasActiveFilters ? '当前筛选下没有可预览资料' : '选择一个规格开始查看'}</strong>
                 <p>{hasActiveFilters ? '左侧结果会随搜索条件更新，清除筛选可返回全部资料。' : canManageDrawing ? '预览区会保持图纸原始比例，并提供版本、下载和资料维护入口。' : '预览区会保持图纸原始比例，并提供版本和下载入口。'}</p>
                 {(hasActiveFilters || canManageDrawing) && <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增图纸资料'}</button>}
               </div>
@@ -1124,7 +1171,7 @@ export function DrawingLibraryShell({
                 <div>
                   <span>当前资料</span>
                   <h1 title={selectedItem.specification}>{selectedItem.specification}</h1>
-                  <FixtureRequirementControl productId={selectedItem.id} /><QualityFixtureStatus id={selectedItem.id} />
+                  <FixtureRequirementControl key={selectedItem.id} productId={selectedItem.id} week={week} /><QualityFixtureStatus id={selectedItem.id} />
                   <p>
                     <b title={selectedItem.customerName}>{selectedItem.customerName}</b>
                     {hasText(selectedItem.productName) && <em title={selectedItem.productName || ''}>{selectedItem.productName}</em>}
