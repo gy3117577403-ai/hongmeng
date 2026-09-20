@@ -97,6 +97,12 @@ export async function assertPackageFiles(tx: Tx, p: QfPackage) {
   if (files.length !== evidence.length || evidence.some(e => !files.some(f => f.id === e.id && f.objectKey === e.objectKey && f.version === e.version && (f.sha256 || "") === e.sha256)))
     conflict("审核所引用资料已移除或发生变化，请重新提交资料");
   if (p.fingerprint !== documentFingerprint(p)) conflict("受审资料指纹发生变化，请重新提交审核");
+  if (["APPROVED", "SUPERSEDED"].includes(p.status)) {
+    const issues = await tx.qfDocumentReturn.findMany({ where: { libraryItemId: p.libraryItemId,
+      OR: [{ sourcePackageId: p.id, kind: "package" }, { fileId: { in: evidence.map(f => f.id) } }] } });
+    if (issues.some(i => i.status !== "RESOLVED" || i.kind !== "package" && i.responseFileId !== i.fileId))
+      conflict("本打印版本引用了审核不通过的文件，请使用技术处理后双方通过的资料版本");
+  }
 }
 export async function fixtureReadiness(tx: Tx, source: { libraryItemId: string } | null, workOrderId = "") {
   const empty = { calculated: false, missing: 0, unmatched: 0, groups: [], unmatchedRows: [] };
@@ -163,7 +169,7 @@ export async function assertFixturePrintReady(tx: Tx, workOrderId: string, expec
     bomFileId: (await getFixturePreparation(tx, p.libraryItemId)).bomFileId, fixtureLabel: readiness.label,
     drawingFiles: p.drawingFiles as unknown as DrawingEvidence[], sopFiles: p.sopFiles as unknown as DrawingEvidence[] };
 }
-async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
+export async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   const libraryItemId = pcText(input.libraryItemId, "产品档案", 100);
   const product = await tx.drawingLibraryItem.findFirst({ where: { id: libraryItemId, deletedAt: null } });
   if (!product) throw new FixtureError("产品图纸档案不存在");
@@ -205,9 +211,11 @@ async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   await event(tx, a, "PACKAGE", p.id, "SAVE", { before: old, after: p });
   return p;
 }
-export async function submitPackage(tx: Tx, input: PcInput, a: PcActor) {
+export async function submitPackage(tx: Tx, input: PcInput, a: PcActor, returnSubmission = false) {
   const p = await getPackage(tx, input.id, input.version);
   if (p.status !== "DRAFT") conflict("请先建立资料修订草稿，再提交双方审核");
+  if (!returnSubmission && await tx.qfDocumentReturn.count({ where: { libraryItemId: p.libraryItemId, status: { not: "RESOLVED" } } }))
+    conflict("存在未关闭的退回事项，请在图纸资料库完成技术处理并重新提交，不能直接送审");
   const issues = fixtureSubmissionIssues({ ...p, needFixture: p.libraryItem.fixtureRequired });
   if (issues.length) conflict(issues.join("；"));
   await assertPackageFiles(tx, p);
@@ -239,14 +247,16 @@ async function review(tx: Tx, input: PcInput, a: PcActor) {
   }
   const reason = pcText(input.reason, "退回意见", 2000, !approve);
   if (approve) await assertPackageFiles(tx, p);
+  const returns = !approve ? await (await import("@/lib/quality-document-returns")).recordDocumentReturn(tx, p, input, a, String(role), reason) : [];
   const next = !approve ? "RETURNED" : (role === "SUPERVISOR" ? p.qualityAt : p.supervisorAt) ? "APPROVED" : role === "SUPERVISOR" ? "QUALITY" : "SUPERVISOR";
   if (next === "APPROVED") await tx.qfPackage.updateMany({ where: { libraryItemId: p.libraryItemId, status: "APPROVED", id: { not: p.id } }, data: { status: "SUPERSEDED", version: { increment: 1 } } });
   const result = await tx.qfPackage.update({ where: { id: p.id }, data: { status: next, reason, version: { increment: 1 },
     ...(approve ? role === "SUPERVISOR" ? { supervisorId: a.id, supervisorName: actorName(a), supervisorAt: new Date(), supervisorAsAdmin: admin } : { qualityId: a.id, qualityName: actorName(a), qualityAt: new Date(), qualityAsAdmin: admin } : {}) } });
-  await event(tx, a, "PACKAGE", p.id, String(input.action), { before: p.status, after: result, reviewRole: role, asAdmin: admin }, reason);
+  await event(tx, a, "PACKAGE", p.id, String(input.action), { before: p.status, after: result, reviewRole: role, asAdmin: admin, returns }, reason);
+  if (next === "APPROVED") await (await import("@/lib/quality-document-returns")).closeReviewedReturns(tx, result, a);
   await closeTodos(tx, p.id);
   if (QF_REVIEW_STATUSES.includes(next)) await notifyPendingReviews(tx, a, result, p.libraryItem.specification);
-  else await notify(tx, a, result, [p.submittedById!], (next === "APPROVED" ? "生产资料双方审核完成" : "生产资料已退回") + " · " + p.libraryItem.specification);
+  else if (next === "APPROVED") await notify(tx, a, result, [p.submittedById!], "生产资料双方审核完成 · " + p.libraryItem.specification);
   return { id: result.id, version: result.version, status: result.status };
 }
 async function saveMapping(tx: Tx, input: PcInput, a: PcActor) {
@@ -332,15 +342,18 @@ export async function mutateQualityFixture(input: PcInput, a: PcActor, key: unkn
       if (old) { if (old.ownerId !== a.id && a.laborRole !== "ADMIN") denied("只有审核流程维护人可以更改负责人"); pcVersion(old.version, input.version); }
       const supervisors = Array.isArray(input.supervisorIds) && input.supervisorIds.length === 0 ? [] : pcIds(input.supervisorIds, "主管"),
         qualities = Array.isArray(input.qualityIds) && input.qualityIds.length === 0 ? [] : pcIds(input.qualityIds, "品质人员");
+      const technicals = input.technicalIds === undefined ? old?.technicalIds || [] : Array.isArray(input.technicalIds) && input.technicalIds.length === 0 ? [] : pcIds(input.technicalIds, "技术处理人员");
       const overlap = supervisors.filter(id => qualities.includes(id));
       if (await tx.user.count({ where: { id: { in: overlap }, laborRole: { not: "ADMIN" } } })) throw new FixtureError("普通主管和品质负责人不能重叠；管理员默认具备两项权限");
-      await users(tx, [...new Set([...supervisors, ...qualities])]);
+      await users(tx, [...new Set([...supervisors, ...qualities, ...technicals])]);
       if ((!supervisors.length || !qualities.length) && !await tx.user.count({ where: { laborRole: "ADMIN", isActive: true, accountStatus: "ACTIVE" } }))
         throw new FixtureError("请设置双方负责人或至少一个有效管理员");
-      result = await tx.qfSettings.upsert({ where: { id: "quality-fixtures" }, create: { ownerId: a.id, supervisorIds: supervisors, qualityIds: qualities },
-        update: { supervisorIds: supervisors, qualityIds: qualities, version: { increment: 1 } } });
+      result = await tx.qfSettings.upsert({ where: { id: "quality-fixtures" }, create: { ownerId: a.id, supervisorIds: supervisors, qualityIds: qualities, technicalIds: technicals },
+        update: { supervisorIds: supervisors, qualityIds: qualities, technicalIds: technicals, version: { increment: 1 } } });
       await event(tx, a, "SETTINGS", "quality-fixtures", action, { before: old, after: result });
     } else if (action === "SAVE_PACKAGE") result = await savePackage(tx, input, a);
+    else if (action === "RESPOND_RETURN") result = await (await import("@/lib/quality-document-returns")).saveDocumentReturnResponse(tx, input, a);
+    else if (action === "RESUBMIT_RETURNS") result = await (await import("@/lib/quality-document-returns")).resubmitDocumentReturns(tx, input, a);
     else if (action === "SAVE_PREPARATION") result = await saveFixturePreparation(tx, input, a);
     else if (action === "SET_REQUIREMENT") {
       if (typeof input.needFixture !== "boolean") throw new FixtureError("请选择需要或无需治具");

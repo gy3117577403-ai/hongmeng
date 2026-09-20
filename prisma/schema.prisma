@@ -3205,6 +3205,8 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
+  documentReturns QfDocumentReturn[]
+  reviewAttachments QfReviewAttachment[]
   fixtureRequired Boolean? @map("fixture_required")
   fixturePackages          QfPackage[]
   fixtureBomFiles          QfBomFile[]
@@ -4380,6 +4382,8 @@ model DocumentDisplaySetting {
 }
 
 model DrawingLibraryFile {
+  documentReturns QfDocumentReturn[] @relation("ReturnedFile")
+  returnResponses QfDocumentReturn[] @relation("ResponseFile")
   id                          String              @id @default(uuid())
   libraryItemId               String              @map("library_item_id")
   categoryId                  String              @map("category_id")
@@ -7401,6 +7405,7 @@ model QfSettings {
   ownerId             String
   supervisorIds String[]
   qualityIds    String[]
+  technicalIds  String[] @default([])
   version              Int      @default(1)
   updatedAt  DateTime @updatedAt
 }
@@ -7411,6 +7416,8 @@ model QfSyncQueue {
 }
 
 model QfPackage {
+  returnedDocuments QfDocumentReturn[] @relation("ReturnSource")
+  resubmittedReturns QfDocumentReturn[] @relation("ReturnSubmission")
   continuedWorkOrderIds String[] @default([])
   planBindings QfPlanBinding[]
   id         String   @id @default(uuid())
@@ -7469,6 +7476,59 @@ model QfPreparation {
   updatedById String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// File-specific issues remain open until a new round receives both signatures.
+model QfDocumentReturn {
+  id String @id @default(uuid())
+  libraryItemId String
+  libraryItem DrawingLibraryItem @relation(fields: [libraryItemId], references: [id], onDelete: Restrict)
+  sourcePackageId String
+  sourcePackage QfPackage @relation("ReturnSource", fields: [sourcePackageId], references: [id], onDelete: Restrict)
+  submittedPackageId String?
+  submittedPackage QfPackage? @relation("ReturnSubmission", fields: [submittedPackageId], references: [id], onDelete: Restrict)
+  fileId String?
+  file DrawingLibraryFile? @relation("ReturnedFile", fields: [fileId], references: [id], onDelete: Restrict)
+  fileSnapshot Json
+  kind String
+  reason String
+  location String @default("")
+  attachmentIds String[] @default([])
+  reviewRole String
+  returnedById String
+  returnedByName String
+  status String @default("OPEN")
+  responseMode String?
+  responseText String @default("")
+  responseFileId String?
+  responseFile DrawingLibraryFile? @relation("ResponseFile", fields: [responseFileId], references: [id], onDelete: Restrict)
+  responseAttachmentIds String[] @default([])
+  respondedById String?
+  respondedByName String @default("")
+  respondedAt DateTime?
+  resolvedAt DateTime?
+  version Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([libraryItemId, status])
+  @@index([submittedPackageId, status])
+  @@index([status, createdAt])
+}
+
+model QfReviewAttachment {
+  id String @id @default(uuid())
+  libraryItemId String
+  libraryItem DrawingLibraryItem @relation(fields: [libraryItemId], references: [id], onDelete: Restrict)
+  name String
+  objectKey String @unique
+  mimeType String
+  byteSize Int
+  sha256 String
+  uploadedById String
+  createdAt DateTime @default(now())
+
+  @@index([libraryItemId, createdAt])
 }
 
 model QfBomFile {

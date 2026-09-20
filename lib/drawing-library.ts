@@ -1,3 +1,4 @@
+import { drawingFileHistory } from '@/lib/drawing-file-history';
 import type {
   ConnectorParameter,
   DrawingLibraryFile,
@@ -152,6 +153,7 @@ export type DrawingLibraryFileWithMeta = DrawingLibraryFileLegacyCompatible & {
 };
 
 export type DrawingLibraryItemWithFiles = DrawingLibraryItem & {
+  documentReturns?: Array<{ id: string; fileId: string | null; kind: string; reason: string; status: string; returnedByName: string; createdAt: Date; responseFileId: string | null }>;
   files?: DrawingLibraryFileWithMeta[];
   productionPlanOrders?: DrawingLibraryPlanningLink[];
   productDataRecords?: ProductDataRecord[];
@@ -247,7 +249,8 @@ export function serializeDrawingLibraryItem(item: DrawingLibraryItemWithFiles, c
           updatedAt: item.sopDocument.updatedAt.toISOString(),
         }
       : null,
-    files: files.map(serializeDrawingLibraryFile),
+    returnSummary: (item.documentReturns || []).filter(r => r.status !== 'RESOLVED').map(r => ({ ...r, createdAt: r.createdAt.toISOString() })),
+    files: files.map(file => ({ ...serializeDrawingLibraryFile(file), timing: drawingFileHistory(file, item.files || []) })),
     structuredRecords: (item.productDataRecords || []).map(record => ({
       id: record.id,
       drawingLibraryItemId: record.drawingLibraryItemId,

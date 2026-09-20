@@ -139,7 +139,7 @@ test("fixture documents, independent review, procurement and physical inventory 
     assert.equal((await assertFixturePrintReady(prisma, order.id))!.packageId, newer.id);
     await qf({ action: "REVOKE", ...await versionInput(newer.id), reason: "核对新版本适用范围" }, quality);
     await assert.rejects(() => review(older.id, quality), /更新的资料版本/);
-    await qf({ action: "RETURN", ...await versionInput(older.id), reason: "已有更新版本，旧稿停止审批" }, quality);
+    await qf({ action: "RETURN", ...await versionInput(older.id), reason: "已有更新版本，旧稿停止审批", fileIds: [product.files[0].id] }, quality);
     assert.equal((await packageRow(older.id)).status, "RETURNED");
   });
   await t.test("library replenishment and repair retain SKU identity and immutable reviewed drawings", async () => {
@@ -230,12 +230,13 @@ test("parallel document reviews, admin signatures, concurrent actions and revisi
   await t.test("return after either first signature blocks print and a revision starts with two fresh reviews",async()=>{
     const p=await prepare();await approval(p.id,"QUALITY",quality);
     await assert.rejects(async()=>command({action:"RETURN",id:p.id,version:(await row(p.id)).version,reviewRole:"SUPERVISOR",reason:""},supervisor),/退回意见/);
-    await command({action:"RETURN",id:p.id,version:(await row(p.id)).version,reviewRole:"SUPERVISOR",reason:"SOP 端子方向需核对"},supervisor);
+    await command({action:"RETURN",id:p.id,version:(await row(p.id)).version,reviewRole:"SUPERVISOR",reason:"图纸端子方向需核对",fileIds:[p.product.files.find(f => f.categoryId === categories[0].id)!.id]},supervisor);
     const returned=await row(p.id);assert.equal(returned.status,"RETURNED");assert.equal(returned.qualityId,quality.id);
     await assert.rejects(()=>assertFixturePrintReady(prisma,p.wo.id),/审核|初审|复审/);
-    const revised=await command({action:"SAVE_PACKAGE",id:p.id,version:returned.version,libraryItemId:p.product.id,revision:"B",needFixture:false,drawingFileIds:[p.product.files.find(f => f.categoryId === categories[0].id)!.id]});
-    assert.notEqual(revised.id,p.id);assert.equal(revised.supervisorAt,null);assert.equal(revised.qualityAt,null);
-    await command({action:"SUBMIT",id:revised.id,version:revised.version});
+    const issue=await prisma.qfDocumentReturn.findFirstOrThrow({where:{sourcePackageId:p.id}});
+    const answered=await command({action:"RESPOND_RETURN",id:issue.id,version:issue.version,mode:"EXPLAIN",reason:"已按客户端子图核实，原方向正确"});
+    const revised=await command({action:"RESUBMIT_RETURNS",libraryItemId:p.product.id,versions:{[issue.id]:answered.version}});
+    assert.notEqual(revised.id,p.id);assert.equal((await row(revised.id)).supervisorAt,null);assert.equal((await row(revised.id)).qualityAt,null);
     await approval(revised.id,"SUPERVISOR",supervisor);await assert.rejects(()=>assertFixturePrintReady(prisma,p.wo.id),/审核|初审|复审/);
     await approval(revised.id,"QUALITY",quality);assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
   });

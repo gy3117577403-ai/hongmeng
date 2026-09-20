@@ -57,7 +57,8 @@ export async function syncProductDocuments(tx: Tx, libraryItemId: string, actor?
   let complete = fixtureSubmissionIssues(p).length === 0;
   try { await assertPackageFiles(tx, p); } catch { complete = false; }
   const recipients = complete && owner ? await pendingReviewers(tx, { ...p, status: "REVIEWING", submittedById: a.id }) : [];
-  if (complete && owner && ["SUPERVISOR", "QUALITY"].every(role => recipients.some(r => r.roles.some(v => v === role))))
+  const unresolvedReturns = await tx.qfDocumentReturn.count({ where: { libraryItemId, status: { not: "RESOLVED" } } });
+  if (!unresolvedReturns && complete && owner && ["SUPERVISOR", "QUALITY"].every(role => recipients.some(r => r.roles.some(v => v === role))))
     await submitPackage(tx, { id: p.id, version: p.version }, a);
   return await tx.qfPackage.findUnique({ where: { id: p.id } });
 }

@@ -6,6 +6,7 @@ import { drawingPlanWeekScope, planWeekStart } from '@/lib/drawing-plan-week';
 import './drawing-library-workbench.css';
 
 const includeFiles = {
+  documentReturns: { where: { status: { not: 'RESOLVED' } }, orderBy: { createdAt: 'desc' as const } },
   files: {
     where: { deletedAt: null },
     include: {

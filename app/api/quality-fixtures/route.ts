@@ -9,11 +9,13 @@ import { FixtureError, scanBom, type BomMapping, type BomSheet } from "@/lib/qua
 import { prisma } from "@/lib/prisma";
 import { processFixtureSyncQueue } from "@/lib/quality-fixture-sync";
 import { fixtureSubmissionIssues } from "@/lib/quality-fixture-documents";
+import { loadDocumentReturns } from "@/lib/quality-document-returns";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   try {
     const actor = await requireUser(), q = req.nextUrl.searchParams;
+    if (q.has("returns")) return NextResponse.json({ ok: true, data: await loadDocumentReturns(q.get("returns") || "") });
     if (q.has("summary")) {
       const { latest, roles } = await loadFixtureReviewQueue(actor);
       const [supervisor, quality, draft, purchasing] = await Promise.all([
@@ -33,6 +35,9 @@ export async function POST(req: NextRequest) {
     const actor = await requireUser();
     if (Number(req.headers.get("content-length") || 0) > 4 * 1024 * 1024) throw new FixtureError("资料内容过大");
     const input = pcRecord(await req.json());
+    if (["RESPOND_RETURN", "RESUBMIT_RETURNS"].includes(String(input.action)) && actor.laborRole !== "ADMIN" &&
+      !actor.access.capabilities.some(c => ["ENGINEERING:CREATE", "ENGINEERING:UPDATE", "DRAWING_LIBRARY:CREATE", "DRAWING_LIBRARY:UPDATE"].includes(c)))
+      throw new FixtureError("请由有图纸资料维护权限的技术人员处理", "FIXTURE_FORBIDDEN", 403);
     if (input.action === "SYNC_DOCUMENTS") return NextResponse.json({ ok: true, data: await processFixtureSyncQueue(60) });
     if (input.action === "SCAN_BOM") {
       const bom = await prisma.qfBomFile.findFirst({ where: { id: String(input.id), deletedAt: null } });

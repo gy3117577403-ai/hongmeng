@@ -21,6 +21,7 @@ export const dynamic = 'force-dynamic';
 
 function itemInclude(week = '') {
   return {
+    documentReturns: { where: { status: { not: 'RESOLVED' } }, orderBy: { createdAt: 'desc' as const } },
     files: {
       where: { deletedAt: null },
       include: {
@@ -56,6 +57,7 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = req.nextUrl.searchParams.get('keyword')?.trim() || '';
     const filter = req.nextUrl.searchParams.get('filter') || 'all';
+    const returnStatuses = filter === 'review_failed' ? ['OPEN', 'READY'] : filter === 'review_recheck' ? ['REVIEWING'] : null;
     let week = '';
     try { if (req.nextUrl.searchParams.get('week')) week = planWeekStart(req.nextUrl.searchParams.get('week')!); }
     catch { return NextResponse.json({ ok: false, error: '计划周日期无效' }, { status: 400 }); }
@@ -69,6 +71,7 @@ export async function GET(req: NextRequest) {
         deletedAt: null,
         AND: [...(week ? [drawingPlanWeekScope(week)] : []), ...(["fixture_pending", "review_scope"].includes(filter) ? [fixturePlanScope] : [])],
         ...(filter === 'fixture_pending' ? { fixtureRequired: null } : {}),
+        ...(returnStatuses ? { documentReturns: { some: { status: { in: returnStatuses } } } } : {}),
         ...(keyword
           ? {
               OR: [
@@ -108,7 +111,7 @@ export async function GET(req: NextRequest) {
     const hasMore = paged && items.length > 200;
     if (hasMore) items.pop();
 
-    const requestedItem = requestedItemId && !week
+    const requestedItem = requestedItemId && !week && !returnStatuses
       ? await prisma.drawingLibraryItem.findFirst({
           where: { id: requestedItemId, deletedAt: null },
           include: itemInclude(),
@@ -120,7 +123,7 @@ export async function GET(req: NextRequest) {
     const serialized = mergedItems.map(item => ({ ...serializeDrawingLibraryItem(item, categories), ...(week ? { planBatchCount: item.productionPlanOrders.reduce((n, order) => n + order.batches.length, 0) } : {}) }));
     const filtered = serialized.filter((item, index) => {
       const rawItem = mergedItems[index];
-      if (!week && rawItem.id === requestedItemId) return true;
+      if (!week && !returnStatuses && rawItem.id === requestedItemId) return true;
       if (filter === 'anomaly') return !!drawingLibraryItemAnomalyReason(rawItem);
       if (!isVisibleDrawingLibraryItem(rawItem)) return false;
       if (filter === 'incomplete') return !item.isComplete;

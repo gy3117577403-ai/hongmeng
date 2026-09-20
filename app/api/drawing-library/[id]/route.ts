@@ -11,6 +11,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const includeFiles = {
+  documentReturns: { where: { status: { not: 'RESOLVED' } }, orderBy: { createdAt: 'desc' as const } },
   files: {
     where: { deletedAt: null },
     include: {

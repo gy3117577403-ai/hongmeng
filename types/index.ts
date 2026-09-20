@@ -91,6 +91,10 @@ export type ResourceFileDTO = {
 };
 
 export type DrawingLibraryFileDTO = {
+  timing?: {
+    firstUploadedAt: string | null; contentChangedAt: string | null; recordedAt: string; timeKind: string;
+    history: Array<{ id: string; name: string; version: string; at: string; actor: string; kind: string; downloadUrl: string }>;
+  };
   id: string;
   libraryItemId: string;
   categoryId: string;
@@ -176,6 +180,7 @@ export type ProductConnectorParameterBindingDTO = {
 };
 
 export type DrawingLibraryItemDTO = {
+  returnSummary?: Array<{ id: string; fileId: string | null; kind: string; reason: string; status: string; returnedByName: string; createdAt: string; responseFileId: string | null }>;
   id: string;
   planBatchCount?: number;
   customerName: string;

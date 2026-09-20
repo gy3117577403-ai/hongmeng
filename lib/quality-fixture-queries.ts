@@ -72,19 +72,22 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
   const approved = product?.fixturePackages.find(p => p.status === "APPROVED") || null;
   const newerReviewed = chosen ? product?.fixturePackages.find(p => p.sequence > chosen.sequence && p.supervisorAt !== null && p.qualityAt !== null)?.revision || null : null;
   const preparation = product ? await getFixturePreparation(prisma, product.id) : null;
-  const [readiness, packageEvents, workOrders, bom, preparationEvents] = await Promise.all([
+  const [readiness, packageEvents, workOrders, bom, preparationEvents, documentReturns] = await Promise.all([
     fixtureReadiness(prisma, product ? { libraryItemId: product.id } : null),
     chosen ? prisma.qfEvent.findMany({ where: { entityType: "PACKAGE", entityId: chosen.id }, orderBy: { createdAt: "desc" } }) : [],
     product ? prisma.workOrder.findMany({ where: { drawingLibraryItemId: product.id, deletedAt: null }, select: { id: true, code: true, status: true, fixtureBinding: true }, orderBy: { createdAt: "desc" }, take: 100 }) : [],
     preparation?.bomFileId ? prisma.qfBomFile.findFirst({ where: { id: preparation.bomFileId, deletedAt: null }, select: { id: true, name: true, sheets: true } }) : null,
     product ? prisma.qfEvent.findMany({ where: { entityId: product.id, entityType: { in: ["PREPARATION", "PRODUCT"] } }, orderBy: { createdAt: "desc" }, take: 100 }) : [],
+    product ? prisma.qfDocumentReturn.findMany({ where: { libraryItemId: product.id,
+      OR: [{ status: { not: "RESOLVED" } }, ...(chosen ? [{ submittedPackageId: chosen.id }] : [])] }, orderBy: { createdAt: "desc" },
+      include: { responseFile: { select: { id: true, originalName: true, displayName: true, version: true } } } }) : [],
   ]);
   const ownsEvidence = chosen ? await prisma.drawingLibraryFile.count({where:{id:{in:[...(chosen.drawingFiles as unknown as {id:string}[]),...(chosen.sopFiles as unknown as {id:string}[])].map(f=>f.id)},uploadedById:actor.id}}) > 0 : false;
   return plain({ actorId: actor.id, settings, users, templates, products, total, page, pageSize: 30, statusCounts,
     preparationRows, preparationCounts, fixtures: fixtures.map(f => ({ ...f, available: f.item.balances.reduce((n, b) => n + fixtureAvailable(b), 0),
       onHand: f.item.balances.reduce((n, b) => n + b.onHand, 0), held: f.item.balances.reduce((n, b) => n + b.held, 0),
       reserved: f.item.balances.reduce((n, b) => n + b.reserved, 0), issued: f.item.balances.reduce((n, b) => n + b.issued, 0) })),
-    fixtureTotal, eventRows, product, chosen, approved, newerReviewed, readiness, packageEvents, workOrders, bom, preparation, preparationEvents,
+    fixtureTotal, eventRows, product, chosen, approved, newerReviewed, readiness, packageEvents, workOrders, bom, preparation, preparationEvents, documentReturns,
     canConfigure: !settings || settings.ownerId === actor.id || actor.laborRole === "ADMIN",
     canReview: fixtureReviewRoles(chosen, actor, settings, ownsEvidence).length > 0,
     reviewRoles: fixtureReviewRoles(chosen, actor, settings, ownsEvidence),

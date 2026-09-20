@@ -1,0 +1,103 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { prisma } from '../lib/prisma';
+import { mutateQualityFixture, assertFixturePrintReady } from '../lib/quality-fixture-service';
+import { syncProductDocuments } from '../lib/quality-fixture-sync';
+import { loadDocumentReturns } from '../lib/quality-document-returns';
+import type { PcInput } from '../lib/purchasing-domain';
+
+test('file-specific returns remain accountable through technical rework and independent review', {skip:process.env.RUN_DB_INTEGRATION!=='1'}, async t => {
+  const tag='RETURN-'+randomUUID().slice(0,8);
+  const admin=await prisma.user.create({data:{username:tag,displayName:'退回验收管理员',passwordHash:'test-only',laborRole:'ADMIN'}});
+  const tech=await prisma.user.create({data:{username:tag+'-tech',displayName:'技术处理人',passwordHash:'test-only'}});
+  const cmd=async(input:PcInput,key=randomUUID())=>await mutateQualityFixture(input,admin,key) as any;
+  const settings=await prisma.qfSettings.findUnique({where:{id:'quality-fixtures'}});
+  await cmd({action:'SAVE_SETTINGS',version:settings?.version,supervisorIds:[],qualityIds:[],technicalIds:[tech.id]});
+  const cats=await Promise.all(['drawing','sop'].map(code=>prisma.resourceCategory.upsert({where:{code},update:{},create:{code,name:code,sortOrder:0}})));
+  const row=(id:string)=>prisma.qfPackage.findUniqueOrThrow({where:{id}});
+  const issue=(id:string)=>prisma.qfDocumentReturn.findUniqueOrThrow({where:{id}});
+  async function create(kinds=['drawing','sop']) {
+    const key=tag+'-'+randomUUID().slice(0,6);
+    const product=await prisma.drawingLibraryItem.create({data:{libraryKey:key,customerName:tag,specification:key,fixtureRequired:true,
+      files:{create:kinds.map(code=>({categoryId:cats.find(c=>c.code===code)!.id,originalName:code+'.pdf',mimeType:'application/pdf',objectKey:key+'/'+code,size:10,version:'V1',uploadedById:admin.id,sourceType:'MANUAL_UPLOAD'}))}},include:{files:true}});
+    const order=await prisma.workOrder.create({data:{code:key,productName:key,specification:key,stage:'frontend',drawingLibraryItemId:product.id,weekStartDate:new Date('2026-09-21T00:00:00+08:00')}});
+    const p=await cmd({action:'SAVE_PACKAGE',libraryItemId:product.id,revision:'A',needFixture:true,drawingFileIds:product.files.filter(f=>f.categoryId===cats[0].id).map(f=>f.id),sopFileIds:product.files.filter(f=>f.categoryId===cats[1].id).map(f=>f.id)});
+    await cmd({action:'SUBMIT',id:p.id,version:p.version});
+    return {product,order,p};
+  }
+  const sign=async(id:string,role:string)=>cmd({action:'APPROVE',id,version:(await row(id)).version,reviewRole:role,confirmed:true});
+  const reject=async(id:string,ids:string[],extra={})=>cmd({action:'RETURN',id,version:(await row(id)).version,reviewRole:'QUALITY',reason:'端子标注与技术要求需核对',fileIds:ids,...extra});
+  const reply=async(id:string,extra={})=>cmd({action:'RESPOND_RETURN',id,version:(await issue(id)).version,mode:'EXPLAIN',reason:'客户受控要求已核实，原标注正确',...extra});
+  const resubmit=async(id:string)=>{const cases=await prisma.qfDocumentReturn.findMany({where:{libraryItemId:id,status:{not:'RESOLVED'}}});return cmd({action:'RESUBMIT_RETURNS',libraryItemId:id,versions:Object.fromEntries(cases.map(c=>[c.id,c.version]))});};
+  await t.test('one returned SOP, required reason and valid identity, notifications, explanation and fresh signatures',async()=>{
+    const f=await create();const sop=f.product.files.find(v=>v.categoryId===cats[1].id)!;
+    await sign(f.p.id,'SUPERVISOR');
+    await assert.rejects(()=>reject(f.p.id,[]),/退回文件/);
+    await assert.rejects(()=>reject(f.p.id,[randomUUID()]),/受审/);
+    await assert.rejects(()=>reject(f.p.id,[sop.id],{reason:''}),/退回意见/);
+    await reject(f.p.id,[sop.id]);
+    const r=await prisma.qfDocumentReturn.findFirstOrThrow({where:{sourcePackageId:f.p.id}});
+    assert.equal(r.kind,'sop');assert.equal(r.fileId,sop.id);assert.equal((await row(f.p.id)).supervisorId,admin.id);
+    assert.equal(await prisma.qfDocumentReturn.count({where:{libraryItemId:f.product.id}}),1);
+    const n=await prisma.systemNotification.findFirstOrThrow({where:{sourceType:'QUALITY_DOCUMENT_RETURN',sourceId:f.product.id},include:{recipients:true}});
+    assert.ok(n.recipients.some(v=>v.userId===tech.id));assert.ok(n.recipients.some(v=>v.userId===admin.id));
+    await assert.rejects(()=>assertFixturePrintReady(prisma,f.order.id),/审核/);
+    await assert.rejects(()=>reply(r.id,{reason:' '}),/技术解释/);
+    const answer=await reply(r.id);await assert.rejects(()=>cmd({action:'RESPOND_RETURN',id:r.id,version:r.version,mode:'EXPLAIN',reason:'过期'}),/更新/);
+    const again=await resubmit(f.product.id);assert.notEqual(again.id,f.p.id);
+    assert.equal((await row(again.id)).qualityAt,null);assert.equal((await row(again.id)).supervisorAt,null);
+    await assert.rejects(()=>reply(r.id),/提交复核/);
+    await sign(again.id,'QUALITY');assert.equal((await issue(r.id)).status,'REVIEWING');
+    await assert.rejects(()=>assertFixturePrintReady(prisma,f.order.id),/双方审核/);
+    await sign(again.id,'SUPERVISOR');assert.equal((await issue(r.id)).status,'RESOLVED');
+    assert.ok(await assertFixturePrintReady(prisma,f.order.id),'missing BOM never blocks approved documents');
+    assert.equal((await issue(r.id)).responseText,answer.responseText);
+    assert.equal((await row(f.p.id)).status,'RETURNED');
+    assert.equal((await loadDocumentReturns(f.product.id)).events.filter(e=>e.action==='RESUBMIT_RETURNS').length,1);
+  });
+  await t.test('replacement cannot auto-submit or erase returns; exact lineage, conflict and duplicate protection',async()=>{
+    const f=await create(['drawing']);const old=f.product.files[0];
+    await sign(f.p.id,'SUPERVISOR');await sign(f.p.id,'QUALITY');
+    await prisma.qfPlanBinding.create({data:{workOrderId:f.order.id,packageId:f.p.id,selectedById:admin.id}});
+    const newer=await cmd({action:'SAVE_PACKAGE',id:f.p.id,version:(await row(f.p.id)).version,libraryItemId:f.product.id,revision:'B',needFixture:true,drawingFileIds:[old.id],sopFileIds:[]});
+    await cmd({action:'SUBMIT',id:newer.id,version:newer.version});await reject(newer.id,[old.id]);
+    await assert.rejects(()=>assertFixturePrintReady(prisma,f.order.id),/退回|不通过/);
+    const r=await prisma.qfDocumentReturn.findFirstOrThrow({where:{sourcePackageId:newer.id}});
+    const replacement=await prisma.drawingLibraryFile.create({data:{libraryItemId:f.product.id,categoryId:old.categoryId,originalName:'修正.pdf',mimeType:'application/pdf',objectKey:old.objectKey+'-v2',size:11,version:'V2',supersedesFileId:old.id,uploadedById:admin.id}});
+    await prisma.drawingLibraryFile.update({where:{id:old.id},data:{isCurrent:false}});
+    const synced=await prisma.$transaction(tx=>syncProductDocuments(tx,f.product.id,admin));assert.equal(synced?.status,'DRAFT');
+    await assert.rejects(()=>cmd({action:'SUBMIT',id:synced!.id,version:synced!.version}),/未关闭/);
+    await assert.rejects(()=>resubmit(f.product.id),/先逐项/);
+    await assert.rejects(()=>reply(r.id),/被替换/);
+    const wrong=await create(['drawing']);await assert.rejects(()=>reply(r.id,{mode:'REPLACE',fileId:wrong.product.files[0].id}),/被替换|当前版本/);
+    await reply(r.id,{mode:'REPLACE',fileId:replacement.id,reason:'按客户要求修正端子序号'});
+    const answered=await issue(r.id),key=randomUUID(),body={action:'RESUBMIT_RETURNS',libraryItemId:f.product.id,versions:{[r.id]:answered.version}};
+    const a=await cmd(body,key),b=await cmd(body,key);assert.equal(a.id,b.id);
+    assert.equal((await prisma.qfPlanBinding.findUniqueOrThrow({where:{workOrderId:f.order.id}})).packageId,a.id,'older bindings to the exact rejected file follow the corrected round');
+    await sign(a.id,'SUPERVISOR');await sign(a.id,'QUALITY');assert.ok(await assertFixturePrintReady(prisma,f.order.id));
+    assert.equal((await issue(r.id)).status,'RESOLVED');assert.equal((await issue(r.id)).responseFileId,replacement.id);
+  });
+  await t.test('repeat rejection retains prior explanations, requires every issue, and closes only on final dual approval',async()=>{
+    const f=await create();await reject(f.p.id,f.product.files.map(v=>v.id));
+    let cases=await prisma.qfDocumentReturn.findMany({where:{libraryItemId:f.product.id}});
+    await reply(cases[0].id);await assert.rejects(()=>resubmit(f.product.id),/先逐项/);await reply(cases[1].id);
+    const p=await resubmit(f.product.id);await reject(p.id,[f.product.files[0].id],{reason:'解释仍未覆盖此尺寸'});
+    cases=await prisma.qfDocumentReturn.findMany({where:{libraryItemId:f.product.id}});
+    assert.equal(cases.length,3);assert.equal(cases.filter(c=>c.status==='READY').length,2);
+    assert.ok(cases.filter(c=>c.status==='READY').every(c=>c.responseText.length>0));
+    await reply(cases.find(c=>c.status==='OPEN')!.id);const next=await resubmit(f.product.id);
+    await sign(next.id,'QUALITY');await sign(next.id,'SUPERVISOR');
+    assert.equal(await prisma.qfDocumentReturn.count({where:{libraryItemId:f.product.id,status:'RESOLVED'}}),3);
+  });
+  await t.test('file deletion or omission cannot silently clear an unresolved issue',async()=>{
+    const f=await create();const old=f.product.files[0];await reject(f.p.id,[old.id]);
+    const r=await prisma.qfDocumentReturn.findFirstOrThrow({where:{sourcePackageId:f.p.id}});await reply(r.id);
+    await prisma.drawingLibraryFile.update({where:{id:old.id},data:{deletedAt:new Date()}});
+    await assert.rejects(()=>resubmit(f.product.id),/已变化/);
+    const synced=await prisma.$transaction(tx=>syncProductDocuments(tx,f.product.id,admin));assert.equal(synced?.status,'DRAFT');
+    await assert.rejects(()=>cmd({action:'SUBMIT',id:synced!.id,version:synced!.version}),/未关闭/);
+    assert.equal((await issue(r.id)).status,'READY');
+  });
+});
+test.after(async()=>prisma.$disconnect());

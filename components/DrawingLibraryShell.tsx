@@ -1,4 +1,6 @@
 'use client';
+import DocumentReturnPanel from '@/components/quality-fixtures/DocumentReturnPanel';
+import DrawingFileHistory, { fileTimeLabel } from '@/components/quality-fixtures/DrawingFileHistory';
 import FixtureRequirementControl from '@/components/quality-fixtures/FixtureRequirementControl';
 import { PlanWeekFilter } from '@/components/PlanWeekFilter';
 import { planWeekLabel } from '@/lib/drawing-plan-week';
@@ -39,7 +41,7 @@ type DrawingLibraryForm = {
   remark: string;
 };
 
-type DrawingFilter = 'fixture_pending' | 'review_scope' | 'missing_drawing' | 'missing_sop' | 'all' | 'complete' | 'recent' | 'anomaly';
+type DrawingFilter = 'review_failed' | 'review_recheck' | 'fixture_pending' | 'review_scope' | 'missing_drawing' | 'missing_sop' | 'all' | 'complete' | 'recent' | 'anomaly';
 type SopFilter = 'all' | 'unset' | SopStageDTO | 'missing_drawing';
 type SopMetadataForm = { sopStage: SopStageDTO; drawingStatus: SopDrawingStatusDTO; remark: string };
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
@@ -115,6 +117,8 @@ const warningPrintPolicyLabels: Record<DrawingQualityWarning['printPolicy'], str
 const emptyForm: DrawingLibraryForm = { customerName: '', productName: '', specification: '', remark: '' };
 const filterOptions: Array<[DrawingFilter, string]> = [
   ['all', '全部'],
+  ['review_failed', '审核不通过'],
+  ['review_recheck', '已提交复核'],
   ['missing_drawing', '缺图纸'],
   ['missing_sop', '缺 SOP'],
   ['fixture_pending', '治具未选择'],
@@ -241,6 +245,9 @@ export function DrawingLibraryShell({
   const requestedActiveItem = initialItems.find(item => item.id === requestedItemId) || null;
   const [selectedId, setSelectedId] = useState(requestedItemId ? (requestedActiveItem?.id || '') : (initialItems[0]?.id || ''));
   const [selectedFileId, setSelectedFileId] = useState('');
+  const [returnProduct, setReturnProduct] = useState<{ id: string; specification: string } | null>(null);
+  const [historyFile, setHistoryFile] = useState<DrawingLibraryFileDTO | null>(null);
+  useEffect(() => { if (requestedActiveItem && new URLSearchParams(window.location.search).get('returns') === '1') setReturnProduct(requestedActiveItem); }, [requestedActiveItem]);
   const [previewMode, setPreviewMode] = useState<'structured' | 'file'>('file');
   const lastFilesByCategory = useRef<Record<string, string>>({});
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
@@ -291,12 +298,14 @@ export function DrawingLibraryShell({
   const requestedItemLoadingRef = useRef('');
 
   const visibleItems = useMemo(() => items.filter(item => {
+    if (filter === 'review_failed' && !item.returnSummary?.some(r => ['OPEN','READY'].includes(r.status))) return false;
+    if (filter === 'review_recheck' && !item.returnSummary?.some(r => r.status === 'REVIEWING')) return false;
     if (customer !== '全部客户' && item.customerName !== customer) return false;
     if (sopFilter === 'all') return true;
     if (sopFilter === 'unset') return !item.sopMetadata;
     if (sopFilter === 'missing_drawing') return item.sopMetadata?.drawingStatus === 'missing';
     return item.sopMetadata?.sopStage === sopFilter;
-  }), [customer, items, sopFilter]);
+  }), [customer, items, sopFilter, filter]);
   const referenceResolutionPending = !selectedId && (referenceResolving || !!missingReference);
   const selectedItem = visibleItems.find(item => item.id === selectedId)
     || (!referenceResolutionPending ? visibleItems[0] : null);
@@ -408,7 +417,7 @@ export function DrawingLibraryShell({
       }
     }
 
-    if (!targetItemId || (week && !items.some(item => item.id === targetItemId))) {
+    if (!targetItemId || ((week || ['review_failed','review_recheck'].includes(filter)) && !items.some(item => item.id === targetItemId))) {
       setReferenceResolving(false);
       return;
     }
@@ -480,7 +489,7 @@ export function DrawingLibraryShell({
         setMsg('图纸文件不存在或已删除。');
       }
     }
-  }, [canManageDrawing, items, keyword, week]);
+  }, [canManageDrawing, items, keyword, week, filter]);
 
   useEffect(() => {
     if (selectedFile && selectedFile.id !== selectedFileId) setSelectedFileId(selectedFile.id);
@@ -581,7 +590,7 @@ export function DrawingLibraryShell({
       setCustomer(current => current !== '全部客户' && !nextItems.some(item => item.customerName === current) ? '全部客户' : current);
       setSelectedId(current => {
         if (nextItems.some(item => item.id === current)) return current;
-        if (!week && requestedItemId && !nextItems.some(item => item.id === requestedItemId)) return '';
+        if (!week && !['review_failed','review_recheck'].includes(filter) && requestedItemId && !nextItems.some(item => item.id === requestedItemId)) return '';
         return nextItems[0]?.id || '';
       });
     } catch (reason) {
@@ -948,7 +957,10 @@ export function DrawingLibraryShell({
     setMissingReference(null);
     setReferenceResolving(false);
     setSelectedId(item.id);
-    setSelectedFileId(lastFilesByCategory.current[`${item.id}:${activeCategoryId}`] || '');
+    const problem = item.returnSummary?.find(r => r.status === 'OPEN' || r.status === 'READY') || item.returnSummary?.[0];
+    const problemFile = problem && item.files.find(f => f.id === (problem.responseFileId || problem.fileId));
+    if (problemFile) { setActiveCategoryId(problemFile.categoryId); setQualityWarningMode(false); setSelectedFileId(problemFile.id); }
+    else setSelectedFileId(lastFilesByCategory.current[`${item.id}:${activeCategoryId}`] || '');
     urlMissingWarnedRef.current = false;
     const url = new URL(window.location.href);
     url.searchParams.set('itemId', item.id);
@@ -1041,6 +1053,7 @@ export function DrawingLibraryShell({
           </label>
 
           <PlanWeekFilter value={week} onChange={changeWeek} />
+          <button type="button" className="drawing-return-filter" aria-pressed={filter === "review_failed"} onClick={() => requestPreviewLeave(() => setFilter(filter === "review_failed" ? "all" : "review_failed"))}><FileWarning size={14}/>审核不通过</button>
           <label className="hm-drawing-customer-filter">
             <span>客户</span>
             <select className="hm-workbench-input" value={customer} onChange={event => { const value = event.target.value; requestPreviewLeave(() => setCustomer(value)); }}>
@@ -1100,6 +1113,8 @@ export function DrawingLibraryShell({
                     {item.sopMetadata && <span className={`sop-stage ${item.sopMetadata.sopStage}`} title={`SOP：${sopStageLabels[item.sopMetadata.sopStage]}`}>{sopStageLabels[item.sopMetadata.sopStage]}</span>}
                   </div>
                   <p title={`${item.customerName} · ${item.productName || '未设置品名'}`}>{item.customerName} · {item.productName || '未设置品名'}</p>
+                  {!!item.returnSummary?.length && <span className="drawing-return-summary" title={item.returnSummary.map(r => r.reason).join("；")}>{[...new Set(item.returnSummary.map(r => r.kind === "sop" ? "SOP" : r.kind === "drawing" ? "图纸" : "资料"))].join("、")} · {item.returnSummary.some(r => r.status === "OPEN" || r.status === "READY") ? "审核不通过" : "已提交复核"}</span>}
+                  {["review_failed", "review_recheck"].includes(filter) && item.returnSummary?.[0] && <small className="drawing-return-excerpt" title={item.returnSummary[0].reason}>{item.returnSummary[0].reason} · {dt(item.returnSummary[0].createdAt)}</small>}
                   <footer>
                     <em>{item.fileCount ? item.completenessText : '待上传'}</em>
                     <span>{week && item.planBatchCount ? `${item.planBatchCount} 批计划 · ` : ''}{item.fileCount ? `${item.fileCount} 个文件` : '档案已建立'}</span>
@@ -1177,7 +1192,8 @@ export function DrawingLibraryShell({
                     {hasText(selectedItem.productName) && <em title={selectedItem.productName || ''}>{selectedItem.productName}</em>}
                     <small>{selectedItem.fileCount ? selectedItem.completenessText : '档案已建立 · 待上传资料'}</small>
                     {selectedItem.fileCount > 0 && <small>{selectedItem.fileCount} 个文件</small>}
-                    <small>更新于 {dt(selectedItem.updatedAt)}</small>
+                    <small>档案更新 {dt(selectedItem.updatedAt)}</small>
+                    {!!selectedItem.returnSummary?.length && <button className="drawing-return-summary" type="button" onClick={() => setReturnProduct(selectedItem)}>退回处理 {selectedItem.returnSummary.length} 项 ↗</button>}
                     {selectedItem.isAnomaly && <small className="anomaly">{selectedItem.anomalyReason}</small>}
                     {qualityWarnings.length > 0 && <button className="drawing-quality-warning-chip" type="button" onClick={() => requestPreviewLeave(() => { setQualityWarningMode(true); setFilePanelOpen(false); })}><ShieldAlert size={12} />{qualityWarnings.length} 条质量异常</button>}
                   </p>
@@ -1259,6 +1275,7 @@ export function DrawingLibraryShell({
                           <button className={!showStructuredPreview ? 'active' : ''} type="button" aria-pressed={!showStructuredPreview} disabled={!selectedFile} onClick={() => setPreviewMode('file')}>附件证据 {activeFiles.length}</button>
                         </span> : <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>}
                       </div>
+                      {selectedFile && <div className="drawing-file-time"><span>{fileTimeLabel(selectedFile.timing?.timeKind)}：{dt(selectedFile.timing?.recordedAt || selectedFile.createdAt)}</span><span>内容变更：{selectedFile.timing?.contentChangedAt ? dt(selectedFile.timing.contentChangedAt) : selectedFile.timing?.firstUploadedAt ? "尚未变更" : "历史未记录"}</span><button type="button" onClick={() => setHistoryFile(selectedFile)}>上传与变更履历 ↗</button>{selectedItem.returnSummary?.some(r => r.fileId === selectedFile.id || r.responseFileId === selectedFile.id) && <button className="drawing-return-summary" type="button" onClick={() => setReturnProduct(selectedItem)}>查看退回与技术回复 ↗</button>}</div>}
 
                       {isSopCategory ? (
                         <div className="drawing-sop-metadata" aria-label="SOP 资料属性">
@@ -1341,6 +1358,8 @@ export function DrawingLibraryShell({
                   <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => requestPreviewLeave(() => { setSelectedFileId(file.id); setPreviewMode('file'); })}>
                     <b>{file.fileType === 'pdf' ? 'PDF' : file.fileType === 'image' ? 'IMG' : 'FILE'}</b>
                     <span title={safeDisplayFilename(file)}>{safeDisplayFilename(file)}</span>
+                    {selectedItem.returnSummary?.some(r => r.fileId === file.id || r.responseFileId === file.id) && <small className="drawing-return-summary">{selectedItem.returnSummary.some(r => (r.fileId === file.id || r.responseFileId === file.id) && ["OPEN","READY"].includes(r.status)) ? "审核不通过" : "待复核"}</small>}
+                    <small className="drawing-file-card-time">{fileTimeLabel(file.timing?.timeKind)} {dt(file.timing?.recordedAt || file.createdAt)}{file.timing?.contentChangedAt ? " · 已变更" : ""}</small>
                     <em>{file.version || 'V1.0'} · {bytes(file.fileSize)}{file.controlMode ? ` · ${file.controlMode === 'controlled' ? '受控' : '未受控'}` : ''}</em>
                   </button>
                 ))}
@@ -1586,6 +1605,8 @@ export function DrawingLibraryShell({
       />
 
       {quickCreateOpen&&selectedItem&&createPortal(<QuickQualityForm productId={selectedItem.id} onClose={()=>setQuickCreateOpen(false)} onSaved={()=>{setQuickCreateOpen(false);setQualityWarningMode(true);window.dispatchEvent(new Event('quality-quick-changed'));}}/>,document.body)}
+      {returnProduct && <DocumentReturnPanel key={returnProduct.id} productId={returnProduct.id} title={returnProduct.specification} canManage={canManageDrawing || canManageArchive} onClose={() => setReturnProduct(null)} onChanged={loadData} onNext={visibleItems.some(i => i.id !== returnProduct.id && i.returnSummary?.some(r => ["OPEN","READY"].includes(r.status))) ? () => { const next = visibleItems.find(i => i.id !== returnProduct.id && i.returnSummary?.some(r => ["OPEN","READY"].includes(r.status))); if (next) { setReturnProduct(next); void chooseItemNow(next); } } : undefined}/>}
+      {historyFile && <DrawingFileHistory file={historyFile} onClose={() => setHistoryFile(null)}/>}
       {warningPhotos&&<QuickPhotoViewer {...warningPhotos} onClose={()=>setWarningPhotos(null)}/>}
     </main>
   );

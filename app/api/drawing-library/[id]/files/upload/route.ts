@@ -9,6 +9,8 @@ import { prisma } from '@/lib/prisma';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { safeFilename, validateFileContent } from '@/lib/validation';
 import { inspectMediaImage } from '@/lib/media-assets';
+import { lockFixtureBusiness, qfJson } from '@/lib/quality-fixture-service';
+import { FixtureError } from '@/lib/quality-fixture-domain';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,6 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const categoryName = String(form.get('categoryName') || '').trim();
     const displayName = cleanText(form.get('displayName'), 160);
     const remark = cleanText(form.get('remark'), 500);
+    const replaceFileId = cleanText(form.get('replaceFileId'), 100);
     const up = form.get('file');
     if (!categoryId && !categoryName) return NextResponse.json({ ok: false, error: '请选择资料分类' }, { status: 400 });
     if (!(up instanceof File)) return NextResponse.json({ ok: false, error: '请选择文件' }, { status: 400 });
@@ -61,7 +64,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     let result;
     try {
       result = await prisma.$transaction(async tx => {
+        await lockFixtureBusiness(tx);
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`drawing-library:${item.id}:${category.id}`}))`;
+        const replaces = replaceFileId ? await tx.drawingLibraryFile.findFirst({ where: { id: replaceFileId, libraryItemId: item.id,
+          categoryId: category.id, deletedAt: null, isCurrent: true } }) : null;
+        if (replaceFileId && !replaces) throw new FixtureError('待替换文件已变化，请刷新后选择当前版本', 'FIXTURE_CONFLICT', 409);
         const files = await tx.drawingLibraryFile.findMany({
           where: { libraryItemId: item.id, categoryId: category.id },
           select: { version: true },
@@ -91,12 +98,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             version,
             uploadedById: user.id,
             remark,
+            supersedesFileId: replaces?.id,
           },
           include: {
             category: { select: { id: true, name: true, code: true, sortOrder: true } },
             uploadedBy: { select: { displayName: true, username: true } },
           },
         });
+        if (replaces) {
+          await tx.drawingLibraryFile.update({ where: { id: replaces.id }, data: { isCurrent: false } });
+          await tx.qfEvent.create({ data: { entityType: 'DOCUMENT_RETURN', entityId: item.id, action: 'REPLACE_DOCUMENT',
+            actorId: user.id, actorName: user.displayName || user.username, reason: remark || '',
+            snapshot: qfJson({ before: { id: replaces.id, name: replaces.displayName || replaces.originalName, version: replaces.version },
+              after: { id: created.id, name: created.displayName || created.originalName, version: created.version } }) } });
+        }
         await tx.drawingLibraryItem.update({ where: { id: item.id }, data: { updatedAt: new Date() } });
         await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: item.id });
         const sync = await synchronizeDrawingLibraryWorkOrderStatus(tx, item.id);
@@ -118,6 +133,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true, file: serializeDrawingLibraryFile(file), sync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof FixtureError) return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });
     console.error(e);
     return NextResponse.json({ ok: false, error: '图纸资料文件上传失败，请检查对象存储配置' }, { status: 500 });
   }
