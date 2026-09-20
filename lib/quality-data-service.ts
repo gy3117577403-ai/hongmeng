@@ -7,7 +7,7 @@ import { reportRangeQuery } from '@/lib/report-date-range';
 import { bindQualityTeam } from './quality-data-options';
 import {
   assertQualityEdit, assertQualitySubmission, beijingInput, qualityDate, qualityForm, qualityResult, qualityText, qualityType,
-  QualityDataError, type QualityActor, type QualityFormData, type QualityOrder, type QualityRecord,
+  QualityDataError, QUALITY_LABELS, type QualityActor, type QualityFormData, type QualityOrder, type QualityRecord, type QualityDataType,
 } from '@/lib/quality-data';
 
 export const orderInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
@@ -152,19 +152,21 @@ export async function qualityFirstOverview(workOrderId: string) {
   const steps = [...order.steps.map(step => ({ ...step, retired: false })), ...historical].map(step => ({ ...step, result: latest.find(record => record.inspectionStepId === step.id)?.result || null, count: counts.find(record => record.inspectionStepId === step.id)?._count || 0 }));
   return { order, steps, unassignedCount: counts.find(record => record.inspectionStepId === null)?._count || 0 };
 }
-function patrolContext(): QualityOrder {
-  return { id: '', code: '', businessCode: null, sourceOrderNo: null, customerName: null, productName: '巡检报表', specification: null,
+function patrolContext(type: QualityDataType): QualityOrder {
+  return { id: '', code: '', businessCode: null, sourceOrderNo: null, customerName: null, productName: QUALITY_LABELS[type], specification: null,
     orderDate: null, stage: 'archive', quantity: null, planOrderId: null, batchId: null, batchNo: null, sourceLineNo: null,
     rootWorkOrderId: null, parentWorkOrderId: null, steps: [] };
 }
-async function resolveInspectionStep(tx: Prisma.TransactionClient, workOrderId: string, stepId: string) {
-  if (!stepId) throw new QualityDataError('请选择本次首件检验的具体工序');
-  const step = await tx.workOrderProcessStep.findFirst({ where: { id: stepId, retiredAt: null, route: { workOrderId } }, select: { id: true, processName: true, position: true, routeId: true } });
-  if (!step) throw new QualityDataError('所选工序不属于当前工单，或已退役，请刷新后重新选择', 409);
-  return { id: step.id, name: step.processName, position: step.position, routeId: step.routeId };
-}
-function assertPaperResult(type: string, data: QualityFormData) {
-  if (type === 'FIRST' && data.paper && !data.paper.result) throw new QualityDataError('请选择本次首件检验结果');
+function preparePaperData(data: QualityFormData, inspectedAt: Date, archive: boolean) {
+  if (archive) {
+    if (data.mode !== 'FILE') throw new QualityDataError('首检和巡检报表请上传照片或 PDF 归档');
+    data.paper = { ...data.paper, area: data.paper?.area || '', result: 'PENDING', archive: true };
+    data.rows = [];
+  } else if (data.paper) {
+    // A historical product decision must not be erased by an archive-mode edit.
+    data.paper.archive = false;
+  }
+  if (data.paper?.dateEnd && data.paper.dateEnd < beijingInput(inspectedAt).slice(0, 10)) throw new QualityDataError('覆盖结束日期不能早于开始日期');
 }
 /** Aggregate all matching records in SQL; dates are Shanghai inspection dates, not upload dates. */
 export async function qualityArchiveDays(params: URLSearchParams) {
@@ -200,14 +202,16 @@ export async function createQualityRecord(actor: QualityActor, body: Record<stri
   if (!title) throw new QualityDataError('请填写记录标题');
   const workOrderId = qualityText(body.workOrderId, 120) || null, sourceQrCode = qualityText(body.sourceQrCode, 120) || null;
   const inspectionStepId = qualityText(body.inspectionStepId, 120) || null;
-  if (type === 'PATROL' && (sourceQrCode || workOrderId)) throw new QualityDataError('巡检报表按日期归档，请从质量数据入口上传，无需关联单一工单');
-  if (type !== 'FIRST' && inspectionStepId) throw new QualityDataError('首件检验工序关联不适用于此类型');
-  if (type !== 'PATROL' && !workOrderId) throw new QualityDataError('请选择本次检验工单');
+  const archive = type === 'FIRST' || type === 'PATROL';
+  if (archive && (sourceQrCode || workOrderId || inspectionStepId || body.supersedesId)) throw new QualityDataError('首检和巡检报表按日期归档，无需关联工单或工序，请从日期报表入口上传');
+  if (!archive && inspectionStepId) throw new QualityDataError('检验工序关联不适用于此类型');
+  if (!archive && !workOrderId) throw new QualityDataError('请选择本次检验工单');
+  preparePaperData(data, inspectedAt, archive);
   const supersedesId = qualityText(body.supersedesId, 120) || null;
   const idempotencyKey = qualityText(body.idempotencyKey, 100);
   if (!/^[a-zA-Z0-9_-]{16,100}$/.test(idempotencyKey)) throw new QualityDataError('提交标识无效，请重新打开表单');
   const status = body.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT';
-  if (status === 'SUBMITTED') { assertPaperResult(type, data); assertQualitySubmission(data, 0); }
+  if (status === 'SUBMITTED') assertQualitySubmission(data, 0);
   const requestHash = createHash('sha256').update(JSON.stringify({ type, data, inspectedAt, title, workOrderId, inspectionStepId, sourceQrCode, supersedesId, status })).digest('hex');
   return prisma.$transaction(async tx => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'quality-data-create:' + actor.id + ':' + idempotencyKey}))`;
@@ -216,9 +220,7 @@ export async function createQualityRecord(actor: QualityActor, body: Record<stri
       if (previous.requestHash !== requestHash) throw new QualityDataError('同一提交标识的内容发生变化，请刷新记录后继续编辑', 409);
       return serializeQuality(previous);
     }
-    const orderSnapshot = workOrderId ? await readQualityOrder(tx, workOrderId) : patrolContext();
-    const inspectionStepSnapshot = type === 'FIRST' ? await resolveInspectionStep(tx, workOrderId!, inspectionStepId || '') : null;
-    if (inspectionStepSnapshot) data.context.processName = inspectionStepSnapshot.name;
+    const orderSnapshot = workOrderId ? await readQualityOrder(tx, workOrderId) : patrolContext(type);
     await bindQualityTeam(tx, data);
     if (sourceQrCode) {
       const ticket = await tx.workOrderQrTicket.findUnique({ where: { publicCode: sourceQrCode } });
@@ -232,7 +234,7 @@ export async function createQualityRecord(actor: QualityActor, body: Record<stri
     const id = randomUUID();
     const record = await tx.qualityDataRecord.create({ data: {
       id, code: 'QD-' + beijingInput().slice(0,10).replaceAll('-', '') + '-' + id.slice(0,8).toUpperCase(),
-      workOrderId, inspectionStepId, ...(inspectionStepSnapshot ? { inspectionStepSnapshot: json(inspectionStepSnapshot) } : {}), type, data: json(data), orderSnapshot: json(orderSnapshot), title, inspectedAt, status,
+      workOrderId, inspectionStepId, type, data: json(data), orderSnapshot: json(orderSnapshot), title, inspectedAt, status,
       result: qualityResult(data), searchText: searchText(orderSnapshot, data, title, actor.name),
       createdById: actor.id, createdByName: actor.name, updatedById: actor.id,
       sourceQrCode, supersedesId, idempotencyKey, requestHash, submittedAt: status === 'SUBMITTED' ? new Date() : null,
@@ -290,16 +292,16 @@ export async function mutateQualityRecord(id: string, actor: QualityActor, body:
       await bindQualityTeam(tx, data, current.data as unknown as QualityFormData);
       if (!title) throw new QualityDataError('请填写记录标题');
       const status = action === 'SUBMIT' || current.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT';
-      if (current.type === 'FIRST') {
-        const requestedStep = qualityText(body.inspectionStepId, 120);
-        if (requestedStep && requestedStep !== current.inspectionStepId) {
-          if (current.inspectionStepId) throw new QualityDataError('已登记的工序不能更换，请另建检验记录', 409);
-          if (!actor.canManage || !reason) throw new QualityDataError('历史首件记录须由质量管理人员注明原因后补充工序', 403);
-          const step = await resolveInspectionStep(tx, current.workOrderId!, requestedStep);
-          update.inspectionStepId = step.id; update.inspectionStepSnapshot = json(step); data.context.processName = step.name;
-        } else if (current.inspectionStepSnapshot) data.context.processName = (current.inspectionStepSnapshot as { name: string }).name;
+      if (current.type === 'FIRST' || current.type === 'PATROL') {
+        if (body.inspectionStepId && body.inspectionStepId !== current.inspectionStepId) throw new QualityDataError('历史工序来源只读，新报表按日期归档', 409);
+        if (body.workOrderId && body.workOrderId !== current.workOrderId) throw new QualityDataError('历史工单来源只读，新报表按日期归档', 409);
+        if (!current.workOrderId && (current.data as unknown as QualityFormData).mode === 'FILE' && data.mode !== 'FILE') throw new QualityDataError('日期报表请使用照片或 PDF 归档');
+        preparePaperData(data, inspectedAt, !current.workOrderId && data.mode === 'FILE');
+      } else if (data.paper) {
+        data.paper.archive = false;
       }
-      if (status === 'SUBMITTED') { assertPaperResult(current.type, data); assertQualitySubmission(data, current.attachments.filter(file => !file.deletedAt).length); }
+      if (current.inspectionStepSnapshot) data.context.processName = (current.inspectionStepSnapshot as { name: string }).name;
+      if (status === 'SUBMITTED') assertQualitySubmission(data, current.attachments.filter(file => !file.deletedAt).length);
       update = { ...update, data: json(data), inspectedAt, title, status, result: qualityResult(data),
         reviewStatus: 'UNREVIEWED', reviewedAt: null, reviewedByName: null, reviewNote: null,
         submittedAt: current.submittedAt || (status === 'SUBMITTED' ? new Date() : null),

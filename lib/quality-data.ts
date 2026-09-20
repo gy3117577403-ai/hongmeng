@@ -24,7 +24,7 @@ export type QualityMeasurement = {
 };
 export type QualityFormData = {
   mode: 'FORM' | 'FILE'; context: QualityContext; rows: QualityMeasurement[]; summary: string; teamId?: string;
-  paper?: { result: QualityResult | null; area: string };
+  paper?: { result: QualityResult | null; area: string; archive?: boolean; dateEnd?: string };
 };
 export type QualityInspectionStep = { id: string; name: string; position?: number; routeId?: string };
 export const isFirstInspectionProcess = (name: string) => /首件|首检/.test(name);
@@ -124,25 +124,39 @@ export function qualityForm(value: unknown): QualityFormData {
   if (input.paper !== undefined) {
     if (!input.paper || typeof input.paper !== 'object' || Array.isArray(input.paper)) throw new QualityDataError('纸质检验信息格式不正确');
     const p = input.paper as Record<string, unknown>;
-    if (p.result !== null && !['PENDING', 'PASS', 'FAIL'].includes(String(p.result))) throw new QualityDataError('检验结果无效');
-    paper = { result: p.result as QualityResult | null, area: qualityText(p.area, 160) };
+    if (p.result != null && !['PENDING', 'PASS', 'FAIL'].includes(String(p.result))) throw new QualityDataError('检验结果无效');
+    paper = { result: (p.result ?? null) as QualityResult | null, area: qualityText(p.area, 160) };
+    if (p.archive !== undefined) {
+      if (typeof p.archive !== 'boolean') throw new QualityDataError('归档方式无效');
+      paper.archive = p.archive;
+    }
+    if (p.dateEnd) {
+      const end = qualityText(p.dateEnd, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(end)) throw new QualityDataError('覆盖结束日期无效');
+      qualityDate(end + 'T00:00');
+      paper.dateEnd = end;
+    }
     if (input.mode !== 'FILE') throw new QualityDataError('照片归档须使用文件模式');
   }
   return { mode: input.mode, context, rows, summary: qualityText(input.summary, 4000), teamId: qualityText(input.teamId, 120), ...(paper ? { paper } : {}) };
 }
 export function qualityResult(data: QualityFormData): QualityResult {
+  if (data.paper?.archive) return 'PENDING';
   if (data.mode === 'FILE') return Number(data.context.defectQty || 0) > 0 ? 'FAIL' : data.paper?.result || 'PENDING';
   if (data.rows.some(row => row.result === 'FAIL') || Number(data.context.defectQty || 0) > 0) return 'FAIL';
   const measured = data.rows.filter(row => row.value);
   return measured.length && measured.every(row => row.result === 'PASS') ? 'PASS' : 'PENDING';
 }
 export function assertQualitySubmission(data: QualityFormData, attachments: number) {
-  if (!data.context.inspectedBy) throw new QualityDataError('请填写实际检验人');
+  if (!data.paper?.archive && !data.context.inspectedBy) throw new QualityDataError('请填写实际检验人');
   if (data.mode === 'FILE') {
     if (!attachments) throw new QualityDataError('文件归档需至少上传一份附件');
   } else if (data.rows.some(row => row.value && !row.item) || (!data.rows.some(row => row.item && row.value) && !attachments)) {
     throw new QualityDataError('请填写至少一项检验结果或上传附件；已填结果须有项目名称');
   }
+}
+export function isPaperArchive(record: Pick<QualityRecord, 'type' | 'workOrderId' | 'data'>): boolean {
+  return (record.type === 'FIRST' || record.type === 'PATROL') && !record.workOrderId && record.data.mode === 'FILE';
 }
 export function emptyQualityForm(type: QualityDataType, inspector = ''): QualityFormData {
   const context = Object.fromEntries(CONTEXT_FIELDS.map(([key]) => [key, key === 'inspectedBy' ? inspector : ''])) as QualityContext;

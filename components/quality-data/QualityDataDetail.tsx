@@ -5,7 +5,7 @@ import ReportQualityEditor from './ReportQualityEditor';
 import { qualityResponsibilityLabel } from '@/lib/process-quality-report';
 import { useState } from 'react';
 import { Download, FileText, History, Pencil, RotateCcw, ShieldCheck, Trash2, X } from 'lucide-react';
-import { CONTEXT_FIELDS, QUALITY_LABELS, RESULT_LABELS, REVIEW_LABELS, beijingInput, type QualityRecord } from '@/lib/quality-data';
+import { CONTEXT_FIELDS, isPaperArchive, QUALITY_LABELS, RESULT_LABELS, REVIEW_LABELS, beijingInput, type QualityRecord } from '@/lib/quality-data';
 import { qualityJson, qualityRequest } from './client';
 import type { CurrentUserDTO } from '@/types';
 type HistoryPage = { total: number; items: Array<{ version: number; action: string; reason: string; actorName: string; createdAt: string }>; page: number };
@@ -31,10 +31,10 @@ export default function QualityDataDetail({ record, user, onChanged, onEdit, onR
     catch (e) { setError(e instanceof Error ? e.message : '读取历史失败'); }
   }
   return <section className="qd-detail" aria-label="检验记录详情">
-    <header><div><small>{r.code} · V{r.version}</small><h2>{r.title}</h2></div><span className={'qd-badge ' + r.result.toLowerCase()}>{r.sourceCompletionId && r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result]}</span></header>
+    <header><div><small>{r.code} · V{r.version}</small><h2>{r.title}</h2></div><span className={'qd-badge ' + r.result.toLowerCase()}>{isPaperArchive(r) ? (r.status === 'DRAFT' ? '草稿' : '已归档') : r.sourceCompletionId && r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result]}</span></header>
     {!old && record.workOrderId && !record.deletedAt && record.status === 'SUBMITTED' && (user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:CREATE')) && <Link className="qd-source-exception" href={'/workspace/quality/internal-risks?sourceRecordId=' + encodeURIComponent(record.id) + '&workOrderId=' + encodeURIComponent(record.workOrderId)}>从本次检验建立异常工单 · 带入订单批次</Link>}
     {r.sourceCompletionId && r.workOrderId && r.reportSnapshot && <section className="qd-report-source"><div><span>来自工序报工 · 第 {r.reportSnapshot.position} 道</span><b>{r.reportSnapshot.processName}</b></div><div className="qd-report-numbers"><span>检验总数<strong>{r.reportSnapshot.quantity}<small>{r.reportSnapshot.unit}</small></strong></span><span>不良<strong>{r.reportSnapshot.defectQty}<small>{r.reportSnapshot.unit}</small></strong></span><span>不良率<strong>{r.reportSnapshot.quantity > 0 ? (r.reportSnapshot.defectQty / r.reportSnapshot.quantity * 100).toFixed(2) + '%' : '—'}</strong></span></div><p>责任：{qualityResponsibilityLabel(r.responsibility, r.reportSnapshot.defectQty)}</p><small>检验总数含不良。同一产品的不同工序分别统计。</small><Link href={'/production?workOrderId=' + encodeURIComponent(r.workOrderId) + '&stepId=' + encodeURIComponent(r.reportSnapshot.stepId)}>查看原工单与报工记录 ↗</Link></section>}
-    <div className="qd-detail-tags"><span>{QUALITY_LABELS[r.type]}</span><span>{r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交'}</span><span>{REVIEW_LABELS[r.reviewStatus]}</span></div>
+    <div className="qd-detail-tags"><span>{QUALITY_LABELS[r.type]}</span><span>{r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交'}</span>{!isPaperArchive(r) && <span>{REVIEW_LABELS[r.reviewStatus]}</span>}</div>
     {old && <div className="qd-alert">正在查看 V{old.version} 历史快照<button onClick={() => setOld(null)}>返回当前版本</button></div>}
     {error && <p className="qd-alert error" role="alert">{error}</p>}
     {r.deletedAt && <p className="qd-alert error">作废原因：{r.deleteReason}</p>}
@@ -60,7 +60,7 @@ export default function QualityDataDetail({ record, user, onChanged, onEdit, onR
       {!old && !record.deletedAt && record.status === 'SUBMITTED' && onRetest && <button onClick={onRetest} disabled={busy}><RotateCcw size={15}/>新增复检</button>}
       <Link target="_blank" href={'/workspace/quality/data/' + record.id + '/print' + (old ? '?version=' + old.version : '')}><Download size={15}/>PDF / 打印</Link>
       <button onClick={() => void loadHistory()}><History size={15}/>修订历史</button>
-      {!old && canReview && !record.deletedAt && record.status === 'SUBMITTED' && <><button disabled={busy} onClick={() => void action('REVIEW','确认复核')}><ShieldCheck size={15}/>复核</button><button disabled={busy} onClick={() => void action('RETURN','退回补充')}>退回</button></>}
+      {!old && !isPaperArchive(record) && canReview && !record.deletedAt && record.status === 'SUBMITTED' && <><button disabled={busy} onClick={() => void action('REVIEW','确认复核')}><ShieldCheck size={15}/>复核</button><button disabled={busy} onClick={() => void action('RETURN','退回补充')}>退回</button></>}
       {!old && !record.sourceCompletionId && !record.deletedAt && (canManage || (record.status === 'DRAFT' && record.createdById === user.id)) && <button className="qd-danger" disabled={busy} onClick={() => void action('DELETE',record.status === 'DRAFT' ? '删除草稿' : '作废记录')}><Trash2 size={15}/>{record.status === 'DRAFT' ? '删除' : '作废'}</button>}
       {!old && !record.sourceCompletionId && record.deletedAt && canManage && <button disabled={busy} onClick={() => void action('RESTORE','恢复记录')}><RotateCcw size={15}/>恢复</button>}
     </div>

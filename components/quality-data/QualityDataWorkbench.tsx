@@ -2,13 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, ClipboardCheck, Download, FileArchive, PanelLeft, Plus, RefreshCw, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { QUALITY_DATA_TYPES, QUALITY_LABELS, RESULT_LABELS, beijingInput, type QualityOrder, type QualityRecord, type QualityDataType } from '@/lib/quality-data';
+import { QUALITY_DATA_TYPES, isPaperArchive, QUALITY_LABELS, RESULT_LABELS, beijingInput, type QualityOrder, type QualityRecord, type QualityDataType } from '@/lib/quality-data';
 import type { CurrentUserDTO } from '@/types';
 import QualityDataEditor from './QualityDataEditor';
 import QualityDataDetail from './QualityDataDetail';
 import QualityReferenceWorkbench from './QualityReferenceWorkbench';
 import QualityPaperWorkbench from './QualityPaperWorkbench';
-import QualityFirstWorkbench from './QualityFirstWorkbench';
+
 import { downloadQuality, qualityRequest } from './client';
 type List = { total: number; page: number; items: QualityRecord[]; counts: Array<{ result: string; status: string; _count: number }> };
 type Orders = { total: number; page: number; items: QualityOrder[] };
@@ -62,7 +62,6 @@ export default function QualityDataWorkbench({ user, initialRecordId = '', initi
   }
   function newRecord(t?:QualityDataType) { if(t==='FIRST'||t==='PATROL'){setType(t);return;}if(!order){setError('请先选择本次检验的生产工单');setOrdersHidden(false);}else if(t)setEditor({order,type:t});else setChooseType(true); }
   const allCount=list.counts.reduce((n,c)=>n+c._count,0);
-  if(paper && type === 'FIRST')return <QualityFirstWorkbench user={user} initialRecordId={selected?.type===type ? selected.id : initialRecordId} onTypeChange={setType} onReferences={()=>setSection('references')}/>;
   if(paper)return <QualityPaperWorkbench key={type} user={user} type={type as 'FIRST'|'PATROL'} initialRecordId={selected?.type===type ? selected.id : initialRecordId} onTypeChange={setType} onReferences={()=>setSection('references')}/>;
   return <main className="hm-workbench-root qd-root">
     <AppWorkbenchHeader user={user} activeHref="/workspace/quality/data" subtitle="" menuItems={[]} hideHeader sidebarTriggerTargetId="qd-sidebar-trigger"/>

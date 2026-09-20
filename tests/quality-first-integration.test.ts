@@ -19,7 +19,13 @@ test('first inspections remain discoverable across completion, upload dates, his
     processRoute: { create: { templateName: '首件测试工艺', templateVersion: 1, steps: { create: [1, 2].map(position => ({ position, sequenceGroup: position, processCode: 'P' + position, processName: position === 1 ? '压接' : '包装', stageGroup: 'frontend', standardSource: 'integration_test', timeBasis: 'per_unit', unitLabel: '件', standardMillisecondsPerUnit: 1000 })) } } },
   }, include: { processRoute: { include: { steps: { orderBy: { position: 'asc' } } } } } })));
   orderIds.push(...orders.map(o => o.id));
-  const create = async (n: number) => { const r = await createQualityRecord(actor, { type: 'FIRST', title: marker, workOrderId: orders[n].id, inspectionStepId: orders[n].processRoute!.steps[0].id, inspectedAt: '2026-09-10T09:00', data: { ...emptyQualityForm('FIRST', actor.name), mode: 'FILE', rows: [], paper: { result: 'FAIL', area: '' } }, idempotencyKey: randomUUID() }); ids.push(r.id); return r; };
+  // Seed the old order-bound format directly; the public create API now rejects these links.
+  const create = async (n: number) => {
+    const r = await createQualityRecord(actor, { type: 'FIRST', title: marker, inspectedAt: '2026-09-10T09:00', data: { ...emptyQualityForm('FIRST', actor.name), mode:'FILE', rows:[] }, idempotencyKey:randomUUID() }); ids.push(r.id);
+    const step=orders[n].processRoute!.steps[0];
+    await prisma.qualityDataRecord.update({where:{id:r.id},data:{workOrderId:orders[n].id,inspectionStepId:step.id,inspectionStepSnapshot:{id:step.id,position:step.position,name:step.processName},orderSnapshot:{...r.orderSnapshot,id:orders[n].id,code:orders[n].code,specification:marker},data:{...r.data,paper:{result:'FAIL',area:'',archive:false}} as never}});
+    return loadQualityRecord(r.id);
+  };
   const attach = async (record: QualityRecord, createdAt: string, by = actor.id) => { await prisma.qualityDataAttachment.create({ data: { recordId: record.id, originalName: '可搜索首件凭证.png', objectKey: marker + '/' + randomUUID(), sha256: randomUUID().replaceAll('-', '').repeat(2), size: 100, mimeType: 'image/png', createdAt: new Date(createdAt), createdById: by } }); return loadQualityRecord(record.id); };
   try {
     let first = await attach(await create(0), '2026-09-12T04:00:00Z');

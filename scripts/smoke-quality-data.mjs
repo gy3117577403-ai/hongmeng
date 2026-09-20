@@ -44,14 +44,14 @@ function form(type,value='80'){
 }
 const records=[];
 const firstStep = (await request('quality',api+'qr/'+fixture.orders[0].publicCode)).body.data.steps[0];
-for(const [index,type] of ['CRIMP','PULL','FINAL','FIRST','PATROL'].entries()){
+for(const [index,type] of ['CRIMP','PULL','FINAL'].entries()){
   const actor=index%2?'tooling':'quality', order=fixture.orders[type==='FINAL'?1:0];
   const input={...(type==='PATROL'?{}:{workOrderId:order.id,sourceQrCode:order.publicCode}),...(type==='FIRST'?{inspectionStepId:firstStep.id}:{}),type,title:fixture.marker+' '+type+' 验收记录',inspectedAt:new Date(Date.now()-60000).toISOString(),data:form(type,index===0?'60':'80'),status:'SUBMITTED',idempotencyKey:randomUUID()};
   const {body}=await request(actor,api+'records','POST',input);
   assert.equal(body.data.result,index===0?'FAIL':'PASS');records.push(body.data);
   const duplicate=await request(actor,api+'records','POST',input);assert.equal(duplicate.body.data.id,body.data.id);
 }
-await request('quality',api+'records','POST',{workOrderId:fixture.orders[1].id,sourceQrCode:fixture.orders[0].publicCode,type:'FIRST',inspectionStepId:firstStep.id,title:'错单检查',inspectedAt:new Date().toISOString(),data:form('FIRST'),idempotencyKey:randomUUID()},409);
+await request('quality',api+'records','POST',{workOrderId:fixture.orders[1].id,sourceQrCode:fixture.orders[0].publicCode,type:'PULL',title:'错单检查',inspectedAt:new Date().toISOString(),data:form('FIRST'),idempotencyKey:randomUUID()},409);
 let editable=records[0],data=editable.data;
 await request('leader',api+'records/'+editable.id,'PATCH',{version:editable.version,action:'SAVE',title:'越权修改',inspectedAt:editable.inspectedAt,data,reason:'测试'},403);
 editable=(await request('quality',api+'records/'+editable.id,'PATCH',{version:editable.version,action:'REVIEW',reason:'确认本次不合格记录'})).body.data;
@@ -81,9 +81,9 @@ fileRecord=(await request('leader',api+'records/'+fileRecord.id,'PATCH',{version
 assert.equal(fileRecord.result,'PENDING');
 await request('leader',api+'attachments/'+file.id,'DELETE',{version:fileRecord.version,reason:'删除唯一附件'},409);
 const query='period=all&q='+encodeURIComponent(fixture.marker);
-const all=await request('quality',api+'records?'+query);assert.equal(all.body.data.total,6);
+const all=await request('quality',api+'records?'+query);assert.equal(all.body.data.total,4);
 const xlsx=await request('quality',api+'export?'+query+'&format=xlsx');
-const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(xlsx.bytes);assert.equal(workbook.getWorksheet('记录清单').rowCount,9);assert.ok(workbook.getWorksheet('拉力测试'));
+const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(xlsx.bytes);assert.equal(workbook.getWorksheet('记录清单').rowCount,7);assert.ok(workbook.getWorksheet('拉力测试'));
 const zip=await request('quality',api+'export?'+query+'&format=zip');
 const archive=await JSZip.loadAsync(zip.bytes);
 assert.ok(Object.keys(archive.files).some(name=>name.endsWith('巡检证据.png')));

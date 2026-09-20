@@ -6,11 +6,11 @@ import { QUALITY_SCAN_TYPES, QUALITY_LABELS, RESULT_LABELS, beijingInput, type Q
 import type { CurrentUserDTO } from '@/types';
 import QualityScanTabs from './QualityScanTabs';
 import QualityDataEditor from './QualityDataEditor';
-import QualityFirstMobile from './QualityFirstMobile';
+import { useRouter } from 'next/navigation';
 import QualityDataDetail from './QualityDataDetail';
 import { qualityRequest } from './client';
-export default function QualityDataMobile({ code,user,initialType,initialStepId }: { code: string; user: CurrentUserDTO; initialType?: string; initialStepId?: string }) {
-  const [firstOpen,setFirstOpen] = useState(initialType === 'FIRST');
+export default function QualityDataMobile({ code,user }: { code: string; user: CurrentUserDTO; initialType?: string; initialStepId?: string }) {
+  const router = useRouter();
   const [order,setOrder] = useState<QualityOrder|null>(null),[items,setItems] = useState<QualityRecord[]>([]),[error,setError] = useState(''),[message,setMessage] = useState('');
   const [edit,setEdit] = useState<{type:QualityDataType;record?:QualityRecord;supersedesId?:string}|null>(null),[selected,setSelected] = useState<QualityRecord|null>(null),[refresh,setRefresh] = useState(0);
   useEffect(()=>{setOrder(null);setItems([]);setEdit(null);setSelected(null);setError('');setMessage('');},[code]);
@@ -24,7 +24,6 @@ export default function QualityDataMobile({ code,user,initialType,initialStepId 
     return()=>{active=false;};
   },[code,refresh]);
   function saved(r:QualityRecord,submitted:boolean){setRefresh(v=>v+1);if(submitted){setEdit(null);setSelected(r);setMessage('记录已提交，后台质量数据已同步');}}
-  if(firstOpen&&order)return <QualityFirstMobile user={user} code={code} order={order} initialStepId={selected?.inspectionStepId || initialStepId} initialRecord={selected?.type === 'FIRST' ? selected : undefined} onClose={()=>{setFirstOpen(false);setSelected(null);setRefresh(v=>v+1);}}/>;
   return <main className="qd-mobile-root">
     <header className="qd-mobile-header"><div><ClipboardCheck size={20}/><b>质量现场填报</b></div><span>{user.displayName || user.username}</span></header>
     <QualityScanTabs code={code} active="quality" canQuick={user.access.capabilities.includes('QUALITY:READ')} canReport={user.access.capabilities.includes('FIELD_REPORT:READ')}/>
@@ -32,7 +31,7 @@ export default function QualityDataMobile({ code,user,initialType,initialStepId 
     {message&&<div role="status" className="qd-alert success">{message}</div>}
     {!order&&!error&&<p className="qd-help">正在读取工单…</p>}
     {order&&<div className="qd-mobile-content"><section className="qd-mobile-order"><small>本次检验工单</small><h1>{order.specification || order.productName}</h1><b>{order.businessCode || order.code}</b><p>{order.customerName || '客户未填写'} · {order.sourceOrderNo || '历史工单'}{order.batchNo?' · 第 '+order.batchNo+' 批':''}</p><div><span>计划数量 <strong>{order.quantity ?? '—'}</strong></span><span>{order.stage==='completed'?'已完工 · 可记录成品检验 / 复检':'按实际检查时间登记'}</span></div></section>
-      {!selected&&<><div className="qd-section-title"><b>新增质量记录</b><span>选择检验类型</span></div><div className="qd-mobile-types">{QUALITY_SCAN_TYPES.map((t,i)=><button key={t} onClick={()=>t==='FIRST'?setFirstOpen(true):setEdit({type:t})}><span className="qd-type-number">{String(i+1).padStart(2,'0')}</span><div><b>{QUALITY_LABELS[t]}</b><small>{t==='CRIMP'?'压接外观与问题照片':t==='PULL'?'核对端子型号、记录实际拉力':t==='FINAL'?'本批成品外观与尺寸':t==='CONTINUITY'?'导通、短路与接线检查':t==='FIRST'?'开工、换模或调整后的首件':'过程检查、异常与处理情况'}</small></div><Plus size={20}/></button>)}</div><div className="qd-section-title"><b>本工单最近记录</b><Link href={'/workspace/quality/data'}>全部档案</Link></div>{items.map(r=><button className="qd-mobile-record" key={r.id} onClick={()=>{setSelected(r);if(r.type==='FIRST')setFirstOpen(true);}}><div><b>{r.title}</b><small>{beijingInput(r.inspectedAt).replace('T',' ')} · {r.createdByName}</small></div><span className={'qd-badge '+r.result.toLowerCase()}>{r.status==='DRAFT'?'草稿':r.sourceCompletionId&&r.result==='PASS'?'未发现不良':RESULT_LABELS[r.result]}</span><ChevronRight size={17}/></button>)}{!items.length&&<p className="qd-help">还没有质量记录，从上方选择类型开始填写。</p>}</>}
+      {!selected&&<><div className="qd-section-title"><b>新增质量记录</b><span>选择检验类型</span></div><div className="qd-mobile-types">{QUALITY_SCAN_TYPES.map((t,i)=><button key={t} onClick={()=>t==='FIRST'?router.push('/workspace/quality/data?type=FIRST'):setEdit({type:t})}><span className="qd-type-number">{String(i+1).padStart(2,'0')}</span><div><b>{QUALITY_LABELS[t]}</b><small>{t==='CRIMP'?'压接外观与问题照片':t==='PULL'?'核对端子型号、记录实际拉力':t==='FINAL'?'本批成品外观与尺寸':t==='CONTINUITY'?'导通、短路与接线检查':t==='FIRST'?'按日期上传整份首检报表':'过程检查、异常与处理情况'}</small></div><Plus size={20}/></button>)}</div><div className="qd-section-title"><b>本工单最近记录</b><Link href={'/workspace/quality/data'}>全部档案</Link></div>{items.map(r=><button className="qd-mobile-record" key={r.id} onClick={()=>{setSelected(r);if(r.type==='FIRST')router.push('/workspace/quality/data?type=FIRST&recordId='+r.id);}}><div><b>{r.title}</b><small>{beijingInput(r.inspectedAt).replace('T',' ')} · {r.createdByName}</small></div><span className={'qd-badge '+r.result.toLowerCase()}>{r.status==='DRAFT'?'草稿':r.sourceCompletionId&&r.result==='PASS'?'未发现不良':RESULT_LABELS[r.result]}</span><ChevronRight size={17}/></button>)}{!items.length&&<p className="qd-help">还没有质量记录，从上方选择类型开始填写。</p>}</>}
       {selected&&<><button className="qd-mobile-back" onClick={()=>setSelected(null)}>返回检验类型</button><QualityDataDetail key={selected.id+selected.version} user={user} record={selected} onChanged={r=>{setSelected(r);setRefresh(v=>v+1);}} onEdit={()=>setEdit({type:selected.type,record:selected})} onRetest={()=>setEdit({type:selected.type,supersedesId:selected.id})}/></>}
     </div>}
     {edit&&order&&<div className="qd-modal" role="dialog" aria-modal="true" aria-label="手机质量填报"><QualityDataEditor user={user} order={order} {...edit} sourceQrCode={code} onClose={()=>setEdit(null)} onSaved={saved}/></div>}

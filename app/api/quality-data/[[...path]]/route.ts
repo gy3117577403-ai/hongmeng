@@ -6,13 +6,14 @@ import { createQualityRecord, listQualityRecords, loadQualityRecord, mutateQuali
 import { prisma } from '@/lib/prisma';
 import { documentDisplaySettings } from '@/lib/document-orientation.server';
 import { uploadQualityFile, deleteQualityFile, qualityFileContent } from '@/lib/quality-data-files';
-import { qualityWorkbook, qualityZip } from '@/lib/quality-data-export';
+import { qualityWorkbook, qualityZip, paperWorkbook } from '@/lib/quality-data-export';
 import { QualityDataError } from '@/lib/quality-data';
 import { qualityOptions } from '@/lib/quality-data-options';
 import { createReference, mutateReference, loadReference, listReferences, favoriteReference, referenceHistory, referenceVersion, exportReferences } from '@/lib/quality-reference-service';
 import { uploadReferenceFile, deleteReferenceFile, referenceFileContent } from '@/lib/quality-reference-files';
 import { referenceWorkbook, referenceZip } from '@/lib/quality-reference-export';
 import { firstOrderList, firstRecordList } from '@/lib/quality-first-service';
+import { paperArchiveList } from '@/lib/quality-paper-archive-service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const privateHeaders = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -33,6 +34,13 @@ export async function GET(req: NextRequest, { params }: Context) {
     else if (p.length === 2 && p[0] === 'references') data = await loadReference(p[1],actor.id);
     else if (p.length === 3 && p[0] === 'references' && p[2] === 'revisions') data = await referenceHistory(p[1],positivePage(query.get('page')));
     else if (p.length === 4 && p[0] === 'references' && p[2] === 'revisions') data = await referenceVersion(p[1],positivePage(p[3]));
+    else if (p.length === 1 && p[0] === 'paper-records') data = await paperArchiveList(query, actor.id);
+    else if (p.length === 1 && p[0] === 'paper-export') {
+      const records = (await paperArchiveList(query, actor.id, true)).items;
+      const label = query.get('type') === 'FIRST' ? '首检报表' : '巡检报表';
+      if (query.get('format') === 'zip') return new Response(Readable.toWeb(await qualityZip(records, query.toString(), true)) as ReadableStream, { headers: { ...privateHeaders, 'Content-Type': 'application/zip', 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(label + '.zip') } });
+      return new Response(new Uint8Array(await paperWorkbook(records, query.toString())), { headers: { ...privateHeaders, 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(label + '.xlsx') } });
+    }
     else if (p.length === 1 && p[0] === 'first-orders') data = await firstOrderList(query, actor.id);
     else if (p.length === 1 && p[0] === 'first-records') data = await firstRecordList(query, actor.id);
     else if (p.length === 1 && p[0] === 'first-export') {
