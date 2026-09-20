@@ -30,7 +30,7 @@ export async function syncProductDocuments(tx: Tx, libraryItemId: string, actor?
   const a = actor || owner || { id: "system:document-sync", username: "计划资料同步", displayName: "计划资料同步" };
   const hasBom = source.needFixture === true && last?.needFixture === true;
   const values = {
-    revision: last?.revision || source.drawingFiles[0]?.version || "A", needFixture: source.needFixture,
+    revision: last?.revision || source.drawingFiles[0]?.version || source.sopFiles[0]?.version || "A", needFixture: source.needFixture,
     drawingFiles: qfJson(source.drawingFiles), sopFiles: qfJson(source.sopFiles),
     parallelCount: last?.parallelCount || 1, spareCount: last?.spareCount || 0,
     bomFileId: hasBom ? last.bomFileId : null, bomRows: qfJson(hasBom ? last.bomRows : []),
@@ -45,7 +45,7 @@ export async function syncProductDocuments(tx: Tx, libraryItemId: string, actor?
   await tx.qfEvent.create({ data: { entityType: "PACKAGE", entityId: p.id, action: "SYNC_PLAN_DOCUMENTS", actorId: a.id,
     actorName: a.displayName || a.username, snapshot: qfJson({ signature: source.signature, drawingCount: source.drawingFiles.length, sopCount: source.sopFiles.length }) } });
   let complete = true;
-  try { await assertPackageFiles(tx, p, true); } catch { complete = false; }
+  try { await assertPackageFiles(tx, p); } catch { complete = false; }
   const recipients = complete && owner ? await pendingReviewers(tx, { ...p, status: "REVIEWING", submittedById: a.id }) : [];
   if (complete && owner && ["SUPERVISOR", "QUALITY"].every(role => recipients.some(r => r.roles.some(v => v === role))))
     await submitPackage(tx, { id: p.id, version: p.version }, a);

@@ -1,3 +1,4 @@
+import { fixtureSubmissionIssues } from "@/lib/quality-fixture-documents";
 import { createHash } from "node:crypto";
 import { Prisma, type QfPackage } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -89,15 +90,14 @@ async function getPackage(tx: Tx, id: unknown, version?: unknown) {
   if (version !== undefined) pcVersion(p.version, version);
   return p;
 }
-export async function assertPackageFiles(tx: Tx, p: QfPackage, requireSop = false) {
+export async function assertPackageFiles(tx: Tx, p: QfPackage) {
   const drawings = p.drawingFiles as unknown as DrawingEvidence[], sops = p.sopFiles as unknown as DrawingEvidence[];
-  if (p.needFixture === null) conflict("请先选择是否需要治具");
-  if (!Array.isArray(drawings) || !drawings.length) conflict("请先上传受审图纸");
-  if (requireSop && (!Array.isArray(sops) || !sops.length)) conflict("请补齐本版本 SOP，再完成主管与品质双方审核");
-  const evidence = [...drawings, ...(Array.isArray(sops) ? sops : [])];
+  const issues = fixtureSubmissionIssues(p);
+  if (issues.length) conflict(issues.join("；"));
+  const evidence = [...(Array.isArray(drawings) ? drawings : []), ...(Array.isArray(sops) ? sops : [])];
   const files = await tx.drawingLibraryFile.findMany({ where: { id: { in: evidence.map(f => f.id) }, libraryItemId: p.libraryItemId, deletedAt: null } });
   if (files.length !== evidence.length || evidence.some(e => !files.some(f => f.id === e.id && f.objectKey === e.objectKey && f.version === e.version && (f.sha256 || "") === e.sha256)))
-    conflict("审核所引用图纸已移除或发生变化，请重新提交资料");
+    conflict("审核所引用资料已移除或发生变化，请重新提交资料");
   if (p.needFixture) {
     const bom = p.bomFileId && await tx.qfBomFile.findFirst({ where: { id: p.bomFileId, libraryItemId: p.libraryItemId, deletedAt: null } });
     if (!bom || !p.bomConfirmed || !(p.bomRows as unknown as BomRow[]).some(r => r.include)) conflict("请上传 BOM 并确认连接器清单");
@@ -153,7 +153,7 @@ export async function assertFixturePrintReady(tx: Tx, workOrderId: string, expec
   // New orders must not reuse approval during the asynchronous source-sync window.
   if (!wo!.fixtureBinding && p.sourceSignature && p.sourceSignature !== await (await import("@/lib/quality-fixture-sync")).currentDocumentSignature(tx, p.libraryItemId))
     conflict("图纸、SOP 或治具要求已有更新，请完成新版两级审核后打印");
-  await assertPackageFiles(tx, p, true);
+  await assertPackageFiles(tx, p);
   const readiness = await fixtureReadiness(tx, p, workOrderId);
   return { packageId: p.id, revision: p.revision, sequence: p.sequence, fingerprint: p.fingerprint,
     supervisor: p.supervisorName, supervisorAt: p.supervisorAt?.toISOString(), quality: p.qualityName, qualityAt: p.qualityAt?.toISOString(),
@@ -181,7 +181,7 @@ async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   const mapping = bom ? pcRecord(input.bomMapping) as unknown as BomMapping : null;
   const base = bom && mapping ? scanBom(bom.sheets as unknown as BomSheet[], mapping) : [];
   const rows = confirmed ? confirmBomRows(base, input.bomRows) : base;
-  const values = { revision: pcText(input.revision, "图纸版本", 40), needFixture: need,
+  const values = { revision: pcText(input.revision, "资料版本", 40), needFixture: need,
     parallelCount: pcInt(input.parallelCount ?? 1, "同时测试产品数量", 1, 1000), spareCount: pcInt(input.spareCount ?? 0, "每种对插件备用数量", 0, 10000),
     drawingFiles: qfJson(files.map(f => ({ id: f.id, name: f.displayName || f.originalName, version: f.version, sha256: f.sha256 || "", objectKey: f.objectKey, mimeType: f.mimeType }))),
     sopFiles: qfJson(sops.map(f => ({ id: f.id, name: f.displayName || f.originalName, version: f.version, sha256: f.sha256 || "", objectKey: f.objectKey, mimeType: f.mimeType }))),
@@ -200,7 +200,7 @@ async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
 export async function submitPackage(tx: Tx, input: PcInput, a: PcActor) {
   const p = await getPackage(tx, input.id, input.version);
   if (p.status !== "DRAFT") conflict("请先建立资料修订草稿，再提交双方审核");
-  await assertPackageFiles(tx, p, true);
+  await assertPackageFiles(tx, p);
   const recipients = await pendingReviewers(tx, { ...p, status: "REVIEWING", submittedById: a.id });
   if (!["SUPERVISOR", "QUALITY"].every(role => recipients.some(r => r.roles.some(v => v === role))))
     conflict("请配置可审核本资料的主管、品质人员，或启用管理员账号");
@@ -226,10 +226,10 @@ async function review(tx: Tx, input: PcInput, a: PcActor) {
   if (approve) {
     if (await tx.qfPackage.count({ where: { libraryItemId: p.libraryItemId, sequence: { gt: p.sequence }, supervisorAt: { not: null }, qualityAt: { not: null } } }))
       conflict("已有更新的资料版本完成双方审核，不能再批准这份旧稿。请退回旧稿，或基于所需资料新建修订版本。");
-    if (input.confirmed !== true) throw new FixtureError("请确认已核对图纸、资料完整性和连接器清单");
+    if (input.confirmed !== true) throw new FixtureError("请确认已核对本版本生产资料及治具要求");
   }
   const reason = pcText(input.reason, "退回意见", 2000, !approve);
-  if (approve) await assertPackageFiles(tx, p, true);
+  if (approve) await assertPackageFiles(tx, p);
   const next = !approve ? "RETURNED" : (role === "SUPERVISOR" ? p.qualityAt : p.supervisorAt) ? "APPROVED" : role === "SUPERVISOR" ? "QUALITY" : "SUPERVISOR";
   if (next === "APPROVED") await tx.qfPackage.updateMany({ where: { libraryItemId: p.libraryItemId, status: "APPROVED", id: { not: p.id } }, data: { status: "SUPERSEDED", version: { increment: 1 } } });
   const result = await tx.qfPackage.update({ where: { id: p.id }, data: { status: next, reason, version: { increment: 1 },

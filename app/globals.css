@@ -16375,6 +16375,11 @@ body:has(.qr-dialog) .modal-backdrop {
 .traveler-print-readiness small { color: #6f8095; font-size: 10px; line-height: 1.45; }
 .traveler-print-readiness > button { min-height: 32px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid #cbd9e8; border-radius: 8px; color: #486786; background: #fff; cursor: pointer; font-size: 10px; font-weight: 750; }
 .traveler-print-readiness.ready { color: #147a45; border-color: #c9e6d5; background: #f1fbf5; }
+.traveler-print-packet-list { margin-top: 12px; padding: 10px 13px; border: 1px solid #dbe5f0; border-radius: 12px; font-size: 12px; }
+.traveler-print-packet-list summary { cursor: pointer; color: #38608e; }
+.traveler-print-packet-list ul { max-height: 150px; overflow: auto; margin: 8px 0 0; padding: 0; list-style: none; }
+.traveler-print-packet-list li { display: flex; justify-content: space-between; gap: 16px; padding: 6px 0; border-bottom: 1px solid #edf1f5; }
+.traveler-print-packet-list li span { color: #6f8095; }
 .traveler-print-readiness.error { color: #b4232d; border-color: #efc9cd; background: #fff5f6; }
 .traveler-print-advanced { margin-top: 14px; overflow: hidden; border: 1px solid #dfe6ef; border-radius: 14px; background: #fafcff; }
 .traveler-print-advanced-toggle { width: 100%; min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 14px; border: 0; color: #34445b; background: transparent; cursor: pointer; text-align: left; }

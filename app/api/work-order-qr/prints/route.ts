@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
       copies?: unknown;
       materials?: unknown;
       materialCopies?: unknown;
+      includeAvailableDocuments?: unknown;
       drawingImagePaperSize?: unknown;
       reprintReason?: unknown;
       returnTo?: unknown;
@@ -29,6 +30,7 @@ export async function POST(req: NextRequest) {
       copies: body.copies,
       materials: body.materials,
       materialCopies: body.materialCopies,
+      includeAvailableDocuments: body.includeAvailableDocuments,
       drawingImagePaperSize: body.drawingImagePaperSize,
       reprintReason: body.reprintReason,
       userId: user.id,

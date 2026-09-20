@@ -1,3 +1,4 @@
+import { fixtureSubmissionIssues, type FixtureDocumentPackage } from "@/lib/quality-fixture-documents";
 import { prisma } from "@/lib/prisma";
 import { fixtureReadiness, assertPackageFiles } from "@/lib/quality-fixture-service";
 import { fixtureAvailable, fixtureReviewRoles, fixtureSignaturesValid, QF_REVIEW_STATUSES } from "@/lib/quality-fixture-domain";
@@ -24,10 +25,10 @@ export async function loadFixtureReviewQueue(actor: PcActor) {
   return { settings, latest, roles };
 }
 
-export function matchesFixtureReviewStatus(p: {status:string; supervisorAt: unknown; qualityAt: unknown}, status: string) {
+export function matchesFixtureReviewStatus(p: FixtureDocumentPackage & {status:string; supervisorAt: unknown; qualityAt: unknown}, status: string) {
   if (status === "SUPERVISOR") return QF_REVIEW_STATUSES.includes(p.status) && !p.supervisorAt;
   if (status === "QUALITY") return QF_REVIEW_STATUSES.includes(p.status) && !p.qualityAt;
-  return status === "PENDING" ? p.status !== "APPROVED" : status === "MISSING" ? ["DRAFT", "RETURNED"].includes(p.status) : p.status === status;
+  return status === "PENDING" ? p.status !== "APPROVED" : status === "MISSING" ? p.status === "RETURNED" || p.status === "DRAFT" && fixtureSubmissionIssues(p).length > 0 : p.status === status;
 }
 
 export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor) {
@@ -108,12 +109,12 @@ export async function qualityFixtureBadges(ids: string[], kind: string) {
     const p = binding ? packages.find(p => p.id === binding.packageId) : available[0];
     let printAllowed = !!p && fixtureSignaturesValid(p) && (p.status === "APPROVED" || (p.status === "SUPERSEDED" && p.continuedWorkOrderIds.includes(batch?.workOrderId || id)));
     if (printAllowed && p) { try {
-      await assertPackageFiles(prisma, p, true);
+      await assertPackageFiles(prisma, p);
       if (!binding && p.sourceSignature && p.sourceSignature !== await (await import("@/lib/quality-fixture-sync")).currentDocumentSignature(prisma,p.libraryItemId)) printAllowed = false;
     } catch { printAllowed = false; } }
     const readiness = await fixtureReadiness(prisma, p || null, kind === "orders" ? id : "");
     return { id, productId, packageId: p?.id, revision: p?.revision, legacy, status: legacy ? "LEGACY" : p?.status === "APPROVED" && !printAllowed ? "DRAFT" : p?.status || "UNSET", needFixture: products.find(p => p.id === productId)?.fixtureRequired ?? null,
       pendingRevision: available[0]?.id !== p?.id ? available[0]?.revision : null, printAllowed: legacy || printAllowed,
-      fixtureLabel: legacy ? "" : readiness.label, supervisor: p?.supervisorName, quality: p?.qualityName, supervisorAt:p?.supervisorAt?.toISOString(), qualityAt:p?.qualityAt?.toISOString(), groups:readiness.groups.map(g=>({model:g.model,required:g.required,available:g.available,incoming:g.incoming,shortage:g.shortage})), sopFiles: p?.sopFiles || [], drawingFiles: p?.drawingFiles || [] };
+      submissionIssues: p ? fixtureSubmissionIssues(p) : ["请准备生产资料"], fixtureLabel: legacy ? "" : readiness.label, supervisor: p?.supervisorName, quality: p?.qualityName, supervisorAt:p?.supervisorAt?.toISOString(), qualityAt:p?.qualityAt?.toISOString(), groups:readiness.groups.map(g=>({model:g.model,required:g.required,available:g.available,incoming:g.incoming,shortage:g.shortage})), sopFiles: p?.sopFiles || [], drawingFiles: p?.drawingFiles || [] };
   }));
 }

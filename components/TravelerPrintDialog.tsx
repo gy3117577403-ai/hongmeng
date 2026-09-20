@@ -3,8 +3,10 @@
 import { AlertTriangle, Check, ChevronDown, FileImage, Files, FileText, Layers3, Loader2, Printer, RefreshCw, Settings2, ShieldAlert, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { WorkOrderTravelerPrintReadinessRecord } from '@/lib/work-order-qr-service';
+import { optionalPrintMaterialAbsent } from '@/lib/work-order-print-selection';
 
 export type TravelerPrintMode =
+  | 'AVAILABLE_DOCUMENTS'
   | 'TRAVELER_ONLY'
   | 'TRAVELER_QUALITY_WARNING'
   | 'TRAVELER_SOP_DUPLEX'
@@ -25,6 +27,12 @@ const printModes: Array<{
   description: string;
   icon: typeof Printer;
 }> = [
+  {
+    value: 'AVAILABLE_DOCUMENTS',
+    title: '工单 + 现有资料（自动匹配）',
+    description: '逐单附带现有图纸 / SOP；需审核的工单仅使用双方通过的版本。',
+    icon: Files,
+  },
   {
     value: 'TRAVELER_ONLY',
     title: '仅打印二维码流转单',
@@ -123,7 +131,8 @@ export function TravelerPrintDialog({
       const items = Array.isArray(body.data?.items) ? body.data.items as WorkOrderTravelerPrintReadinessRecord[] : [];
       if (items.length !== selectedIds.length) throw new Error('生产资料校验结果不完整，请刷新后重试');
       setReadiness({ status: 'ready', items, message: '' });
-      if (items.some(item => item.qualityWarning.requiredCount > 0)) setMode('TRAVELER_QUALITY_WARNING');
+      if (items.some(item => item.documentReviewRequired)) setMode('AVAILABLE_DOCUMENTS');
+      else if (items.some(item => item.qualityWarning.requiredCount > 0)) setMode('TRAVELER_QUALITY_WARNING');
     }).catch(reason => {
       if (controller.signal.aborted) return;
       setReadiness({
@@ -151,12 +160,12 @@ export function TravelerPrintDialog({
 
   if (!open) return null;
 
-  const includesSop = mode === 'TRAVELER_SOP_DUPLEX'
+  const includesSop = (mode === 'AVAILABLE_DOCUMENTS' && readiness.items.some(item => item.sop.ready)) || mode === 'TRAVELER_SOP_DUPLEX'
     || mode === 'TRAVELER_SOP_SEPARATE'
     || mode === 'DRAWING_SOP_TRAVELER_SEPARATE'
     || mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'
     || (mode === 'CUSTOM' && customMaterials.includes('SOP'));
-  const includesDrawing = mode === 'DRAWING_SOP_TRAVELER_SEPARATE'
+  const includesDrawing = (mode === 'AVAILABLE_DOCUMENTS' && readiness.items.some(item => item.drawing.ready)) || mode === 'DRAWING_SOP_TRAVELER_SEPARATE'
     || mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'
     || (mode === 'CUSTOM' && customMaterials.includes('DRAWING'));
   const includesQualityWarning = mode === 'TRAVELER_QUALITY_WARNING'
@@ -177,6 +186,7 @@ export function TravelerPrintDialog({
       || (targetMode === 'CUSTOM' && materials.includes('QUALITY_WARNING'));
     const checks = readiness.items.flatMap(item => [
       item.traveler,
+      ...(targetMode === 'AVAILABLE_DOCUMENTS' ? [item.drawing, item.sop].filter(check => !optionalPrintMaterialAbsent(check.code)) : []),
       ...(requiresSop ? [item.sop] : []),
       ...(requiresDrawing ? [item.drawing] : []),
       ...(requiresQualityWarning ? [item.qualityWarning] : []),
@@ -217,7 +227,8 @@ export function TravelerPrintDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           workOrderIds,
-          mode,
+          mode: mode === 'AVAILABLE_DOCUMENTS' ? 'CUSTOM' : mode,
+          includeAvailableDocuments: mode === 'AVAILABLE_DOCUMENTS',
           copies,
           materials: mode === 'CUSTOM' ? customMaterials : undefined,
           materialCopies: mode === 'CUSTOM' ? materialCopies : undefined,
@@ -268,6 +279,10 @@ export function TravelerPrintDialog({
           {readiness.status === 'error' && <><AlertTriangle size={20} /><span><strong>打印前校验失败</strong><small>{readiness.message}</small></span><button type="button" onClick={() => setReadinessNonce(value => value + 1)}><RefreshCw size={15} />重新校验</button></>}
           {readiness.status === 'ready' && <><ShieldCheck size={20} /><span><strong>打印条件已校验</strong><small>流转单 {readyCount('traveler')}/{readiness.items.length} · 警示 {readyCount('qualityWarning')}/{readiness.items.length} · SOP {readyCount('sop')}/{readiness.items.length} · 原图 {readyCount('drawing')}/{readiness.items.length}；必打警示会自动加入任务。</small></span><button type="button" aria-label="重新校验打印条件" onClick={() => setReadinessNonce(value => value + 1)}><RefreshCw size={15} /></button></>}
         </section>
+        {mode === 'AVAILABLE_DOCUMENTS' && readiness.status === 'ready' && <details className="traveler-print-packet-list" open={readiness.items.length <= 5}>
+          <summary>本次打印明细 · {readiness.items.length} 张工单（未提供的资料不生成空白页）</summary>
+          <ul>{readiness.items.map(item => <li key={item.workOrderId}><strong>{item.businessWorkOrderCode || item.workOrderCode}</strong><span>{item.specification} · {['工单', item.drawing.ready ? '图纸' : '', item.sop.ready ? 'SOP' : '', item.qualityWarning.requiredCount ? '异常警示' : ''].filter(Boolean).join(' + ')}</span></li>)}</ul>
+        </details>}
         <section className={`traveler-print-advanced ${advancedOpen ? 'open' : ''}`}>
           <button type="button" className="traveler-print-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(current => !current)}>
             <span><Settings2 size={17} /><strong>更多组合与自定义补打</strong><small>原图单独打印 + 流转单/SOP 双面，或只补打指定资料</small></span><ChevronDown size={18} />
@@ -301,7 +316,7 @@ export function TravelerPrintDialog({
             </div>
           </div>}
         </section>
-        {(includesSop || includesDrawing || includesQualityWarning) && <div className="traveler-print-hint"><FileText size={18} /><span><strong>{includesQualityWarning ? '异常警示按归档版本冻结到本次打印快照' : includesDrawing ? '原图与 SOP 均使用当前文件快照' : '将使用当前已发布或上传的 SOP 快照'}</strong><small>{includesQualityWarning ? '一条警示一张 A4；后续修订不会改变已生成的历史打印记录，必打警示自动附加。' : includesDrawing ? '支持 PDF、JPG、JPEG、PNG、WebP；PDF保留源页面，图片自动转为打印PDF，资料更新后仍会提示重打。' : '支持 PDF、JPG、JPEG、PNG、WebP；损坏、已删除或版本失效的文件仍会被阻止。'}</small></span></div>}
+        {(includesSop || includesDrawing || includesQualityWarning) && <div className="traveler-print-hint"><FileText size={18} /><span><strong>{mode === 'AVAILABLE_DOCUMENTS' ? '按每张工单的有效资料生成打印文件' : includesQualityWarning ? '异常警示按归档版本冻结到本次打印快照' : includesDrawing ? '原图与 SOP 均使用当前文件快照' : '将使用当前已发布或上传的 SOP 快照'}</strong><small>{includesQualityWarning ? '一条警示一张 A4；后续修订不会改变已生成的历史打印记录，必打警示自动附加。' : includesDrawing ? '支持 PDF、JPG、JPEG、PNG、WebP；PDF保留源页面，图片自动转为打印PDF，资料更新后仍会提示重打。' : '支持 PDF、JPG、JPEG、PNG、WebP；损坏、已删除或版本失效的文件仍会被阻止。'}</small></span></div>}
         <div className={`traveler-print-form-row${includesDrawing ? ' with-paper' : ''}${mode === 'CUSTOM' ? ' custom-mode' : ''}`}>
           {mode !== 'CUSTOM' && <label><span>打印份数</span><input type="number" min={1} max={10} value={copies} onChange={event => setCopies(Math.max(1, Math.min(10, Number(event.target.value) || 1)))} /></label>}
           {includesDrawing && <label><span>图片原图纸张</span><select value={drawingImagePaperSize} onChange={event => setDrawingImagePaperSize(event.target.value === 'A3' ? 'A3' : 'A4')}><option value="A4">A4 · 自动横竖</option><option value="A3">A3 · 自动横竖</option></select></label>}
