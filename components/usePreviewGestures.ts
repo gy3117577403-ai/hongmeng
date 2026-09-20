@@ -196,7 +196,7 @@ export function usePreviewGestures({
     const node = stageRef.current;
     if (!node) return;
     const nextZoom = clampPreviewZoom(nextValue);
-    const surface = node.querySelector<HTMLElement>('.viewer-scroll-surface');
+    const surface = node.querySelector<HTMLElement>('.viewer-gesture-content');
     const surfaceRect = surface?.getBoundingClientRect();
     const focalRatioX = surfaceRect?.width
       ? Math.max(0, Math.min(1, (clientPoint.x - surfaceRect.left) / surfaceRect.width))
@@ -319,7 +319,9 @@ export function usePreviewGestures({
     const wheel = (event: WheelEvent): void => {
       if (wheelRequiresModifier && !event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
-      wheelDeltaRef.current += event.deltaY;
+      event.stopPropagation();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? node.clientHeight : 1;
+      wheelDeltaRef.current += event.deltaY * unit;
       wheelPointRef.current = { x: event.clientX, y: event.clientY };
       if (wheelFrameRef.current !== null) return;
       wheelFrameRef.current = window.requestAnimationFrame(() => {

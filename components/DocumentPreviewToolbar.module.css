@@ -1,0 +1,23 @@
+.toolbar { position:relative; z-index:6; display:flex; flex:0 0 auto; flex-wrap:wrap; align-items:center; justify-content:center; gap:6px 12px; min-width:0; padding:6px 10px; background:#fff; border-bottom:1px solid #e5eaf0; color:#40536a; font-family:inherit; font-size:12px; line-height:1.3; }
+.toolbar * { box-sizing:border-box; }
+.toolbar .group { display:flex; flex:0 0 auto; align-items:center; gap:4px; min-width:0; }
+.toolbar button, .toolbar a { display:inline-flex; flex:0 0 auto; align-items:center; justify-content:center; gap:5px; height:32px; min-height:32px; min-width:32px; width:auto; margin:0; padding:0 9px; border:1px solid #dfe6ee; border-radius:7px; background:#fff; color:#43556c; font-family:inherit; font-size:12px; font-weight:500; line-height:1.2; white-space:nowrap; text-decoration:none; box-shadow:none; cursor:pointer; }
+.toolbar button:disabled { opacity:.4; cursor:default; }
+.toolbar button:hover:not(:disabled), .toolbar a:hover { background:#fff7ef; border-color:#f6bb91; }
+.toolbar button[aria-pressed=true], .toolbar button.save { background:#fff2e6; border-color:#ffb584; color:#dc5908; }
+.toolbar button:focus-visible, .toolbar input:focus-visible { outline:2px solid #f47a28; outline-offset:2px; }
+.toolbar svg { width:15px; height:15px; flex:none; }
+.toolbar .pageField { display:flex; align-items:center; flex:none; width:auto; height:32px; min-height:0; margin:0; padding:0 7px 0 0; border:1px solid #dfe6ee; border-radius:7px; background:#fff; gap:2px; }
+.toolbar .pageField input { display:block; flex:none; width:34px; height:28px; min-width:0; min-height:0; max-width:34px; margin:0; padding:0 3px; border:0; border-radius:5px; background:transparent; box-shadow:none; text-align:center; color:#34465d; font-family:inherit; font-size:12px; font-weight:500; line-height:28px; }
+.toolbar .pageField span { position:static; display:block; font-size:12px; color:#718096; white-space:nowrap; }
+.toolbar .zoom { display:block; flex:none; width:48px; text-align:center; font-size:12px; font-variant-numeric:tabular-nums; }
+.toolbar .menuAnchor { position:relative; flex:none; }
+.toolbar .popover { position:absolute; right:0; top:calc(100% + 8px); z-index:30; display:flex; flex-direction:column; gap:6px; width:260px; max-width:calc(100vw - 40px); padding:12px; border:1px solid #e2e8f0; border-radius:12px; background:rgba(255,255,255,.97); box-shadow:0 12px 36px #18324e26; backdrop-filter:blur(16px); }
+.toolbar .popover > button, .toolbar .popover > a { width:100%; justify-content:flex-start; }
+.toolbar .rotationActions { display:flex; gap:6px; }
+.toolbar .rotationActions button { flex:1; padding:0 6px; }
+.toolbar .popover small { display:block; margin:3px 0 0; color:#75869b; font-size:11px; line-height:1.6; }
+.toolbar .check { display:flex; align-items:center; gap:7px; padding:4px 0; margin:0; font-size:12px; }
+.toolbar .check input { flex:none; appearance:auto; width:15px; height:15px; min-height:0; margin:0; padding:0; accent-color:#f97316; }
+.toolbar i { width:5px; height:5px; border-radius:50%; background:#ed782a; }
+@media(max-width:600px) { .toolbar { gap:5px; padding:5px; } .toolbar button { padding:0 6px; } }

@@ -1,4 +1,5 @@
 'use client';
+import { DocumentPreviewToolbar } from './DocumentPreviewToolbar';
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
@@ -150,7 +151,7 @@ function PdfCanvas({
     memoryKey: `${orientation.key}|${pageNo}`,
     initialFitMode,
     fitWidthFromTop: initialFitMode === 'fit-width',
-    wheelRequiresModifier: initialFitMode === 'fit-width',
+    wheelRequiresModifier: !dashboardMode && initialFitMode === 'fit-width',
     scrollWheel: dashboardMode,
   });
   const setReadingPage = orientation.setPage;
@@ -380,26 +381,14 @@ function PdfCanvas({
 
   return (
     <div className={`${fullscreen ? 'pdf-viewer fullscreen-viewer' : 'pdf-viewer'}${readingMode ? ' reading-viewer' : ''}${dashboardMode ? ' dashboard-preview-viewer' : ''}`}>
-      <div className="viewer-toolbar pdf-toolbar">
+      {dashboardMode ? <DocumentPreviewToolbar orientation={orientation} gestures={gestures} page={pageNo} onPageChange={goToPage} onOpenSystem={openSystem} pageCount={pageCount} loading={loading} fullscreen={fullscreen} onClose={onClose} onFullscreen={onFullscreen} downloadUrl={downloadUrl} /> : <div className="viewer-toolbar pdf-toolbar">
         <div className="viewer-title" title={title}>
           <span>PDF</span>
           <strong>{title}</strong>
         </div>
         <div className="viewer-controls">
           {!dashboardMode && <DocumentOrientationControls orientation={orientation} pageCount={pageCount} disabled={loading} />}
-          {dashboardMode ? <>
-            <button type="button" aria-label="上一页" title="上一页" disabled={pageNo <= 1 || loading} onClick={() => goToPage(pageNo - 1)}>‹</button>
-            <label className="page-jump dashboard-page-jump" title="输入页码跳转"><input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} /><span>/ {pageCount || '-'}</span></label>
-            <button type="button" aria-label="下一页" title="下一页" disabled={!pageCount || pageNo >= pageCount || loading} onClick={() => goToPage(pageNo + 1)}>›</button>
-            <button type="button" aria-label="缩小" title="缩小" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)}>−</button>
-            <span className="viewer-zoom-value" aria-live="polite">{Math.round(gestures.zoom * 100)}%</span>
-            <button type="button" aria-label="放大" title="放大" disabled={loading} onClick={() => gestures.zoomBy(1.15)}>＋</button>
-            {initialFitMode === 'fit-width' && <button className={gestures.fitMode === 'fit-width' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适宽</button>}
-            <button className={gestures.fitMode === 'fit-window' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>整页</button>
 
-            {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
-            <details className="viewer-more"><summary aria-label="更多预览操作" title="更多预览操作">更多</summary><div><DocumentOrientationControls orientation={orientation} pageCount={pageCount} disabled={loading} /><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适应宽度</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>适应整页</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={loading} onClick={gestures.reset}>重置视图</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={openSystem}>系统打开</button></div></details>
-          </> : <>
           <button type="button" disabled={pageNo <= 1 || loading} onClick={() => goToPage(pageNo - 1)}>上一页</button>
           <label className="page-jump" title="输入页码跳转"><input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} /><span>/ {pageCount || '-'}</span></label>
           <button type="button" disabled={!pageCount || pageNo >= pageCount || loading} onClick={() => goToPage(pageNo + 1)}>下一页</button>
@@ -411,7 +400,7 @@ function PdfCanvas({
           {readingMode ? (
             <details className="viewer-more"><summary>更多</summary><div><button type="button" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)}>缩小</button><button type="button" disabled={loading} onClick={() => gestures.zoomBy(1.15)}>放大</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适宽</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>整页</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={loading || gestures.rotation === 0} onClick={() => orientation.restoreOriginal()}>重置旋转</button><button type="button" disabled={loading} onClick={gestures.reset}>重置视图</button><button type="button" disabled={loading} onClick={restartReading}>从头阅读</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载原件</a><button type="button" onClick={openSystem}>系统打开</button>{onCopyPageLink && <button type="button" onClick={() => void onCopyPageLink(pageNo)}>复制当前页链接</button>}</div></details>
           ) : <><button type="button" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)} title="缩小">−</button><button type="button" disabled={loading} onClick={() => gestures.zoomBy(1.15)} title="放大">＋</button><button type="button" disabled={loading} onClick={gestures.reset}>重置</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适宽</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('actual-size')}>原始大小</button></>}
-          </>}
+
         </div>
         {tocOpen && (
           <form className="viewer-toc-popover" onSubmit={submitQuickToc} role="dialog" aria-label="添加当前页至目录">
@@ -420,7 +409,7 @@ function PdfCanvas({
             <div><button type="button" onClick={() => setTocOpen(false)}>取消</button><button className="primary-button" type="submit" disabled={tocSaving || !tocTitle.trim()}>{tocSaving ? '添加中...' : '添加'}</button></div>
           </form>
         )}
-      </div>
+      </div>}
       <div
         className={`viewer-stage pdf-stage gesture-stage${gestures.isDragging ? ' dragging' : ''}`}
         ref={shellRef}

@@ -4,6 +4,7 @@ import { isVisibleDrawingLibraryItem, serializeDrawingLibraryItem } from '@/lib/
 import { requirePageAccess } from '@/lib/page-access';
 import { drawingPlanWeekScope, planWeekStart } from '@/lib/drawing-plan-week';
 import './drawing-library-workbench.css';
+import './drawing-library-layout.css';
 
 const includeFiles = {
   documentReturns: { where: { status: { not: 'RESOLVED' } }, orderBy: { createdAt: 'desc' as const } },

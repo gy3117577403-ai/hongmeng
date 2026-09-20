@@ -1,4 +1,5 @@
 'use client';
+import DrawingReturnNotice from '@/components/quality-fixtures/DrawingReturnNotice';
 import DocumentReturnPanel from '@/components/quality-fixtures/DocumentReturnPanel';
 import DrawingFileHistory, { fileTimeLabel } from '@/components/quality-fixtures/DrawingFileHistory';
 import FixtureRequirementControl from '@/components/quality-fixtures/FixtureRequirementControl';
@@ -180,7 +181,17 @@ function categoryShortName(value?: string | null) {
   if (value === '样品过程图') return '过程';
   if (value === '测量证据') return '测量';
   if (value === '剥皮参数') return '剥皮';
+  if (value === '样品工序与工时') return '工序工时';
+  if (value === '样品半成品') return '半成品';
+  if (value === '样品异常参考') return '异常参考';
   return value || '分类';
+}
+
+function preferredPreviewFile(item: DrawingLibraryItemDTO | null | undefined, categoryId: string) {
+  const issue = item?.returnSummary?.find(r => r.status === 'OPEN' || r.status === 'READY') || item?.returnSummary?.[0];
+  return (issue && item?.files.find(f => f.id === (issue.responseFileId || issue.fileId)))
+    || item?.files.find(f => f.categoryId === categoryId)
+    || item?.files.find(f => f.categoryCode === 'drawing') || item?.files[0];
 }
 
 const structuredFieldLabels: Record<string, string> = {
@@ -243,14 +254,17 @@ export function DrawingLibraryShell({
   const [sopFilter, setSopFilter] = useState<SopFilter>('all');
   const [customer, setCustomer] = useState('全部客户');
   const requestedActiveItem = initialItems.find(item => item.id === requestedItemId) || null;
+  const initialPreviewItem = requestedActiveItem || (!requestedItemId ? initialItems[0] : null);
+  const initialPreviewFile = preferredPreviewFile(initialPreviewItem, categories[0]?.id || '');
+  const previewProductRef = useRef(initialPreviewItem?.id || '');
   const [selectedId, setSelectedId] = useState(requestedItemId ? (requestedActiveItem?.id || '') : (initialItems[0]?.id || ''));
-  const [selectedFileId, setSelectedFileId] = useState('');
+  const [selectedFileId, setSelectedFileId] = useState(initialPreviewFile?.id || '');
   const [returnProduct, setReturnProduct] = useState<{ id: string; specification: string } | null>(null);
   const [historyFile, setHistoryFile] = useState<DrawingLibraryFileDTO | null>(null);
   useEffect(() => { if (requestedActiveItem && new URLSearchParams(window.location.search).get('returns') === '1') setReturnProduct(requestedActiveItem); }, [requestedActiveItem]);
   const [previewMode, setPreviewMode] = useState<'structured' | 'file'>('file');
   const lastFilesByCategory = useRef<Record<string, string>>({});
-  const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
+  const [activeCategoryId, setActiveCategoryId] = useState(initialPreviewFile?.categoryId || categories[0]?.id || '');
   const [qualityWarningMode, setQualityWarningMode] = useState(false);
   const [quickCreateOpen,setQuickCreateOpen]=useState(false);
   const [warningPhotos,setWarningPhotos]=useState<{photos:QuickQualityPhoto[];index:number}|null>(null);
@@ -490,6 +504,16 @@ export function DrawingLibraryShell({
       }
     }
   }, [canManageDrawing, items, keyword, week, filter]);
+
+  useEffect(() => {
+    if (!selectedItem || previewProductRef.current === selectedItem.id) return;
+    previewProductRef.current = selectedItem.id;
+    const params = new URLSearchParams(window.location.search);
+    const explicitFile = params.get('itemId') === selectedItem.id ? selectedItem.files.find(f => f.id === params.get('fileId')) : null;
+    const file = explicitFile || preferredPreviewFile(selectedItem, activeCategoryId);
+    if (file) { setActiveCategoryId(file.categoryId); setSelectedFileId(file.id); }
+    setFilePanelOpen(false);
+  }, [selectedItem, activeCategoryId]);
 
   useEffect(() => {
     if (selectedFile && selectedFile.id !== selectedFileId) setSelectedFileId(selectedFile.id);
@@ -957,10 +981,15 @@ export function DrawingLibraryShell({
     setMissingReference(null);
     setReferenceResolving(false);
     setSelectedId(item.id);
+    previewProductRef.current = item.id;
     const problem = item.returnSummary?.find(r => r.status === 'OPEN' || r.status === 'READY') || item.returnSummary?.[0];
     const problemFile = problem && item.files.find(f => f.id === (problem.responseFileId || problem.fileId));
     if (problemFile) { setActiveCategoryId(problemFile.categoryId); setQualityWarningMode(false); setSelectedFileId(problemFile.id); }
-    else setSelectedFileId(lastFilesByCategory.current[`${item.id}:${activeCategoryId}`] || '');
+    else {
+      const file = preferredPreviewFile(item, activeCategoryId);
+      if (file) { setActiveCategoryId(file.categoryId); setSelectedFileId(lastFilesByCategory.current[`${item.id}:${file.categoryId}`] || file.id); }
+      else setSelectedFileId('');
+    }
     urlMissingWarnedRef.current = false;
     const url = new URL(window.location.href);
     url.searchParams.set('itemId', item.id);
@@ -1007,12 +1036,12 @@ export function DrawingLibraryShell({
   }
 
   return (
-    <main className="drawing-library-page hm-drawing-workbench hm-workbench-root">
+    <main className="drawing-library-page hm-drawing-workbench hm-workbench-root library-reading-layout">
       <AppWorkbenchHeader
         user={user}
         activeHref="/drawing-library"
         subtitle="客户、规格与图纸预览"
-        utilityActions={planningReturnContext ? (
+        utilityActions={<div className="library-header-actions">{planningReturnContext ? (
           <a
             className="hm-drawing-planning-return"
             href={planningReturnContext.returnTo}
@@ -1032,7 +1061,10 @@ export function DrawingLibraryShell({
               </small>
             </span>
           </a>
-        ) : undefined}
+        ) : null}
+          {canManageDrawing && <><button className="hm-workbench-button" type="button" onClick={() => openModal('create')}><Plus size={15} />新增</button><button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)}><Upload size={15} />批量导入</button></>}
+          <details className="library-popover-menu"><summary className="hm-workbench-button" aria-label="资料库更多操作"><MoreHorizontal size={17} /></summary><div>{canManageDrawing && <><button type="button" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} />导入说明</button><button type="button" onClick={openTrash}><Trash2 size={15} />资料回收站</button></>}</div></details>
+        </div>}
         menuItems={[
           planningReturnContext
             ? { label: '返回计划中心', onSelect: () => { void returnToPlanning(); } }
@@ -1042,81 +1074,34 @@ export function DrawingLibraryShell({
       />
 
       <div className="hm-drawing-main">
-        <section className="hm-drawing-query" aria-label="图纸资料搜索和筛选">
-          <label className="hm-drawing-search-field" htmlFor="drawing-library-search">
-            <span>搜索资料</span>
-            <span className="hm-drawing-search-control">
-              <Search size={16} aria-hidden="true" />
-              <input id="drawing-library-search" className="hm-workbench-input" value={keyword} onChange={event => { const value = event.target.value; requestPreviewLeave(() => setKeyword(value)); }} placeholder="客户、规格、品名或备注" />
-              {keyword && <button type="button" aria-label="清空搜索关键词" onClick={() => requestPreviewLeave(() => setKeyword(''))}>清空</button>}
-            </span>
-          </label>
-
-          <PlanWeekFilter value={week} onChange={changeWeek} />
-          <button type="button" className="drawing-return-filter" aria-pressed={filter === "review_failed"} onClick={() => requestPreviewLeave(() => setFilter(filter === "review_failed" ? "all" : "review_failed"))}><FileWarning size={14}/>审核不通过</button>
-          <label className="hm-drawing-customer-filter">
-            <span>客户</span>
-            <select className="hm-workbench-input" value={customer} onChange={event => { const value = event.target.value; requestPreviewLeave(() => setCustomer(value)); }}>
-              {customers.map(item => <option key={`${item.customerName}-${item.customerCode || ''}`} value={item.customerName}>{item.customerName}（{item.itemCount}）</option>)}
-              {!customers.length && <option value="全部客户">全部客户（0）</option>}
-            </select>
-          </label>
-
-          <label className="hm-drawing-status-filter">
-            <span>状态</span>
-            <select className="hm-workbench-input" value={filter} onChange={event => { const value = event.target.value as DrawingFilter; requestPreviewLeave(() => setFilter(value)); }}>
-              {filterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-            </select>
-          </label>
-
-          <label className="hm-drawing-status-filter hm-drawing-sop-filter">
-            <span>SOP</span>
-            <select className="hm-workbench-input" value={sopFilter} onChange={event => { const value = event.target.value as SopFilter; requestPreviewLeave(() => setSopFilter(value)); }}>
-              {sopFilterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-            </select>
-          </label>
-
-          <div className="hm-drawing-result-count" aria-live="polite">
-            <span>{loading ? '正在检索' : '当前结果'}</span><strong>{loading ? '…' : visibleItems.length}</strong><small>规格 · {visibleFileCount} 文件</small>
-          </div>
-          <span className="hm-drawing-filter-summary" title={[keyword.trim() ? `关键词：${keyword.trim()}` : '', customer !== '全部客户' ? `客户：${customer}` : '', filter !== 'all' ? `状态：${activeFilterLabel}` : '', sopFilter !== 'all' ? `SOP：${sopFilterOptions.find(([key]) => key === sopFilter)?.[1]}` : ''].filter(Boolean).join(' · ') || '全部资料'}>{hasActiveFilters ? '已启用筛选' : '全部资料'}</span>
-          <details className="hm-drawing-more-filters">
-            <summary className="hm-workbench-button">更多筛选</summary>
-            <div role="group" aria-label="快捷资料状态筛选">
-              <span>资料状态</span>
-              {filterOptions.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" aria-pressed={filter === key} onClick={() => requestPreviewLeave(() => setFilter(key))}>{label}</button>)}
-            </div>
-          </details>
-          <button className="hm-drawing-clear-filters" type="button" disabled={!hasActiveFilters} onClick={clearFilters}>清除筛选</button>
-          <div className="hm-drawing-command-actions" aria-label="图纸资料操作">
-            {canManageDrawing && <>
-              <button className="hm-workbench-button" type="button" onClick={() => openModal('create')} title="新增图纸资料"><Plus size={15} aria-hidden="true" /><span>新增</span></button>
-              <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)} title="批量导入原图"><Upload size={15} aria-hidden="true" /><span>批量导入</span></button>
-              <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} aria-hidden="true" /><span>说明</span></button>
-              <button className="hm-workbench-button" type="button" title="查看已删除文件和图纸档案" onClick={openTrash}><Trash2 size={15} aria-hidden="true" /><span>资料回收站</span></button>
-            </>}
-          </div>
+        <section className="library-query" aria-label="图纸资料搜索和筛选">
+          <label className="library-search"><Search size={16} /><input aria-label="搜索资料" value={keyword} placeholder="客户、规格、品名或备注" onChange={e => { const value=e.target.value; requestPreviewLeave(() => setKeyword(value)); }} />{keyword && <button type="button" aria-label="清空搜索关键词" onClick={() => requestPreviewLeave(() => setKeyword(''))}>×</button>}</label>
+          <PlanWeekFilter compact value={week} onChange={changeWeek} />
+          <select className="library-customer" aria-label="客户筛选" value={customer} onChange={e => { const value=e.target.value; requestPreviewLeave(() => setCustomer(value)); }}>{customers.map(item => <option key={`${item.customerName}-${item.customerCode || ''}`} value={item.customerName}>{item.customerName}（{item.itemCount}）</option>)}{!customers.length && <option value="全部客户">全部客户（0）</option>}</select>
+          <button className="library-rejected" type="button" aria-pressed={filter === 'review_failed'} onClick={() => requestPreviewLeave(() => setFilter(filter === 'review_failed' ? 'all' : 'review_failed'))}><FileWarning size={15} />审核不通过</button>
+          <details className="library-popover-menu library-filter-menu"><summary>更多筛选{(filter !== 'all' && filter !== 'review_failed' || sopFilter !== 'all') && <i />}</summary><div>
+            <label>资料状态<select aria-label="资料状态筛选" value={filter} onChange={e => { const value=e.target.value as DrawingFilter; requestPreviewLeave(() => setFilter(value)); }}>{filterOptions.map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+            <label>SOP 状态<select aria-label="SOP 状态筛选" value={sopFilter} onChange={e => { const value=e.target.value as SopFilter; requestPreviewLeave(() => setSopFilter(value)); }}>{sopFilterOptions.map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+          </div></details>
+          <button className="library-clear" type="button" disabled={!hasActiveFilters} onClick={clearFilters}>清除筛选</button>
+          {(filter !== 'all' && filter !== 'review_failed' || sopFilter !== 'all') && <div className="library-filter-chips">{filter !== 'all' && filter !== 'review_failed' && <button type="button" onClick={() => requestPreviewLeave(() => setFilter('all'))}>{activeFilterLabel}<span>×</span></button>}{sopFilter !== 'all' && <button type="button" onClick={() => requestPreviewLeave(() => setSopFilter('all'))}>{sopFilterOptions.find(([key]) => key === sopFilter)?.[1]}<span>×</span></button>}</div>}
         </section>
 
         <section className={`drawing-workspace ${qualityWarningMode ? 'quality-warning-mode' : ''}`.trim()}>
           <aside className="drawing-browser" aria-label="图纸规格结果">
             <div className="drawing-panel-head">
               <div><strong>规格结果</strong><span>{week ? planWeekLabel(week) : customer === '全部客户' ? '全部客户' : customer}</span></div>
-              <b>{visibleItems.length}</b>
+              <b aria-live="polite" title={`${visibleFileCount} 个文件`}>{loading ? "…" : visibleItems.length}</b>
             </div>
             <div ref={listScrollRef} onScroll={event => { if (restoredScrollKey.current === scrollKey) { try { sessionStorage.setItem(scrollKey, String(event.currentTarget.scrollTop)); } catch { /* Optional position memory. */ } } }} className="drawing-list hm-scroll-region" tabIndex={0} aria-label={`图纸规格结果，共 ${visibleItems.length} 项`}>
               {visibleItems.map(item => (
                 <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" aria-pressed={selectedItem?.id === item.id} onClick={() => { void chooseItem(item); }}>
                   <div className="drawing-spec-title-line">
                     <strong title={item.specification}>{item.specification}</strong>
-                    {item.isAnomaly && <span title={item.anomalyReason || '异常数据'}>异常</span>}
-                    {item.sopMetadata && <span className={`sop-stage ${item.sopMetadata.sopStage}`} title={`SOP：${sopStageLabels[item.sopMetadata.sopStage]}`}>{sopStageLabels[item.sopMetadata.sopStage]}</span>}
+                    {!!item.returnSummary?.length ? <span className="library-return-badge">{item.returnSummary.some(r => r.status === 'OPEN' || r.status === 'READY') ? '审核不通过' : '待复核'}</span> : item.isAnomaly ? <span title={item.anomalyReason || '异常数据'}>异常</span> : item.sopMetadata ? <span className={`sop-stage ${item.sopMetadata.sopStage}`}>{sopStageLabels[item.sopMetadata.sopStage]}</span> : null}
                   </div>
                   <p title={`${item.customerName} · ${item.productName || '未设置品名'}`}>{item.customerName} · {item.productName || '未设置品名'}</p>
-                  {!!item.returnSummary?.length && <span className="drawing-return-summary" title={item.returnSummary.map(r => r.reason).join("；")}>{[...new Set(item.returnSummary.map(r => r.kind === "sop" ? "SOP" : r.kind === "drawing" ? "图纸" : "资料"))].join("、")} · {item.returnSummary.some(r => r.status === "OPEN" || r.status === "READY") ? "审核不通过" : "已提交复核"}</span>}
-                  {["review_failed", "review_recheck"].includes(filter) && item.returnSummary?.[0] && <small className="drawing-return-excerpt" title={item.returnSummary[0].reason}>{item.returnSummary[0].reason} · {dt(item.returnSummary[0].createdAt)}</small>}
                   <footer>
-                    <em>{item.fileCount ? item.completenessText : '待上传'}</em>
                     <span>{week && item.planBatchCount ? `${item.planBatchCount} 批计划 · ` : ''}{item.fileCount ? `${item.fileCount} 个文件` : '档案已建立'}</span>
                     <time dateTime={item.updatedAt || undefined}>{dt(item.updatedAt)}</time>
                   </footer>
@@ -1182,32 +1167,35 @@ export function DrawingLibraryShell({
           ) : (
             <>
 
-              <div className="drawing-detail-head">
-                <div>
-                  <span>当前资料</span>
-                  <h1 title={selectedItem.specification}>{selectedItem.specification}</h1>
-                  <FixtureRequirementControl key={selectedItem.id} productId={selectedItem.id} week={week} /><QualityFixtureStatus id={selectedItem.id} />
-                  <p>
-                    <b title={selectedItem.customerName}>{selectedItem.customerName}</b>
-                    {hasText(selectedItem.productName) && <em title={selectedItem.productName || ''}>{selectedItem.productName}</em>}
-                    <small>{selectedItem.fileCount ? selectedItem.completenessText : '档案已建立 · 待上传资料'}</small>
-                    {selectedItem.fileCount > 0 && <small>{selectedItem.fileCount} 个文件</small>}
-                    <small>档案更新 {dt(selectedItem.updatedAt)}</small>
-                    {!!selectedItem.returnSummary?.length && <button className="drawing-return-summary" type="button" onClick={() => setReturnProduct(selectedItem)}>退回处理 {selectedItem.returnSummary.length} 项 ↗</button>}
-                    {selectedItem.isAnomaly && <small className="anomaly">{selectedItem.anomalyReason}</small>}
-                    {qualityWarnings.length > 0 && <button className="drawing-quality-warning-chip" type="button" onClick={() => requestPreviewLeave(() => { setQualityWarningMode(true); setFilePanelOpen(false); })}><ShieldAlert size={12} />{qualityWarnings.length} 条质量异常</button>}
-                  </p>
-                </div>
+              <div className="library-document-head">
+                <div className="library-document-identity"><h1 title={selectedItem.specification}>{selectedItem.specification}</h1><p title={`${selectedItem.customerName} · ${selectedItem.productName || ''}`}>{selectedItem.customerName}{hasText(selectedItem.productName) ? ` · ${selectedItem.productName}` : ''}</p></div>
                 <div className="drawing-head-actions">
                   {canManageDrawing && isSopCategory && (
                     <div className="drawing-sop-mode-switch" role="group" aria-label="SOP 查看模式">
-                      <button className="active" type="button" aria-pressed="true">文件预览</button>
+
                       <button type="button" disabled={pdfOverlayOpening || selectedFile?.fileType !== 'pdf'} onClick={() => requestPreviewLeave(() => { void openPdfOverlayEditor(); })}>
                         {pdfOverlayOpening ? '正在打开...' : '在线编辑'}
                       </button>
                     </div>
                   )}
-                  <button className="hm-workbench-button" type="button" onClick={() => { void openProductTime(selectedItem.id); }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
+                  <details key={selectedItem.id} className="library-popover-menu library-document-info"><summary className="hm-workbench-button">资料详情</summary><div><FixtureRequirementControl productId={selectedItem.id} week={week} /><QualityFixtureStatus id={selectedItem.id} />{isSopCategory ? (
+                        <div className="drawing-sop-metadata" aria-label="SOP 资料属性">
+                          <span className={`stage ${selectedItem.sopMetadata?.sopStage || 'unset'}`}>
+                            <FileCheck2 size={15} aria-hidden="true" />
+                            <small>SOP 状态</small><strong>{selectedItem.sopMetadata ? sopStageLabels[selectedItem.sopMetadata.sopStage] : '未登记'}</strong>
+                          </span>
+                          <span className={`drawing ${selectedItem.sopMetadata?.drawingStatus || 'unset'}`}>
+                            {selectedItem.sopMetadata?.drawingStatus === 'missing' ? <FileWarning size={15} aria-hidden="true" /> : <FileImage size={15} aria-hidden="true" />}
+                            <small>图纸状态</small><strong>{selectedItem.sopMetadata ? (selectedItem.sopMetadata.drawingStatus === 'missing' ? '没图纸' : '有图纸') : '未登记'}</strong>
+                          </span>
+                          <span className={`control ${selectedFile?.controlMode || 'unset'}`}>
+                            {selectedFile?.controlMode === 'controlled' ? <ShieldCheck size={15} aria-hidden="true" /> : <ShieldOff size={15} aria-hidden="true" />}
+                            <small>当前版本</small><strong>{selectedFile?.controlMode === 'controlled' ? '受控' : selectedFile?.controlMode === 'uncontrolled' ? '未受控' : '未标记'}</strong>
+                          </span>
+                          <p title={selectedItem.sopMetadata?.remark || '暂无 SOP 备注'}><small>备注</small><strong>{selectedItem.sopMetadata?.remark || '暂无备注'}</strong></p>
+                          {canManageDrawing ? <button type="button" onClick={openSopMetadataEditor}><Settings2 size={15} aria-hidden="true" />编辑属性</button> : null}
+                        </div>
+                      ) : null}<small>档案更新：{dt(selectedItem.updatedAt)} · {selectedItem.fileCount} 个文件</small><button type="button" onClick={() => { void openProductTime(selectedItem.id); }}><Clock3 size={15} />产品工时</button>{selectedItem.isAnomaly && <p>{selectedItem.anomalyReason}</p>}</div></details>
                   <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}><Files size={15} aria-hidden="true" /><span>文件列表</span><b>{activeFiles.length}</b></button>
                   {canManageDrawing && <button className="hm-workbench-button drawing-upload-trigger" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}><Upload size={15} aria-hidden="true" />{uploading ? '上传中...' : '上传资料'}</button>}
                   {(canManageDrawing || canManageArchive || (canDeleteDrawing && selectedFile)) && <details className="hm-drawing-more-actions drawing-head-more-actions">
@@ -1221,6 +1209,7 @@ export function DrawingLibraryShell({
                 </div>
               </div>
 
+              <DrawingReturnNotice returns={selectedItem.returnSummary || []} onHandle={() => setReturnProduct(selectedItem)} />
               <div className="drawing-library-main">
                 <nav className="drawing-category-rail">
                   <button className={`drawing-quality-warning-entry ${qualityWarningMode ? 'active' : ''} ${qualityWarnings.length ? 'has-warning' : ''}`} type="button" onClick={() => requestPreviewLeave(() => { setQualityWarningMode(true); setFilePanelOpen(false); })}>
@@ -1275,26 +1264,7 @@ export function DrawingLibraryShell({
                           <button className={!showStructuredPreview ? 'active' : ''} type="button" aria-pressed={!showStructuredPreview} disabled={!selectedFile} onClick={() => setPreviewMode('file')}>附件证据 {activeFiles.length}</button>
                         </span> : <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>}
                       </div>
-                      {selectedFile && <div className="drawing-file-time"><span>{fileTimeLabel(selectedFile.timing?.timeKind)}：{dt(selectedFile.timing?.recordedAt || selectedFile.createdAt)}</span><span>内容变更：{selectedFile.timing?.contentChangedAt ? dt(selectedFile.timing.contentChangedAt) : selectedFile.timing?.firstUploadedAt ? "尚未变更" : "历史未记录"}</span><button type="button" onClick={() => setHistoryFile(selectedFile)}>上传与变更履历 ↗</button>{selectedItem.returnSummary?.some(r => r.fileId === selectedFile.id || r.responseFileId === selectedFile.id) && <button className="drawing-return-summary" type="button" onClick={() => setReturnProduct(selectedItem)}>查看退回与技术回复 ↗</button>}</div>}
-
-                      {isSopCategory ? (
-                        <div className="drawing-sop-metadata" aria-label="SOP 资料属性">
-                          <span className={`stage ${selectedItem.sopMetadata?.sopStage || 'unset'}`}>
-                            <FileCheck2 size={15} aria-hidden="true" />
-                            <small>SOP 状态</small><strong>{selectedItem.sopMetadata ? sopStageLabels[selectedItem.sopMetadata.sopStage] : '未登记'}</strong>
-                          </span>
-                          <span className={`drawing ${selectedItem.sopMetadata?.drawingStatus || 'unset'}`}>
-                            {selectedItem.sopMetadata?.drawingStatus === 'missing' ? <FileWarning size={15} aria-hidden="true" /> : <FileImage size={15} aria-hidden="true" />}
-                            <small>图纸状态</small><strong>{selectedItem.sopMetadata ? (selectedItem.sopMetadata.drawingStatus === 'missing' ? '没图纸' : '有图纸') : '未登记'}</strong>
-                          </span>
-                          <span className={`control ${selectedFile?.controlMode || 'unset'}`}>
-                            {selectedFile?.controlMode === 'controlled' ? <ShieldCheck size={15} aria-hidden="true" /> : <ShieldOff size={15} aria-hidden="true" />}
-                            <small>当前版本</small><strong>{selectedFile?.controlMode === 'controlled' ? '受控' : selectedFile?.controlMode === 'uncontrolled' ? '未受控' : '未标记'}</strong>
-                          </span>
-                          <p title={selectedItem.sopMetadata?.remark || '暂无 SOP 备注'}><small>备注</small><strong>{selectedItem.sopMetadata?.remark || '暂无备注'}</strong></p>
-                          {canManageDrawing ? <button type="button" onClick={openSopMetadataEditor}><Settings2 size={15} aria-hidden="true" />编辑属性</button> : null}
-                        </div>
-                      ) : null}
+                      {selectedFile && <div className="drawing-file-time"><span>{fileTimeLabel(selectedFile.timing?.timeKind)}：{dt(selectedFile.timing?.recordedAt || selectedFile.createdAt)}</span><span>内容变更：{selectedFile.timing?.contentChangedAt ? dt(selectedFile.timing.contentChangedAt) : selectedFile.timing?.firstUploadedAt ? "尚未变更" : "历史未记录"}</span><button type="button" onClick={() => setHistoryFile(selectedFile)}>上传与变更履历 ↗</button></div>}
 
                       {showStructuredPreview ? (
                         <div className="drawing-structured-records hm-scroll-region" tabIndex={0} aria-label={`${activeCategory?.name || '结构化资料'}，共 ${activeStructuredCount} 条`}>
@@ -1346,7 +1316,7 @@ export function DrawingLibraryShell({
           </section>
 
           {filePanelOpen && <button className="drawing-file-panel-scrim" type="button" aria-label="关闭文件工具窗" onClick={closeFilePanel} />}
-          {selectedItem && <aside ref={filePanelRef} id="drawing-library-file-panel" className={`drawing-file-panel ${filePanelOpen ? 'open' : ''}`.trim()} aria-label="分类文件列表" tabIndex={-1}>
+          {selectedItem && filePanelOpen && <aside ref={filePanelRef} id="drawing-library-file-panel" className={`drawing-file-panel ${filePanelOpen ? 'open' : ''}`.trim()} aria-label="分类文件列表" tabIndex={-1}>
           <div className="drawing-file-panel-head">
             <div><strong>{activeCategory?.name || '分类文件'}</strong><span>{activeFiles.length} 个文件</span></div>
             <button ref={filePanelCloseRef} className="drawing-file-panel-close" type="button" aria-label="关闭文件工具窗" title="关闭" onClick={closeFilePanel}>×</button>
@@ -1355,7 +1325,7 @@ export function DrawingLibraryShell({
             <>
               <div className="drawing-files hm-scroll-region" tabIndex={0} aria-label={`当前分类文件，共 ${activeFiles.length} 个`}>
                 {activeFiles.map(file => (
-                  <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => requestPreviewLeave(() => { setSelectedFileId(file.id); setPreviewMode('file'); })}>
+                  <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => requestPreviewLeave(() => { setSelectedFileId(file.id); setPreviewMode('file'); setQualityWarningMode(false); closeFilePanel(); })}>
                     <b>{file.fileType === 'pdf' ? 'PDF' : file.fileType === 'image' ? 'IMG' : 'FILE'}</b>
                     <span title={safeDisplayFilename(file)}>{safeDisplayFilename(file)}</span>
                     {selectedItem.returnSummary?.some(r => r.fileId === file.id || r.responseFileId === file.id) && <small className="drawing-return-summary">{selectedItem.returnSummary.some(r => (r.fileId === file.id || r.responseFileId === file.id) && ["OPEN","READY"].includes(r.status)) ? "审核不通过" : "待复核"}</small>}

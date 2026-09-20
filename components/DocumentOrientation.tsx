@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { GlassNotice } from './GlassNotice';
 import { documentDisplaySettingsUrl, rotateDocumentPages, samePageRotations, type PageRotations } from '@/lib/document-orientation';
 
 type Cached = { revision: number; saved: PageRotations; draft: PageRotations; page: number };
@@ -27,6 +28,8 @@ export function useDocumentOrientation(source: string) {
   const [ready, setReady] = useState(!url || Boolean(cached));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [messageError, setMessageError] = useState(false);
+  const clearMessage = useCallback(() => setMessage(''), []);
   const [prompt, setPrompt] = useState(false);
   const pending = useRef<(() => void) | null>(null);
   const state = useRef({ draft, saved, revision, canSave, saving });
@@ -46,10 +49,12 @@ export function useDocumentOrientation(source: string) {
       setCanSave(data.canSave === true);
       setDraft(!discard && state.current.revision === data.revision ? state.current.draft : data.pageRotations);
       setReady(true);
+      setMessageError(false);
       setMessage(discard ? '已恢复服务器保存的方向' : '');
     } catch (error) {
       if (signal?.aborted) return;
       setCanSave(false);
+      setMessageError(true);
       setMessage(error instanceof Error ? error.message : '方向设置读取失败');
     }
   }
@@ -111,8 +116,10 @@ export function useDocumentOrientation(source: string) {
       sessions.set(key, { revision: data.revision, saved: data.pageRotations, draft: data.pageRotations, page });
       state.current = { ...state.current, draft: data.pageRotations, saved: data.pageRotations, revision: data.revision };
       setMessage('方向已保存，所有有查看权限的人员均可使用');
+      setMessageError(false);
       return true;
     } catch (error) {
+      setMessageError(true);
       setMessage(error instanceof Error ? error.message : '方向保存失败，请重试'); return false;
     } finally { setSaving(false); }
   }
@@ -128,7 +135,7 @@ export function useDocumentOrientation(source: string) {
   }
 
   return {
-    key, url, ready, rootRef, page, setPage, draft, saved, revision, canSave, dirty, saving, message, prompt,
+    key, url, ready, rootRef, page, setPage, draft, saved, revision, canSave, dirty, saving, message, messageError, clearMessage, prompt,
     save, reload: () => load(true),
     rotate: (delta: number, pageCount = 1, all = false) => { if (!saving) { setMessage(''); setDraft(value => rotateDocumentPages(value, page, delta, pageCount, all)); } },
     restoreOriginal: () => { if (!saving) { setMessage(''); setDraft(value => { const next = { ...value }; delete next[page]; return next; }); } },
@@ -186,7 +193,7 @@ export function DocumentPreviewFrame({ orientation: o, fullscreen, title, onClos
   return <div ref={o.rootRef} className={`document-preview-session${fullscreen ? ' preview-fullscreen-backdrop' : ''}`} role={fullscreen ? 'dialog' : undefined} aria-modal={fullscreen || undefined} aria-label={fullscreen ? `${title} 全屏预览` : undefined}>
     <div className={fullscreen ? 'document-preview-panel preview-fullscreen-panel' : 'document-preview-panel'}>
       {o.ready ? children : <div className="viewer-state"><strong>正在读取文件方向…</strong><button type="button" onClick={() => void o.reload()}>重新读取</button></div>}
-      {o.message && <div className="orientation-message" role="status">{o.message}</div>}
+      <GlassNotice message={o.prompt ? '' : o.message} close={o.clearMessage} error={o.messageError} />
     </div>
     {o.prompt && <div className="orientation-confirm-backdrop"><section ref={confirmRef} className="orientation-confirm" role="alertdialog" aria-modal="true" aria-labelledby="orientation-confirm-title">
       <h3 id="orientation-confirm-title">是否保存阅读方向？</h3><p>{title} 的阅读方向已修改。保存后对所有有查看权限的人员生效。</p>
