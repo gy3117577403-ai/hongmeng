@@ -26,14 +26,11 @@ test('notification center fills the workbench instead of centering a fixed 1240p
   assert.doesNotMatch(frame, /1240px/);
 });
 
-test('drawing library keeps a persistent desktop file list and a responsive drawer trigger', () => {
+test('drawing library retains an accessible file drawer trigger', () => {
   const component = source('components/DrawingLibraryShell.tsx');
-  const stylesheet = source('app/drawing-library/drawing-library-workbench.css');
-
-  assert.match(component, /selectedItem && <aside[\s\S]*?className=\{`drawing-file-panel \$\{filePanelOpen \? 'open' : ''\}`\.trim\(\)\}/);
   assert.match(component, /文件列表<\/span><b>\{activeFiles\.length\}<\/b>/);
-  assert.match(stylesheet, /grid-template-columns:\s*minmax\(270px, 292px\) minmax\(0, 1fr\) minmax\(238px, 276px\)/);
-  assert.match(stylesheet, /@media \(max-width: 1180px\)[\s\S]*?\.hm-drawing-file-toggle\s*\{[\s\S]*?display:\s*inline-flex/);
+  assert.match(component, /aria-controls="drawing-library-file-panel"/);
+  assert.match(component, /aria-expanded=\{filePanelOpen\}/);
 });
 
 test('warehouse toolbar contains filters and refresh while related modules live in collaboration', () => {

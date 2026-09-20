@@ -26,7 +26,10 @@ test('photo viewer and drawing preview expose fit, rotate, zoom, center and full
   const viewer = readFileSync('components/ImageViewer.tsx', 'utf8');
   const sampleDialog = readFileSync('components/SamplePhotoViewerDialog.tsx', 'utf8');
   const drawing = readFileSync('components/DrawingLibraryShell.tsx', 'utf8');
-  for (const contract of ['fit-window', '居中', 'showFullscreen']) assert.match(viewer, new RegExp(contract));
+  const toolbar = readFileSync('components/DocumentPreviewToolbar.tsx', 'utf8');
+  for (const contract of ['fit-window', 'showFullscreen']) assert.match(viewer, new RegExp(contract));
+  assert.match(viewer, /<DocumentPreviewToolbar/);
+  assert.match(toolbar, /居中显示/);
   assert.match(sampleDialog, /PageUp/);
   assert.match(sampleDialog, /PageDown/);
   assert.match(drawing, /initialFitMode="fit-window"/);
