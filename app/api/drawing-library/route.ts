@@ -1,5 +1,5 @@
 import { fixturePlanScope } from '@/lib/quality-fixture-scope';
-import { drawingPlanWeekScope, planWeekStart } from '@/lib/drawing-plan-week';
+import { drawingPlanWeekScope, planWeekStart, planWeekStartRange } from '@/lib/drawing-plan-week';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
@@ -34,7 +34,7 @@ function itemInclude(week = '') {
     },
     productionPlanOrders: {
       where: { deletedAt: null, ...(week ? { status: { not: 'cancelled' } } : {}) },
-      select: { id: true, batches: { where: { deletedAt: null, releaseState: { notIn: ['cancelled', 'archived'] }, ...(week ? { weekStartDate: new Date(`${week}T00:00:00+08:00`) } : {}) }, select: { id: true } } },
+      select: { id: true, batches: { where: { deletedAt: null, releaseState: { notIn: ['cancelled', 'archived'] }, ...(week ? { weekStartDate: planWeekStartRange(week) } : {}) }, select: { id: true } } },
       ...(week ? {} : { take: 1 }),
     },
     productDataRecords: {

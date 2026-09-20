@@ -26,8 +26,14 @@ export function planWeekLabel(week: string): string {
   return `${start} — ${end.toISOString().slice(0, 10)}`;
 }
 
+/** Match the recorded Monday by Shanghai calendar day; planning stores it at noon. */
+export function planWeekStartRange(week: string): { gte: Date; lt: Date } {
+  const gte = new Date(`${planWeekStart(week)}T00:00:00+08:00`);
+  return { gte, lt: new Date(gte.getTime() + 24 * 60 * 60 * 1000) };
+}
+
 export function drawingPlanWeekScope(week: string, reviewRequired = false): Prisma.DrawingLibraryItemWhereInput {
-  const weekStartDate = new Date(`${planWeekStart(week)}T00:00:00+08:00`);
+  const weekStartDate = planWeekStartRange(week);
   return { OR: [
     { productionPlanOrders: { some: { deletedAt: null, status: { not: 'cancelled' }, batches: { some: {
       deletedAt: null, weekStartDate, releaseState: { notIn: ['cancelled', 'archived'] }, ...(reviewRequired ? { documentReviewRequired: true } : {}),
