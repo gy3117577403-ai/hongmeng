@@ -10,7 +10,7 @@ import {
   QualityDataError, type QualityActor, type QualityFormData, type QualityOrder, type QualityRecord,
 } from '@/lib/quality-data';
 
-const orderInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
+export const orderInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
   productionPlanBatch: { include: { planOrder: true } },
   processRoute: { select: { steps: { where: { retiredAt: null }, select: { id: true, processName: true, position: true, routeId: true }, orderBy: { position: 'asc' } } } },
 });

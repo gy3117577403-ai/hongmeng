@@ -12,6 +12,7 @@ import { qualityOptions } from '@/lib/quality-data-options';
 import { createReference, mutateReference, loadReference, listReferences, favoriteReference, referenceHistory, referenceVersion, exportReferences } from '@/lib/quality-reference-service';
 import { uploadReferenceFile, deleteReferenceFile, referenceFileContent } from '@/lib/quality-reference-files';
 import { referenceWorkbook, referenceZip } from '@/lib/quality-reference-export';
+import { firstOrderList, firstRecordList } from '@/lib/quality-first-service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const privateHeaders = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -32,6 +33,13 @@ export async function GET(req: NextRequest, { params }: Context) {
     else if (p.length === 2 && p[0] === 'references') data = await loadReference(p[1],actor.id);
     else if (p.length === 3 && p[0] === 'references' && p[2] === 'revisions') data = await referenceHistory(p[1],positivePage(query.get('page')));
     else if (p.length === 4 && p[0] === 'references' && p[2] === 'revisions') data = await referenceVersion(p[1],positivePage(p[3]));
+    else if (p.length === 1 && p[0] === 'first-orders') data = await firstOrderList(query, actor.id);
+    else if (p.length === 1 && p[0] === 'first-records') data = await firstRecordList(query, actor.id);
+    else if (p.length === 1 && p[0] === 'first-export') {
+      const records = (await firstRecordList(query, actor.id, true)).items;
+      if (query.get('format') === 'zip') return new Response(Readable.toWeb(await qualityZip(records, query.toString())) as ReadableStream, { headers: { ...privateHeaders, 'Content-Type': 'application/zip', 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent('首件检验附件.zip') } });
+      return new Response(new Uint8Array(await qualityWorkbook(records, query.toString())), { headers: { ...privateHeaders, 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent('首件检验记录.xlsx') } });
+    }
     else if (p.length === 1 && p[0] === 'orders') data = await qualityOrderOptions(query);
     else if (p.length === 2 && p[0] === 'orders') data = await readQualityOrder(prisma, p[1]);
     else if (p.length === 2 && p[0] === 'first-steps') data = await qualityFirstOverview(p[1]);

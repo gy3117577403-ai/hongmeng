@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { firstTime, type FirstActivity } from './quality-first-types';
 import { qualityResponsibilityLabel } from './process-quality-report';
 import { Readable } from 'node:stream';
 import { ZipFile } from 'yazl';
@@ -7,17 +8,17 @@ import { getObjectStream } from '@/lib/s3';
 import { safeFilename } from '@/lib/validation';
 import { CONTEXT_FIELDS, QUALITY_DATA_TYPES, QUALITY_LABELS, RESULT_LABELS, REVIEW_LABELS, beijingInput, QualityDataError, type QualityRecord } from '@/lib/quality-data';
 
-export async function qualityWorkbook(records: QualityRecord[], filter: string) {
+export async function qualityWorkbook(records: (QualityRecord & { activity?: FirstActivity })[], filter: string) {
   const book = new ExcelJS.Workbook();
   book.creator = '杭连协同平台';
   const overview = book.addWorksheet('记录清单');
   overview.addRow(['质量数据导出', '北京时间', beijingInput().replace('T',' ')]);
   overview.addRow(['查询条件', filter]);
-  const headings = ['记录编号','检验类型','标题','检验时间','提交时间','订单号','订单行','生产批次','工单号','产品','规格','客户','检验结论','记录状态','复核状态','填写人','版本','作废原因','摘要','来源','工序序号','报工单位','责任人','报工记录ID', ...CONTEXT_FIELDS.map(([, label]) => label)];
+  const headings = ['记录编号','检验类型','标题','检验时间','提交时间','订单号','订单行','生产批次','工单号','产品','规格','客户','检验结论','记录状态','复核状态','填写人','版本','作废原因','摘要','来源','工序序号','报工单位','责任人','报工记录ID', ...CONTEXT_FIELDS.map(([, label]) => label), '首次上传时间', '最近上传时间', '最近上传人', '最近变更时间'];
   overview.addRow(headings);
   for (const r of records) {
     const o = r.orderSnapshot;
-    overview.addRow([r.code,QUALITY_LABELS[r.type],r.title,beijingInput(r.inspectedAt).replace('T',' '),r.submittedAt ? beijingInput(r.submittedAt).replace('T',' ') : '',o.sourceOrderNo,o.sourceLineNo,o.batchNo,o.businessCode || o.code,o.productName,o.specification,o.customerName,r.type === 'PATROL' && r.data.mode === 'FILE' ? '纸质报表归档' : r.sourceCompletionId && r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result],r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交',REVIEW_LABELS[r.reviewStatus],r.createdByName,r.version,r.deleteReason,r.data.summary,r.sourceCompletionId ? '工序报工' : r.supersedesId ? '复检' : '独立检验',r.inspectionStepSnapshot?.position || r.reportSnapshot?.position,r.reportSnapshot?.unit,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0)),r.sourceCompletionId,...CONTEXT_FIELDS.map(([key]) => r.data.context[key])]);
+    overview.addRow([r.code,QUALITY_LABELS[r.type],r.title,beijingInput(r.inspectedAt).replace('T',' '),r.submittedAt ? beijingInput(r.submittedAt).replace('T',' ') : '',o.sourceOrderNo,o.sourceLineNo,o.batchNo,o.businessCode || o.code,o.productName,o.specification,o.customerName,r.type === 'PATROL' && r.data.mode === 'FILE' ? '纸质报表归档' : r.sourceCompletionId && r.result === 'PASS' ? '未发现不良' : RESULT_LABELS[r.result],r.deletedAt ? '已作废' : r.status === 'DRAFT' ? '草稿' : '已提交',REVIEW_LABELS[r.reviewStatus],r.createdByName,r.version,r.deleteReason,r.data.summary,r.sourceCompletionId ? '工序报工' : r.supersedesId ? '复检' : '独立检验',r.inspectionStepSnapshot?.position || r.reportSnapshot?.position,r.reportSnapshot?.unit,qualityResponsibilityLabel(r.responsibility,Number(r.data.context.defectQty||0)),r.sourceCompletionId,...CONTEXT_FIELDS.map(([key]) => r.data.context[key]), r.activity?.firstUploadedAt ? firstTime(r.activity.firstUploadedAt) : '', r.activity?.lastUploadedAt ? firstTime(r.activity.lastUploadedAt) : '', r.activity?.lastUploadedAt ? r.activity.uploadedBy : '', firstTime(r.updatedAt)]);
   }
   for (const type of QUALITY_DATA_TYPES) {
     const sheet = book.addWorksheet(QUALITY_LABELS[type]);

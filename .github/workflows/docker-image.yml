@@ -226,7 +226,7 @@ jobs:
       - name: Quality data PostgreSQL lifecycle integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/quality-data-integration.test.ts tests/quality-reference-integration.test.ts tests/quality-paper-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/quality-data-integration.test.ts tests/quality-reference-integration.test.ts tests/quality-paper-integration.test.ts tests/quality-first-integration.test.ts
       - name: Lint
         run: npm run lint
       - name: Drawing archive identity and administrator lifecycle PostgreSQL integration
@@ -372,6 +372,11 @@ jobs:
             QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/release-fixture.json \
             QUALITY_PAPER_QA_OUTPUT=artifacts/quality-data-v1/release-paper-runtime.json \
             node scripts/smoke-quality-paper.mjs
+            QUALITY_DATA_QA_BASE=http://127.0.0.1:3000 \
+              QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+              QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/release-fixture.json \
+              QUALITY_FIRST_QA_OUTPUT=artifacts/quality-data-v1/release-first-runtime.json \
+              node scripts/smoke-quality-first.mjs
           mkdir -p artifacts/planning-progress-preview
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime hongmeng-release-smoke node \
             < scripts/seed-planning-import-smoke.cjs > artifacts/planning-progress-preview/release-reference.json
@@ -790,6 +795,11 @@ jobs:
             QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
             QUALITY_PAPER_QA_OUTPUT=artifacts/quality-data-v1/mirror-paper-runtime.json \
             node scripts/smoke-quality-paper.mjs
+            QUALITY_DATA_QA_BASE=http://127.0.0.1:3300 \
+              QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+              QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
+              QUALITY_FIRST_QA_OUTPUT=artifacts/quality-data-v1/mirror-first-runtime.json \
+              node scripts/smoke-quality-first.mjs
 
           mkdir -p artifacts/planning-progress-preview
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
