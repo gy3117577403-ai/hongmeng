@@ -8,6 +8,7 @@ import { mutatePurchasing } from "@/lib/purchasing-service";
 import { FixtureError, scanBom, type BomMapping, type BomSheet } from "@/lib/quality-fixture-domain";
 import { prisma } from "@/lib/prisma";
 import { processFixtureSyncQueue } from "@/lib/quality-fixture-sync";
+import { fixtureSubmissionIssues } from "@/lib/quality-fixture-documents";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
@@ -15,11 +16,10 @@ export async function GET(req: NextRequest) {
     const actor = await requireUser(), q = req.nextUrl.searchParams;
     if (q.has("summary")) {
       const { latest, roles } = await loadFixtureReviewQueue(actor);
-      const scope = { id: { in: latest.map(p => p.id) } };
       const [supervisor, quality, draft, purchasing] = await Promise.all([
         latest.filter(p => roles.get(p.id)?.includes("SUPERVISOR")).length,
         latest.filter(p => roles.get(p.id)?.includes("QUALITY")).length,
-        prisma.qfPackage.count({ where: { ...scope, status: { in: ["DRAFT", "RETURNED"] } } }),
+        latest.filter(p => p.status === "RETURNED" || p.status === "DRAFT" && fixtureSubmissionIssues(p).length > 0).length,
         prisma.pcLine.count({ where: { request: { source: "FIXTURE", deletedAt: null }, completedAt: null, status: { in: ["PENDING", "APPROVED", "ORDERED"] } } }),
       ]);
       return NextResponse.json({ ok: true, data: { supervisor, quality, draft, purchasing } });

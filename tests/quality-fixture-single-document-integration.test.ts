@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { prisma } from "../lib/prisma";
-import { assertFixturePrintReady, mutateQualityFixture } from "../lib/quality-fixture-service";
+import { assertFixturePrintReady, mutateQualityFixture, fixtureReadiness } from "../lib/quality-fixture-service";
 import { fixtureSubmissionIssues, fixtureDocumentLabel, fixtureDraftReady } from "../lib/quality-fixture-documents";
 import { syncProductDocuments } from "../lib/quality-fixture-sync";
-import { qualityFixtureBadges } from "../lib/quality-fixture-queries";
+import { qualityFixtureBadges, loadQualityFixtures } from "../lib/quality-fixture-queries";
 import { createWorkOrderTravelerPrints, loadWorkOrderTravelerPrintReadiness, loadWorkOrderTravelerPrints, confirmWorkOrderTravelerPrints } from "../lib/work-order-qr-service";
 import { inferBomMapping, scanBom, confirmBomRows } from "../lib/quality-fixture-domain";
 import type { PcInput } from "../lib/purchasing-domain";
@@ -86,17 +86,69 @@ test("single document review, fixture preparation and mixed printing form one wo
     assert.equal(synced.status, "REVIEWING"); assert.equal(synced.revision, "V3");
     const again = await prisma.$transaction(tx => syncProductDocuments(tx, one.product.id, admin)); assert.equal(again?.id, synced.id);
   });
-  await t.test("fixture-required SOP-only version still needs BOM, then shortage permits print and procurement", async () => {
-    const one = await create(["sop"], true); await assert.rejects(() => submit(one.p.id), /上传 BOM/);
+  await t.test("required fixture without BOM can be reviewed and printed; later BOM never changes document approval", async () => {
+    const one = await create(["sop"], true);
+    await submit(one.p.id); await sign(one.p.id, "QUALITY");
+    await assert.rejects(() => print([one.order.id]), /双方审核/);
+    await sign(one.p.id, "SUPERVISOR");
+    // Previously released source signatures also remain valid after the split.
+    const original = await row(one.p.id);
+    const legacySignature = createHash("sha256").update(JSON.stringify([true, original.drawingFiles, original.sopFiles])).digest("hex");
+    await prisma.qfPackage.update({ where: { id: original.id }, data: { sourceSignature: legacySignature } });
+    const approved = await row(one.p.id);
+    const before = await print([one.order.id], { includeAvailableDocuments: true });
+    assert.match(before[0].snapshot.documentApproval!.fixtureLabel, /BOM 待上传.*尚未计算/);
+    const queue = await loadQualityFixtures(new URLSearchParams({ view: "plans", product: one.product.id, q: one.product.specification }), admin);
+    assert.equal(queue.preparationRows[0].state, "BOM"); assert.equal(queue.readiness.calculated, false);
+    assert.equal((await qualityFixtureBadges([one.product.id], "products"))[0].printAllowed, true);
     const sheets = [{ name: "BOM", rows: [["名称", "型号", "数量"], ["连接器", tag + "-C", "2"]].map(r => r.map(text => ({ text }))) }];
     const mapping = inferBomMapping(sheets), rows = confirmBomRows(scanBom(sheets, mapping), scanBom(sheets, mapping));
     const bom = await prisma.qfBomFile.create({ data: { libraryItemId: one.product.id, name: "bom.xlsx", objectKey: tag + "/bom", sha256: "test", byteSize: 100, sheets, uploadedById: admin.id } });
-    const p = await cmd({ action: "SAVE_PACKAGE", id: one.p.id, version: (await row(one.p.id)).version, libraryItemId: one.product.id, revision: "V3", needFixture: true, drawingFileIds: [], sopFileIds: one.product.files.map(f => f.id), bomFileId: bom.id, bomMapping: mapping, bomRows: rows, bomConfirmed: true });
+    const input = { action: "SAVE_PREPARATION", libraryItemId: one.product.id, preparationVersion: 0, bomFileId: bom.id, bomMapping: mapping, bomRows: rows, bomConfirmed: false };
+    let prep = await cmd({ ...input, bomRows: rows.map(r => ({ ...r, model: r.model + "-draft", reason: "待核对更名", include: null })) });
+    assert.equal((prep.bomRows as any[])[0].model, tag + "-C-draft", "unfinished edits survive saving");
+    assert.equal((prep.bomRows as any[])[0].include, null);
+    assert.equal((await fixtureReadiness(prisma, approved)).calculated, false);
+    assert.match((await assertFixturePrintReady(prisma, one.order.id))!.fixtureLabel, /BOM 待确认/);
+    await assert.rejects(() => cmd({ ...input, bomConfirmed: true }), /其他人更新/);
+    prep = await cmd({ ...input, preparationVersion: prep.version, bomConfirmed: true });
     const matched = await cmd({ action: "SAVE_MAPPING", connectorModel: tag + "-C", model: tag + "-MATE", initialQuantity: 0 });
-    await submit(p.id); await sign(p.id, "QUALITY"); await sign(p.id, "SUPERVISOR");
     const printed = await print([one.order.id], { includeAvailableDocuments: true }); assert.match(printed[0].snapshot.documentApproval!.fixtureLabel, /缺 2/);
-    await mutatePurchasing({ action: "CREATE_FIXTURE_PURCHASE", packageId: p.id, version: (await row(p.id)).version, fixtureId: matched.fixtureId, quantity: 2, estimateCents: 2000, needDate: "2026-09-28", urgency: "NORMAL", reason: "仅 SOP 产品治具申购" }, admin, randomUUID());
-    assert.equal(await prisma.pcLine.count({ where: { fixturePackageId: p.id, request: { source: "FIXTURE" } } }), 1);
+    const ps = await prisma.pcSettings.findUnique({ where: { id: "purchasing" } });
+    await mutatePurchasing({ action: "SAVE_SETTINGS", version: ps?.version, reason: "独立验收", purchaseApproverIds: [admin.id], buyerIds: [admin.id], fundApproverIds: [admin.id], financeIds: [admin.id] }, admin, randomUUID());
+    const purchase = { action: "CREATE_FIXTURE_PURCHASE", packageId: one.p.id, libraryItemId: one.product.id, preparationVersion: prep.version, fixtureId: matched.fixtureId, quantity: 2, estimateCents: 2000, needDate: "2026-09-28", urgency: "NORMAL" };
+    await mutatePurchasing(purchase, admin, randomUUID());
+    await assert.rejects(() => mutatePurchasing(purchase, admin, randomUUID()), /最多新增 0/);
+    assert.equal((await fixtureReadiness(prisma, approved)).groups[0].incoming, 2);
+    assert.equal(await prisma.pcLine.count({ where: { fixturePackageId: one.p.id, request: { source: "FIXTURE" } } }), 1);
+    assert.deepEqual(await row(one.p.id), approved, "BOM and purchasing cannot rewrite any signed package field");
+    for (const need of [false, true]) {
+      await cmd({ action: "SET_REQUIREMENT", productIds: [one.product.id], needFixture: need });
+      assert.deepEqual(await row(one.p.id), approved);
+      assert.ok(await assertFixturePrintReady(prisma, one.order.id));
+    }
+    assert.equal(await prisma.qfPackage.count({ where: { libraryItemId: one.product.id } }), 1);
+    // Updating BOM before or after matching only recalculates preparation.
+    prep = await cmd({ ...input, preparationVersion: prep.version, bomConfirmed: true, parallelCount: 2 });
+    assert.equal((await fixtureReadiness(prisma, approved)).groups[0].required, 4);
+    assert.equal((await fixtureReadiness(prisma, approved)).groups[0].incoming, 2);
+    await assert.rejects(() => mutatePurchasing({ ...purchase, quantity: 1 }, admin, randomUUID()), /BOM 需求已更新/);
+    const priorPrints = await loadWorkOrderTravelerPrints(before.map(p => p.printId));
+    assert.match(priorPrints[0].snapshot.documentApproval!.fixtureLabel, /待上传/);
+    await confirmWorkOrderTravelerPrints({ printIds: before.map(p => p.printId), userId: admin.id, actor: admin.username });
+    assert.deepEqual(await row(one.p.id), approved);
+    assert.equal(await prisma.qfEvent.count({ where: { entityType: "PREPARATION", entityId: one.product.id, action: "SAVE_PREPARATION" } }), 3);
+  });
+  await t.test("unconfirmed BOM never blocks first or second review, and invalid BOM can be saved for later mapping", async () => {
+    const one = await create(["drawing"], true);
+    const bom = await prisma.qfBomFile.create({ data: { libraryItemId: one.product.id, name: "待整理.xlsx", objectKey: one.product.id + "/incomplete", sha256: "test", byteSize: 10, sheets: [], uploadedById: admin.id } });
+    await cmd({ action: "SAVE_PREPARATION", libraryItemId: one.product.id, preparationVersion: 0, bomFileId: bom.id, bomConfirmed: false });
+    await submit(one.p.id); await sign(one.p.id, "SUPERVISOR"); await sign(one.p.id, "QUALITY");
+    assert.ok(await assertFixturePrintReady(prisma, one.order.id));
+    assert.match((await fixtureReadiness(prisma, one.p)).label, /BOM 待确认/);
+    await assert.rejects(() => cmd({ action: "SAVE_PREPARATION", libraryItemId: one.product.id, preparationVersion: 1, bomFileId: bom.id, bomConfirmed: true }), /选择表头/);
+    await prisma.qfBomFile.update({ where: { id: bom.id }, data: { deletedAt: new Date() } });
+    assert.ok(await assertFixturePrintReady(prisma, one.order.id), "even a missing BOM original cannot revoke drawing approval");
   });
   await t.test("supplementing the missing category creates a new version without inheriting signatures", async () => {
     const one = await create(["sop"]); await submit(one.p.id); await sign(one.p.id, "SUPERVISOR"); await sign(one.p.id, "QUALITY");

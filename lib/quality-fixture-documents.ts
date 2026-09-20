@@ -13,8 +13,6 @@ export function fixtureSubmissionIssues(p: FixtureDocumentPackage): string[] {
   if (!(Array.isArray(p.drawingFiles) && p.drawingFiles.length) && !(Array.isArray(p.sopFiles) && p.sopFiles.length))
     issues.push("请至少上传一份图纸或 SOP");
   if (p.needFixture === null) issues.push("请选择是否需要治具");
-  if (p.needFixture && (!p.bomFileId || !p.bomConfirmed || !Array.isArray(p.bomRows) || !p.bomRows.some(r => r?.include === true)))
-    issues.push("请上传 BOM 并确认连接器清单");
   return issues;
 }
 

@@ -52,8 +52,8 @@ export async function POST(req: NextRequest) {
     const data = await prisma.$transaction(async tx => {
       await lockFixtureBusiness(tx);
       if (kind === "bom") {
-        const draft = await tx.qfPackage.findFirst({ where: { id: String(form.get("package") || ""), libraryItemId, status: "DRAFT", needFixture: true } });
-        if (!draft) throw new FixtureError("请先保存“需要治具”的资料草稿，再上传 BOM");
+        const product = await tx.drawingLibraryItem.findFirst({ where: { id: libraryItemId, deletedAt: null, fixtureRequired: true } });
+        if (!product) throw new FixtureError("请先为产品选择需要治具，再上传 BOM；资料可先审核");
         const saved = await tx.qfBomFile.create({ data: { libraryItemId, name: file.name, objectKey: key, sha256, byteSize: file.size, sheets: qfJson(sheets), uploadedById: actor.id } });
         return { id: saved.id, name: saved.name, sheets, mapping: inferBomMapping(sheets!) };
       }
@@ -83,7 +83,10 @@ export async function DELETE(req: NextRequest) {
       await lockFixtureBusiness(tx);
       const bom = await tx.qfBomFile.findFirst({ where: { id: String(input.id), deletedAt: null } });
       if (!bom) throw new FixtureError("BOM 不存在");
-      if (await tx.qfPackage.count({ where: { bomFileId: bom.id } })) throw new FixtureError("已关联资料版本的 BOM 需保留追溯，可上传新版本替换");
+      if (await tx.qfPackage.count({ where: { bomFileId: bom.id } }) || await tx.qfPreparation.count({ where: { bomFileId: bom.id } }) ||
+        await tx.qfEvent.count({ where: { entityType: "PREPARATION", entityId: bom.libraryItemId, OR: [
+          { snapshot: { path: ["after", "bomFileId"], equals: bom.id } }, { snapshot: { path: ["before", "bomFileId"], equals: bom.id } }
+        ] } })) throw new FixtureError("已关联准备或审核履历的 BOM 需保留追溯，可上传新版本替换");
       await tx.qfBomFile.update({ where: { id: bom.id }, data: { deletedAt: new Date() } });
       await tx.qfEvent.create({ data: { entityType: "BOM", entityId: bom.id, action: "REMOVE_UNUSED", actorId: actor.id,
         actorName: actor.displayName || actor.username, snapshot: qfJson({ name: bom.name }) } });

@@ -62,13 +62,15 @@ test("plan cohort, existing drawings and SOP, fixture-only queue and simple inve
     assert.equal(empty.total, 0); assert.equal(empty.product, null);
   });
   await t.test("only opted-in planned products enter fixture preparation; changing choice does not erase history", async () => {
+    const before = await latest();
     await command({ action: "SET_REQUIREMENT", productIds: [product.id], needFixture: true });
-    const p = await latest(); assert.equal(p.status, "DRAFT"); assert.equal(p.needFixture, true);
+    const p = await latest(); assert.equal(p.status, "REVIEWING"); assert.equal(p.id, before.id);
     const workbench = await loadQualityFixtures(new URLSearchParams({ view: "plans", q: marker }), planner);
     assert.equal(workbench.total, 1); assert.equal(workbench.product?.id, product.id);
     await command({ action: "SET_REQUIREMENT", productIds: [product.id], needFixture: false });
     assert.equal((await loadQualityFixtures(new URLSearchParams({ view: "plans", q: marker }), planner)).total, 0);
-    assert.ok(await prisma.qfPackage.count({ where: { libraryItemId: product.id } }) >= 3);
+    assert.equal(await prisma.qfPackage.count({ where: { libraryItemId: product.id } }), 2);
+    assert.deepEqual(await latest(), before);
   });
   await t.test("two-field registration, shared stock, editing, soft deletion and quantity concurrency", async () => {
     const first = await command({ action: "SAVE_MAPPING", connectorModel: marker + "-C1", model: marker + "-M", initialQuantity: 4 });

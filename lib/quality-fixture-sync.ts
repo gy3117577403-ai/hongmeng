@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { Prisma } from "@prisma/client";
+import { Prisma, type QfPackage } from "@prisma/client";
+import { fixtureSubmissionIssues } from "@/lib/quality-fixture-documents";
 import { prisma } from "@/lib/prisma";
 import { fixturePlanScope } from "@/lib/quality-fixture-scope";
 import { documentFingerprint, lockFixtureBusiness, qfJson, submitPackage, assertPackageFiles, pendingReviewers } from "@/lib/quality-fixture-service";
@@ -7,6 +8,10 @@ import type { PcActor } from "@/lib/purchasing-service";
 import { FixtureError } from "@/lib/quality-fixture-domain";
 
 type Tx = Prisma.TransactionClient;
+export function documentEvidenceSignature(p: { drawingFiles: unknown; sopFiles: unknown }) {
+  const stable = (files: unknown) => (Array.isArray(files) ? files : []).map(f => [f.id, f.objectKey, f.version, f.sha256 || "", f.mimeType || "", f.name || ""]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  return createHash("sha256").update(JSON.stringify([stable(p.drawingFiles), stable(p.sopFiles)])).digest("hex");
+}
 export async function currentDocumentSource(tx: Tx, libraryItemId: string) {
   const [product, files] = await Promise.all([
     tx.drawingLibraryItem.findUniqueOrThrow({ where: { id: libraryItemId }, select: { fixtureRequired: true } }),
@@ -14,17 +19,22 @@ export async function currentDocumentSource(tx: Tx, libraryItemId: string) {
   ]);
   const evidence = (kind: string) => files.filter(f => f.category.code === kind).map(f => ({ id: f.id, name: f.displayName || f.originalName, version: f.version, sha256: f.sha256 || "", objectKey: f.objectKey, mimeType: f.mimeType }));
   const drawingFiles = evidence("drawing"), sopFiles = evidence("sop");
-  const signature = createHash("sha256").update(JSON.stringify([product.fixtureRequired, drawingFiles, sopFiles])).digest("hex");
+  const signature = documentEvidenceSignature({ drawingFiles, sopFiles });
   return { needFixture: product.fixtureRequired, drawingFiles, sopFiles, signature, files };
 }
 export async function currentDocumentSignature(tx: Tx, id: string) { return (await currentDocumentSource(tx, id)).signature; }
+export async function packageMatchesCurrentDocuments(tx: Tx, p: QfPackage) {
+  // Compare evidence, so previously signed source hashes (which included fixture choice) remain valid.
+  return documentEvidenceSignature(p) === await currentDocumentSignature(tx, p.libraryItemId);
+}
 
 /** Called under the purchasing lock, on explicit writes/worker jobs only. */
 export async function syncProductDocuments(tx: Tx, libraryItemId: string, actor?: PcActor) {
   if (!await tx.drawingLibraryItem.findFirst({ where: { AND: [fixturePlanScope, { id: libraryItemId }] }, select: { id: true } })) return null;
   const source = await currentDocumentSource(tx, libraryItemId);
   const last = await tx.qfPackage.findFirst({ where: { libraryItemId }, orderBy: { sequence: "desc" } });
-  if (last?.sourceSignature === source.signature) return last;
+  const sameDocuments = !!last && documentEvidenceSignature(last) === source.signature;
+  if (sameDocuments && (last.status !== "DRAFT" || last.needFixture === source.needFixture)) return last;
   const ownerId = actor?.id || [...source.files].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).find(f => f.uploadedById)?.uploadedById || last?.createdById;
   const owner = ownerId ? await tx.user.findUnique({ where: { id: ownerId }, select: { id: true, username: true, displayName: true } }) : null;
   const a = actor || owner || { id: "system:document-sync", username: "计划资料同步", displayName: "计划资料同步" };
@@ -44,7 +54,7 @@ export async function syncProductDocuments(tx: Tx, libraryItemId: string, actor?
     : await tx.qfPackage.create({ data: { ...values, fingerprint, libraryItemId, sequence: (last?.sequence || 0) + 1, createdById: a.id } });
   await tx.qfEvent.create({ data: { entityType: "PACKAGE", entityId: p.id, action: "SYNC_PLAN_DOCUMENTS", actorId: a.id,
     actorName: a.displayName || a.username, snapshot: qfJson({ signature: source.signature, drawingCount: source.drawingFiles.length, sopCount: source.sopFiles.length }) } });
-  let complete = true;
+  let complete = fixtureSubmissionIssues(p).length === 0;
   try { await assertPackageFiles(tx, p); } catch { complete = false; }
   const recipients = complete && owner ? await pendingReviewers(tx, { ...p, status: "REVIEWING", submittedById: a.id }) : [];
   if (complete && owner && ["SUPERVISOR", "QUALITY"].every(role => recipients.some(r => r.roles.some(v => v === role))))

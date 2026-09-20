@@ -3208,6 +3208,7 @@ model DrawingLibraryItem {
   fixtureRequired Boolean? @map("fixture_required")
   fixturePackages          QfPackage[]
   fixtureBomFiles          QfBomFile[]
+  fixturePreparation       QfPreparation?
   quickQualityRecords      QuickQualityRecord[]
   id                       String                               @id @default(uuid())
   customerName             String                               @map("customer_name")
@@ -7453,6 +7454,23 @@ model QfPackage {
   @@index([status, updatedAt])
 }
 
+// Current product preparation is independent of immutable document review packages.
+model QfPreparation {
+  libraryItemId String @id
+  libraryItem DrawingLibraryItem @relation(fields: [libraryItemId], references: [id], onDelete: Restrict)
+  bomFileId String?
+  bomFile QfBomFile? @relation(fields: [bomFileId], references: [id], onDelete: Restrict)
+  bomRows Json @default("[]")
+  bomMapping Json?
+  bomConfirmed Boolean @default(false)
+  parallelCount Int @default(1)
+  spareCount Int @default(0)
+  version Int @default(1)
+  updatedById String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model QfBomFile {
   id         String   @id @default(uuid())
   libraryItemId String
@@ -7466,6 +7484,7 @@ model QfBomFile {
   createdAt  DateTime @default(now())
   deletedAt    DateTime?
   packages      QfPackage[]
+  preparations  QfPreparation[]
 
   @@index([libraryItemId, deletedAt])
   @@index([libraryItemId, sha256])

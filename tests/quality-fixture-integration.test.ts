@@ -246,6 +246,15 @@ test("parallel document reviews, admin signatures, concurrent actions and revisi
     await approval(p.id,"QUALITY",admin);await approval(p.id,"SUPERVISOR",supervisor);
     assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
   });
+  await t.test("uploading only BOM does not remove a document reviewer's authority",async()=>{
+    const p=await prepare();
+    await command({action:"SET_REQUIREMENT",productIds:[p.product.id],needFixture:true});
+    const bom=await prisma.qfBomFile.create({data:{libraryItemId:p.product.id,name:"quality-bom.xlsx",objectKey:p.product.id+"/quality-bom",sha256:"test",byteSize:10,sheets:[],uploadedById:quality.id}});
+    await command({action:"SAVE_PREPARATION",libraryItemId:p.product.id,preparationVersion:0,bomFileId:bom.id,bomConfirmed:false},quality);
+    assert.deepEqual((await loadFixtureReviewQueue(quality)).roles.get(p.id),["QUALITY"]);
+    await approval(p.id,"QUALITY",quality); await approval(p.id,"SUPERVISOR",supervisor);
+    assert.ok(await assertFixturePrintReady(prisma,p.wo.id));
+  });
   await t.test("administrator defaults work with no configured reviewer assignments",async()=>{
     const current=await prisma.qfSettings.findUniqueOrThrow({where:{id:"quality-fixtures"}});
     await command({action:"SAVE_SETTINGS",version:current.version,supervisorIds:[],qualityIds:[]},admin);

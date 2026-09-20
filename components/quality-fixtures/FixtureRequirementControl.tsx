@@ -16,16 +16,17 @@ export default function FixtureRequirementControl({ productId, initialValue, ini
   useEffect(() => {
     let alive = true;
     const load = () => {
+      if (saving.current) return;
       controller.current?.abort();
       const abort = new AbortController(); controller.current = abort;
       setBusy(true);
       fetch('/api/quality-fixtures?badges=' + encodeURIComponent(productId), { signal: abort.signal }).then(async r => {
         const j = await r.json(); if (!r.ok || !j.ok) throw new Error(j.error || '读取失败');
         if (alive && !abort.signal.aborted) { setValue(j.data[0]?.needFixture ?? null); setStatus(j.data[0]?.status || ''); }
-      }).catch(e => { if (alive && !abort.signal.aborted) setError(e.message); }).finally(() => { if (alive && !abort.signal.aborted) setBusy(false); });
+      }).catch(e => { if (alive && !abort.signal.aborted) setError(e.message); }).finally(() => { if (alive && !abort.signal.aborted && !saving.current) setBusy(false); });
     };
     setPending(null); setError(''); setMessage('');
-    if (initialValue !== undefined) { setValue(initialValue); setStatus(initialStatus || ''); setBusy(false); } else load();
+    if (initialValue !== undefined) { setValue(initialValue); setStatus(initialStatus || ''); setBusy(saving.current); } else load();
     window.addEventListener('quality-fixture-updated', load);
     return () => { alive = false; controller.current?.abort(); window.removeEventListener('quality-fixture-updated', load); };
   }, [productId, initialValue, initialStatus]);
@@ -46,6 +47,7 @@ export default function FixtureRequirementControl({ productId, initialValue, ini
   }
   const suffix = week ? '&week=' + encodeURIComponent(week) : '';
   function choose(need: boolean) {
+      if (saving.current || busy || disabled) return;
       if (need === value) return;
       if (['REVIEWING', 'SUPERVISOR', 'QUALITY', 'APPROVED', 'SUPERSEDED'].includes(status)) setPending(need); else void change(need);
   }
@@ -57,6 +59,6 @@ export default function FixtureRequirementControl({ productId, initialValue, ini
       {!compact && <>{value === true && <Link href={'/workspace/quality-fixtures?view=plans&product=' + productId + suffix}>BOM 与治具准备 →</Link>}<Link href={'/workspace/quality-fixtures?view=review&product=' + productId + suffix}>资料审核与履历 →</Link></>}
     </>}
     <GlassNotice message={error || message} error={!!error} close={error ? clearError : clearMessage} />
-    <ConfirmDialog open={pending !== null} title="变更当前产品的治具要求？" description={`将改为${pending ? '需要治具' : '无需治具'}，并生成新资料版本重新由主管、品质审核，两项都通过后可打印。现有图纸和 SOP 沿用，历史审核、已发工单引用及采购库存记录保留。`} confirmLabel="确认变更" busy={busy} onCancel={() => { if (!busy) setPending(null); }} onConfirm={() => { if (pending !== null) void change(pending); }} />
+    <ConfirmDialog open={pending !== null} title="变更当前产品的治具要求？" description={`将改为${pending ? '需要治具，加入治具准备清单，BOM 可后补' : '无需治具，从治具准备清单移出'}。已有主管、品质签名和打印状态保持不变，BOM、采购及库存履历保留。`} confirmLabel="确认变更" busy={busy} onCancel={() => { if (!busy) setPending(null); }} onConfirm={() => { if (pending !== null) void change(pending); }} />
   </section>;
 }
