@@ -17,7 +17,10 @@ await call('none', api, 'GET', undefined, 401);
 for (const kind of Object.keys(fixture.users)) { const result = await call(kind, '/api/auth/login', 'POST', { username: fixture.users[kind].username, password: fixture.password }); cookies[kind] = result.response.headers.get('set-cookie')?.match(/hm_session=[^;]+/)[0]; assert.ok(cookies[kind]); }
 await call('employee', api, 'GET', undefined, 403);
 const input = { title: '作业指导书包胶要求与图纸不一致', problemCategory: 'PROCESS', defectPhenomenon: '隔离验收：图纸无需包胶，作业指导书标注需要包胶。', productIds: [fixture.product.id], workOrderIds: [fixture.order.id], responsibleUserIds: [fixture.users.lead.id, fixture.users.worker.id], operatorAssignments: { [fixture.users.lead.id]: [fixture.operator.id] }, reviewerUserId: fixture.users.reviewer.id, responsibleDepartment: '工艺部', severity: 'HIGH', warningSummary: '核对包胶版本后再作业', requiredAction: '按确认图纸作业，完成首件复核', inspectionMethod: '目视核对', inspectionFrequency: '首件及巡检', acceptanceCriteria: '图纸与指导书要求一致', applicableProcess: '包胶', stopConditions: '要求冲突时联系质量确认', escalationContact: '质量管理验收', printPolicy: 'OPTIONAL' };
-const source = (await call('admin', '/api/quality-data/records', 'POST', { workOrderId: fixture.order.id, inspectionStepId: fixture.order.firstStepId, type: 'FIRST', title: '包胶首件检验记录', inspectedAt: new Date().toISOString(), status: 'SUBMITTED', idempotencyKey: randomUUID(), data: { mode: 'FORM', context: { processName: '首检', inspectedBy: '质量验收' }, summary: input.defectPhenomenon, rows: [{ sample: '01', item: '图纸要求', value: '标注冲突', result: 'FAIL', note: '包胶标注冲突' }] } })).body.data;
+const source = (await call('admin', '/api/quality-data/records/' + fixture.legacyFirstId)).body.data;
+assert.equal(source.workOrderId, fixture.order.id);
+assert.equal(source.data.mode, 'FORM');
+assert.equal(source.result, 'FAIL');
 assert.equal(source.inspectionStepId, fixture.order.firstStepId);
 assert.equal(source.inspectionStepSnapshot.name, '首件检验');
 await call('admin', api, 'POST', { ...input, sourceQualityRecordId: randomUUID() }, 400);
