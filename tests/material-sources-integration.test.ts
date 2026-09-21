@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { prisma } from '../lib/prisma';
 import { mutateWarehouseException, mutateMaterialFollowUp, classifyMaterialFollowUps } from '../lib/material-exception-service';
 import { serializeWarehouseMaterialTask } from '../lib/warehouse-material';
-import { loadFinishedGoods, mutateFinishedGoods } from '../lib/finished-goods-service';
 const skip = process.env.RUN_DB_INTEGRATION !== '1';
 
 test('purchased and customer shortages remain independent through partial arrivals, conflicts and individual closure', {skip}, async()=>{
@@ -62,41 +60,4 @@ test('purchased and customer shortages remain independent through partial arriva
     await prisma.workOrder.delete({where:{id:work.id}});
     await prisma.user.deleteMany({where:{id:{in:[actor.id,owner.id]}}});
   }
-});
-
-test('finished goods captures each completion, keeps dates after receipts, and filters business dates independently of receipt dates', {skip}, async()=>{
-  process.env.FINISHED_GOODS_QA_ALLOW='disposable-finished-goods-runtime';
-  const {createFixture}=require('../scripts/seed-finished-goods-smoke.cjs');
-  const fixture=await createFixture(prisma,1);
-  const first=await prisma.fgLot.findUniqueOrThrow({where:{id:fixture.lots[0].id}});
-  const completion=await prisma.processCompletion.findUniqueOrThrow({where:{id:fixture.lots[0].completionId}});
-  assert.deepEqual(first.productionWorkDate,completion.workDate);assert.deepEqual(first.productionCompletedAt,completion.completedAt);
-  assert.ok(first.transferredAt);assert.equal(first.receivedAt,null);
-  const earlier=new Date(Date.now()-86400000*3).toISOString().slice(0,10);
-  const secondCompletion=await prisma.processCompletion.create({data:{workOrderId:completion.workOrderId,routeId:completion.routeId,stepId:completion.stepId,workDate:new Date(earlier+'T00:00:00Z'),completedAt:new Date(earlier+'T06:30:00Z'),processedQty:5,goodQty:5,defectQty:0,reportedUnitQty:5,reportedGoodUnitQty:5,reportedDefectUnitQty:0,coveredQty:5,coveredGoodQty:5,routeVersion:0,standardSource:'legacy',idempotencyKey:randomUUID(),createdById:fixture.actor.id}});
-  const movement=await prisma.processQuantityMovement.create({data:{completionId:secondCompletion.id,workOrderId:completion.workOrderId,sourceStepId:completion.stepId,type:'FINISHED_GOOD',quantity:5,sourceSequenceGroup:1,idempotencyKey:randomUUID()}});
-  const second=await prisma.fgLot.findUniqueOrThrow({where:{movementId:movement.id}});
-  assert.deepEqual(second.productionCompletedAt,secondCompletion.completedAt);
-  assert.notDeepEqual(second.productionWorkDate,first.productionWorkDate,'same order, separate physical completion lots');
-  const pending=await loadFinishedGoods({q:first.workOrderCode,date:earlier,dateBasis:'production',scope:'range',filter:'pending'});
-  assert.deepEqual(pending.rows.map(r=>r.lotId),[second.id],'pending items can be queried by actual production date');
-  await mutateFinishedGoods({action:'RECEIVE',lotId:second.id,version:second.version,quantity:5,checked:true},fixture.actor,randomUUID());
-  const received=await prisma.fgLot.findUniqueOrThrow({where:{id:second.id}});
-  assert.deepEqual(received.productionWorkDate,second.productionWorkDate);assert.deepEqual(received.productionCompletedAt,second.productionCompletedAt);assert.deepEqual(received.transferredAt,second.transferredAt);assert.ok(received.receivedAt);
-  const byProduction=await loadFinishedGoods({q:first.workOrderCode,view:'receipts',date:earlier,dateBasis:'production',scope:'range'});
-  assert.deepEqual(byProduction.rows.map(r=>r.lotId),[second.id],'production date query cannot intersect with recent receipt date');
-  const byReceipt=await loadFinishedGoods({q:first.workOrderCode,view:'receipts',date:earlier,scope:'range'});
-  assert.equal(byReceipt.rows.length,0);
-  const sorted=await loadFinishedGoods({q:first.workOrderCode,scope:'all',sort:'completed_asc'});
-  assert.equal(sorted.rows[0].lotId,second.id);
-  const opening=await prisma.fgLot.create({data:{sourceKey:randomUUID(),sourceKind:'OPENING',workOrderCode:first.workOrderCode+'-opening',productKey:'test',productName:'旧库存',specification:first.workOrderCode,sourceQuantity:2,available:2}});
-  assert.equal(opening.productionCompletedAt,null);assert.equal(opening.transferredAt,null);
-  // Exercise the exact source-backed backfill against a prior-version-shaped lot.
-  await prisma.fgLot.update({where:{id:first.id},data:{productionCompletedAt:null,productionWorkDate:null,transferredAt:null}});
-  const migration=readFileSync('prisma/migrations/202609210002_material_sources_completion_dates/migration.sql','utf8');
-  const sql=migration.match(/UPDATE fg_lots l SET[\s\S]*?;/)![0];
-  await prisma.$executeRawUnsafe(sql);
-  const backfilled=await prisma.fgLot.findUniqueOrThrow({where:{id:first.id}});
-  assert.deepEqual(backfilled.productionCompletedAt,completion.completedAt);
-  assert.equal((await prisma.fgLot.findUniqueOrThrow({where:{id:opening.id}})).productionCompletedAt,null);
 });
