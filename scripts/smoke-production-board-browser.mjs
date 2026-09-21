@@ -34,26 +34,27 @@ try {
     const rows=()=>page.locator('[data-production-order-id]').count();
     const scroll=()=>page.locator('.production-dispatch-list').evaluate(el=>{el.style.scrollBehavior='auto';el.scrollTop=el.scrollHeight});
     for(let i=0;i<55;i++){await scroll();await page.waitForTimeout(150);if(await page.getByRole('button',{name:'重试加载下一页',exact:true}).count())break;}
-    check(await rows()===60,'failed next page must retain 60 rows');
+    check(responses.find(item=>item.offset===0)?.count===24,'first database page contains 24 rows');
+    check(await rows()===24,'failed next page must retain the first 24 rows');
     const failedCount=responses.length;await page.waitForTimeout(400);check(responses.length===failedCount,'failed page must not loop');
     await page.getByRole('button',{name:'重试加载下一页',exact:true}).click();
     for(let i=0;i<55;i++){await scroll();await page.waitForTimeout(150);if(await rows()===76)break;}
     check(await rows()===76,'all 76 database rows load after retry');
-    const first=responses.find(item=>item.offset===0),second=responses.find(item=>item.offset===60);
-    check(first?.token&&first.token===second?.token,'next page carries the same scope-bound snapshot');
+    const first=responses.find(item=>item.offset===0),pageOffsets=[0,24,48,72];
+    check(first?.token&&pageOffsets.every(offset=>responses.some(item=>item.offset===offset&&item.token===first.token)),'all pages carry the same scope-bound snapshot');
     await page.waitForTimeout(250);
     const before=await page.locator('.production-dispatch-list').evaluate(el=>el.scrollTop);
     const start=responses.length;
     await page.evaluate(()=>window.dispatchEvent(new CustomEvent('hongmeng:production-data-invalidated',{detail:{kind:'plan-batch-updated',entityId:'browser-qa',occurredAt:Date.now(),nonce:'qa-'+Date.now()}})));
     const frames=[];
-    for(let i=0;i<100;i++){await page.waitForTimeout(100);frames.push(await rows());if(responses.slice(start).some(item=>item.offset===60)&&i>12)break;}
+    for(let i=0;i<100;i++){await page.waitForTimeout(100);frames.push(await rows());if(responses.slice(start).some(item=>item.offset===72)&&i>12)break;}
     check(frames.every(count=>count===76),'refresh must never truncate rendered rows');
-    const refreshed=responses.slice(start);check(refreshed.some(item=>item.offset===0)&&refreshed.some(item=>item.offset===60),'refresh replaces the entire loaded range');
+    const refreshed=responses.slice(start);check(pageOffsets.every(offset=>refreshed.some(item=>item.offset===offset)),'refresh replaces the entire loaded range');
     const after=await page.locator('.production-dispatch-list').evaluate(el=>el.scrollTop);
     check(Math.abs(after-before)<=2,'refresh preserves scroll position');
     check(!failures.length,'no uncaught browser errors: '+failures.join(';'));
     await page.screenshot({path:'${dir}/production-76-rows.png'});
-    return {passed:true,rows:76,frames,scroll:{before,after},responses,checks:['database pages 60+16','manual retry retains rows','scope-bound stable snapshot','refresh retains 76 rows','scroll retained','no uncaught errors']};
+    return {passed:true,rows:76,frames,scroll:{before,after},responses,checks:['database pages 24+24+24+4','manual retry retains rows','scope-bound stable snapshot','refresh retains 76 rows','scroll retained','no uncaught errors']};
   }`;
   const output = cli(['run-code', code]);
   writeFileSync(`${dir}/browser-runtime.txt`, output);
