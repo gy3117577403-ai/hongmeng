@@ -2853,3 +2853,8 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   color: #72523b;
   cursor: pointer;
 }
+
+.hm-workflow-center .workflow-pagination { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-top: 1px solid #e7edf3; flex-shrink: 0; }
+.hm-workflow-center .workflow-pagination button, .hm-workflow-center .workflow-auxiliary-note button { border: 1px solid #e2e8f0; background: white; border-radius: 8px; padding: 6px 10px; }
+.hm-workflow-center .workflow-pagination button:disabled { opacity: .4; }
+.hm-workflow-center .workflow-auxiliary-note { padding: 6px 12px; color: #99582b; display: flex; align-items: center; gap: 12px; }

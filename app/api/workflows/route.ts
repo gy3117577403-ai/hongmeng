@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { loadWorkflowCenter } from '@/lib/workflows';
+import { loadWorkflowCenter, loadWorkflowNavigation, type WorkflowCenterFilters } from '@/lib/workflows';
 import { parseWeek } from '@/lib/weekly-work-orders';
 import type { WorkflowEntityType, WorkflowProcessStatus, WorkflowWeekScope } from '@/types';
 import { chinaWeekRange } from '@/lib/production-planning';
-import { reconcileCurrentProductionCarryovers } from '@/lib/production-carryovers';
+import { ensureWorkflowCarryovers } from '@/lib/production-carryovers';
 import { hasCapability } from '@/lib/department-access';
 import {
   assertProductionScopeRead,
   ProductionAccessScopeError,
   resolveProductionEntityScope,
 } from '@/lib/production-access-scope';
+
+import { beginRequestObservation, markRequest, observedJson } from '@/lib/request-observability';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,9 +29,15 @@ function workflowWeekScope(value: string | null): WorkflowWeekScope {
 }
 
 export async function GET(req: NextRequest) {
+  const observation = beginRequestObservation();
   try {
     const user = await requireUser();
+    markRequest(observation, 'auth');
     const params = req.nextUrl.searchParams;
+    const mode = params.get('view') || 'list';
+    if (!['list', 'summary', 'navigation', 'detail'].includes(mode)) return NextResponse.json({ ok: false, error: '读取范围不正确' }, { status: 400 });
+    const detailId = String(params.get('id') || '').trim().slice(0, 160);
+    if (mode === 'detail' && !/^(issue|change|production-plan|production):[^:]+$/.test(detailId)) return NextResponse.json({ ok: false, error: '请选择一条流程' }, { status: 400 });
     const keyword = String(params.get('keyword') || '').trim().slice(0, 160);
     const entityType = String(params.get('entityType') || 'all') as WorkflowEntityType | 'all';
     const status = String(params.get('status') || 'all') as WorkflowProcessStatus | 'all';
@@ -86,11 +94,16 @@ export async function GET(req: NextRequest) {
     }
     if (entityType === 'all' && canViewProduction) assertProductionScopeRead(productionScope);
 
-    if (canViewProduction && weekScope === 'current' && productionScope.canReconcile) {
-      await reconcileCurrentProductionCarryovers({ targetWeekStart: chinaWeekRange(new Date()).start, actorId: user.id });
+    if (canViewProduction && (entityType === 'all' || entityType === 'production') && mode !== 'detail' && weekScope === 'current' && productionScope.canReconcile) {
+      await ensureWorkflowCarryovers(chinaWeekRange(new Date()).start, user.id);
     }
+    markRequest(observation, 'carryover');
 
-    const result = await loadWorkflowCenter({
+    const query: WorkflowCenterFilters = {
+      mode: mode === 'detail' ? 'detail' : mode === 'summary' ? 'summary' : 'list',
+      detailId,
+      page: Math.max(1, Number.parseInt(params.get('page') || '1', 10) || 1),
+      pageSize: Math.max(1, Math.min(50, Number.parseInt(params.get('pageSize') || '40', 10) || 40)),
       keyword,
       entityType,
       status,
@@ -104,8 +117,17 @@ export async function GET(req: NextRequest) {
         : undefined,
       productionScope,
       allowedEntityTypes,
-    });
-    return NextResponse.json({ ok: true, ...result });
+    };
+    if (mode === 'navigation') {
+      const navigation = await loadWorkflowNavigation(query);
+      markRequest(observation, 'navigation');
+      return observedJson(observation, { ok: true, navigation });
+    }
+    const result = await loadWorkflowCenter(query);
+    markRequest(observation, mode === 'detail' ? 'detail' : 'scoped_list');
+    if (mode === 'detail') return observedJson(observation, { ok: true, item: result.items[0] || null });
+    if (mode === 'summary') return observedJson(observation, { ok: true, summary: result.summary });
+    return observedJson(observation, { ok: true, items: result.items, pagination: result.pagination });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof ProductionAccessScopeError) {

@@ -50,6 +50,7 @@ type WorkflowResponse = {
   items: WorkflowItemDTO[];
   summary: WorkflowSummaryDTO;
   navigation: WorkflowWeekNavigationDTO;
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
   error?: string;
 };
 type Filters = {
@@ -147,10 +148,23 @@ function workflowTargetLabel(item: WorkflowItemDTO): string {
 }
 
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { cache: 'no-store', ...init });
-  const data = await response.json().catch(() => ({ ok: false, error: '服务返回格式异常' })) as T & { error?: string };
-  if (!response.ok) throw new Error(data.error || '请求失败');
-  return data;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  init?.signal?.addEventListener('abort', abort, { once: true });
+  if (init?.signal?.aborted) abort();
+  const timer = !init?.method || init.method === 'GET' ? window.setTimeout(abort, 30_000) : undefined;
+  try {
+    const response = await fetch(url, { cache: 'no-store', ...init, signal: controller.signal });
+    const data = await response.json().catch(() => ({ ok: false, error: '服务返回格式异常' })) as T & { error?: string };
+    if (!response.ok) throw new Error(data.error || '请求失败');
+    return data;
+  } catch (error) {
+    if (controller.signal.aborted && !init?.signal?.aborted) throw new Error('加载超时，请重试');
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+    init?.signal?.removeEventListener('abort', abort);
+  }
 }
 
 export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) {
@@ -166,6 +180,19 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const selectedIdRef = useRef('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const listRequest = useRef<AbortController | null>(null);
+  const listSequence = useRef(0);
+  const listKeyRef = useRef('');
+  const [selectionId, setSelectionId] = useState('');
+  const [detailRevision, setDetailRevision] = useState(0);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [summaryReady, setSummaryReady] = useState(false);
+  const [navigationReady, setNavigationReady] = useState(false);
+  const [auxiliaryError, setAuxiliaryError] = useState('');
+  const [refreshRevision, setRefreshRevision] = useState(0);
+  const [pageState, setPageState] = useState({ key: '', page: 1 });
+  const [pagination, setPagination] = useState({ page: 1, pageSize: 40, total: 0, totalPages: 1 });
   const listRef = useRef<HTMLDivElement>(null);
   const deepLinkStepRef = useRef<HTMLElement | null>(null);
   const processNodeRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -242,11 +269,21 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     setDeepLinkReady(true);
   }, []);
 
-  const load = useCallback(async (): Promise<void> => {
+  const queryKey = JSON.stringify([keyword.trim(), filters, historyWeekStart, deepLink.batchId, deepLink.workOrderId]);
+  const page = pageState.key === queryKey ? pageState.page : 1;
+  const load = useCallback(async (refreshRelated = true): Promise<void> => {
+    listRequest.current?.abort();
+    const controller = new AbortController();
+    listRequest.current = controller;
+    const sequence = ++listSequence.current;
+    const changedScope = listKeyRef.current !== queryKey;
+    listKeyRef.current = queryKey;
+    if (changedScope) { setItems([]); setSelected(null); setSelectionId(''); }
+    if (refreshRelated) setRefreshRevision(value => value + 1);
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({ view: 'list', page: String(page), pageSize: '40' });
       if (keyword.trim()) params.set('keyword', keyword.trim());
       if (filters.entityType !== 'all') params.set('entityType', filters.entityType);
       if (filters.status !== 'all') params.set('status', filters.status);
@@ -255,28 +292,57 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       if (filters.weekScope === 'history' && historyWeekStart) params.set('weekStart', historyWeekStart);
       if (deepLink.batchId) params.set('batchId', deepLink.batchId);
       if (deepLink.workOrderId) params.set('workOrderId', deepLink.workOrderId);
-      const data = await jsonRequest<WorkflowResponse>(`/api/workflows?${params.toString()}`);
+      const data = await jsonRequest<WorkflowResponse>(`/api/workflows?${params}`, { signal: controller.signal });
+      if (controller.signal.aborted || sequence !== listSequence.current) return;
       setItems(data.items);
-      setSummary(data.summary);
-      setNavigation(data.navigation);
-      if (filters.weekScope === 'history' && !historyWeekStart && data.navigation.history[0]?.weekStartDate) {
-        setHistoryWeekStart(data.navigation.history[0].weekStartDate);
-      }
+      setPagination(data.pagination);
       const desired = selectedIdRef.current || sessionStorage.getItem('hm-workflow-selected') || '';
-      const nextSelected = selectWorkflowItem({
-        items: data.items,
-        batchId: deepLink.batchId,
-        workOrderId: deepLink.workOrderId,
-        preferredId: desired,
-      });
+      const nextSelected = selectWorkflowItem({ items: data.items,
+        batchId: page === 1 ? deepLink.batchId : '', workOrderId: page === 1 ? deepLink.workOrderId : '', preferredId: desired });
       selectedIdRef.current = nextSelected?.id || '';
-      setSelected(nextSelected);
+      setSelectionId(nextSelected?.id || '');
+      setDetailRevision(value => value + 1);
+      if (changedScope && listRef.current) listRef.current.scrollTop = 0;
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '流程中心加载失败');
+      if (!controller.signal.aborted && sequence === listSequence.current) setError(loadError instanceof Error ? loadError.message : '流程中心加载失败');
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted && sequence === listSequence.current) setLoading(false);
     }
-  }, [deepLink.batchId, deepLink.workOrderId, filters, historyWeekStart, keyword]);
+  }, [queryKey, page, deepLink.batchId, deepLink.workOrderId, filters, historyWeekStart, keyword]);
+
+  useEffect(() => {
+    if (!deepLinkReady) return;
+    const controller = new AbortController();
+    const params = new URLSearchParams({ view: 'summary', weekScope: filters.weekScope });
+    if (filters.weekScope === 'history' && historyWeekStart) params.set('weekStart', historyWeekStart);
+    setSummaryReady(false);
+    setAuxiliaryError('');
+    void jsonRequest<{ summary: WorkflowSummaryDTO }>(`/api/workflows?${params}`, { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) { setSummary(data.summary); setSummaryReady(true); } })
+      .catch(() => { if (!controller.signal.aborted) setAuxiliaryError('统计暂未加载，列表可继续操作'); });
+    return () => controller.abort();
+  }, [deepLinkReady, filters.weekScope, historyWeekStart, refreshRevision]);
+
+  useEffect(() => {
+    if (!deepLinkReady) return;
+    const controller = new AbortController();
+    void jsonRequest<{ navigation: WorkflowWeekNavigationDTO }>('/api/workflows?view=navigation', { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) { setNavigation(data.navigation); setNavigationReady(true); } })
+      .catch(() => { if (!controller.signal.aborted) setAuxiliaryError('周导航统计暂未加载，可刷新重试'); });
+    return () => controller.abort();
+  }, [deepLinkReady, refreshRevision]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!selectionId) { setSelected(null); setDetailLoading(false); return; }
+    setDetailLoading(true); setDetailError('');
+    setSelected(current => current?.id === selectionId ? current : null);
+    void jsonRequest<{ item: WorkflowItemDTO | null }>(`/api/workflows?view=detail&id=${encodeURIComponent(selectionId)}`, { signal: controller.signal })
+      .then(data => { if (!controller.signal.aborted) { setSelected(data.item); if (!data.item) setDetailError('该流程已移除或当前账号不可查看'); } })
+      .catch(error => { if (!controller.signal.aborted) setDetailError(error instanceof Error ? error.message : '详情加载失败'); })
+      .finally(() => { if (!controller.signal.aborted) setDetailLoading(false); });
+    return () => controller.abort();
+  }, [selectionId, detailRevision]);
 
   const loadWithdrawalRequests = useCallback(async (): Promise<void> => {
     if (!canCorrectProduction) {
@@ -315,8 +381,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
 
   useEffect(() => {
     if (!deepLinkReady) return;
-    const timer = window.setTimeout(() => { void load(); }, keyword ? 260 : 0);
-    return () => window.clearTimeout(timer);
+    const timer = window.setTimeout(() => { void load(false); }, keyword ? 260 : 0);
+    return () => { window.clearTimeout(timer); listRequest.current?.abort(); };
   }, [deepLinkReady, keyword, load]);
 
   useEffect(() => {
@@ -896,7 +962,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                 onClick={() => changeWorkflowWeekScope(scope)}
               >
                 <CalendarDays size={13} aria-hidden="true" />
-                {weekScopeLabels[scope]} <b>{navigation[scope].count}</b>{scope === 'current' && navigation.carryoverCount > 0 && <small>+遗留 {navigation.carryoverCount}</small>}
+                {weekScopeLabels[scope]} <b>{navigationReady ? navigation[scope].count : '—'}</b>{scope === 'current' && navigation.carryoverCount > 0 && <small>+遗留 {navigation.carryoverCount}</small>}
               </button>
             ))}
           </div>
@@ -921,8 +987,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
           {([
             ['全部流程', summary.total, 'all'], ['待推进', summary.waiting, 'waiting'], ['处理中', summary.processing, 'processing'],
             ['待验证', summary.verifying, 'verifying'], ['已完成', summary.closed, 'closed'],
-          ] as const).map(([label, count, status]) => <button key={status} type="button" className={filters.status === status ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, status }))}><span>{label}</span><strong>{count}</strong></button>)}
-          <button type="button" className={`danger ${filters.overdue ? 'active' : ''}`} onClick={() => setFilters(current => ({ ...current, overdue: !current.overdue }))}><span>已逾期</span><strong>{summary.overdue}</strong></button>
+          ] as const).map(([label, count, status]) => <button key={status} type="button" className={filters.status === status ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, status }))}><span>{label}</span><strong>{summaryReady ? count : '—'}</strong></button>)}
+          <button type="button" className={`danger ${filters.overdue ? 'active' : ''}`} onClick={() => setFilters(current => ({ ...current, overdue: !current.overdue }))}><span>已逾期</span><strong>{summaryReady ? summary.overdue : '—'}</strong></button>
         </section>
 
         {canCorrectProduction && <section className="workflow-withdrawal-queue" aria-label="报工撤回审批与异常">
@@ -951,27 +1017,34 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
 
         <div className="workflow-workspace">
           <section className="workflow-list" aria-label="流程列表">
-            <header><div><h2>流程实例</h2><span>{items.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters(current => ({ entityType: 'all', status: 'all', overdue: false, weekScope: current.weekScope }))}>清除 {activeFilterCount}</button>}</header>
+            <header><div><h2>流程实例</h2><span>{loading && !items.length ? '加载中' : `${pagination.total} 条 · 第 ${pagination.page}/${pagination.totalPages} 页`}</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters(current => ({ entityType: 'all', status: 'all', overdue: false, weekScope: current.weekScope }))}>清除 {activeFilterCount}</button>}</header>
             <label className="workflow-list-search"><Search size={15} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、产品或负责人" aria-label="搜索流程" />{keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={13} /></button>}</label>
             <div className="workflow-type-filters" role="group" aria-label="流程类型筛选">
-              {(['all', 'issue', 'change', 'production'] as const).map(type => <button type="button" key={type} className={filters.entityType === type ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, entityType: type }))}>{type === 'all' ? '全部' : entityLabels[type]}<span>{type === 'all' ? summary.total : summary[type]}</span></button>)}
+              {(['all', 'issue', 'change', 'production'] as const).map(type => <button type="button" key={type} className={filters.entityType === type ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, entityType: type }))}>{type === 'all' ? '全部' : entityLabels[type]}<span>{summaryReady ? (type === 'all' ? summary.total : summary[type]) : '—'}</span></button>)}
             </div>
             <div className="workflow-list-scroll hm-scroll-region" ref={listRef} tabIndex={0}>
-              {loading && <div className="workflow-loading"><Loader2 className="spin" />正在汇总真实流程...</div>}
+              {loading && !items.length && <div className="workflow-loading"><Loader2 className="spin" />正在加载本页流程...</div>}
               {!loading && error && <div className="workflow-error"><AlertTriangle /><p>{error}</p><button type="button" onClick={() => { void load(); }}>重试</button></div>}
               {!loading && !error && !items.length && <div className="workflow-empty"><Workflow /><h3>没有符合条件的流程</h3><p>可调整类型、状态或逾期筛选。</p></div>}
-              {!loading && !error && items.map(item => {
+              {items.map(item => {
                 const Icon = entityIcons[item.entityType];
-                return <button type="button" key={item.id} className={`workflow-list-card ${item.carryover ? 'is-carryover' : ''} ${selected?.id === item.id ? 'selected' : ''}`} onClick={() => setSelected(item)}>
+                return <button type="button" key={item.id} className={`workflow-list-card ${item.carryover ? 'is-carryover' : ''} ${selectionId === item.id ? 'selected' : ''}`} onClick={() => { selectedIdRef.current = item.id; setSelectionId(item.id); }}>
                   <span className={`workflow-entity-icon entity-${item.entityType}`}><Icon size={16} aria-hidden="true" /></span>
                   <div><div className="workflow-card-top"><em>{entityLabels[item.entityType]}</em>{item.carryover && <em className="carryover">{item.carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' : '上周遗留'}</em>}<span>{item.code}</span><i className={`priority-${item.priority}`}>{priorityLabels[item.priority]}</i></div><strong title={item.title}>{item.title}</strong><p title={item.subtitle}>{item.subtitle}</p><footer><span className={`status-${item.processStatus}`}>{statusLabels[item.processStatus]}</span><span>{item.owner || '待分派'}</span><span className={item.isOverdue ? 'overdue' : ''}>{item.isOverdue ? '已逾期' : formatDate(item.dueAt, false)}</span></footer></div>
                 </button>;
               })}
             </div>
+            <footer className="workflow-pagination">
+              <button type="button" disabled={loading || pagination.page <= 1} onClick={() => setPageState({ key: queryKey, page: pagination.page - 1 })}>上一页</button>
+              <span>{loading ? '更新中…' : `${pagination.page} / ${pagination.totalPages}`}</span>
+              <button type="button" disabled={loading || pagination.page >= pagination.totalPages} onClick={() => setPageState({ key: queryKey, page: pagination.page + 1 })}>下一页</button>
+            </footer>
           </section>
 
           <section className="workflow-detail" aria-label="流程详情">
-            {!selected ? <div className="workflow-detail-empty"><Workflow /><h2>选择一条流程查看节点</h2><p>流程中心显示真实业务记录，不生成独立副本。</p></div> : <>
+            {auxiliaryError && <div className="workflow-auxiliary-note">{auxiliaryError}<button type="button" onClick={() => setRefreshRevision(value => value + 1)}>重试统计</button></div>}
+            {detailError && <div className="workflow-auxiliary-note">{detailError}<button type="button" onClick={() => setDetailRevision(value => value + 1)}>重试详情</button></div>}
+            {detailLoading && !selected ? <div className="workflow-detail-empty"><Loader2 className="spin" /><p>正在加载所选流程…</p></div> : !selected ? <div className="workflow-detail-empty"><Workflow /><h2>选择一条流程查看节点</h2><p>流程中心显示真实业务记录，不生成独立副本。</p></div> : <>
               {selected.entityType !== 'production' && <header className="workflow-detail-header"><div><span>{entityLabels[selected.entityType]}流程 · {selected.code}</span><h2 title={selected.title}>{selected.title}</h2><p>{selected.subtitle}</p></div><div><span className={`workflow-status status-${selected.processStatus}`}>{statusLabels[selected.processStatus]}</span><a href={selected.route}>进入处理<ArrowUpRight size={14} /></a></div></header>}
               <div className="workflow-detail-scroll hm-scroll-region">
                 {routeActionMessage && <div className={`workflow-route-action-message ${routeActionMessage.tone}`}>

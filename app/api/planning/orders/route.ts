@@ -21,7 +21,7 @@ import type {
   ProductionPlanningWeekDTO,
 } from '@/types';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
-import { loadWipContinuations } from '@/lib/wip-continuations';
+import { loadPlanningRows, type PlanningReadMode } from '@/lib/planning-reads';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,19 +37,22 @@ export async function GET(req: NextRequest) {
   const requestStartedAt = performance.now();
   try {
     await requireUser();
+    const read = req.nextUrl.searchParams.get('read') || 'legacy';
+    if (!['legacy', 'all', 'week', 'metadata', 'options'].includes(read)) {
+      return NextResponse.json({ ok: false, error: '计划读取方式无效' }, { status: 400 });
+    }
+    const weekKey = req.nextUrl.searchParams.get('week') || '';
+    const weekDate = /^\d{4}-\d{2}-\d{2}$/.test(weekKey) ? new Date(`${weekKey}T00:00:00+08:00`) : null;
+    if (read === 'week' && (!weekDate || !Number.isFinite(weekDate.getTime()) || chinaDate(weekDate) !== weekKey)) {
+      return NextResponse.json({ ok: false, error: '请选择有效的计划周' }, { status: 400 });
+    }
+    const options = read === 'options' || read === 'legacy';
+    const readStartedAt = performance.now();
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim().slice(0, 160);
     const status = String(req.nextUrl.searchParams.get('status') || '').trim();
     const customer = String(req.nextUrl.searchParams.get('customer') || '').trim().slice(0, 120);
-    const [allRecords, allWipContinuations] = await Promise.all([
-      prisma.productionPlanOrder.findMany({
-          where: { deletedAt: null },
-          include: productionPlanOrderInclude,
-          orderBy: [{ priority: 'asc' }, { customerDueDate: 'asc' }, { createdAt: 'desc' }],
-          take: 5000,
-      }),
-      loadWipContinuations({ take: 5000 }),
-    ]);
-    const all = allRecords.map(serializeProductionPlanOrder);
+    const { orders: all, wipContinuations: allWipContinuations } = await loadPlanningRows(read as PlanningReadMode, weekDate);
+    const readDuration = performance.now() - readStartedAt;
     const normalizedOrderKeyword = keyword.toLocaleLowerCase('zh-CN');
     const visibleOrders = all.filter(order => {
       if (status && status !== 'all' && order.status !== status) return false;
@@ -135,7 +138,7 @@ export async function GET(req: NextRequest) {
     const customers = [...new Set(all.map(order => order.customerName))].sort((a, b) => a.localeCompare(b, 'zh-CN'));
     const auxiliaryWarnings: Array<{ code: string; message: string }> = [];
     const [drawingProductsResult, salespersonRowsResult] = await Promise.allSettled([
-      prisma.drawingLibraryItem.findMany({
+      options ? prisma.drawingLibraryItem.findMany({
         where: { deletedAt: null },
         select: {
           id: true,
@@ -175,13 +178,13 @@ export async function GET(req: NextRequest) {
         },
         orderBy: [{ customerName: 'asc' }, { specification: 'asc' }],
         take: 1200,
-      }),
-      prisma.productionPlanOrder.findMany({
+      }) : Promise.resolve([]),
+      options ? prisma.productionPlanOrder.findMany({
         where: { deletedAt: null, salesperson: { not: null } },
         select: { customerName: true, salesperson: true },
         orderBy: { updatedAt: 'desc' },
         take: 3000,
-      }),
+      }) : Promise.resolve([]),
     ]);
     const drawingProducts = drawingProductsResult.status === 'fulfilled' ? drawingProductsResult.value : [];
     const salespersonRows = salespersonRowsResult.status === 'fulfilled' ? salespersonRowsResult.value : [];
@@ -274,23 +277,27 @@ export async function GET(req: NextRequest) {
     const response = NextResponse.json({
       ok: true,
       requestId,
-      orders: visibleOrders,
-      wipContinuations: visibleWipContinuations,
+      ...(read !== 'metadata' && read !== 'options' ? { orders: visibleOrders, wipContinuations: visibleWipContinuations } : {}),
+      ...(['metadata', 'legacy'].includes(read) ? {
       summary,
       customers,
-      productOptions,
+      orderPoolCount: all.filter(order => order.remainingQuantity > 0 && !['cancelled', 'completed'].includes(order.status)).length,
+      carryoverCount: batches.filter(batch => batch.weekEndDate < currentStart && !(batch.releaseState === 'archived' && batch.workOrderCompletedAt)).length,
+      } : {}),
+      ...(options ? { productOptions,
       salespeople: [...new Set(salespersonRows.map(row => row.salesperson).filter((value): value is string => Boolean(value)))],
-      periods: {
+      } : {}),
+      ...(['metadata', 'legacy'].includes(read) ? { periods: {
         current: weekSummary(currentStart, currentEnd),
         next: weekSummary(nextStart, nextEnd),
         afterNext: weekSummary(afterNextStart, afterNextEnd),
         upcoming,
         history,
-      },
+      } } : {}),
       warnings: auxiliaryWarnings,
     });
     response.headers.set('Cache-Control', 'private, no-store');
-    response.headers.set('Server-Timing', `total;dur=${(performance.now() - requestStartedAt).toFixed(1)}`);
+    response.headers.set('Server-Timing', `read;dur=${readDuration.toFixed(1)}, total;dur=${(performance.now() - requestStartedAt).toFixed(1)}`);
     return response;
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

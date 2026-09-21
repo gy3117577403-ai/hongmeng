@@ -2,7 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { reconcileDraftProductTimeRoutes } from '@/lib/process-routing';
-import { reconcileProductionCarryovers } from '@/lib/production-carryovers';
+import { reconcileProductionCarryovers, markWorkflowCarryoversFresh } from '@/lib/production-carryovers';
 import {
   materializeProductQualityWarningForWorkOrder,
   type ProductQualityWarningProjectionStatus,
@@ -614,6 +614,7 @@ function lockedAuxiliaryPhase(
     if (!locked.acquired) {
       return { status: 'skipped_locked', result: { reason: 'another_worker_active' } };
     }
+    if (phase === 'current_week_carryover') markWorkflowCarryoversFresh(chinaWeekRange(now).start);
     if (phase === 'draft_product_time_routes') {
       const result = locked.value as {
         lastRouteId?: string | null;

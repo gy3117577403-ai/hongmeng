@@ -1754,7 +1754,7 @@ type ProductionExecutionSeed = {
   sourceLots: WipSourceLotProjection[]; arrangements: ProductionArrangementView[];
 };
 
-type ProductionExecutionInput = Parameters<typeof buildProductionExecutionSnapshot>[0] & { snapshotToken?: string; snapshotMode?: boolean };
+type ProductionExecutionInput = Parameters<typeof buildProductionExecutionSnapshot>[0] & { snapshotToken?: string; snapshotMode?: boolean; onTiming?: (stage: string, durationMs: number) => void };
 type ProductionExecutionMetadata = Awaited<ReturnType<typeof buildProductionExecutionSnapshot>>['metadata'];
 
 async function hydrateProductionExecutionPage(seeds: ProductionExecutionSeed[], input: ProductionExecutionInput, now: Date) {
@@ -1811,16 +1811,23 @@ export async function loadProductionExecution(input: ProductionExecutionInput) {
   let seeds: ProductionExecutionSeed[];
   let total: number;
   let snapshotTime = new Date();
+  let phaseStarted = performance.now();
   if (token) {
     const saved = await readProductionSnapshot<ProductionExecutionSeed, ProductionExecutionMetadata>({ token, queryKey, offset: requestedOffset, pageSize });
     metadata = saved.metadata; seeds = saved.rows; total = saved.total; snapshotTime = saved.createdAt;
+    input.onTiming?.('snapshot_read', performance.now() - phaseStarted);
   } else {
     const built = await buildProductionExecutionSnapshot(input);
+    input.onTiming?.('snapshot_build', performance.now() - phaseStarted);
+    phaseStarted = performance.now();
     metadata = built.metadata; total = built.seeds.length;
     if (input.snapshotMode) token = await saveProductionSnapshot(queryKey, metadata, built.seeds);
+    input.onTiming?.('snapshot_save', performance.now() - phaseStarted);
     seeds = built.seeds.slice(requestedOffset, requestedOffset + pageSize);
   }
+  phaseStarted = performance.now();
   const items = await hydrateProductionExecutionPage(seeds, input, snapshotTime);
+  input.onTiming?.('page_hydrate', performance.now() - phaseStarted);
   return { ...metadata, items, pagination: { page: Math.floor(requestedOffset / pageSize) + 1, pageSize, total,
     totalPages: Math.max(1, Math.ceil(total / pageSize)), loadedOffset: requestedOffset + seeds.length, snapshotToken: token || null } };
 }
@@ -1865,15 +1872,10 @@ async function buildProductionExecutionSnapshot(input: {
   // batch. Query by durable order identity first, then apply the source/target
   // week relationship in memory; an exact sourceWeek=currentWeek predicate
   // loses historical-source carryovers such as 08-24 -> 08-31 -> 09-07.
-  const relevantWipContinuations = relevantWipWorkOrderIds.length
-    ? await loadWipContinuations({
-        workOrderIds: relevantWipWorkOrderIds,
-        productionScope: input.productionScope,
-      })
-    : [];
-  const relevantWipSourceLots = relevantWipWorkOrderIds.length
-    ? await loadWipSourceLots({ workOrderIds: relevantWipWorkOrderIds })
-    : [];
+  const [relevantWipContinuations, relevantWipSourceLots] = await runTasksWithConcurrencyLimit(2, [
+    () => relevantWipWorkOrderIds.length ? loadWipContinuations({ workOrderIds: relevantWipWorkOrderIds, productionScope: input.productionScope }) : Promise.resolve([] as WipContinuationProjection[]),
+    () => relevantWipWorkOrderIds.length ? loadWipSourceLots({ workOrderIds: relevantWipWorkOrderIds }) : Promise.resolve([] as WipSourceLotProjection[]),
+  ] as const);
   const relevantWipByWorkOrder = new Map<string, WipContinuationProjection[]>();
   for (const continuation of relevantWipContinuations) {
     const current = relevantWipByWorkOrder.get(continuation.workOrderId) || [];
@@ -1890,14 +1892,17 @@ async function buildProductionExecutionSnapshot(input: {
     ...weekWipContinuations.map(item => item.workOrderId),
     ...relevantWipContinuations.map(item => item.workOrderId),
   ])];
-  const wipSummaryOrders = wipWorkOrderIds.length
+  const knownSummaryOrders = new Map([...nativeOrders, ...summaryOrders].map(order => [order.id, order]));
+  const missingWipIds = wipWorkOrderIds.filter(id => !knownSummaryOrders.has(id));
+  const extraWipSummaryOrders = missingWipIds.length
     ? await prisma.workOrder.findMany({
         // Allocation IDs above have already passed the WIP team scope. Their
         // source order need not also have an ordinary daily-plan assignment.
-        where: { id: { in: wipWorkOrderIds }, deletedAt: null },
+        where: { id: { in: missingWipIds }, deletedAt: null },
         include: productionSummaryInclude,
       })
     : [];
+  const wipSummaryOrders = [...wipWorkOrderIds.flatMap(id => { const order = knownSummaryOrders.get(id); return order ? [order] : []; }), ...extraWipSummaryOrders];
   const wipSummaryOrderById = new Map(wipSummaryOrders.map(order => [order.id, inheritProductionControl(order)] as const));
   const allOrderMap = new Map<string, ProductionSummaryOrderRecord>();
   for (const order of [...nativeOrders, ...wipSummaryOrders.map(inheritProductionControl)]) allOrderMap.set(order.id, order);

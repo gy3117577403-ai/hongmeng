@@ -295,6 +295,31 @@ export async function reconcileCurrentProductionCarryovers(input: { targetWeekSt
   return prisma.$transaction(tx => reconcileProductionCarryovers(tx, input));
 }
 
+// The worker maintains carryovers normally. A shared, bounded freshness gate is
+// retained for a new week, development servers, and recovery from worker errors.
+// Failed refreshes never advance freshness; concurrent reads share one transaction.
+const carryoverFreshness = globalThis as typeof globalThis & {
+  workflowCarryoverGate?: { week: string; until: number; pending?: Promise<unknown> };
+};
+export function markWorkflowCarryoversFresh(targetWeekStart: Date) {
+  const week = chinaDateKey(targetWeekStart);
+  const current = carryoverFreshness.workflowCarryoverGate;
+  carryoverFreshness.workflowCarryoverGate = { week, until: Date.now() + 60_000, ...(current?.week === week ? { pending: current.pending } : {}) };
+}
+export async function ensureWorkflowCarryovers(targetWeekStart: Date, actorId: string) {
+  const week = chinaDateKey(targetWeekStart);
+  let gate = carryoverFreshness.workflowCarryoverGate;
+  if (gate?.week === week && gate.until > Date.now()) return;
+  if (gate?.week === week && gate.pending) { await gate.pending; return; }
+  gate = { week, until: 0 };
+  carryoverFreshness.workflowCarryoverGate = gate;
+  const current = gate;
+  current.pending = reconcileCurrentProductionCarryovers({ targetWeekStart, actorId })
+    .then(() => { current.until = Date.now() + 60_000; })
+    .finally(() => { current.pending = undefined; });
+  await current.pending;
+}
+
 export type ProductionCarryoverMetadata = {
   id: string;
   sourceWeekStartDate: string;

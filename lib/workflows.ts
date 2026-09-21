@@ -704,6 +704,10 @@ function productionExecutionRouteForWeek(
 }
 
 export type WorkflowCenterFilters = {
+  mode?: 'list' | 'summary' | 'detail';
+  detailId?: string;
+  page?: number;
+  pageSize?: number;
   keyword?: string;
   entityType?: WorkflowEntityType | 'all';
   status?: WorkflowProcessStatus | 'all';
@@ -762,6 +766,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   summary: WorkflowSummaryDTO;
   templates: WorkflowTemplateDTO[];
   navigation: WorkflowWeekNavigationDTO;
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
 }> {
   const now = Date.now();
   const nowDate = new Date(now);
@@ -772,9 +777,27 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   const productionTaskScopeWhere: Prisma.DailyProcessTaskListRelationFilter | undefined = productionTeamWhere
     ? { some: { plan: { team: productionTeamWhere } } }
     : undefined;
+  const detail = filters.mode === 'detail';
+  const allowed = new Set(filters.allowedEntityTypes || ['issue', 'change', 'production']);
+  const requested = filters.mode === 'summary' ? 'all' : filters.entityType || 'all';
+  const detailKey = detail ? String(filters.detailId || '') : '';
+  const [detailKind, detailEntityId] = detailKey.split(':');
+  const includes = (kind: WorkflowEntityType) => allowed.has(kind) && (requested === 'all' || requested === kind)
+    && (!detail || (kind === 'production' ? detailKind === 'production-plan' || detailKind === 'production' : detailKind === kind));
+  const range = workflowWeekRange(filters.weekScope || 'current', nowDate, filters.weekStartDate);
+  const weekWhere: Prisma.ProductionPlanBatchWhereInput = {
+    OR: [
+      { weekStartDate: productionCarryoverDayWindow(range.start) },
+      ...((filters.weekScope || 'current') === 'current' ? [{ carryovers: { some: {
+        targetWeekStartDate: productionCarryoverDayWindow(currentWeek.start), status: 'ACTIVE',
+      } } }] : []),
+      ...(filters.mode !== 'summary' && filters.batchId ? [{ id: filters.batchId }] : []),
+      ...(filters.mode !== 'summary' && filters.workOrderId ? [{ workOrderId: filters.workOrderId }] : []),
+    ],
+  };
   const [issues, changes, productionBatches, standaloneProductionOrders] = await Promise.all([
-    prisma.issue.findMany({
-      where: { deletedAt: null },
+    includes('issue') ? prisma.issue.findMany({
+      where: { deletedAt: null, ...(detail ? { id: detailEntityId || '__missing__' } : {}) },
       select: {
         id: true, sequence: true, title: true, type: true, priority: true, status: true, dueAt: true, updatedAt: true,
         isMajorQuality: true,
@@ -788,30 +811,29 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         workOrder: { select: { code: true, specification: true, customerName: true } },
         activities: {
           select: { id: true, action: true, content: true, toStatus: true, createdAt: true, actor: { select: { username: true, displayName: true } } },
-          orderBy: { createdAt: 'desc' }, take: 8,
+          orderBy: { createdAt: 'desc' }, take: detail ? 8 : 0,
         },
       },
       orderBy: { updatedAt: 'desc' },
-      take: 500,
-    }),
-    prisma.changeRequest.findMany({
-      where: { deletedAt: null },
+    }) : Promise.resolve([]),
+    includes('change') ? prisma.changeRequest.findMany({
+      where: { deletedAt: null, ...(detail ? { id: detailEntityId || '__missing__' } : {}) },
       select: {
         id: true, sequence: true, title: true, type: true, priority: true, status: true, dueAt: true, updatedAt: true,
         owner: { select: { username: true, displayName: true } },
         workOrder: { select: { code: true, specification: true, customerName: true } },
         activities: {
           select: { id: true, action: true, content: true, toStatus: true, createdAt: true, actor: { select: { username: true, displayName: true } } },
-          orderBy: { createdAt: 'desc' }, take: 8,
+          orderBy: { createdAt: 'desc' }, take: detail ? 8 : 0,
         },
       },
       orderBy: { updatedAt: 'desc' },
-      take: 500,
-    }),
-    prisma.productionPlanBatch.findMany({
+    }) : Promise.resolve([]),
+    includes('production') && (!detail || detailKind === 'production-plan') ? prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
         planOrder: { deletedAt: null },
+        ...(detail ? { id: detailEntityId || '__missing__' } : weekWhere),
         ...(productionTaskScopeWhere ? { dailyProcessTasks: productionTaskScopeWhere } : {}),
       },
       select: {
@@ -894,7 +916,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             actor: { select: { username: true, displayName: true } },
           },
           orderBy: { createdAt: 'desc' },
-          take: 8,
+          take: detail ? 8 : 0,
         },
         workOrder: {
           select: {
@@ -920,7 +942,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             progressLogs: {
               select: { id: true, stage: true, remark: true, createdBy: true, createdAt: true },
               orderBy: { createdAt: 'desc' },
-              take: 8,
+              take: detail ? 8 : 0,
             },
             materialTask: {
               select: {
@@ -935,7 +957,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     actor: { select: { username: true, displayName: true } },
                   },
                   orderBy: { createdAt: 'desc' },
-                  take: 8,
+                  take: detail ? 8 : 0,
                 },
               },
             },
@@ -953,6 +975,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 completedAt: true,
                 productTimeProfile: { select: { remark: true } },
                 processRouteChanges: {
+                  take: detail ? undefined : 0,
                   where: {
                     status: 'ACTIVE',
                     activatedRouteVersion: { not: null },
@@ -1015,6 +1038,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                       },
                     },
                     executions: {
+                      take: detail ? undefined : 0,
                       where: {
                         voidedAt: null,
                         ...(filters.laborEmployeeTeam
@@ -1025,6 +1049,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                       orderBy: { endedAt: 'desc' },
                     },
                     completions: {
+                      take: detail ? undefined : 0,
                       where: { voidedAt: null },
                       select: {
                         id: true,
@@ -1052,6 +1077,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                       orderBy: { completedAt: 'desc' },
                     },
                     processLaborPools: {
+                      take: detail ? undefined : 0,
                       where: { status: { not: 'VOIDED' } },
                       select: {
                         id: true,
@@ -1090,7 +1116,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     actor: { select: { username: true, displayName: true } },
                   },
                   orderBy: { createdAt: 'desc' },
-                  take: 8,
+                  take: detail ? 8 : 0,
                 },
               },
             },
@@ -1098,13 +1124,13 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         },
       },
       orderBy: { updatedAt: 'desc' },
-      take: 5000,
-    }),
-    prisma.workOrder.findMany({
+    }) : Promise.resolve([]),
+    includes('production') && ((detail && detailKind === 'production') || (!detail && Boolean(filters.workOrderId))) ? prisma.workOrder.findMany({
       where: {
         deletedAt: null,
         planActive: true,
         productionPlanBatch: null,
+        id: (detail ? detailEntityId : filters.workOrderId) || '__missing__',
         ...(productionTaskScopeWhere ? { dailyProcessTasks: productionTaskScopeWhere } : {}),
       },
       select: {
@@ -1142,7 +1168,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         },
         progressLogs: {
           select: { id: true, stage: true, remark: true, createdBy: true, createdAt: true },
-          orderBy: { createdAt: 'desc' }, take: 8,
+          orderBy: { createdAt: 'desc' }, take: detail ? 8 : 0,
         },
         processRoute: {
           select: {
@@ -1158,6 +1184,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             completedAt: true,
             productTimeProfile: { select: { remark: true } },
             processRouteChanges: {
+              take: detail ? undefined : 0,
               where: {
                 status: 'ACTIVE',
                 activatedRouteVersion: { not: null },
@@ -1220,6 +1247,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                   },
                 },
                 executions: {
+                  take: detail ? undefined : 0,
                   where: {
                     voidedAt: null,
                     ...(filters.laborEmployeeTeam
@@ -1230,6 +1258,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                   orderBy: { endedAt: 'desc' },
                 },
                 completions: {
+                  take: detail ? undefined : 0,
                   where: { voidedAt: null },
                   select: {
                     id: true,
@@ -1257,6 +1286,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                   orderBy: { completedAt: 'desc' },
                 },
                 processLaborPools: {
+                  take: detail ? undefined : 0,
                   where: { status: { not: 'VOIDED' } },
                   select: {
                     id: true,
@@ -1295,14 +1325,13 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 actor: { select: { username: true, displayName: true } },
               },
               orderBy: { createdAt: 'desc' },
-              take: 8,
+              take: detail ? 8 : 0,
             },
           },
         },
       },
       orderBy: { updatedAt: 'desc' },
-      take: 500,
-    }),
+    }) : Promise.resolve([]),
   ]);
 
   const issueLabels = ['待受理', '处理中', '待验证', '待发起人确认', '已关闭'];
@@ -1624,11 +1653,11 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   const allowedEntityTypes = new Set<WorkflowEntityType>(
     filters.allowedEntityTypes || ['issue', 'change', 'production'],
   );
-  const navigation = workflowWeekNavigationFromBatches(
-    allowedEntityTypes.has('production') ? productionBatches : [],
-    nowDate,
-  );
-  const requestedEntityType = filters.entityType || 'all';
+  const navigation = workflowWeekNavigationFromBatches([], nowDate);
+  const requestedEntityType = requested;
+  if (detail) {
+    return { items, summary: summary(items), templates: [], navigation, pagination: { page: 1, pageSize: 1, total: items.length, totalPages: 1 } };
+  }
   const weekScoped = items.filter(item => {
     if (!allowedEntityTypes.has(item.entityType)) return false;
     if (item.entityType !== 'production') return true;
@@ -1650,7 +1679,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   filtered.sort((first, second) => Number(second.isOverdue) - Number(first.isOverdue)
     || Number(first.processStatus === 'closed') - Number(second.processStatus === 'closed')
     || priorityRank[first.priority] - priorityRank[second.priority]
-    || new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime());
+    || new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime()
+    || first.id.localeCompare(second.id));
   const target = items.find(item => allowedEntityTypes.has(item.entityType) && (
     (filters.batchId && item.batchId === filters.batchId)
     || (filters.workOrderId && item.workOrderId === filters.workOrderId)
@@ -1658,10 +1688,31 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   const result = target
     ? [target, ...filtered.filter(item => item.id !== target.id)]
     : filtered;
+  const pageSize = Math.max(1, Math.min(50, filters.pageSize || 40));
+  const totalPages = Math.max(1, Math.ceil(result.length / pageSize));
+  const page = Math.max(1, Math.min(totalPages, filters.page || 1));
   return {
-    items: result.slice(0, 300),
+    items: filters.mode === 'summary' ? [] : result.slice((page - 1) * pageSize, page * pageSize).map(item => ({
+      ...item, steps: [], activities: [], preparationSteps: undefined, historicalRouteRepair: undefined,
+      productRemark: undefined, orderRemark: undefined,
+    })),
+    pagination: { page, pageSize, total: result.length, totalPages },
     summary: scopedSummary,
     templates: workflowTemplates.filter(template => allowedEntityTypes.has(template.key)),
     navigation,
   };
+}
+
+/** Navigation uses only week keys, never hydrates process histories. */
+export async function loadWorkflowNavigation(filters: WorkflowCenterFilters = {}) {
+  if (filters.allowedEntityTypes && !filters.allowedEntityTypes.includes('production')) return workflowWeekNavigationFromBatches([]);
+  const team = filters.productionScope ? productionTeamScopeWhere(filters.productionScope) as Prisma.ProductionTeamWhereInput | null : null;
+  const batches = await prisma.productionPlanBatch.findMany({
+    where: { deletedAt: null, planOrder: { deletedAt: null }, ...(team ? { dailyProcessTasks: { some: { plan: { team } } } } : {}) },
+    select: { weekStartDate: true, weekEndDate: true, carryovers: {
+      where: { targetWeekStartDate: productionCarryoverDayWindow(chinaWeekRange(new Date()).start), status: 'ACTIVE' },
+      select: { id: true }, take: 1,
+    } },
+  });
+  return workflowWeekNavigationFromBatches(batches);
 }

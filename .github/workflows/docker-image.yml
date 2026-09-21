@@ -222,7 +222,7 @@ jobs:
       - name: Production collaboration PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/wip-route-edit-integration.test.ts tests/wip-material-route-integration.test.ts tests/production-snapshot-integration.test.ts tests/production-wip-execution-state-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/wip-route-edit-integration.test.ts tests/wip-material-route-integration.test.ts tests/production-snapshot-integration.test.ts tests/production-wip-execution-state-integration.test.ts tests/performance-loading-integration.test.ts
       - name: Quality data PostgreSQL lifecycle integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -517,6 +517,12 @@ jobs:
             WORKLOAD_QA_FIXTURE=artifacts/production-workload/release-fixture.json \
             WORKLOAD_QA_OUTPUT=artifacts/production-workload/release-http.json \
             node scripts/smoke-production-workload.mjs
+          PERFORMANCE_QA_ALLOW=disposable-performance-runtime \
+            PERFORMANCE_QA_BASE=http://127.0.0.1:3000 \
+            PERFORMANCE_QA_FIXTURE=artifacts/production-workload/release-fixture.json \
+            PERFORMANCE_QA_OUTPUT=artifacts/performance-loading/release-http.json \
+            node scripts/smoke-performance-loading.mjs
+
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -890,6 +896,12 @@ jobs:
             WORKLOAD_QA_FIXTURE=artifacts/production-workload/hangzhou-fixture.json \
             WORKLOAD_QA_OUTPUT=artifacts/production-workload/hangzhou-http.json \
             node scripts/smoke-production-workload.mjs
+          PERFORMANCE_QA_ALLOW=disposable-performance-runtime \
+            PERFORMANCE_QA_BASE=http://127.0.0.1:3300 \
+            PERFORMANCE_QA_FIXTURE=artifacts/production-workload/hangzhou-fixture.json \
+            PERFORMANCE_QA_OUTPUT=artifacts/performance-loading/hangzhou-http.json \
+            node scripts/smoke-performance-loading.mjs
+
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
           {
@@ -897,6 +909,13 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload performance loading acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-loading-${{ github.ref_name }}
+          path: artifacts/performance-loading/*http.json
+          if-no-files-found: warn
       - name: Upload production workload acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

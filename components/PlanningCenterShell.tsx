@@ -147,6 +147,8 @@ const readinessOptions: Array<{
 const readyFilters = new Set<PlanningReadinessFilter>(['ready_preparation', 'ready_production']);
 
 type PlanningPayload = {
+  orderPoolCount?: number;
+  carryoverCount?: number;
   ok?: boolean;
   orders?: ProductionPlanOrderDTO[];
   wipContinuations?: ProductionPlanningWipContinuationDTO[];
@@ -516,6 +518,13 @@ function editableWeekLabel(key: EditableWeekKey): string {
   return Number.isInteger(index) ? `第${index + 1}周` : '未来周';
 }
 
+function currentPlanningWeek(offset = 0): string {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const date = new Date(`${today}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() - (date.getUTCDay() + 6) % 7 + offset * 7);
+  return date.toISOString().slice(0, 10);
+}
+
 function currentPlanningMonth(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit' })
     .format(new Date()).slice(0, 7);
@@ -678,7 +687,12 @@ export default function PlanningCenterShell({
   const [selectedMonth, setSelectedMonth] = useState(currentPlanningMonth);
   const [monthData, setMonthData] = useState<ProductionPlanningMonthDTO | null>(null);
   const [monthLoading, setMonthLoading] = useState(false);
-  const [selectedWeekStartDate, setSelectedWeekStartDate] = useState('');
+  const [selectedWeekStartDate, setSelectedWeekStartDate] = useState(() => currentPlanningWeek());
+  const [queryReady, setQueryReady] = useState(false);
+  const [metadataReady, setMetadataReady] = useState(false);
+  const [globalCounts, setGlobalCounts] = useState({ orderPool: 0, carryover: 0 });
+  const [metadataError, setMetadataError] = useState('');
+  const [optionsError, setOptionsError] = useState('');
   const [historyWeekStartDate, setHistoryWeekStartDate] = useState('');
   const [carryoverOpen, setCarryoverOpen] = useState(false);
   const [wipOpen, setWipOpen] = useState(false);
@@ -732,7 +746,7 @@ export default function PlanningCenterShell({
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [productEntryMode, setProductEntryMode] = useState<ProductEntryMode>('select');
   const [activeProductIndex, setActiveProductIndex] = useState(-1);
-  const [batchDialog, setBatchDialog] = useState<{ orderId: string; batchId?: string } | null>(null);
+  const [batchDialog, setBatchDialog] = useState<{ orderId: string; batchId?: string; order: ProductionPlanOrderDTO } | null>(null);
   const [batchDraft, setBatchDraft] = useState<BatchForm>({ quantity: '', unitSeconds: '', weekStartDate: '', plannedCompletionDate: '', reason: '' });
   const [releasePreview, setReleasePreview] = useState<ReleasePreview | null>(null);
   const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null);
@@ -795,13 +809,25 @@ export default function PlanningCenterShell({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [orderPoolOpen]);
 
+  const queryWeek = view === 'preparation' ? periods?.next.weekStartDate || currentPlanningWeek(1)
+    : view === 'history' ? historyWeekStartDate || currentPlanningWeek(-1) : selectedWeekStartDate;
+  const readAll = view === 'orders' || orderPoolOpen || carryoverOpen;
+  const loadPlanRows = readAll || ['schedule', 'preparation', 'history'].includes(view);
+  const rowQuery = readAll ? 'read=all' : `read=week&week=${encodeURIComponent(queryWeek)}`;
+  const lastRowQuery = useRef('');
+
   useEffect(() => {
+    if (!queryReady || !loadPlanRows) return;
     const controller = new AbortController();
+    let timedOut = false;
+    const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, 30000);
+    const sameScope = lastRowQuery.current === rowQuery;
+    lastRowQuery.current = rowQuery;
+    if (!sameScope) { setOrders([]); setWipContinuations([]); setLastPlanLoadedAt(null); }
     planRequestInFlightRef.current = true;
     setLoading(true);
     setPlanLoadError('');
-    setPlanLoadWarnings([]);
-    fetch('/api/planning/orders', { cache: 'no-store', signal: controller.signal })
+    fetch(`/api/planning/orders?${rowQuery}`, { cache: 'no-store', signal: controller.signal })
       .then(async response => {
         const body = await responseBody<PlanningPayload>(response);
         if (response.status === 401) { location.href = '/login'; return null; }
@@ -809,29 +835,44 @@ export default function PlanningCenterShell({
         return body;
       })
       .then(body => {
-        if (!body) return;
-        const loadWarnings = Array.isArray(body.warnings)
-          ? body.warnings.filter((warning): warning is ClientLoadWarning => Boolean(warning && typeof warning.code === 'string'))
-          : [];
+        if (!body || controller.signal.aborted) return;
         setOrders(body.orders || []);
         setWipContinuations(body.wipContinuations || []);
+        setLastPlanLoadedAt(new Date());
+      })
+      .catch(reason => {
+        if (timedOut) setPlanLoadError('计划数据加载超时，请重试');
+        else if (!controller.signal.aborted && reason instanceof Error) setPlanLoadError(reason.message);
+      })
+      .finally(() => {
+        window.clearTimeout(timer);
+        if (controller.signal.aborted && !timedOut) return;
+        planRequestInFlightRef.current = false;
+        setLoading(false);
+        if (planRefreshPendingRef.current) {
+          planRefreshPendingRef.current = false;
+          setRefreshToken(value => value + 1);
+        }
+      });
+    return () => { window.clearTimeout(timer); controller.abort(); planRequestInFlightRef.current = false; };
+  }, [queryReady, loadPlanRows, rowQuery, refreshToken]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setMetadataError('');
+    fetch('/api/planning/orders?read=metadata', { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        const body = await responseBody<PlanningPayload>(response);
+        if (!response.ok) throw new Error(body.error || '计划统计暂时不可用');
+        return body;
+      })
+      .then(body => {
+        if (controller.signal.aborted) return;
         setSummary(body.summary || emptySummary);
         setCustomers(body.customers || []);
-        setProductOptions(current => auxiliaryValueAfterLoad(
-          current,
-          body.productOptions || [],
-          loadWarnings,
-          planningProductOptionsWarningCode,
-        ));
-        setSalespeople(current => auxiliaryValueAfterLoad(
-          current,
-          body.salespeople || [],
-          loadWarnings,
-          planningSalespeopleWarningCode,
-        ));
-        setPlanLoadWarnings(loadWarnings);
+        setGlobalCounts({ orderPool: body.orderPoolCount || 0, carryover: body.carryoverCount || 0 });
         setPeriods(body.periods);
-        setLastPlanLoadedAt(new Date());
+        setMetadataReady(true);
         if (body.periods) {
           const editableStarts = (body.periods.upcoming?.length
             ? body.periods.upcoming
@@ -852,25 +893,34 @@ export default function PlanningCenterShell({
                 ? requestedWeekStartDate
                 : body.periods!.history[0]?.weekStartDate || ''
           ));
-          if (body.periods.history.some(item => item.weekStartDate === requestedWeekStartDate)) {
-            setView('history');
-          }
+
         }
       })
-      .catch(reason => {
-        if (reason instanceof Error && reason.name !== 'AbortError') setPlanLoadError(reason.message);
-      })
-      .finally(() => {
-        if (controller.signal.aborted) return;
-        planRequestInFlightRef.current = false;
-        setLoading(false);
-        if (planRefreshPendingRef.current) {
-          planRefreshPendingRef.current = false;
-          setRefreshToken(value => value + 1);
-        }
-      });
+      .catch(reason => { if (!controller.signal.aborted) setMetadataError(reason instanceof Error ? reason.message : '计划统计暂时不可用'); });
     return () => controller.abort();
   }, [refreshToken]);
+
+  const needsProductOptions = Boolean(orderDialog);
+  useEffect(() => {
+    if (!needsProductOptions) return;
+    const controller = new AbortController();
+    setOptionsError('');
+    fetch('/api/planning/orders?read=options', { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        const body = await responseBody<PlanningPayload>(response);
+        if (!response.ok) throw new Error(body.error || '产品选项加载失败');
+        return body;
+      })
+      .then(body => {
+        if (controller.signal.aborted) return;
+        const warnings = body.warnings || [];
+        setProductOptions(current => auxiliaryValueAfterLoad(current, body.productOptions || [], warnings, planningProductOptionsWarningCode));
+        setSalespeople(current => auxiliaryValueAfterLoad(current, body.salespeople || [], warnings, planningSalespeopleWarningCode));
+        setPlanLoadWarnings(warnings);
+      })
+      .catch(reason => { if (!controller.signal.aborted) setOptionsError(reason instanceof Error ? reason.message : '产品选项加载失败'); });
+    return () => controller.abort();
+  }, [needsProductOptions, refreshToken]);
 
   useEffect(() => {
     if (view !== 'month') return undefined;
@@ -904,6 +954,7 @@ export default function PlanningCenterShell({
   }, [productPickerOpen]);
 
   useEffect(() => {
+    setQueryReady(true);
     const search = new URLSearchParams(window.location.search);
     if (search.get('restore') === '1') {
       const stored = window.sessionStorage.getItem(PLANNING_RETURN_STATE_KEY);
@@ -935,9 +986,13 @@ export default function PlanningCenterShell({
     }
     const requestedWeekStartDate = String(search.get('week') || '').trim();
     requestedWeekStartRef.current = requestedWeekStartDate;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(requestedWeekStartDate)) {
+      if (requestedWeekStartDate < currentPlanningWeek()) { setHistoryWeekStartDate(requestedWeekStartDate); setView('history'); }
+      else setSelectedWeekStartDate(requestedWeekStartDate);
+    }
     const batchId = search.get('batchId');
     if (batchId) {
-      setView('schedule');
+      setView(requestedWeekStartDate && requestedWeekStartDate < currentPlanningWeek() ? 'history' : 'schedule');
       setExpandedOrderId(batchId);
       pendingBatchFocusRef.current = batchId;
     }
@@ -1030,7 +1085,7 @@ export default function PlanningCenterShell({
     [orderDraft.drawingLibraryItemId, productOptions],
   );
   const batchOrder = useMemo(
-    () => batchDialog ? orders.find(item => item.id === batchDialog.orderId) || null : null,
+    () => batchDialog ? orders.find(item => item.id === batchDialog.orderId) || batchDialog.order : null,
     [batchDialog, orders],
   );
   const orderDraftUnitMilliseconds = useMemo(() => {
@@ -1125,22 +1180,33 @@ export default function PlanningCenterShell({
     const word = keyword.trim().toLocaleLowerCase();
     return !word || [order.customerName, order.salesperson || '', order.productName, order.specification, order.sopRemark || ''].some(value => value.toLocaleLowerCase().includes(word));
   }), [allBatches, customer, keyword, priority]);
-  const documentBatchIds = allBatches.map(row => row.batch.id).sort().join(",");
+  const documentBatchIds = ['schedule', 'preparation', 'history'].includes(view)
+    ? allBatches.filter(row => row.batch.weekStartDate === queryWeek).map(row => row.batch.id).sort().join(',') : '';
   useEffect(() => {
     let active = true;
-    const update = async () => {
+    let pending: AbortController | null = null;
+    let lastSuccess = 0;
+    let refreshPending = false;
+    const update = async (event?: Event) => {
+      if (pending) { if (event?.type === 'quality-fixture-updated') refreshPending = true; return; }
+      if (event?.type === 'focus' && Date.now() - lastSuccess < 15000) return;
+      const controller = new AbortController(); pending = controller;
       try {
-        const ids = documentBatchIds.split(",").filter(Boolean), result: typeof documentBadges = {};
+        const ids = documentBatchIds.split(',').filter(Boolean), result: typeof documentBadges = {};
         for (let i = 0; i < ids.length; i += 100) {
-          const r = await fetch("/api/quality-fixtures?kind=batches&badges=" + encodeURIComponent(ids.slice(i, i + 100).join(",")), {cache:"no-store"});
-          const j = await r.json(); if (!r.ok || !j.ok) throw new Error();
-          for (const b of j.data) result[b.id] = b;
+          const response = await fetch('/api/quality-fixtures?kind=batches&badges=' + encodeURIComponent(ids.slice(i, i + 100).join(',')), { cache: 'no-store', signal: controller.signal });
+          const body = await response.json(); if (!response.ok || !body.ok) throw new Error();
+          for (const badge of body.data) result[badge.id] = badge;
         }
-        if (active) { setDocumentBadges(result); setDocumentBadgeError(false); }
-      } catch { if (active) setDocumentBadgeError(true); }
+        if (active) { setDocumentBadges(result); setDocumentBadgeError(false); lastSuccess = Date.now(); }
+      } catch { if (active && !controller.signal.aborted) setDocumentBadgeError(true); }
+      finally {
+        if (pending === controller) pending = null;
+        if (active && refreshPending) { refreshPending = false; void update(); }
+      }
     };
-    void update(); window.addEventListener("quality-fixture-updated", update); window.addEventListener("focus", update);
-    return () => {active = false; window.removeEventListener("quality-fixture-updated", update); window.removeEventListener("focus", update);};
+    void update(); window.addEventListener('quality-fixture-updated', update); window.addEventListener('focus', update);
+    return () => { active = false; pending?.abort(); window.removeEventListener('quality-fixture-updated', update); window.removeEventListener('focus', update); };
   }, [documentBatchIds]);
   const documentOptions = [["SUPERVISOR","待主管审核"],["QUALITY","待品质审核"],["MISSING","资料待补齐"],["UNKNOWN","治具未选择"],["SHORT","治具待准备"]];
   const matchesDocument = useCallback((id: string, filter: string) => {
@@ -1535,7 +1601,7 @@ export default function PlanningCenterShell({
       plannedCompletionDate: batch?.plannedCompletionDate || defaultWeekEnd,
       reason: '',
     });
-    setBatchDialog({ orderId: order.id, batchId: batch?.id });
+    setBatchDialog({ orderId: order.id, batchId: batch?.id, order });
   }
 
   function changeBatchWeek(weekStartDate: string): void {
@@ -2166,10 +2232,10 @@ export default function PlanningCenterShell({
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   });
   const views: Array<{ id: PlanningView; label: string; icon: typeof ClipboardList; count?: number }> = [
-    { id: 'schedule', label: '计划排程', icon: CalendarCheck2, count: planDataAvailable ? summary.scheduledOrderCount : undefined },
+    { id: 'schedule', label: '计划排程', icon: CalendarCheck2, count: metadataReady ? summary.scheduledOrderCount : undefined },
     { id: 'month', label: '月度排产', icon: CalendarRange },
-    { id: 'orders', label: '订单管理', icon: ClipboardList, count: planDataAvailable ? summary.pendingOrderCount : undefined },
-    { id: 'preparation', label: '下周生产', icon: PackageCheck, count: planDataAvailable ? summary.preparationBatchCount : undefined },
+    { id: 'orders', label: '订单管理', icon: ClipboardList, count: metadataReady ? summary.pendingOrderCount : undefined },
+    { id: 'preparation', label: '下周生产', icon: PackageCheck, count: metadataReady ? summary.preparationBatchCount : undefined },
     { id: 'changes', label: '插单与变更', icon: FilePenLine },
     { id: 'history', label: '历史计划', icon: History },
   ];
@@ -2216,7 +2282,7 @@ export default function PlanningCenterShell({
           open={modeDrawer.open}
           moduleLabel="计划中心"
           mode="mass"
-          mass={{ href: '/weekly-plan-center', title: '量产计划', description: '订单排程、配料准备、工艺联动与生产下达', count: planDataAvailable ? summary.scheduledOrderCount : undefined, countLabel: '单' }}
+          mass={{ href: '/weekly-plan-center', title: '量产计划', description: '订单排程、配料准备、工艺联动与生产下达', count: metadataReady ? summary.scheduledOrderCount : undefined, countLabel: '单' }}
           sample={{ href: '/weekly-plan-center?branch=samples', title: '样品组计划', description: '按客户等级下达样品资料采集与分项审核任务' }}
           onClose={modeDrawer.close}
         />
@@ -2253,7 +2319,7 @@ export default function PlanningCenterShell({
           </div>
           <div className="planning-context-actions">
             {view === 'schedule' && <><button type="button" className="planning-context-chip wip" onClick={() => setWipOpen(true)}><Boxes size={14} />半成品续作 {selectedWipContinuations.length} 项</button>
-            <button type="button" className="planning-context-chip attention" onClick={() => setCarryoverOpen(true)}><History size={14} />历史遗留 {carryoverRows.length} 批</button></>}
+            <button type="button" className="planning-context-chip attention" onClick={() => setCarryoverOpen(true)}><History size={14} />历史遗留 {metadataReady ? globalCounts.carryover : '—'} 批</button></>}
             <WeekReconciliationBar compact weekStartDate={view === 'history' ? historyWeekStartDate : selectedWeek?.weekStartDate} weekEndDate={view === 'history' ? selectedHistoryWeek?.weekEndDate : selectedWeek?.weekEndDate} refreshSignature={refreshToken} />
           </div>
         </section>
@@ -2304,7 +2370,7 @@ export default function PlanningCenterShell({
           </div>
           <div className="planning-toolbar-actions">
             {view === 'schedule' && <>
-              <button ref={orderPoolTriggerRef} className="planning-secondary-action pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池 <b>{planDataAvailable ? orderPool.length : '—'}</b></button>
+              <button ref={orderPoolTriggerRef} className="planning-secondary-action pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池 <b>{metadataReady ? globalCounts.orderPool : '—'}</b></button>
               <details className="planning-transfer-menu" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary><Upload size={15} />导入/导出<ChevronDown size={13} /></summary><div>
                 <button type="button" onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); openPlanningImport(menu?.querySelector('summary') || event.currentTarget); }}>导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); void openWeeklyPlanExport(menu?.querySelector('summary') || event.currentTarget); }}>导出计划 Excel</button>
@@ -2320,6 +2386,7 @@ export default function PlanningCenterShell({
           </div>
         </section>
 
+        {(metadataError || optionsError) && <div className="planning-error" role="alert"><AlertTriangle size={16} /><span>{metadataError || optionsError}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重试</button></div>}
         {error
           ? <div className="planning-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误"><X size={15} /></button></div>
           : planLoadError
@@ -2568,7 +2635,8 @@ export default function PlanningCenterShell({
                     </article>;
                   })}
                 </div>
-      {!carryoverRows.length && <p>当前筛选范围没有历史遗留未完批次。</p>}
+      {loading && <p role="status">正在加载历史遗留批次…</p>}
+      {!loading && !carryoverRows.length && <p>当前筛选范围没有历史遗留未完批次。</p>}
     </PlanningDetailDrawer>}
     {wipOpen && <PlanningDetailDrawer title="半成品续作" subtitle={`${selectedWipContinuations.length} 项 · ${selectedWipQuantity.toLocaleString()} 件 · 计划 ${duration(selectedWipMilliseconds)}`} onClose={() => setWipOpen(false)}>
       <p className="planning-detail-description">剩余工序在独立台账管理，并计入对应生产周的执行口径。</p>

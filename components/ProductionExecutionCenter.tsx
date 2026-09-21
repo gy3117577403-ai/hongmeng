@@ -1155,7 +1155,7 @@ function executionParams(
   displaySize = 12,
   wipAllocationId = '',
 ): URLSearchParams {
-  const params = new URLSearchParams({ view, page: '1', pageSize: '60' });
+  const params = new URLSearchParams({ view, page: '1', pageSize: '24' });
   if (page > 1) params.set('displayPage', String(page));
   if (displaySize !== 12) params.set('displaySize', String(displaySize));
   params.set('scope', scope);
@@ -1175,8 +1175,8 @@ async function fetchProductionBoardPage(
 ): Promise<BoardPayload> {
   const pageParams = new URLSearchParams(params);
   const offset = Math.max(0, options.offset || 0);
-  pageParams.set('page', String(Math.floor(offset / 60) + 1));
-  pageParams.set('pageSize', '60');
+  pageParams.set('page', String(Math.floor(offset / 24) + 1));
+  pageParams.set('pageSize', '24');
   pageParams.delete('displayPage');
   if (options.snapshotToken) pageParams.set('snapshotToken', options.snapshotToken);
   if (options.includeSummary === false) {
@@ -1649,7 +1649,7 @@ export default function ProductionExecutionCenter({
     setLoading(true);
     setLoadError('');
     fetchProductionBoardRange({
-      fetchPage: (offset, includeSummary, snapshotToken) => fetchProductionBoardPage(params, controller.signal, { offset, includeSummary, snapshotToken }),
+      fetchPage: (offset, _includeSummary, snapshotToken) => fetchProductionBoardPage(params, controller.signal, { offset, includeSummary: false, snapshotToken }),
       loadedOffset,
       signal: controller.signal,
     })
@@ -1659,7 +1659,8 @@ export default function ProductionExecutionCenter({
         productionBoardCache.set(cacheKey, data);
         if (productionBoardCache.size > 8) productionBoardCache.delete(productionBoardCache.keys().next().value || '');
         setBoardSnapshot({ cacheKey, value: data });
-        setSummarySnapshot(data.summary ? { cacheKey, value: data.summary } : null);
+        if (data.summary) setSummarySnapshot({ cacheKey, value: data.summary });
+        else setSummaryRefreshToken(value => value + 1);
         setLastRefreshedAt(new Date());
         setLoadError('');
         autoRefreshFailureCountRef.current = 0;

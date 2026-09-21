@@ -75,7 +75,9 @@ export async function GET(req: NextRequest) {
       }),
     }, async () => {
       const week = await resolveProductionWeek(...weekInput);
+      const timings: string[] = [];
       const data = await loadProductionExecution({
+        onTiming: (stage, duration) => timings.push(`${stage};dur=${duration.toFixed(1)}`),
         week,
         filters,
         view,
@@ -87,6 +89,7 @@ export async function GET(req: NextRequest) {
         snapshotMode: true,
         snapshotToken,
       });
+      const navigationStarted = performance.now();
       let navigation: Awaited<ReturnType<typeof loadProductionWeekNavigation>> | null = null;
       const warnings: Array<{ code: string; message: string }> = [];
       if (includeSummary) {
@@ -101,7 +104,9 @@ export async function GET(req: NextRequest) {
           });
         }
       }
+      timings.push(`navigation;dur=${(performance.now() - navigationStarted).toFixed(1)}`);
       return {
+        timings,
         data: navigation && data.summary
           ? { ...data, summary: { ...data.summary, navigation } }
           : data,
@@ -127,6 +132,7 @@ export async function GET(req: NextRequest) {
       response.headers.set('X-Request-Id', requestId);
       return response;
     }
+    const qualityStarted = performance.now();
     const quick = await quickWarningsForOrders(readResult.value.data.items.map(item=>item.id));
     const data = {...readResult.value.data,items:readResult.value.data.items.map(item=>({...item,qualityRiskAlertCount:item.qualityRiskAlertCount+(quick.get(item.id)?.length||0)}))};
     const loadedAt = performance.now();
@@ -140,6 +146,9 @@ export async function GET(req: NextRequest) {
     response.headers.set('X-Request-Id', requestId);
     response.headers.set('X-Production-Read-Mode', readResult.shared ? 'joined' : 'leader');
     response.headers.set('Server-Timing', [
+      ...readResult.value.timings,
+      `quality;dur=${(loadedAt - qualityStarted).toFixed(1)}`,
+      `serialize;dur=${(performance.now() - loadedAt).toFixed(1)}`,
       `auth;dur=${(authenticatedAt - requestStartedAt).toFixed(1)}`,
       `prepare;dur=${(preparedAt - authenticatedAt).toFixed(1)}`,
       `load;dur=${(loadedAt - preparedAt).toFixed(1)}`,
