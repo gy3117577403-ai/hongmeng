@@ -4,7 +4,8 @@ import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { QF_STATUS } from "@/lib/quality-fixture-domain";
 import styles from "./QualityFixtureStatus.module.css";
-type Badge = { submissionIssues?: string[]; id: string; productId?: string; status: string; revision?: string; fixtureLabel: string; printAllowed: boolean; pendingRevision?: string; legacy?: boolean;packageId?:string; needFixture?:boolean|null; supervisor?:string; quality?:string;supervisorAt?:string;qualityAt?:string;groups?:{model:string;required:number;available:number;incoming:number;shortage:number}[]; drawingFiles?: {id:string;name:string;version:string}[]; sopFiles?:{id:string;name:string;version:string}[] };
+export type QualityFixtureBadge = { submissionIssues?: string[]; id: string; productId?: string; status: string; revision?: string; fixtureLabel: string; printAllowed: boolean; pendingRevision?: string; legacy?: boolean;packageId?:string; needFixture?:boolean|null; supervisor?:string; quality?:string;supervisorAt?:string;qualityAt?:string;groups?:{model:string;required:number;available:number;incoming:number;shortage:number}[]; drawingFiles?: {id:string;name:string;version:string}[]; sopFiles?:{id:string;name:string;version:string}[] };
+type Badge = QualityFixtureBadge;
 type Entry = { data?: Badge; error?: boolean; at: number; listeners: Set<() => void> };
 const cache = new Map<string, Entry>(), queue = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -25,10 +26,11 @@ function enqueue(key: string) {
     }
   }, 35);
 }
-export function QualityFixtureStatus({ id, kind = "products", compact = false }: { id?: string | null; kind?: "products" | "orders" | "batches"; compact?: boolean }) {
+export function QualityFixtureStatus({ id, kind = "products", compact = false, provided }: { id?: string | null; kind?: "products" | "orders" | "batches"; compact?: boolean; provided?: { data?: Badge; error?: boolean } }) {
   const [, render] = useState(0), key = kind + ":" + (id || "");
+  const externallyManaged = provided !== undefined;
   useEffect(() => {
-    if (!id) return;
+    if (!id || externallyManaged) return;
     const entry = cache.get(key) || { at: 0, listeners: new Set<() => void>() };
     cache.set(key, entry);
     const update = () => render(n => n + 1), refresh = () => { if (document.visibilityState !== "hidden") enqueue(key); };
@@ -37,8 +39,8 @@ export function QualityFixtureStatus({ id, kind = "products", compact = false }:
     window.addEventListener("focus", refresh); window.addEventListener("quality-fixture-updated", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => { entry.listeners.delete(update); window.removeEventListener("focus", refresh); window.removeEventListener("quality-fixture-updated", refresh); document.removeEventListener("visibilitychange", refresh); };
-  }, [id, key]);
-  const e = cache.get(key), badge = e?.data;
+  }, [id, key, externallyManaged]);
+  const e = provided || cache.get(key), badge = e?.data;
   const product = badge?.productId || (kind === "products" ? id : "");
   const href = "/workspace/quality-fixtures?view=review" + (product ? "&product=" + product : "");
   return <div className={styles.status + (compact ? " " + styles.compact : "")} onClick={event => event.stopPropagation()}>

@@ -167,12 +167,14 @@ test('WIP mobile reporting uses Chinese source choices and target-week worker as
 
 test('WIP continuation is projected into planning, production execution and process reporting', () => {
   const planningApi = readFileSync(resolve(repositoryRoot, 'app/api/planning/orders/route.ts'), 'utf8');
+  const planningReads = readFileSync(resolve(repositoryRoot, 'lib/planning-reads.ts'), 'utf8');
   const planningUi = readFileSync(resolve(repositoryRoot, 'components/PlanningCenterShell.tsx'), 'utf8');
   const productionService = readFileSync(resolve(repositoryRoot, 'lib/production-execution.ts'), 'utf8');
   const continuationService = readFileSync(resolve(repositoryRoot, 'lib/wip-continuations.ts'), 'utf8');
   const productionUi = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
 
-  assert.match(planningApi, /loadWipContinuations/);
+  assert.match(planningApi, /loadPlanningRows/);
+  assert.match(planningReads, /loadWipContinuations/);
   assert.match(planningApi, /wipContinuations:\s*visibleWipContinuations/);
   assert.match(planningUi, /PlanningDetailDrawer title="半成品续作"/);
   assert.doesNotMatch(planningUi, /className="planning-wip-lane"/);
