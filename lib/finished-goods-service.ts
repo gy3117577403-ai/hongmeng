@@ -235,7 +235,7 @@ async function stockAction(tx: Tx, input: FgInput, actor: FgActor): Promise<Resu
     await assertShippable(tx, lot);
     const bucket = 'available';
     lot = await ledger(tx, lot, { ...fgStock(lot), [bucket]: lot[bucket] - quantity }, action, quantity, actor, reason);
-    const newLot = await tx.fgLot.create({ data: { sourceKey: `allocation:${randomUUID()}`, sourceKind: 'ALLOCATION', workOrderId: lot.workOrderId, workOrderCode: lot.workOrderCode, productKey: lot.productKey, productName: lot.productName, specification: lot.specification, unit: lot.unit, ownerType: 'CUSTOMER', customerName: customer, sourceQuantity: quantity, [bucket]: quantity, location: lot.location, note: `来自公共备货 ${lot.id}；${reason}`, receivedAt: lot.receivedAt } });
+    const newLot = await tx.fgLot.create({ data: { sourceKey: `allocation:${randomUUID()}`, sourceKind: 'ALLOCATION', workOrderId: lot.workOrderId, workOrderCode: lot.workOrderCode, productKey: lot.productKey, productName: lot.productName, specification: lot.specification, unit: lot.unit, ownerType: 'CUSTOMER', customerName: customer, sourceQuantity: quantity, [bucket]: quantity, location: lot.location, note: `来自公共备货 ${lot.id}；${reason}`, receivedAt: lot.receivedAt, productionWorkDate: lot.productionWorkDate, productionCompletedAt: lot.productionCompletedAt, transferredAt: lot.transferredAt } });
     await ledger(tx, newLot, fgStock(newLot), action, quantity, actor, reason, lot.id);
     return { id: newLot.id };
   } else throw new FinishedGoodsError('不支持的库存操作');
@@ -399,7 +399,7 @@ export async function mutateFinishedGoods(input: FgInput, actor: FgActor, idempo
   return conflict();
 }
 
-export async function loadFinishedGoods(input: { date?: string; dateTo?: string; scope?: string; view?: string; filter?: string; q?: string; batchId?: string; page?: number; pageSize?: number }): Promise<FgWorkbench> {
+export async function loadFinishedGoods(input: { date?: string; dateTo?: string; dateBasis?: string; sort?: string; scope?: string; view?: string; filter?: string; q?: string; batchId?: string; page?: number; pageSize?: number }): Promise<FgWorkbench> {
   const date = fgDate(input.date);
   const workDate = fgDate();
   const dateTo = input.dateTo ? fgDate(input.dateTo) : date;
@@ -408,6 +408,8 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
   const pageSize = [24, 16, 48, 100].includes(input.pageSize || 0) ? input.pageSize! : 24;
   const q = fgText(input.q, 200).toLocaleLowerCase();
   const allHistory = input.scope === 'all';
+  const productionDates = input.dateBasis === 'production';
+  const productionWhere: Prisma.FgLotWhereInput = productionDates && !allHistory ? { productionWorkDate: { gte: new Date(date+'T00:00:00Z'), lte: new Date(dateTo+'T00:00:00Z') } } : {};
   const view = input.view || 'queue';
   const filter = input.filter || 'all';
   return prisma.$transaction(async tx => {
@@ -416,7 +418,7 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
       include: { holds: true, lines: { where: { shipment: { status: { in: ['DRAFT', 'RESERVED'] } } }, include: { shipment: { include: { batch: true, _count: { select: { lines: true } } } } }, orderBy: { shipment: { updatedAt: 'desc' } } } },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
-    const shipmentWhere: Prisma.FgShipmentWhereInput = { status: 'SHIPPED', ...(!allHistory ? { shippedAt: { gte: start, lt: end } } : {}) };
+    const shipmentWhere: Prisma.FgShipmentWhereInput = { status: 'SHIPPED', ...(productionDates ? { lines: { some: { lot: productionWhere } } } : {}), ...(!allHistory && !productionDates ? { shippedAt: { gte: start, lt: end } } : {}) };
     const waybillMatches = allHistory && q ? await tx.$queryRaw<{ id: string }[]>`SELECT id FROM fg_shipments WHERE waybills::text ILIKE ${'%' + q.replace(/[\\%_]/g, '\\$&') + '%'}` : [];
     if (allHistory && q) shipmentWhere.OR = [{ number: { contains: q, mode: 'insensitive' } }, { customerName: { contains: q, mode: 'insensitive' } }, { lines: { some: { lot: { OR: [{ workOrderCode: { contains: q.replace('·', '-'), mode: 'insensitive' } }, { specification: { contains: q, mode: 'insensitive' } }, { productName: { contains: q, mode: 'insensitive' } }] } } } }, { id: { in: waybillMatches.map(s => s.id) } }];
     const shipped = await tx.fgShipment.findMany({ where: shipmentWhere, include: shipmentInclude, orderBy: [{ shippedAt: 'desc' }, { id: 'asc' }], take: allHistory ? 20001 : undefined });
@@ -425,7 +427,7 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
     const cutover = await tx.fgCutover.findUnique({ where: { id: 'finished-goods-v2' } });
     const closedCount = await tx.fgLot.count({ where: { legacyClosedAt: { not: null }, legacyQuantity: { gt: 0 } } });
     const legacyLots = view === 'legacy' ? await tx.fgLot.findMany({ where: { legacyClosedAt: { not: null }, legacyQuantity: { gt: 0 } }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }] }) : [];
-    const receipts = view === 'receipts' ? await tx.fgLedger.findMany({ where: { kind: { in: ['RECEIVE','OPENING','RETURN','REWORK_RETURN'] }, ...(allHistory ? {} : { createdAt: { gte: start, lt: end } }) }, include: { lot: true }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: 20001 }) : [];
+    const receipts = view === 'receipts' ? await tx.fgLedger.findMany({ where: { kind: { in: ['RECEIVE','OPENING','RETURN','REWORK_RETURN'] }, ...(productionDates ? { lot: productionWhere } : allHistory ? {} : { createdAt: { gte: start, lt: end } }) }, include: { lot: true }, orderBy: [{ createdAt: 'desc' }, { id: 'asc' }], take: 20001 }) : [];
     if (receipts.length > 20000) throw new FinishedGoodsError('入库记录较多，请按日期范围查询');
     const workOrderIds = [...new Set(lots.filter(l => ['PRODUCTION','ALLOCATION'].includes(l.sourceKind)).map(l => l.workOrderId).filter((id): id is string => Boolean(id)))];
     const [workOrders, supplements] = await Promise.all([
@@ -441,6 +443,7 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
       sourceKind: lot.sourceKind, sourceQuantity: lot.sourceQuantity, location: lot.location, note: lot.note, openingReview: lot.openingReview,
       legacyClosedAt: lot.legacyClosedAt?.toISOString() || null, legacyQuantity: lot.legacyQuantity,
       onHand: physicalStock(lot), shippedQuantity: 0, receivedQuantity: 0, receiptCount: 0, lastReceivedAt: null, lastShippedAt: null,
+      productionWorkDate: lot.productionWorkDate?.toISOString().slice(0,10) || null, productionCompletedAt: lot.productionCompletedAt?.toISOString() || null, transferredAt: lot.transferredAt?.toISOString() || null,
       version: lot.version, createdAt: lot.createdAt.toISOString(), receivedAt: lot.receivedAt?.toISOString() || null, status: '', blockedReason: block(lot),
       quantity: lot.available || lot.pending, returned: 0, carrier: '', waybills: [], method: 'COURIER', recipient: '', phone: '', address: '',
       boxes: 1, handoverName: '', batchId: '', batchNumber: '', shippedAt: null, holdDueDate: null, holdReason: '', otherDrafts: 0, shipmentLineCount: 1, shipmentNote: '', externalReference: '',
@@ -457,13 +460,13 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
     const shippedRows: FgRow[] = shipped.flatMap(shipment => shipment.lines.map(line => ({ ...base(line.lot), ...shipmentFields(shipment), id: line.id, lineId: line.id, quantity: line.quantity, returned: line.returned, status: 'shipped', blockedReason: '', shipmentLineCount: shipment.lines.length })));
     const legacyRows: FgRow[] = legacyLots.map(lot => ({ ...base(lot), quantity: lot.legacyQuantity, status: 'legacy', blockedReason: '' }));
     const receiptRows: FgRow[] = receipts.map(entry => ({ ...base(entry.lot), id: entry.id, quantity: Math.abs(entry.quantity), receivedAt: entry.createdAt.toISOString(), status: 'received', note: entry.reason, blockedReason: '' }));
-    const commonFilter = (row: FgRow): boolean => (!q || [row.workOrderCode, fgShortWorkOrder(row.workOrderCode), row.productName, row.specification, row.customerName, row.location, row.shipmentNumber, row.waybills.join(' ')].join(' ').toLocaleLowerCase().includes(q)) && (!input.batchId || row.batchId === input.batchId);
+    const commonFilter = (row: FgRow): boolean => (!productionDates || allHistory || Boolean(row.productionWorkDate && row.productionWorkDate >= date && row.productionWorkDate <= dateTo)) && (!q || [row.workOrderCode, fgShortWorkOrder(row.workOrderCode), row.productName, row.specification, row.customerName, row.location, row.shipmentNumber, row.waybills.join(' ')].join(' ').toLocaleLowerCase().includes(q)) && (!input.batchId || row.batchId === input.batchId);
     // The workbench is one row per source lot. History/batches retain every handover line.
     const queueLots = new Map(stockRows.map(row => [row.lotId, row]));
     for (const row of shippedRows) if (!queueLots.has(row.lotId)) queueLots.set(row.lotId, row);
     let sourceRows = view === 'legacy' ? legacyRows : view === 'receipts' ? receiptRows : view === 'history' || filter === 'shipped' || filter === 'missing' ? shippedRows : view === 'stock' || view === 'holds' ? stockRows : view === 'batches' ? [...stockRows, ...shippedRows] : [...queueLots.values()];
     if (view === 'holds') sourceRows = sourceRows.filter(r => r.held > 0);
-    if (view === 'stock' && input.date && input.scope === 'range') sourceRows = sourceRows.filter(r => r.receivedAt && new Date(r.receivedAt) >= start && new Date(r.receivedAt) < end);
+    if (!productionDates && view === 'stock' && input.date && input.scope === 'range') sourceRows = sourceRows.filter(r => r.receivedAt && new Date(r.receivedAt) >= start && new Date(r.receivedAt) < end);
     const matching = sourceRows.filter(commonFilter);
     const counts: Record<string, number> = { all: matching.length, processing: 0, pending: 0, ready: 0, shipped: 0, held: 0, opening: 0, missing: 0, blocked: 0, reserved: 0, legacy: closedCount, received: receiptRows.length };
     for (const row of matching) {
@@ -484,6 +487,7 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
     if (filter !== 'all') rows = rows.filter(row => filter === 'processing' ? ['ready','pending','reserved'].includes(row.status) : filter === 'missing' ? row.status === 'shipped' && row.method === 'COURIER' && !row.waybills.length : filter === 'pending' ? row.status !== 'shipped' && row.pending > 0 && !row.openingReview : filter === 'ready' ? row.status !== 'shipped' && row.available > 0 && !row.blockedReason && !row.openingReview : filter === 'held' ? row.status !== 'shipped' && row.held > 0 : filter === 'blocked' ? row.status !== 'shipped' && (row.blocked > 0 || Boolean(row.blockedReason)) : row.status === filter);
     if (view === 'batches') rows.sort((a, b) => a.batchNumber.localeCompare(b.batchNumber) || a.workOrderCode.localeCompare(b.workOrderCode));
     else if (view === 'queue') { const rank: Record<string,number> = { pending:0,ready:1,reserved:1,shipped:2,blocked:4,restricted:4 }; rows.sort((a,b) => (rank[a.status] ?? 5)-(rank[b.status] ?? 5)); }
+    if (['completed_asc','completed_desc'].includes(input.sort || '')) rows.sort((a,b) => { const av=a.productionWorkDate, bv=b.productionWorkDate; if(!av || !bv) return av ? -1 : bv ? 1 : a.id.localeCompare(b.id); return (av.localeCompare(bv) || (a.productionCompletedAt || '').localeCompare(b.productionCompletedAt || '')) * (input.sort === 'completed_desc' ? -1 : 1) || a.id.localeCompare(b.id); });
     const total = rows.length; const page = Math.max(1, Math.min(Math.ceil(total / pageSize) || 1, Math.trunc(input.page || 1)));
     const pageRows = rows.slice((page - 1) * pageSize, page * pageSize);
     const lotIds = [...new Set(pageRows.filter(row => !row.legacyClosedAt).map(row => row.lotId))];

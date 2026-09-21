@@ -199,7 +199,7 @@ export function prepareMaterialFollowUpTransition(
   if (status === MaterialFollowUpStatus.WAITING_ARRIVAL && !expectedAt) {
     return { ok: false, statusCode: 400, error: '等待物料时必须填写预计到料时间' };
   }
-  if (expectedAt && expectedAt < chinaDayStart(now)) {
+  if (expectedAt && expectedAt < chinaDayStart(now) && expectedAt.toISOString().slice(0, 10) !== current.expectedAt?.toISOString().slice(0, 10)) {
     return { ok: false, statusCode: 400, error: '预计到料时间不能早于今天' };
   }
   return {

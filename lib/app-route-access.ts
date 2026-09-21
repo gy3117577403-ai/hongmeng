@@ -69,7 +69,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
       'MAJOR_APPROVAL',
     ],
   },
-  { prefix: '/workspace/warehouse', anyOf: ['WAREHOUSE'] },
+  { prefix: '/workspace/warehouse', anyOf: ['WAREHOUSE', 'PROCUREMENT'] },
   { prefix: '/workspace/procurement', anyOf: ['PROCUREMENT'] },
   { prefix: '/workspace/product-times', anyOf: ['PROCESS', 'PRODUCT_TIME'] },
   { prefix: '/workspace/time-standards', anyOf: ['PROCESS'] },

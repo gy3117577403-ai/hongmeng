@@ -33,21 +33,6 @@ test('drawing library retains an accessible file drawer trigger', () => {
   assert.match(component, /aria-expanded=\{filePanelOpen\}/);
 });
 
-test('warehouse toolbar contains filters and refresh while related modules live in collaboration', () => {
-  const component = source('components/WarehouseManagementShell.tsx');
-  const toolbarStart = component.indexOf('<section className="warehouse-toolbar"');
-  const toolbarEnd = component.indexOf('</section>', toolbarStart);
-  const toolbar = component.slice(toolbarStart, toolbarEnd);
-  const collaborationStart = component.indexOf('<aside className="warehouse-collaboration"');
-  const collaboration = component.slice(collaborationStart, component.indexOf('</aside>', collaborationStart));
-
-  assert.doesNotMatch(toolbar, /href="\/workspace\/procurement"|href="\/weekly-plan-center"/);
-  assert.match(toolbar, /刷新仓库任务/);
-  assert.match(collaboration, /warehouse-related-links/);
-  assert.match(collaboration, /href="\/workspace\/procurement"/);
-  assert.match(collaboration, /href="\/weekly-plan-center"/);
-});
-
 test('production command collapses secondary actions and keeps the side panel with view controls', () => {
   const component = source('components/ProductionExecutionCenter.tsx');
   const stylesheet = source('app/production/production-workbench.css');

@@ -101,11 +101,11 @@ async function main() {
   };
 
   for (const task of snapshot.activeWarehouseTasks) {
-    if (task.exceptionCases.length !== 1) {
+    if (!task.exceptionCases.length) {
       addFinding(
         'ACTIVE_WAREHOUSE_EVENT_COUNT',
         task.id,
-        `${task.workOrder.code} 当前异常必须且只能对应一个活动事件，实际 ${task.exceptionCases.length} 个`,
+        `${task.workOrder.code} 当前异常必须对应至少一个活动事件`,
       );
     }
   }
@@ -126,9 +126,8 @@ async function main() {
     if (!sameTime(exceptionCase.expectedArrivalAt, exceptionCase.followUpTask.expectedAt)) {
       addFinding('EVENT_FOLLOW_UP_ETA_MISMATCH', exceptionCase.id, '异常事件与物料跟进的预计到料时间不一致');
     }
-    if (!sameTime(exceptionCase.warehouseTask.expectedAt, exceptionCase.followUpTask.expectedAt)) {
-      addFinding('WAREHOUSE_FOLLOW_UP_ETA_MISMATCH', exceptionCase.id, '仓库任务与物料跟进的预计到料时间不一致');
-    }
+    const expected = snapshot.openCases.filter(e => e.warehouseTaskId === exceptionCase.warehouseTaskId).map(e => e.expectedArrivalAt).filter((d): d is Date => !!d).sort((a,b) => a.getTime()-b.getTime())[0] || null;
+    if (!sameTime(exceptionCase.warehouseTask.expectedAt, expected)) addFinding('WAREHOUSE_FOLLOW_UP_ETA_MISMATCH', exceptionCase.id, '仓库汇总日期应为未解决异常中最早的预计到料时间');
   }
   for (const followUp of snapshot.activeFollowUps) {
     if (followUp.warehouseException.status !== WarehouseExceptionCaseStatus.OPEN) {

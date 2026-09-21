@@ -34,6 +34,9 @@ model FgLot {
   note String @default("")
   version Int @default(0)
   receivedAt DateTime?
+  productionCompletedAt DateTime?
+  productionWorkDate DateTime? @db.Date
+  transferredAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   ledger FgLedger[]
@@ -3046,6 +3049,11 @@ model WarehouseMaterialExceptionCase {
   status                   WarehouseExceptionCaseStatus @default(OPEN)
   exceptionType            String                       @map("exception_type")
   exceptionNote            String                       @map("exception_note")
+  supplySource             String                       @default("UNKNOWN") @map("supply_source")
+  materialModel            String                       @default("") @map("material_model")
+  shortageQuantity         Float?                       @map("shortage_quantity")
+  receivedQuantity         Float                        @default(0) @map("received_quantity")
+  unit                     String                       @default("个")
   weekStartDate            DateTime?                    @map("week_start_date")
   weekEndDate              DateTime?                    @map("week_end_date")
   reportedAt               DateTime                     @default(now()) @map("reported_at")
@@ -3069,6 +3077,7 @@ model WarehouseMaterialExceptionCase {
 
   @@unique([warehouseTaskId, sequence])
   @@index([warehouseTaskId, status])
+  @@index([supplySource, status])
   @@index([status, expectedArrivalAt])
   @@index([weekStartDate, status])
   @@index([resolvedAt])

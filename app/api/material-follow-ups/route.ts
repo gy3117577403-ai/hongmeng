@@ -20,6 +20,7 @@ import {
   loadProductionCarryoverMetadata,
   reconcileCurrentProductionCarryovers,
 } from '@/lib/production-carryovers';
+import { MATERIAL_SOURCES } from '@/lib/material-source';
 import { canRunGetReconciliation } from '@/lib/get-reconciliation-access';
 
 export const runtime = 'nodejs';
@@ -81,9 +82,15 @@ export async function GET(req: NextRequest) {
       currentWeekStart: naturalWeek.start,
       requestedWeekStart: requestedWeek,
     });
-    const scopeWhere: Prisma.MaterialFollowUpTaskWhereInput = {
-      warehouseTask: { workOrder: { is: workOrderWhere } },
-    };
+    const source = params.get('source') || 'ALL';
+    if (source !== 'ALL' && !MATERIAL_SOURCES.includes(source as never)) return NextResponse.json({ ok: false, error: '物料来源筛选不正确' }, { status: 400 });
+    const periodWhere: Prisma.MaterialFollowUpTaskWhereInput = scope === 'current' ? {
+      OR: [
+        { warehouseTask: { workOrder: { is: workOrderWhere } } },
+        { status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES }, warehouseTask: { workOrder: { deletedAt: null, weekStartDate: { lt: naturalWeek.start } } } },
+      ],
+    } : { warehouseTask: { workOrder: { is: workOrderWhere } } };
+    const scopeWhere: Prisma.MaterialFollowUpTaskWhereInput = { AND: [periodWhere, ...(source === 'ALL' ? [] : [{ warehouseException: { supplySource: source } }])] };
     const filters: Prisma.MaterialFollowUpTaskWhereInput[] = [scopeWhere];
     if (status === 'ACTIVE') {
       filters.push({ status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES } });
@@ -95,6 +102,7 @@ export async function GET(req: NextRequest) {
     if (keyword) {
       filters.push({
         OR: [
+          { warehouseException: { materialModel: { contains: keyword, mode: 'insensitive' } } },
           { latestProgress: { contains: keyword, mode: 'insensitive' } },
           { warehouseException: { exceptionNote: { contains: keyword, mode: 'insensitive' } } },
           { warehouseTask: { workOrder: { code: { contains: keyword, mode: 'insensitive' } } } },
@@ -104,6 +112,7 @@ export async function GET(req: NextRequest) {
         ],
       });
     }
+    if (params.get('risk') === 'overdue') filters.push({ status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES }, expectedAt: { lt: chinaDayStart() } });
     const where: Prisma.MaterialFollowUpTaskWhereInput = { AND: filters };
     const page = integer(params.get('page'), 1, 100000);
     const pageSize = integer(params.get('pageSize'), 100, 300);
@@ -166,6 +175,8 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
+    const sourceGroups = await prisma.warehouseMaterialExceptionCase.groupBy({ by: ['supplySource'], where: { followUpTask: { is: { AND: [periodWhere, { status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES } }] } } }, _count: { _all: true } });
+    const sourceSummary = Object.fromEntries(sourceGroups.map(group => [group.supplySource, group._count._all]));
     const counts = new Map<MaterialFollowUpStatusDTO, number>();
     grouped.forEach(item => counts.set(item.status as MaterialFollowUpStatusDTO, item._count._all));
     const activeTotal = MATERIAL_FOLLOW_UP_ACTIVE_STATUSES.reduce(
@@ -229,10 +240,11 @@ export async function GET(req: NextRequest) {
                 label: carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' as const : '上周遗留' as const,
                 originalWeekStartDate: carryover.originalWeekStartDate,
               }
-            : null,
+            : scope === 'current' && task.warehouseTask.workOrder.weekStartDate && task.warehouseTask.workOrder.weekStartDate < naturalWeek.start ? { label: '更早遗留' as const, originalWeekStartDate: task.warehouseTask.workOrder.weekStartDate.toISOString() } : null,
         };
       }),
       summary,
+      sourceSummary,
       users,
       selectedWeekStart: ymd(activeWeek),
       weeks,

@@ -6,6 +6,7 @@ import type {
   WarehouseMaterialStatus,
   WarehouseMaterialTaskDTO,
 } from '@/types';
+import { materialSource, materialExceptionLabel } from '@/lib/material-source';
 import { activeProductionCarryoverWorkOrderWhere } from '@/lib/production-carryovers';
 
 export const WAREHOUSE_MATERIAL_STATUSES: WarehouseMaterialStatus[] = ['pending', 'completed', 'exception'];
@@ -167,10 +168,10 @@ export const warehouseMaterialTaskListInclude = Prisma.validator<Prisma.Warehous
     },
   },
   exceptionCases: {
-    where: { status: 'RESOLVED' },
-    orderBy: { resolvedAt: 'desc' },
-    take: 1,
+    where: { status: { in: ['OPEN', 'RESOLVED'] } },
+    orderBy: { sequence: 'desc' },
     include: {
+      followUpTask: { select: { id: true, status: true, owner: { select: { id: true, username: true, displayName: true } } } },
       reportedBy: { select: { id: true, username: true, displayName: true } },
       expectedArrivalBy: { select: { id: true, username: true, displayName: true } },
       actualArrivalBy: { select: { id: true, username: true, displayName: true } },
@@ -353,7 +354,12 @@ export function serializeWarehouseExceptionCase(
     sequence: exceptionCase.sequence,
     status: exceptionCase.status,
     exceptionType,
-    exceptionTypeText: warehouseExceptionText[exceptionType],
+    exceptionTypeText: materialExceptionLabel(exceptionType, exceptionCase.supplySource),
+    supplySource: materialSource(exceptionCase.supplySource),
+    materialModel: exceptionCase.materialModel,
+    shortageQuantity: exceptionCase.shortageQuantity,
+    receivedQuantity: exceptionCase.receivedQuantity,
+    unit: exceptionCase.unit,
     exceptionNote: exceptionCase.exceptionNote,
     weekStartDate: exceptionCase.weekStartDate?.toISOString() || null,
     weekEndDate: exceptionCase.weekEndDate?.toISOString() || null,
@@ -382,8 +388,8 @@ export function serializeWarehouseMaterialTask(
     : null;
   const detailTask = task as WarehouseMaterialTaskDetailRecord;
   const activeFollowUp = task.followUpTasks[0] || null;
-  const lastResolvedException = task.exceptionCases[0] || null;
-  const synchronizedExpectedAt = activeFollowUp?.expectedAt || task.expectedAt;
+  const lastResolvedException = task.exceptionCases.find(e => e.status === 'RESOLVED') || null;
+  const synchronizedExpectedAt = task.expectedAt || activeFollowUp?.expectedAt;
   return {
     id: task.id,
     workOrderId: task.workOrderId,
@@ -416,6 +422,7 @@ export function serializeWarehouseMaterialTask(
       latestProgress: activeFollowUp.latestProgress,
       updatedAt: activeFollowUp.updatedAt.toISOString(),
     } : null,
+    activeExceptions: task.exceptionCases.filter(e => e.status === 'OPEN').map(e => ({ ...serializeWarehouseExceptionCase(e), followUpId: e.followUpTask?.id || null, followUpStatus: e.followUpTask?.status || null, owner: e.followUpTask?.owner || null })),
     lastResolvedException: lastResolvedException ? serializeWarehouseExceptionCase(lastResolvedException) : null,
     workOrder: {
       ...task.workOrder,

@@ -50,12 +50,13 @@ test('finance account lands on account center and cannot open business pages', (
   assert.equal(canAccessAppRoute(finance, '/workspace/approvals'), false);
 });
 
-test('department users receive only their mapped module entries plus shared workflow', () => {
+test('procurement can collaborate on warehouse exceptions without gaining system permissions', () => {
   const procurement = access('ACCOUNT_SELF', 'BASIC_SUMMARY', 'PROCUREMENT');
   assert.equal(canAccessAppRoute(procurement, '/home'), true);
   assert.equal(canAccessAppRoute(procurement, '/workspace/procurement'), true);
   assert.equal(canAccessAppRoute(procurement, '/workspace/workflows'), true);
-  assert.equal(canAccessAppRoute(procurement, '/workspace/warehouse'), false);
+  assert.equal(canAccessAppRoute(procurement, '/workspace/warehouse'), true);
+  assert.equal(canAccessAppRoute(procurement, '/workspace/permissions'), false);
 });
 
 test('production supervisor can use production and planning collaboration pages', () => {

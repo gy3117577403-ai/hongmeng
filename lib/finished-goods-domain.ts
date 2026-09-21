@@ -60,6 +60,7 @@ export type FgRow = Stock & {
   legacyClosedAt: string | null; legacyQuantity: number;
   onHand: number; shippedQuantity: number; receivedQuantity: number; receiptCount: number;
   lastReceivedAt: string | null; lastShippedAt: string | null;
+  productionWorkDate?: string | null; productionCompletedAt?: string | null; transferredAt?: string | null;
 };
 export type FgBatchDTO = { id: string; number: string; businessDate: string; sequence: number; name: string; carrier: string; note: string; closedAt: string | null; shipped: number; draft: number; quantity: number; quantities: Record<string, number>; waybillCount: number; missingWaybill: number };
 export type FgWorkbench = {

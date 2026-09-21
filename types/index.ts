@@ -1468,6 +1468,7 @@ export type ChangeSummaryDTO = {
 };
 
 export type WarehouseMaterialStatus = 'pending' | 'completed' | 'exception';
+export type MaterialSupplySource = 'PURCHASED' | 'CUSTOMER' | 'UNKNOWN';
 export type WarehouseExceptionType = 'shortage' | 'wrong_material' | 'insufficient_quantity' | 'quality_issue' | 'other';
 
 export type WarehouseMaterialActivityDTO = {
@@ -1481,6 +1482,14 @@ export type WarehouseMaterialActivityDTO = {
 };
 
 export type WarehouseMaterialExceptionCaseDTO = {
+  supplySource?: MaterialSupplySource;
+  materialModel?: string;
+  shortageQuantity?: number | null;
+  receivedQuantity?: number;
+  unit?: string;
+  followUpId?: string | null;
+  followUpStatus?: MaterialFollowUpStatusDTO | null;
+  owner?: IssueUserDTO | null;
   id: string;
   sequence: number;
   status: 'OPEN' | 'RESOLVED' | 'CANCELLED';
@@ -1531,6 +1540,7 @@ export type WarehouseMaterialTaskDTO = {
     updatedAt: string;
   } | null;
   lastResolvedException?: WarehouseMaterialExceptionCaseDTO | null;
+  activeExceptions?: WarehouseMaterialExceptionCaseDTO[];
   workOrder: {
     id: string;
     code: string;

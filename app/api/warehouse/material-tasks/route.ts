@@ -17,6 +17,7 @@ import {
   loadProductionCarryoverMetadata,
   reconcileCurrentProductionCarryovers,
 } from '@/lib/production-carryovers';
+import { MATERIAL_SOURCES } from '@/lib/material-source';
 import { canRunGetReconciliation } from '@/lib/get-reconciliation-access';
 
 export const runtime = 'nodejs';
@@ -77,6 +78,10 @@ export async function GET(req: NextRequest) {
 
     const summaryWhere: Prisma.WarehouseMaterialTaskWhereInput = { workOrder: { is: workOrderWhere } };
     const where: Prisma.WarehouseMaterialTaskWhereInput = { ...summaryWhere };
+    const source = params.get('source') || 'ALL';
+    if (source !== 'ALL' && !MATERIAL_SOURCES.includes(source as never)) return NextResponse.json({ ok: false, error: '物料来源筛选不正确' }, { status: 400 });
+    const eventFilter: Prisma.WarehouseMaterialExceptionCaseWhereInput = { status: 'OPEN' };
+    if (source !== 'ALL') eventFilter.supplySource = source;
     const status = params.get('status');
     const exceptionType = params.get('exceptionType');
     const keyword = String(params.get('keyword') || '').trim().slice(0, 160);
@@ -90,8 +95,9 @@ export async function GET(req: NextRequest) {
       if (!WAREHOUSE_EXCEPTION_TYPES.includes(exceptionType as WarehouseExceptionType)) {
         return NextResponse.json({ ok: false, error: '异常类型筛选不正确' }, { status: 400 });
       }
-      where.exceptionType = exceptionType;
+      eventFilter.exceptionType = exceptionType;
     }
+    if (source !== 'ALL' || (exceptionType && exceptionType !== 'all')) where.exceptionCases = { some: eventFilter };
     if (params.get('expected') === 'overdue') {
       where.status = 'exception';
       where.expectedAt = { lt: chinaDayStart() };
@@ -99,6 +105,7 @@ export async function GET(req: NextRequest) {
     if (keyword) {
       where.OR = [
         { exceptionNote: { contains: keyword, mode: 'insensitive' } },
+        { exceptionCases: { some: { materialModel: { contains: keyword, mode: 'insensitive' } } } },
         { workOrder: { code: { contains: keyword, mode: 'insensitive' } } },
         { workOrder: { customerName: { contains: keyword, mode: 'insensitive' } } },
         { workOrder: { specification: { contains: keyword, mode: 'insensitive' } } },
