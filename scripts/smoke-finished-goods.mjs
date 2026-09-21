@@ -66,7 +66,12 @@ const attachment=await call('user',`/api/finished-goods/attachments?id=${attachm
 const media=await fetch(attachment.response.headers.get('location'));assert.equal(media.status,200);assert.ok((await media.arrayBuffer()).byteLength>40);
 await call('user','/api/finished-goods/attachments','DELETE',{id:attachmentId});await call('user',`/api/finished-goods/attachments?id=${attachmentId}`,'GET',undefined,404);
 const exportResponse=await fetch(`${base}/api/finished-goods/export?q=${fixture.marker}&date=${fixture.date}&view=history`,{headers:{Cookie:cookies.user},signal:AbortSignal.timeout(90000)});assert.equal(exportResponse.status,200);
-const bytes=Buffer.from(await exportResponse.arrayBuffer());const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(bytes);assert.equal(workbook.worksheets[0].rowCount,11);const headers=workbook.worksheets[0].getRow(1).values;assert.equal(workbook.worksheets[0].columnCount,29);for(const removed of ['收货人','联系电话','收货地址','承运商','箱数','运单号'])assert.ok(!headers.includes(removed));for(const required of ['外部单号','实际出库时间','入库时间','在库数量','已出数量','累计入库'])assert.ok(headers.includes(required));
+const bytes=Buffer.from(await exportResponse.arrayBuffer());const workbook=new ExcelJS.Workbook();await workbook.xlsx.load(bytes);assert.equal(workbook.worksheets[0].rowCount,11);const headers=workbook.worksheets[0].getRow(1).values;assert.equal(workbook.worksheets[0].columnCount,32);for(const removed of ['收货人','联系电话','收货地址','承运商','箱数','运单号'])assert.ok(!headers.includes(removed));for(const required of ['外部单号','实际出库时间','入库时间','在库数量','已出数量','累计入库','现场完成日期','完成登记时间','转入待入库时间'])assert.ok(headers.includes(required));
+for (let row = 2; row <= workbook.worksheets[0].rowCount; row++) {
+  const sheet = workbook.worksheets[0];
+  assert.equal(sheet.getRow(row).getCell(headers.indexOf('现场完成日期')).value, fixture.date);
+  for (const key of ['完成登记时间','转入待入库时间']) assert.ok(sheet.getRow(row).getCell(headers.indexOf(key)).value, `${key} is exported from production facts`);
+}
 await fs.writeFile(path.join(path.dirname(output),'shipment-export.xlsx'),bytes);
 checks.push({method:'GET',path:'/api/finished-goods/export',status:200,records:10,bytes:bytes.length});
 const all24=await call('user',`/api/finished-goods?q=${fixture.marker}&date=${fixture.date}&pageSize=24`);assert.equal(all24.body.data.rows.length,24);assert.equal(all24.body.data.total,fixture.lots.length+1);
