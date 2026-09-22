@@ -111,6 +111,12 @@ export function routeAccessRule(pathname: string): RouteAccessRule | null {
 }
 
 export function canAccessAppRoute(access: AppAccess, pathname: string): boolean {
+  // The former production sample workbench now lives inside planning. Preserve its
+  // existing audience only for this branch; do not grant bulk-planning access.
+  if (normalizedPath(pathname) === '/weekly-plan-center'
+    && new URLSearchParams(String(pathname).split('?')[1] || '').get('branch') === 'samples') {
+    return access.modules.some(module => module === 'PLANNING' || module === 'BUSINESS' || module === 'PRODUCTION');
+  }
   // Finished goods is shared by every authenticated user; page access still requires login.
   if (/^\/workspace\/finished-goods(?:\/|$)/.test(normalizedPath(pathname))) return true;
   if (/^\/workspace\/purchases(?:\/|$)/.test(normalizedPath(pathname))) return true;

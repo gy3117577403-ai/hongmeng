@@ -1,4 +1,4 @@
-# Sample unified workbench v1.34.221 — 2026-09-22
+# Sample unified workbench v1.34.222 — 2026-09-22
 
 Final result: passed for requested UI and browser interactions. Production data counts and Sealos deployment are outside this UI acceptance.
 
@@ -17,6 +17,8 @@ Final result: passed for requested UI and browser interactions. Production data 
 - P2: underlying trial modal could receive Escape while a photo viewer was open. Hide the base modal while its higher-order photo viewer is active, matching existing edit/QR/return handling.
 - P2: a REPEAT fixture carrying stale pending-submission counts could open an unavailable review tab. Main row action now branches on task type before pending count. Post-fix old-product dialog shows only overview, drawing review, completion/warehouse; no capture or package review.
 - P2: final item on a paged conflict queue could leave an empty page after resolution. API clamps page after count and UI applies the returned page.
+
+Final route compatibility check also preserves the former production/business audience for the samples branch only. Bulk planning remains restricted as before; regression assertions cover both boundaries.
 
 No remaining actionable P0/P1/P2 visual findings in tested states.
 

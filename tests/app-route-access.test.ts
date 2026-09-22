@@ -16,6 +16,19 @@ function accessWithCapabilities(modules: AccessModuleCode[], capabilities: Capab
   return { modules, capabilities };
 }
 
+test('unified samples retain production entry access without opening bulk planning', () => {
+  for (const module of ['BUSINESS', 'PRODUCTION'] as const) {
+    assert.equal(canAccessAppRoute(access(module), '/production?branch=samples'), true);
+    assert.equal(canAccessAppRoute(access(module), '/weekly-plan-center?branch=samples&taskId=sample-1'), true);
+    assert.equal(canAccessAppRoute(access(module), '/weekly-plan-center'), false);
+    assert.equal(canAccessAppRoute(access(module), '/weekly-plan-center?branch=bulk'), false);
+    assert.equal(canAccessAppRoute(access(module), '/workspace/permissions'), false);
+  }
+  assert.equal(canAccessAppRoute(access('PLANNING'), '/weekly-plan-center?branch=samples'), true);
+  assert.equal(canAccessAppRoute(access('HR'), '/weekly-plan-center?branch=samples'), false);
+  assert.equal(canAccessAppRoute(access(), '/weekly-plan-center?branch=samples'), false);
+});
+
 test('HR opens the employee account page without system dashboard or permissions access', () => {
   const hr = accessWithCapabilities(['HR', 'TRAINING'], ['HR:READ', 'HR:UPDATE']);
   assert.equal(canAccessAppRoute(hr, '/workspace/employees/accounts'), true);
