@@ -29,6 +29,7 @@ export default function DrawingQuickActions({ item, categories, enabled, onChang
     const previous = document.activeElement as HTMLElement | null;
     panel.current?.focus();
     const key = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.key === 'Escape' && panel.current?.querySelector('.preview-fullscreen-backdrop')) return;
       if (e.key === 'Escape' && !busy) { e.stopPropagation(); setKind(null); }
       if (e.key !== 'Tab') return;
       const nodes = Array.from(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled)') || []);
