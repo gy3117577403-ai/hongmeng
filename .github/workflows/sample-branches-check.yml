@@ -36,3 +36,41 @@ jobs:
       - run: npm run test:sample-integration
       - run: npm run test:material-follow-up-integration
       - run: npx tsx --test --test-concurrency=1 tests/drawing-plan-week-integration.test.ts tests/finished-goods-integration.test.ts
+      - run: npm run build
+      - name: Real sample HTTP and storage acceptance
+        env:
+          SESSION_SECRET: sample-branch-ci-session-key-only-1234567890
+          SEED_ADMIN_USERNAME: samplebranchqa
+          SEED_ADMIN_PASSWORD: Codex-SBR-Seed-QA-2026!Z
+          SAMPLE_BRANCH_INITIAL_PASSWORD: Codex-SBR-Seed-QA-2026!Z
+          SMOKE_ADMIN_CHANGED_PASSWORD: Codex-SBR-Changed-QA-2026!R
+          S3_ENDPOINT: http://127.0.0.1:19000
+          S3_PUBLIC_ENDPOINT: http://127.0.0.1:19000
+          S3_BUCKET: workorder-resources
+          S3_REGION: auto
+          S3_FORCE_PATH_STYLE: "true"
+          S3_ACCESS_KEY_ID: samplebranchstorage
+          S3_SECRET_ACCESS_KEY: sample-branch-ci-storage-only-123456
+          APP_BASE_URL: http://127.0.0.1:3000
+          SAMPLE_BRANCH_QA_ALLOW: disposable-sample-branches
+        run: |
+          set -euo pipefail
+          bash scripts/pull-ci-minio.sh
+          docker run -d --name sample-branch-storage --network host -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" hongmeng-ci-minio:verified-a1a8bd4ac40a server /data --address :19000
+          SMOKE_STORAGE_ALLOW=disposable-ci-storage node scripts/prepare-smoke-storage.mjs
+          npm run prisma:seed
+          npm run start > sample-branch-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" || true; docker rm -f sample-branch-storage >/dev/null' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/ready >/dev/null; then break; fi
+            sleep 2
+          done
+          node scripts/smoke-sample-branches.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sample-branches-preflight
+          path: |
+            artifacts/sample-branches
+            sample-branch-server.log
