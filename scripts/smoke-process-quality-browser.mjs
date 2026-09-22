@@ -50,8 +50,14 @@ try {
     // Open the selected work order through the actual production card action.
     const candidates=page.locator('[data-production-order-id="'+order.id+'"] .production-dispatch-row-actions>button.primary');
     await candidates.first().click();await page.locator('.process-completion-dialog').waitFor();
+    // The dialog shell precedes the async reporting form. Wait for its initial
+    // autofocus before typing into the route search so input cannot be stolen.
+    await page.locator('.process-completion-dialog .process-completion-layout').waitFor();
     const routePicker=page.locator('.process-completion-route-sidebar');check(await routePicker.count()===1,'desktop long route has independent sidebar');
-    await routePicker.getByRole('textbox',{name:'搜索工序'}).fill('检验');await routePicker.locator('.process-picker-row').first().click();await page.locator('.process-completion-dialog .pquality').waitFor();await snap('desktop-final-inspection');
+    const routeSearch=routePicker.getByRole('textbox',{name:'搜索工序'});await routeSearch.fill('检验');
+    check(await routeSearch.inputValue()==='检验','desktop route search retains entered text');
+    const finalInspection=order.steps.find(step=>step.name==='检验（A端）');check(!!finalInspection,'fixture has an exact final inspection step');
+    await routePicker.locator('[data-step-id="'+finalInspection.id+'"]').click();await page.locator('.process-completion-dialog .pquality').waitFor();await snap('desktop-final-inspection');
     await page.setViewportSize({width:1024,height:768});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'short desktop has no horizontal page overflow');await snap('desktop-compact');
     await page.goto(base+'/workspace/quality/data');await page.setViewportSize({width:1366,height:1024});await page.getByRole('button',{name:'更多筛选'}).click();await page.getByRole('combobox',{name:'数据来源'}).selectOption('report');await snap('quality-ledger-report-source');
     await page.getByRole('button',{name:'导通检验',exact:true}).click();await page.locator('.qd-record-card').filter({hasText:'导通检验'}).first().click();await page.locator('.qd-report-source').waitFor();await snap('quality-report-detail');
