@@ -72,7 +72,7 @@ function orderBy(sort: string): Prisma.ConnectorParameterOrderByWithRelationInpu
 
 async function stats() {
   const base = { deletedAt: null };
-  const [total, missingOuter, missingInner, missingInsertion, missingAny, highlighted, fileCount, linked, sampleSynced, history] = await Promise.all([
+  const [total, missingOuter, missingInner, missingInsertion, missingAny, highlighted, fileCount, linked, sampleSynced, history, pendingConflicts] = await Promise.all([
     prisma.connectorParameter.count({ where: base }),
     prisma.connectorParameter.count({ where: { ...base, ...missingWhere('outerPeelMm') } }),
     prisma.connectorParameter.count({ where: { ...base, ...missingWhere('innerPeelMm') } }),
@@ -83,8 +83,9 @@ async function stats() {
     prisma.connectorParameter.count({ where: { ...base, productBindings: { some: { isCurrent: true, status: 'PUBLISHED' } } } }),
     prisma.connectorParameter.count({ where: { ...base, OR: [{ sourceType: 'SAMPLE_REVIEW' }, { productBindings: { some: { sourceType: 'SAMPLE_REVIEW' } } }] } }),
     prisma.connectorParameter.count({ where: { ...base, OR: [{ status: { not: 'PUBLISHED' } }, { supersedesParameterId: { not: null } }, { productBindings: { some: { isCurrent: false } } }] } }),
+    prisma.connectorParameterConflict.count({ where: { status: 'PENDING' } }),
   ]);
-  return { total, missingOuter, missingInner, missingInsertion, missingAny, highlighted, fileCount, linked, sampleSynced, history };
+  return { total, missingOuter, missingInner, missingInsertion, missingAny, highlighted, fileCount, linked, sampleSynced, history, pendingConflicts };
 }
 
 export async function GET(req: NextRequest) {

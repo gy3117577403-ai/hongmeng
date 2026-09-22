@@ -55,7 +55,7 @@ export const SAMPLE_TASK_STATUSES: readonly SampleTaskStatusDTO[] = [
 export const sampleTaskInclude = {
   warehouseTask: { select: { id: true, status: true, requirementsConfirmed: true } },
   completions: { orderBy: { createdAt: 'desc' as const }, take: 50 },
-  _count: { select: { finishedGoods: true } },
+  _count: { select: { finishedGoods: true, parameterConflicts: { where: { status: 'PENDING' } } } },
   drawingLibraryItem: {
     select: {
       id: true,
@@ -500,6 +500,7 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     startedAt: task.startedAt?.toISOString() || null,
     submittedAt: task.submittedAt?.toISOString() || null,
     completedAt: task.completedAt?.toISOString() || null,
+    parameterConflictCount: task._count?.parameterConflicts || 0,
     cancelledAt: task.cancelledAt?.toISOString() || null,
     archivedAt: task.archivedAt?.toISOString() || null,
     archivedBy: task.archivedByName,

@@ -11,14 +11,16 @@ export async function sampleRequest(url: string, init?: RequestInit) {
   return body;
 }
 export const sampleStamp = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
-export function SampleDialog({ title, children, onClose, busy = false, wide = false }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; wide?: boolean }) {
+export function SampleDialog({ title, children, onClose, busy = false, wide = false, headerActions }: { title: string; children: ReactNode; onClose: () => void; busy?: boolean; wide?: boolean; headerActions?: ReactNode }) {
   const ref = useRef<HTMLElement>(null), label = useId();
   const closeRef = useRef(onClose); closeRef.current = onClose;
   useEffect(() => {
     const prior = document.activeElement as HTMLElement | null;
     ref.current?.focus();
     function key(event: KeyboardEvent) {
-      if (event.key === 'Escape' && !busy) closeRef.current();
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== ref.current) return;
+      if (event.key === 'Escape' && !busy) { event.stopPropagation(); closeRef.current(); }
       if (event.key !== 'Tab') return;
       const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href]') || []);
       if (!nodes.length) { event.preventDefault(); return; }
@@ -29,7 +31,7 @@ export function SampleDialog({ title, children, onClose, busy = false, wide = fa
     document.addEventListener('keydown', key);
     return () => { document.removeEventListener('keydown', key); prior?.focus(); };
   }, [busy]);
-  return createPortal(<div className="sb-overlay"><section ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={label} className={`sb-dialog${wide ? ' sp-detail-dialog' : ''}`}><header><h2 id={label}>{title}</h2><button aria-label="关闭弹窗" disabled={busy} onClick={onClose}><X size={18}/></button></header>{children}</section></div>, document.body);
+  return createPortal(<div className="sb-overlay"><section ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={label} className={`sb-dialog${wide ? ' sp-detail-dialog' : ''}`}><header><h2 id={label}>{title}</h2>{headerActions}<button aria-label="关闭弹窗" disabled={busy} onClick={onClose}><X size={18}/></button></header>{children}</section></div>, document.body);
 }
 type Week = { week: string; total: number; unfinished: number };
 export function SampleBranchControls({ type, week, carry, refresh, onChange, warehouse = false, hideType = false }: { hideType?: boolean; warehouse?: boolean; type: 'NEW' | 'REPEAT' | ''; week: string; carry: boolean; refresh: number; onChange: (type: 'NEW' | 'REPEAT' | '', week: string, carry: boolean) => void }) {

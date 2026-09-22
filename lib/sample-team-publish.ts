@@ -330,12 +330,13 @@ async function publishStructuredRecord(
   };
 }
 
-async function publishStrippingParameter(
+export async function publishStrippingParameter(
   tx: Prisma.TransactionClient,
   task: SampleTaskForPublish,
   entry: SampleEntryForPublish,
   actor: SampleActor,
   publishMode: SamplePublishModeDTO,
+  resolveConflict = false,
 ) {
   const payload = payloadRecord(entry.payload);
   const model = normalizeConnectorModel(payload.model);
@@ -351,6 +352,13 @@ async function publishStrippingParameter(
   const sourcePayloadHash = sampleRequestHash(payload);
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-connector:${task.drawingLibraryItemId}`}))`;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`connector-parameter:${technicalFingerprint}`}))`;
+  if (!resolveConflict) {
+    const pending = await tx.connectorParameterConflict.findUnique({ where: { sourceEntryId: entry.id } });
+    if (pending?.status === 'PENDING') return { reviewStatus: 'APPROVED' as const, entityType: 'connector_parameter_conflict', entityId: pending.id, detail: { deferred: true } };
+    if (pending?.status === 'RESOLVED') return pending.resultBindingId
+      ? { reviewStatus: 'PUBLISHED' as const, entityType: 'connector_parameter_binding', entityId: pending.resultBindingId, detail: { reused: true } }
+      : { reviewStatus: 'APPROVED' as const, entityType: 'connector_parameter_conflict_resolved', entityId: pending.id, detail: { recordedOnly: true } };
+  }
   const replay = await tx.productConnectorParameterBinding.findUnique({
     where: { sourceSampleEntryId: entry.id },
     include: { connectorParameter: true },
@@ -383,13 +391,19 @@ async function publishStrippingParameter(
       detail: { connectorParameterId: exactCurrent.connectorParameterId, version: exactCurrent.version, reused: true },
     };
   }
+  if (currentBindings.length && !resolveConflict) {
+    const candidate = await tx.connectorParameterConflict.create({ data: {
+      sourceEntryId: entry.id, taskId: task.id, libraryItemId: task.drawingLibraryItemId,
+      model, positionLabel, positionKey: position.key,
+      sourceSnapshot: { ...payload, model, outerPeelMm, innerPeelMm, insertionLengthMm, remark } as Prisma.InputJsonValue,
+      productSnapshot: { taskCode: task.code, customerName: task.customerNameSnapshot, specification: task.specificationSnapshot, productName: task.productNameSnapshot },
+      baseBindings: currentBindings.map(binding => ({ id: binding.id, version: binding.version, parameterId: binding.connectorParameterId, parameterUpdatedAt: binding.connectorParameter.updatedAt.toISOString(), values: { model: binding.connectorParameter.model, outerPeelMm: binding.connectorParameter.outerPeelMm, innerPeelMm: binding.connectorParameter.innerPeelMm, insertionLengthMm: binding.connectorParameter.insertionLengthMm, remark: binding.connectorParameter.remark } })),
+    } });
+    await tx.operationLog.create({ data: { userId: actor.id, action: 'defer_sample_connector_parameter', targetType: 'connector_parameter_conflict', targetId: candidate.id, detail: { taskId: task.id, sourceEntryId: entry.id, positionLabel } } });
+    return { reviewStatus: 'APPROVED' as const, entityType: 'connector_parameter_conflict', entityId: candidate.id, detail: { deferred: true } };
+  }
   if (currentBindings.length && publishMode !== 'REPLACE_MATCHING') {
-    const label = positionLabel || '未标明位置';
-    throw new SamplePublishError(
-      `${label}已经存在不同的当前剥皮参数，请在审核编辑中选择“替换当前版本”，或补充 A/B 端等位置后再确认`,
-      409,
-      'SAMPLE_CONNECTOR_PARAMETER_CONFLICT',
-    );
+    throw new SamplePublishError('此位置已有参数，请重新选择位置或覆盖当前版本', 409, 'CONNECTOR_POSITION_IN_USE');
   }
   const replaced = currentBindings[0] || null;
   if (publishMode === 'REPLACE_MATCHING') {

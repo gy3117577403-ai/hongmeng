@@ -640,14 +640,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             reviewedAt: now,
             publishedEntityType: publication.entityType,
             publishedEntityId: publication.entityId,
-            publishedAt: publication.entityId ? now : null,
+            publishedAt: publication.reviewStatus === 'PUBLISHED' ? now : null,
             publishedById: publication.entityId ? actor.id : null,
             publishedByName: publication.entityId ? actor.name : null,
             version: { increment: 1 },
           },
         });
         if (updated.count !== 1) throw new SamplePackageReviewError('记录已被其他人修改，请刷新后重试', 'SAMPLE_REVIEW_EDIT_CONFLICT');
-        if (publication.entityId) publishedEntries += 1;
+        if (publication.entityId && publication.entityType !== 'connector_parameter_conflict') publishedEntries += 1;
         else recordedEntries += 1;
       }
 

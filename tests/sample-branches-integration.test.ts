@@ -40,14 +40,21 @@ test('sample branches retain drawing review, independent material events and ato
       assert.equal((await listSamplePlans(new URLSearchParams({ keyword: tag, taskType: 'REPEAT', week: '2026-09-28', carry: 'true' }))).pagination.total, 1);
       assert.equal((await getTask()).dueDate!.toISOString().slice(0,10), '2026-09-29');
     });
-    await t.test('unplanned queue excludes completed history and keeps independent completion date', async () => {
+    await t.test('unplanned completion history remains visible and independent completion date is retained', async () => {
       await prisma.sampleTask.update({where:{id:task.id},data:{planWeekStartDate:null,plannedCompletionDate:new Date('2026-09-26')}});
       const list=()=>listSamplePlans(new URLSearchParams({keyword:tag,week:'unplanned',view:'ALL',summary:'true'}));
       assert.equal((await list()).pagination.total,1);
       assert.equal(((await list()).tasks[0] as any).plannedCompletionDate,'2026-09-26');
-      await prisma.sampleTask.update({where:{id:task.id},data:{status:'COMPLETED'}});
-      assert.equal((await list()).pagination.total,0);
-      await prisma.sampleTask.update({where:{id:task.id},data:{status:task.status,planWeekStartDate:task.planWeekStartDate}});
+      await prisma.sampleTask.update({where:{id:task.id},data:{status:'COMPLETED',archivedAt:new Date()}});
+      assert.equal((await list()).pagination.total,1);
+      const completed=await listSamplePlans(new URLSearchParams({keyword:tag,week:'unplanned',view:'COMPLETED'}));
+      assert.equal(completed.pagination.total,1);
+      assert.ok(completed.globalCompleted>=1);
+      assert.ok((completed.tasks[0] as any).archivedAt,'archived completed record is included');
+      const independent=await listSamplePlans(new URLSearchParams({keyword:tag,week:'2026-10-05',view:'COMPLETED'}));
+      assert.equal(independent.pagination.total,0);assert.ok(independent.globalCompleted>=1,'global history count is independent of plan week');
+      assert.equal((await listSamplePlans(new URLSearchParams({keyword:tag,week:'unplanned',view:'UNFINISHED'}))).pagination.total,0);
+      await prisma.sampleTask.update({where:{id:task.id},data:{status:task.status,planWeekStartDate:task.planWeekStartDate,archivedAt:null}});
     });
     await t.test('quality may review first; both signatures needed while BOM and warehouse remain pending', async () => {
       await assert.rejects(() => prisma.$transaction(async tx => assertSampleDrawingApproved(tx, await getTask())), /双方审核/);

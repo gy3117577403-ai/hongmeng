@@ -313,6 +313,7 @@ export type SamplePhotoDTO = {
 export type SampleScheduleChange = { fromWeek?: string | null; toWeek?: string | null; fromPlannedCompletion?: string | null; toPlannedCompletion?: string | null; at: string; actor: string; reason: string; fromDue: string | null; toDue: string | null; fromIssued: string | null; toIssued: string | null; fromWarning: number; toWarning: number };
 
 export type SampleTaskDTO = {
+  parameterConflictCount?: number;
   id: string;
   taskType?: 'NEW' | 'REPEAT';
   planWeekStartDate?: string | null;

@@ -1,15 +1,18 @@
 'use client';
 
 import QRCode from 'qrcode';
+import dynamic from 'next/dynamic';
+import SampleOverview from '@/components/sample/SampleOverview';
+import '@/app/sample-unified-workbench.css';
+const SampleCapture = dynamic(() => import('@/components/SampleCaptureMobile'), { ssr: false, loading: () => <div className="sb-empty">正在加载采集工具…</div> });
 import '@/app/sample-branches.css';
-import { SampleBranchControls } from '@/components/sample/SampleBranchControls';
+import { SampleBranchControls, SampleDialog } from '@/components/sample/SampleBranchControls';
 import SampleDocumentsPanel from '@/components/sample/SampleDocumentsPanel';
 import SamplePlanningTable from '@/components/sample/SamplePlanningTable';
 import { SamplePlanningDetail } from '@/components/sample/SamplePlanningDetail';
 import '@/app/sample-planning-warehouse.css';
 import SampleCompletionPanel from '@/components/sample/SampleCompletionPanel';
 import { sampleCurrentWeek } from '@/lib/sample-plan-domain';
-import SampleSchedulePanel from '@/components/sample/SampleSchedulePanel';
 import { SAMPLE_VIEWS, sampleDateRange, sampleWarning, type SamplePlanView } from '@/lib/sample-plan-view';
 import {
   FlaskConical,
@@ -40,7 +43,6 @@ import {
   Send,
   Trash2,
   Upload,
-  UserRound,
   X,
 } from 'lucide-react';
 import Image from 'next/image';
@@ -66,7 +68,7 @@ import type {
 
 type CenterMode = 'planning' | 'execution' | 'materials';
 type TaskViewFilter = SamplePlanView;
-type DetailTab = 'documents' | 'warehouse' | 'completion' | 'overview' | 'data' | 'materials' | 'photos' | 'review' | 'published';
+type DetailTab = 'capture' | 'documents' | 'warehouse' | 'completion' | 'overview' | 'data' | 'materials' | 'photos' | 'review' | 'published';
 type SampleDeletePreview = {
   task: { id: string; code: string; customerName: string; productName: string | null; specification: string; status: string; version: number; dataPurpose: string; completedAt: string | null; archivedAt: string | null };
   impact: { entryCount: number; photoCount: number; submissionCount: number; publishedDrawingFileCount: number; productDataRecordCount: number; connectorBindingCount: number; affectedProductTimeProfileCount: number; objectDeletionCount: number };
@@ -117,7 +119,6 @@ type PlanForm = {
   scheduleReason: string;
   priority: string;
   planRemark: string;
-  assigneeEmployeeIds: string[];
 };
 
 type SampleImportCandidate = {
@@ -206,7 +207,6 @@ const emptyPlanForm: PlanForm = {
   scheduleReason: '',
   priority: String(SAMPLE_CUSTOMER_LEVELS[0].priority),
   planRemark: '',
-  assigneeEmployeeIds: [],
 };
 
 const taskStatusLabels: Record<string, string> = {
@@ -379,14 +379,22 @@ export default function SampleTeamCenter({
   const [planWeek, setPlanWeek] = useState(sampleCurrentWeek);
   const [includeCarry, setIncludeCarry] = useState(false);
   const [planningDetailOpen, setPlanningDetailOpen] = useState(false);
+  const detailOpenRef = useRef(false); detailOpenRef.current = planningDetailOpen;
   const [totalQuantity, setTotalQuantity] = useState(0);
+  const [globalCompleted, setGlobalCompleted] = useState(0);
+  const [captureDirty, setCaptureDirty] = useState(false);
+  const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
+  const [commandMenu, setCommandMenu] = useState(false);
+  function safelyLeave(action: () => void) { if (captureDirty) setLeaveAction(() => action); else action(); }
+  function navigateDetail(tab: DetailTab) { safelyLeave(() => { setDetailTab(tab); setCaptureDirty(false); setRefreshToken(v=>v+1); }); }
+  function closeDetail() { safelyLeave(() => { setPlanningDetailOpen(false); setCaptureDirty(false); setRefreshToken(v=>v+1); }); }
   const [detailTask, setDetailTask] = useState<SampleTaskDTO | null>(null);
   const [tasks, setTasks] = useState<SampleTaskDTO[]>([]);
   const [summary, setSummary] = useState<SampleTeamSummaryDTO>(emptySummary);
   const [selectedId, setSelectedId] = useState('');
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
-  const [taskView, setTaskView] = useState<TaskViewFilter>(mode === 'planning' ? 'ALL' : 'UNFINISHED');
+  const [taskView, setTaskView] = useState<TaskViewFilter>('UNFINISHED');
   const [filters, setFilters] = useState({ customer: '', dateBy: 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: 'issued_desc' });
   const [moreFilters, setMoreFilters] = useState(false);
   const [page, setPage] = useState(1);
@@ -416,7 +424,6 @@ export default function SampleTeamCenter({
   const [form, setForm] = useState<PlanForm>(emptyPlanForm);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [showAllMembers, setShowAllMembers] = useState(false);
   const [productSearch, setProductSearch] = useState('');
   const [qrTask, setQrTask] = useState<SampleTaskDTO | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState('');
@@ -451,34 +458,33 @@ export default function SampleTeamCenter({
     return () => { clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, []);
   const visibleTasks = tasks;
-  const summaryTask = tasks.find(task => task.id === selectedId) || tasks[0] || null;
+  const summaryTask = tasks.find(task => task.id === selectedId) || (planningDetailOpen && detailTask?.id === selectedId ? detailTask : tasks[0]) || null;
   const selected = detailTask?.id === summaryTask?.id ? detailTask : summaryTask;
   const queryString = useMemo(() => {
     const query = new URLSearchParams({ view: taskView, page: String(page), pageSize: mode === 'planning' ? '20' : '40', dateBy: filters.dateBy, sort: filters.sort });
-    query.set('taskType', taskType); query.set('week', planWeek); query.set('carry', String(includeCarry)); query.set('summary', 'true');
+    query.set('taskType', taskType); if (planWeek) query.set('week', planWeek); query.set('carry', String(includeCarry)); query.set('summary', 'true');
     if (debouncedKeyword) query.set('keyword', debouncedKeyword);
     for (const key of ['customer', 'level', 'member', 'risk', 'from', 'to'] as const) if (filters[key]) query.set(key, filters[key]);
     if (focusId) query.set('focusId', focusId);
     return query.toString();
   }, [taskView, page, filters, debouncedKeyword, focusId, taskType, planWeek, includeCarry, mode]);
   function changeFilters(next: Partial<typeof filters>) { setFilters(current => ({ ...current, ...next })); setPage(1); setFocusId(''); }
-  function changeView(view: TaskViewFilter) { setTaskView(view); setPage(1); setFocusId(''); }
-  function clearFilters() { setKeyword(''); setFilters({ customer: '', dateBy: 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: 'issued_desc' }); setPage(1); setFocusId(''); setTaskView('UNFINISHED'); }
+  function changeView(view: TaskViewFilter) { setTaskView(view); setPage(1); setFocusId(''); if (view === 'COMPLETED' || view === 'ALL') { setPlanWeek(''); setIncludeCarry(false); setKeyword(''); setDebouncedKeyword(''); setFilters({ customer: '', dateBy: view === 'COMPLETED' ? 'completed' : 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: view === 'COMPLETED' ? 'completed_desc' : 'issued_desc' }); } else if (!planWeek) setPlanWeek(sampleCurrentWeek()); }
+  function clearFilters() { setKeyword(''); setFilters({ customer: '', dateBy: 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: 'issued_desc' }); setPage(1); setFocusId(''); setPlanWeek(''); setIncludeCarry(false); setTaskView(taskView === 'COMPLETED' ? 'COMPLETED' : 'ALL'); }
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const view = params.get('sampleView') as TaskViewFilter;
-    if (SAMPLE_VIEWS.includes(view)) setTaskView(view);
+    if (SAMPLE_VIEWS.includes(view)) { setTaskView(view); if (view === 'COMPLETED' || view === 'ALL') setPlanWeek(''); if (view === 'COMPLETED') setFilters(v=>({...v,dateBy:'completed',sort:'completed_desc'})); }
     const id = params.get('taskId');
     if (id) {
       fetch(`/api/sample-tasks/${encodeURIComponent(id)}`, { cache: 'no-store' }).then(responseJson).then(body => {
         if (!body.task) { setError(body.error || '任务不存在'); return; }
-        setTaskType(body.task.taskType || 'NEW'); setPlanWeek(body.task.planWeekStartDate || 'unplanned'); setTaskView('ALL'); setFocusId(id); setSelectedId(id); setDetailTask(body.task);
+        setTaskType(body.task.taskType || 'NEW'); setPlanWeek(body.task.planWeekStartDate || 'unplanned'); setTaskView('ALL'); setFocusId(id); setSelectedId(id); setDetailTask(body.task); setPlanningDetailOpen(true);
       }).catch(() => { setFocusId(''); setError('指定任务加载失败，请从任务清单重新选择'); }).finally(() => setQueryReady(true));
     }
     const keyword = params.get('sampleSearch') || '';
     setKeyword(keyword); setDebouncedKeyword(keyword); if (!id) setQueryReady(true);
   }, []);
-  const visibleMembers = showAllMembers ? context.members : context.members.filter(member => member.sampleTeam);
   const visibleProducts = useMemo(() => {
     const query = productSearch.trim().toLowerCase();
     if (!query) return context.products.slice(0, 120);
@@ -522,9 +528,9 @@ export default function SampleTeamCenter({
         setPagination(body.pagination);
         setCustomers(body.customers || []);
         setSummary(body.summary || emptySummary);
-        setTotalQuantity(Number(body.summary?.quantity || 0));
+        setTotalQuantity(Number(body.summary?.quantity || 0)); setGlobalCompleted(Number(body.globalCompleted ?? body.viewCounts?.COMPLETED ?? 0));
         setSelectedId(currentSelectedId => {
-          if (!nextTasks.some(task => task.id === currentSelectedId)) {
+          if (!detailOpenRef.current && !nextTasks.some(task => task.id === currentSelectedId)) {
             initialSelectedRef.current = true;
             return nextTasks[0]?.id || '';
           }
@@ -547,8 +553,9 @@ export default function SampleTeamCenter({
   }, [selectedId, refreshToken, mode, planningDetailOpen]);
 
   useEffect(() => {
+    if (planningDetailOpen) return;
     setSelectedId(current => visibleTasks.some(task => task.id === current) ? current : visibleTasks[0]?.id || '');
-  }, [visibleTasks]);
+  }, [visibleTasks, planningDetailOpen]);
 
   useEffect(() => {
     if (!selected) {
@@ -579,7 +586,6 @@ export default function SampleTeamCenter({
   function openCreate() {
     setForm({ ...emptyPlanForm, taskType, planWeekStartDate: planWeek === 'unplanned' ? '' : planWeek, issuedDate: chinaTodayKey() });
     setProductSearch('');
-    setShowAllMembers(context.sampleMemberCount === 0);
     setFormError('');
     setCreateOpen(true);
   }
@@ -676,21 +682,11 @@ export default function SampleTeamCenter({
       scheduleReason: '',
       priority: String(level.priority),
       planRemark: task.planRemark || '',
-      assigneeEmployeeIds: task.assignees.map(item => item.employeeId),
     });
-    setShowAllMembers(context.sampleMemberCount === 0 || task.assignees.some(item => !context.members.find(member => member.id === item.employeeId)?.sampleTeam));
     setFormError('');
     setEditOpen(true);
   }
 
-  function toggleAssignee(employeeId: string) {
-    setForm(current => ({
-      ...current,
-      assigneeEmployeeIds: current.assigneeEmployeeIds.includes(employeeId)
-        ? current.assigneeEmployeeIds.filter(id => id !== employeeId)
-        : [...current.assigneeEmployeeIds, employeeId],
-    }));
-  }
 
   async function savePlan() {
     setSaving(true);
@@ -979,6 +975,7 @@ export default function SampleTeamCenter({
       <header><span>{dataKindLabels[entry.kind] || entry.kind}</span><strong>{entry.label || '未命名记录'}</strong><em>{reviewStatusLabels[entry.reviewStatus]}</em></header>
       {!!payloadRows(entry).length && <dl>{payloadRows(entry).map(row => <div key={row.key}><dt>{row.label}</dt><dd>{row.value}</dd></div>)}</dl>}
       <footer><span>{entry.updatedBy || entry.createdBy || '未记录'} · {dateTimeText(entry.updatedAt)}</span>{entry.reviewComment && <p>审核意见：{entry.reviewComment}</p>}</footer>
+      {entry.publishedEntityType === 'connector_parameter_conflict' && <Link className="sample-published-link" href="/connector-parameters?view=conflicts">参数差异待处理 · 不影响样品完成 →</Link>}
       {entry.kind === 'PROCESS_TIME' && entry.publishedEntityType === 'product_time_draft' && selected && <Link className="sample-published-link" href={`/workspace/product-times?itemId=${encodeURIComponent(selected.drawingLibraryItemId)}`} prefetch={false}><Clock3 size={13} />已同步产品工时草稿，进入影响预览后正式发布</Link>}
     </article>;
   }
@@ -999,15 +996,6 @@ export default function SampleTeamCenter({
   const publishedPhotos = selected?.photos.filter(photo => photo.reviewStatus === 'PUBLISHED') || [];
   const materialEntries = selected?.entries.filter(entry => entry.kind === 'MATERIAL') || [];
   const publishedCount = publishedEntries.length + publishedPhotos.length;
-  const stageIndex = !selected
-    ? 0
-    : selected.status === 'COMPLETED'
-      ? 3
-      : selected.status === 'SUBMITTED' || selected.counts.pendingReview > 0
-        ? 2
-        : selected.status === 'IN_PROGRESS' && (!selected.documentReviewRequired || selected.drawingReviewStatus === 'APPROVED')
-          ? 1
-          : 0;
   const taskViews = [
     { key: 'ALL' as const, label: '全部', count: viewCounts.ALL, icon: <ClipboardCheck size={15} /> },
     { key: 'DRAWING_REVIEW' as const, label: '图纸待审核', count: viewCounts.DRAWING_REVIEW, icon: <FileText size={15} /> },
@@ -1027,7 +1015,8 @@ export default function SampleTeamCenter({
     { key: 'documents', label: '图纸审核' },
 
     ...(selected.taskType === 'REPEAT' ? [] : [
-      { key: 'data' as const, label: '采集数据', count: selected.counts.data },
+      ...(!terminalTask ? [{ key: 'capture' as const, label: '填写 / 拍照' }] : []),
+      { key: 'data' as const, label: '数据记录', count: selected.counts.data },
       { key: 'photos' as const, label: '过程照片', count: selected.counts.photos },
       { key: 'review' as const, label: '整包审核', count: selected.counts.pendingReview, attention: true },
       { key: 'published' as const, label: '已处理', count: publishedCount },
@@ -1085,10 +1074,7 @@ export default function SampleTeamCenter({
     modeDrawer.toggle();
   }
 
-  const statusBar = <section className="sample-team-statusbar" aria-label="样品任务状态筛选">
-          <div>{taskViews.filter(item => (taskType !== 'REPEAT' || item.key !== 'PENDING_REVIEW') && (mode !== 'planning' || ['ALL','UNFINISHED','DRAWING_REVIEW','SHORTAGE','PENDING_REVIEW','COMPLETED','CANCELLED'].includes(item.key))).map(item => <button type="button" className={`${taskView === item.key ? 'active' : ''}${item.danger && item.count ? ' danger' : ''}${item.attention && item.count ? ' attention' : ''}${item.quiet ? ' quiet' : ''}`} aria-pressed={taskView === item.key} key={item.key} onClick={() => changeView(item.key)}>{item.icon}<span>{item.label}</span><b>{item.count}{item.unit || ''}</b></button>)}</div>
-          <span className="sample-team-published-total"><CheckCircle2 size={15} />正式资料 <strong>{summary.publishedItems}</strong> 项</span>
-        </section>;
+  const statusBar = <section className="su-status" aria-label="样品任务状态筛选"><div className="su-primary-scopes">{(['UNFINISHED','COMPLETED','ALL'] as const).map(view=><button key={view} className={taskView===view?'active':''} aria-pressed={taskView===view} onClick={()=>changeView(view)}>{view==='UNFINISHED'?'未完成':view==='COMPLETED'?'已完成':'全部'}{view==='COMPLETED'&&<b title="此类型全部历史已完成数量">{loading ? '…' : globalCompleted}</b>}</button>)}</div><div className="su-attention-scopes">{taskViews.filter(v=>['DRAWING_REVIEW','SHORTAGE',...(taskType==='NEW'?['PENDING_REVIEW']:[])].includes(v.key)).map(v=><button key={v.key} className={taskView===v.key?'active':''} onClick={()=>changeView(v.key)}>{v.icon}{v.label}<b>{v.count}</b></button>)}</div><span className="su-scope-caption">{planWeek==='unplanned'?'未安排计划周':planWeek?`${planWeek} 当周`:'所有计划周'} · 当前 {pagination.total} 项 / {totalQuantity.toLocaleString()} 件</span></section>;
   return (
     <main className={`sample-team-page sample-branches-page hm-workbench-root hm-workbench-navigation-overlay ${mode === 'planning' ? 'sp-planning-page' : ''}`}>
       <AppWorkbenchHeader
@@ -1115,10 +1101,10 @@ export default function SampleTeamCenter({
           </div>
           {mode === 'planning' && <div className="sb-branch-switch sp-header-branches" role="group" aria-label="样品类型">{(['NEW','REPEAT'] as const).map(kind=><button key={kind} className={taskType===kind?'active':''} aria-pressed={taskType===kind} onClick={()=>{setTaskType(kind);setPage(1);setFocusId('');setSelectedId('');setDetailTask(null);}}>{kind==='NEW'?<FlaskConical size={18}/>:<Layers3 size={18}/>}<span>{kind==='NEW'?'新品试制':'老产品制作'}</span></button>)}</div>}
           <div className="sample-team-command-actions">
-            <Link className="hm-workbench-button" href={mode === 'planning' ? '/production?branch=samples' : '/weekly-plan-center?branch=samples'} prefetch={false}>{mode === 'planning' ? '样品执行' : '样品计划'}<ArrowRight size={15}/></Link>
-            <a className="hm-workbench-button" href={`/api/sample-tasks/export?${queryString}`} download><Download size={15} />导出清单</a>
+            <details className="su-command-menu" open={commandMenu} onToggle={e=>setCommandMenu(e.currentTarget.open)}><summary>导入 / 导出</summary><div><a className="hm-workbench-button" href={`/api/sample-tasks/export?${queryString}`} download><Download size={15} />导出清单</a>
             {mode === 'planning' && <a className="hm-workbench-button" href="/api/sample-tasks/import/template" download><Download size={15} />下载导入模板</a>}
             {mode === 'planning' && <button className="hm-workbench-button" type="button" onClick={openImport}><Upload size={15} />批量导入</button>}
+            </div></details>
             {mode === 'planning' && <button className="hm-workbench-button primary" type="button" onClick={openCreate}><Plus size={15} />新建样品计划</button>}
             {mode === 'planning' && user.laborRole === 'ADMIN' && <button className="hm-workbench-button" type="button" onClick={() => void loadTrash()}><Trash2 size={15} />回收站</button>}
             <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>
@@ -1135,13 +1121,12 @@ export default function SampleTeamCenter({
           onClose={modeDrawer.close}
         />
 
-        <SampleBranchControls hideType={mode === 'planning'} type={taskType} week={planWeek} carry={includeCarry} refresh={refreshToken} onChange={(kind, week, carry) => { setTaskType(kind || 'NEW'); setPlanWeek(week); setIncludeCarry(carry); setPage(1); setFocusId(''); setSelectedId(''); setDetailTask(null); }} />
-
-        {mode !== 'planning' && statusBar}
+        {statusBar}
+        {planWeek ? <SampleBranchControls hideType={mode === 'planning'} type={taskType} week={planWeek} carry={includeCarry} refresh={refreshToken} onChange={(kind, week, carry) => { setTaskType(kind || 'NEW'); setPlanWeek(week); setIncludeCarry(carry); setPage(1); setFocusId(''); setSelectedId(''); setDetailTask(null); }} /> : <div className="su-history-scope"><CheckCircle2 size={16}/><span>{taskView==='COMPLETED'?'全部历史已完成 · 包含未记录计划周及已归档样品':'全部计划 · 包含历史及未排期样品'}</span><button onClick={()=>setPlanWeek(sampleCurrentWeek())}>按计划周查看</button></div>}
 
         <section className="sample-plan-filters" aria-label="样品计划筛选">
           <div className="sample-plan-filter-line">
-            <label className="sample-plan-search"><Search size={16}/><input aria-label="搜索样品任务" value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); setFocusId(''); }} placeholder="搜索客户、型号、订单或成员" /></label>
+            <label className="sample-plan-search"><Search size={16}/><input aria-label="搜索样品任务" value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); setFocusId(''); }} placeholder="搜索客户、型号或订单" /></label>
             <select aria-label="日期类型" value={filters.dateBy} onChange={event => changeFilters({ dateBy: event.target.value })}><option value="issued">下达日期</option><option value="due">出货日期</option><option value="completed">完成日期</option></select>
             <select aria-label="日期范围" value={filters.period} onChange={event => changeFilters({ period: event.target.value, ...sampleDateRange(event.target.value) })}><option value="all">全部日期</option><option value="today">今天</option><option value="week">本周</option><option value="month">本月</option><option value="custom">自定义</option></select>
             <select aria-label="客户筛选" value={filters.customer} onChange={event => changeFilters({ customer: event.target.value })}><option value="">全部客户</option>{customers.map(customer => <option key={customer}>{customer}</option>)}</select>
@@ -1149,10 +1134,9 @@ export default function SampleTeamCenter({
             <button type="button" aria-expanded={moreFilters} onClick={() => setMoreFilters(value => !value)}>更多筛选</button><button type="button" aria-label="清除筛选" onClick={clearFilters}><X size={16}/></button>
           </div>
           {filters.period === 'custom' && <div className="sample-plan-filter-line"><label>从 <input aria-label="开始日期" type="date" value={filters.from} onChange={event => changeFilters({ from: event.target.value })}/></label><label>至 <input aria-label="结束日期" type="date" value={filters.to} onChange={event => changeFilters({ to: event.target.value })}/></label></div>}
-          {moreFilters && <div className="sample-plan-filter-line"><select aria-label="客户等级筛选" value={filters.level} onChange={event => changeFilters({ level: event.target.value })}><option value="">全部等级</option>{['A','B','C','D'].map(level => <option value={level} key={level}>{level}级</option>)}</select><select aria-label="样品成员筛选" value={filters.member} onChange={event => changeFilters({ member: event.target.value })}><option value="">全部成员</option>{context.members.map(member => <option value={member.id} key={member.id}>{member.name} · {member.employeeNo}</option>)}</select><select aria-label="交期预警筛选" value={filters.risk} onChange={event => changeFilters({ risk: event.target.value })}><option value="">全部交期</option><option value="WARNING">需关注交期</option><option value="MISSING">未设置出货日期</option></select></div>}
+          {moreFilters && <div className="sample-plan-filter-line"><select aria-label="客户等级筛选" value={filters.level} onChange={event => changeFilters({ level: event.target.value })}><option value="">全部等级</option>{['A','B','C','D'].map(level => <option value={level} key={level}>{level}级</option>)}</select><select aria-label="交期预警筛选" value={filters.risk} onChange={event => changeFilters({ risk: event.target.value })}><option value="">全部交期</option><option value="WARNING">需关注交期</option><option value="MISSING">未设置出货日期</option></select></div>}
         </section>
 
-        {mode === 'planning' && <div className="sp-planning-summary"><strong>{pagination.total} <small>项计划</small><span> / </span>{totalQuantity.toLocaleString()} <small>件 / 套</small></strong>{statusBar}</div>}
 
         {error && <div className="sample-team-error"><AlertTriangle size={18} /><span>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 
@@ -1160,7 +1144,7 @@ export default function SampleTeamCenter({
           : viewCounts.ALL === 0 && !debouncedKeyword && !Object.values(filters).some(value => value && !['issued', 'all', 'issued_desc'].includes(value)) ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'planning' ? '当前计划周暂无样品计划' : mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '选择新品或老产品，安排计划周，准备图纸与物料。' : mode === 'materials' ? '正式样品计划下达后，仓库可在这里登记物料需求并确认配料。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />{taskType === 'REPEAT' ? '老产品仅审核图纸资料，完成后转成品仓。' : '新品保留现有采集与整包审核流程。'}</div></section>
             : !tasks.length || !visibleTasks.length ? <section className="sample-filter-empty"><span className="sample-empty-icon"><Search size={30} /></span><h2>没有符合条件的样品任务</h2><p>调整搜索内容或任务状态后再查看。</p><button type="button" onClick={clearFilters}>清除筛选</button></section>
               : <section className="sample-team-workspace">
-          {mode === 'planning' && <SamplePlanningTable tasks={tasks} pagination={pagination} loading={loading} totalQuantity={totalQuantity} onPage={next => { setFocusId(''); setPage(next); }} onEdit={openEdit} onChanged={() => setRefreshToken(v=>v+1)} onOpen={(task, tab) => { lastDetailTaskRef.current=task.id; setSelectedId(task.id); setDetailTab(tab); setPlanningDetailOpen(true); }} />}
+          {mode === 'planning' && <SamplePlanningTable scopeKey={queryString} tasks={tasks} pagination={pagination} loading={loading} totalQuantity={totalQuantity} onPage={next => { setFocusId(''); setPage(next); }} onEdit={openEdit} onChanged={() => setRefreshToken(v=>v+1)} onOpen={(task, tab) => { lastDetailTaskRef.current=task.id; setSelectedId(task.id); setDetailTab(tab); setPlanningDetailOpen(true); }} />}
           {mode !== 'planning' && <aside className="sample-task-list" aria-label="样品任务列表">
             <header className="sample-task-list-head"><div><strong>任务清单</strong><span>{pagination.total} 个任务</span></div></header>
             <div className="sample-task-list-scroll hm-scroll-region" tabIndex={0}>
@@ -1173,7 +1157,7 @@ export default function SampleTeamCenter({
                   <h3 title={task.specification}><small className="sample-task-sequence">{String((pagination.page-1)*pagination.pageSize+index+1).padStart(3, '0')}</small>{task.specification}</h3>
                   <p>{task.productName || '未设置品名'}</p>
                   <div className="sample-task-date-pair"><span>下达 {dateText(task.issuedDate)}</span><span>出货 {dateText(task.dueDate)}</span></div>
-                  <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{task.taskType === 'REPEAT' && task.status === 'IN_PROGRESS' ? '制作中' : taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{warning.label}</span><span><UserRound size={12} />{task.assignees.map(item => item.name).join('、') || '未指派'}</span></div>
+                  <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{task.taskType === 'REPEAT' && task.status === 'IN_PROGRESS' ? '制作中' : taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{warning.label}</span></div>
                   <footer><span className={task.drawingReviewStatus === 'APPROVED' ? 'sb-good-text' : ''}>图纸 {task.drawingReviewStatus === 'APPROVED' ? '已通过' : task.drawingReviewStatus === 'RETURNED' ? '已退回' : '待审核'}</span><span>配料 {task.materialStatus === 'completed' ? '已齐' : task.materialStatus === 'exception' ? '缺料' : '待准备'}</span><b>{task.completedQuantity || 0} / {task.sampleQuantity || '—'}</b></footer>
                 </button>;
               })}
@@ -1181,15 +1165,19 @@ export default function SampleTeamCenter({
             <footer className="sample-plan-pagination"><button type="button" disabled={loading || pagination.page <= 1} onClick={() => { setFocusId(''); setPage(pagination.page-1); }}>上一页</button><span>{pagination.page} / {pagination.totalPages}</span><button type="button" disabled={loading || pagination.page >= pagination.totalPages} onClick={() => { setFocusId(''); setPage(pagination.page+1); }}>下一页</button></footer>
           </aside>}
 
-          <SamplePlanningDetail planning={mode === 'planning'} open={planningDetailOpen} onClose={() => setPlanningDetailOpen(false)}>
+
+        </section>}
+      </div>
+
+          <SamplePlanningDetail planning={mode === 'planning'} open={planningDetailOpen && !packageDialog && !editOpen && !qrTask && !deletePreview} title={selected?.taskType==='REPEAT'?'样品制作':'样品试制'} onClose={closeDetail} navigation={<div className="su-detail-nav"><span>{tasks.findIndex(t=>t.id===selectedId)+1} / {tasks.length}</span>{[-1,1].map(direction=><button key={direction} aria-label={direction<0?'上一项样品':'下一项样品'} disabled={!tasks[tasks.findIndex(t=>t.id===selectedId)+direction]} onClick={()=>safelyLeave(()=>{const next=tasks[tasks.findIndex(t=>t.id===selectedId)+direction];if(next){setSelectedId(next.id);setDetailTask(null);setCaptureDirty(false);}})}>{direction<0?'上一项':'下一项'}</button>)}</div>}>
           <section className="sample-task-detail">
             {selected && detailTask?.id !== selected.id && <div className="sb-empty"><Loader2 className="spin"/>正在读取任务详情</div>}
             {selected && detailTask?.id === selected.id && <>
               <header className="sample-detail-head">
                 <div><div className="sample-detail-identity"><span style={sampleCustomerLevelStyle(selected.customerLevelCode)}>{taskLevelText(selected)}</span><small>{selected.code}</small></div><h2>{selected.specification}</h2><p>{selected.customerName} · {selected.productName || '未设置品名'}{selected.sourceOrderNo ? ` · 来源 ${selected.sourceOrderNo}` : ''}</p></div>
                 <div className="sample-detail-actions">
-                  {!terminalTask && selected.taskType !== 'REPEAT' && <button type="button" onClick={() => void openQr(selected)}><QrCode size={15} />二维码</button>}
-                  {mode === 'planning' && !terminalTask && <button type="button" onClick={() => openEdit(selected)}><Pencil size={15} />编辑计划</button>}
+                  {!terminalTask && selected.taskType !== 'REPEAT' && <button type="button" onClick={() => safelyLeave(() => { setCaptureDirty(false); void openQr(selected); })}><QrCode size={15} />二维码</button>}
+                  {mode === 'planning' && !terminalTask && <button type="button" onClick={() => safelyLeave(() => { setCaptureDirty(false); openEdit(selected); })}><Pencil size={15} />编辑计划</button>}
                   {mode !== 'materials' && selected.status === 'PLANNED' && <button className="primary" type="button" onClick={() => void taskAction(selected, 'START')}>开始任务</button>}
                   {mode !== 'materials' && selected.taskType !== 'REPEAT' && selected.status === 'IN_PROGRESS' && selected.counts.data + selected.counts.photos === 0 && <button type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>无资料完成</button>}
                   {mode === 'planning' && selected.status === 'COMPLETED' && <button type="button" onClick={() => void taskAction(selected, selected.archivedAt ? 'UNARCHIVE' : 'ARCHIVE')}>{selected.archivedAt ? '取消归档' : '归档'}</button>}
@@ -1197,34 +1185,20 @@ export default function SampleTeamCenter({
                 </div>
               </header>
 
-              <nav className="sample-detail-tabs" aria-label="样品任务详情"><div>{detailTabs.map(tab => <button type="button" className={`${detailTab === tab.key ? 'active' : ''}${tab.attention && tab.count ? ' attention' : ''}`} aria-pressed={detailTab === tab.key} key={tab.key} onClick={() => setDetailTab(tab.key)}><span>{tab.label}</span>{typeof tab.count === 'number' && <em>{tab.count}</em>}</button>)}</div></nav>
+              <nav className="sample-detail-tabs" aria-label="样品任务详情"><div>{detailTabs.map(tab => <button type="button" className={`${detailTab === tab.key ? 'active' : ''}${tab.attention && tab.count ? ' attention' : ''}`} aria-pressed={detailTab === tab.key} key={tab.key} onClick={() => navigateDetail(tab.key)}><span>{tab.label}</span>{typeof tab.count === 'number' && <em>{tab.count}</em>}</button>)}</div></nav>
 
               <div className={`sample-detail-body hm-scroll-region${detailTab === 'documents' ? ' sb-preview-body' : ''}`} tabIndex={0}>
                 {detailTab === 'documents' && <SampleDocumentsPanel key={selected.id} task={selected} onChanged={() => setRefreshToken(v => v + 1)} />}
                 {detailTab === 'warehouse' && <div className="sb-empty"><Link href={`/workspace/warehouse?branch=samples&taskId=${selected.id}`} prefetch={false}>进入仓库查看配料与缺料跟进 →</Link></div>}
                 {(detailTab === 'completion' || detailTab === 'overview' && selected.taskType === 'REPEAT') && <SampleCompletionPanel key={selected.id} task={selected} onSaved={replaceTask} onTab={setDetailTab} />}
 
-                {detailTab === 'overview' && selected.taskType !== 'REPEAT' && <section className="sample-overview-content">
-                  <ol className={`sample-stage-rail ${selected.status === 'CANCELLED' ? 'cancelled' : ''}`}>{['资料准备', '试制采集', '整包审核', '完成转仓'].map((label, index) => <li className={index < stageIndex ? 'done' : index === stageIndex ? 'current' : ''} key={label}><span>{index < stageIndex ? <CheckCircle2 size={15} /> : index + 1}</span><strong>{label}</strong></li>)}</ol>
-                  <div className="sb-preparation-links"><button onClick={() => setDetailTab('documents')}><FileText size={21}/><span><strong>图纸资料审核</strong><small>{selected.drawingReviewStatus === 'APPROVED' ? '资料已审核' : '查看图纸与双方审核'}</small></span><ArrowRight size={16}/></button><Link prefetch={false} href={`/workspace/warehouse?branch=samples&taskId=${encodeURIComponent(selected.id)}`}><PackageCheck size={21}/><span><strong>仓库配料</strong><small>{selected.materialStatus === 'completed' ? '已配齐' : selected.materialStatus === 'exception' ? '有缺料待跟进' : '查看配料状态与缺料跟进'}</small></span><ArrowRight size={16}/></Link></div>
-                  <SampleSchedulePanel key={selected.id} task={selected} editable={mode === 'planning' && !terminalTask} onSaved={replaceTask} />
-                  <section className="sample-detail-facts">
-                    <div><span>任务状态</span><strong>{taskStatusLabels[selected.status]}</strong><small>{dataStatusLabels[selected.dataStatus]}</small></div>
-                    <div><span>计划数量</span><strong>{selected.sampleQuantity ?? '未设置'}</strong><small>{selected.sampleQuantity === null ? '数量未设置' : `${selected.sampleQuantity} 件/套`}</small></div>
-                    <div><span>样品成员</span><strong>{selected.assignees.length || 0} 人</strong><small>{selected.assignees.map(item => item.name).join('、') || '尚未指派'}</small></div>
-                    <div><span>本次采集</span><strong>{selected.counts.data} 条 · {selected.counts.photos} 图</strong><small>{selected.counts.pendingReview ? `待审核 1 包 · ${selected.counts.pendingItems} 项内容` : selected.archivedAt ? '已完成并归档' : '没有待审核提交包'}</small></div>
-                  </section>
-                  {terminalTask && <div className={`sample-terminal-banner ${selected.status.toLowerCase()}`}><CheckCircle2 size={18} /><span><strong>{selected.status === 'CANCELLED' ? '任务已取消，所有入口均为只读' : selected.archivedAt ? '任务已完成并归档' : '任务已完成，当前未归档'}</strong><small>{selected.status === 'CANCELLED' ? '不会再显示新增、删除、采集、上传、重新打开或审核操作。' : '归档或取消归档只改变整理状态，不会撤销审核结果，也不需要重新审核。'}</small></span></div>}
-                  {selected.planRemark && <div className="sample-plan-remark"><strong>计划说明</strong><p>{selected.planRemark}</p></div>}
-                  {!terminalTask && <section className="sample-capture-callout"><div><Camera size={22} /><span><strong>{mode === 'materials' ? '补充辅料数据与样品照片' : '扫码填写数据与拍照'}</strong><small>{mode === 'materials' ? '全部选填；仅沉淀样品资料，不扣库存、不生成正式领料。' : '所有采集项均为选填；空白不判缺项，也无需说明原因。'}</small></span></div><div><Link className="primary" href={selected.captureUrl} prefetch={false}>打开采集页<ArrowRight size={15} /></Link><button type="button" onClick={() => void copyCaptureLink(selected)}><Copy size={15} />复制链接</button></div></section>}
-                  {mode === 'materials' ? <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('materials')}><span><PackageCheck size={18} /></span><div><small>辅料数据</small><strong>{materialEntries.length} 条</strong><em>查看波纹管、热缩管等选填记录</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('published')}><span><FolderKanban size={18} /></span><div><small>正式产品资料</small><strong>{publishedCount} 项</strong><em>仅展示审核发布后的记录</em></div><ArrowRight size={16} /></button></div> : <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('data')}><span><FileText size={18} /></span><div><small>采集数据</small><strong>{selected.entries.length} 条</strong><em>查看记录与审核状态</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button className={selected.counts.pendingReview ? 'attention' : ''} type="button" onClick={() => setDetailTab('review')}><span><ClipboardCheck size={18} /></span><div><small>整包审核</small><strong>{selected.counts.pendingReview ? '1 包' : '0 包'}</strong><em>{selected.counts.pendingReview ? `${selected.counts.pendingItems} 项内容一次确认` : '当前没有待审核提交包'}</em></div><ArrowRight size={16} /></button></div>}
-                </section>}
-
-                {detailTab === 'data' && <section className="sample-record-panel sample-tab-panel"><header><div><FileText size={17} /><span><strong>采集数据</strong><small>{selected.entries.length} 条记录，仅显示业务字段</small></span></div>{!terminalTask && <Link href={selected.captureUrl} prefetch={false}>继续采集</Link>}</header><div className="sample-record-list" tabIndex={0}>{selected.entries.map(renderDataRecord)}{!selected.entries.length && <div className="sample-record-empty"><FileText size={25} /><strong>本次尚未采集数据</strong><p>这不是缺项，任务仍可提交或完成。</p></div>}</div></section>}
+                {detailTab === 'overview' && selected.taskType !== 'REPEAT' && <SampleOverview task={selected} onTab={navigateDetail}/>}
+                {detailTab === 'capture' && selected.taskType !== 'REPEAT' && <div className="su-embedded-capture"><SampleCapture key={selected.id} code={selected.qrCode} user={user} embedded onDirtyChange={setCaptureDirty} onBack={()=>navigateDetail('data')}/></div>}
+                {detailTab === 'data' && <section className="sample-record-panel sample-tab-panel"><header><div><FileText size={17} /><span><strong>采集数据</strong><small>{selected.entries.length} 条记录，仅显示业务字段</small></span></div>{!terminalTask && <button onClick={()=>navigateDetail('capture')}>继续采集</button>}</header><div className="sample-record-list" tabIndex={0}>{selected.entries.map(renderDataRecord)}{!selected.entries.length && <div className="sample-record-empty"><FileText size={25} /><strong>本次尚未采集数据</strong><p>这不是缺项，任务仍可提交或完成。</p></div>}</div></section>}
 
                 {detailTab === 'materials' && <section className="sample-record-panel sample-tab-panel"><header><div><PackageCheck size={17} /><span><strong>样品辅料数据</strong><small>{materialEntries.length} 条记录；全部选填，不关联库存扣减</small></span></div>{!terminalTask && <Link href={selected.captureUrl} prefetch={false}>补充资料</Link>}</header><div className="sample-record-list" tabIndex={0}>{materialEntries.map(renderDataRecord)}{!materialEntries.length && <div className="sample-record-empty"><PackageCheck size={25} /><strong>本次尚未记录辅料数据</strong><p>可按实际需要记录波纹管、热缩管、套管等，不要求填写原因。</p></div>}</div></section>}
 
-                {detailTab === 'photos' && <section className="sample-record-panel sample-tab-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>过程与成品照片</strong><small>{selected.photos.length} 张照片</small></span></div>{!terminalTask && <Link href={selected.captureUrl} prefetch={false}>继续拍照</Link>}</header><div className="sample-photo-grid" tabIndex={0}>{selected.photos.map(renderPhotoRecord)}{!selected.photos.length && <div className="sample-record-empty"><ImageIcon size={25} /><strong>本次尚未上传照片</strong><p>照片同样不设必选项。</p></div>}</div></section>}
+                {detailTab === 'photos' && <section className="sample-record-panel sample-tab-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>过程与成品照片</strong><small>{selected.photos.length} 张照片</small></span></div>{!terminalTask && <button onClick={()=>navigateDetail('capture')}>继续拍照</button>}</header><div className="sample-photo-grid" tabIndex={0}>{selected.photos.map(renderPhotoRecord)}{!selected.photos.length && <div className="sample-record-empty"><ImageIcon size={25} /><strong>本次尚未上传照片</strong><p>照片同样不设必选项。</p></div>}</div></section>}
 
                 {detailTab === 'review' && (!selected.activeSubmission || selected.activeSubmission.status !== 'PENDING' ? <div className="sample-record-empty sample-tab-empty"><CheckCircle2 size={30} /><strong>当前没有待审核提交包</strong><p>每个产品每次提交只形成一个审核包，不再逐条确认。</p></div> : <section className="sample-package-review">
                   <header className="sample-package-review-head">
@@ -1237,7 +1211,7 @@ export default function SampleTeamCenter({
                     <section className="sample-record-panel"><header><div><FileText size={17} /><span><strong>本包采集数据</strong><small>{pendingEntries.length} 项</small></span></div></header><div className="sample-record-list">{pendingEntries.map(renderDataRecord)}{!pendingEntries.length && <div className="sample-record-empty"><strong>本包没有数据记录</strong></div>}</div></section>
                     <section className="sample-record-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>本包照片</strong><small>{pendingPhotos.length} 项</small></span></div></header><div className="sample-photo-grid sample-review-photo-grid">{pendingPhotos.map(renderPhotoRecord)}{!pendingPhotos.length && <div className="sample-record-empty"><strong>本包没有照片</strong></div>}</div></section>
                   </div>
-                  {<footer className="sample-package-review-actions"><span><Info size={15} />确认时整包事务处理；任一真实阻断项都会全部回滚。</span><div><button type="button" disabled={reviewSaving} onClick={() => openPackageDialog('EDIT')}><Pencil size={15} />编辑资料</button><button className="danger" type="button" disabled={reviewSaving} onClick={() => openPackageDialog('REJECT')}><X size={15} />整包驳回</button><button className="primary" type="button" disabled={reviewSaving} onClick={() => void savePackageReview('CONFIRM')}>{reviewSaving ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}{autoCatalogEntries.length ? `确认并处理 ${autoCatalogEntries.length} 条工序` : '确认通过'}</button></div></footer>}
+                  {<footer className="sample-package-review-actions"><span><Info size={15} />参数差异将留待处理，样品可正常完成并转仓。</span><div><button type="button" disabled={reviewSaving} onClick={() => openPackageDialog('EDIT')}><Pencil size={15} />编辑资料</button><button className="danger" type="button" disabled={reviewSaving} onClick={() => openPackageDialog('REJECT')}><X size={15} />整包驳回</button><button className="primary" type="button" disabled={reviewSaving} onClick={() => void savePackageReview('CONFIRM')}>{reviewSaving ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}{autoCatalogEntries.length ? `确认并处理 ${autoCatalogEntries.length} 条工序` : '确认通过'}</button></div></footer>}
                 </section>)}
 
                 {detailTab === 'published' && (!publishedEntries.length && !publishedPhotos.length ? <div className="sample-record-empty sample-tab-empty"><FolderKanban size={30} /><strong>本任务还没有审核处理资料</strong><p>整包确认后的留档、工时草稿、正式数据和照片会在这里集中展示。</p></div> : <div className="sample-review-workspace"><section className="sample-record-panel"><header><div><FileText size={17} /><span><strong>已处理数据</strong><small>{publishedEntries.length} 项</small></span></div></header><div className="sample-record-list">{publishedEntries.map(renderDataRecord)}{!publishedEntries.length && <div className="sample-record-empty"><strong>没有已处理数据</strong></div>}</div></section><section className="sample-record-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>已发布照片</strong><small>{publishedPhotos.length} 项</small></span></div></header><div className="sample-photo-grid sample-review-photo-grid">{publishedPhotos.map(renderPhotoRecord)}{!publishedPhotos.length && <div className="sample-record-empty"><strong>没有已发布照片</strong></div>}</div></section></div>)}
@@ -1250,9 +1224,8 @@ export default function SampleTeamCenter({
             </>}
           </section>
           </SamplePlanningDetail>
-        </section>}
-      </div>
 
+      {leaveAction&&<SampleDialog title="还有未同步的采集内容" onClose={()=>setLeaveAction(null)}><div className="sb-dialog-body"><p>请先保存数据并上传照片。留在当前页可继续处理；离开后，本机草稿会保留供下次继续。</p></div><footer><button onClick={()=>setLeaveAction(null)}>继续编辑</button><button onClick={()=>{const action=leaveAction;setLeaveAction(null);setCaptureDirty(false);action();}}>保留草稿并离开</button></footer></SampleDialog>}
       {message && <div className="sample-team-toast" role="status">{message}</div>}
 
       {importOpen && <div className="sample-modal-backdrop sample-import-backdrop" role="presentation">
@@ -1408,10 +1381,7 @@ export default function SampleTeamCenter({
               {!editOpen && form.taskType !== 'REPEAT' && user.laborRole === 'ADMIN' && <label className="sample-data-purpose-field"><span>数据用途</span><select value={form.dataPurpose} onChange={event => setForm(current => ({ ...current, dataPurpose: event.target.value as PlanForm['dataPurpose'] }))}><option value="PRODUCTION">正式业务数据</option><option value="TEST">测试数据（可批量退役）</option><option value="TRAINING">培训数据</option></select><small>只有新建时可标记；正式数据不会被测试清理工具自动退役。</small></label>}
             </section>
 
-            <section className="sample-plan-section">
-              <div className="sample-section-title"><strong>样品组成员</strong><small>{context.sampleMemberCount ? `已识别 ${context.sampleMemberCount} 名样品组成员` : '当前员工资料中未识别到“样品”班组名称，可从全部员工选择'}</small><button type="button" onClick={() => setShowAllMembers(value => !value)}>{showAllMembers ? '只看样品组' : '查看全部员工'}</button></div>
-              <div className="sample-member-grid">{visibleMembers.map(member => <button className={form.assigneeEmployeeIds.includes(member.id) ? 'selected' : ''} type="button" key={member.id} onClick={() => toggleAssignee(member.id)}><span>{member.name.slice(0, 1)}</span><b>{member.name}<small>{member.employeeNo} · {member.position || '岗位未设置'}</small></b><em>{member.team || member.department || '班组未设置'}</em></button>)}{!visibleMembers.length && <p>没有可选择的样品组成员，请查看全部员工或先维护员工班组。</p>}</div>
-            </section>
+
             {formError && <div className="sample-form-error"><AlertTriangle size={16} />{formError}</div>}
           </div>
           <footer><span>{form.taskType === 'REPEAT' ? '老产品只审核图纸资料。' : '新品采集内容仍全部选填。'}</span><div><button type="button" disabled={saving} onClick={() => { setCreateOpen(false); setEditOpen(false); }}>取消</button><button className="primary" type="button" disabled={saving} onClick={() => void savePlan()}>{saving ? <><Loader2 className="spin" size={15} />保存中</> : editOpen ? '保存计划' : '创建样品任务'}</button></div></footer>
@@ -1438,7 +1408,7 @@ export default function SampleTeamCenter({
                   <header><span>{String(index + 1).padStart(2, '0')}</span><strong>{dataKindLabels[entry.kind]}</strong></header>
                   <label><span>记录名称</span><input value={entry.label} onChange={event => updateReviewEntry(entry.id, { label: event.target.value })} /></label>
                   {entry.kind === 'PROCESS_TIME' && <><label><span>工序处理方式</span><select value={typeof entry.payload.processDefinitionId === 'string' ? entry.payload.processDefinitionId : ''} onChange={event => updateReviewEntryPayload(entry.id, 'processDefinitionId', event.target.value)}><option value="">确认时按名称自动复用或新增</option>{context.processes.map(process => <option key={process.id} value={process.id}>{process.name}{process.code ? ` · ${process.code}` : ''}</option>)}</select><small>未选择已有工序不再阻断确认；系统会按名称去重复用或写入工序库。</small></label>{!String(entry.payload.processDefinitionId || '').trim() && <div className="sample-package-edit-grid"><label><span>新工序名称</span><input value={String(entry.payload.processName || '')} onChange={event => updateReviewEntryPayload(entry.id, 'processName', event.target.value)} /></label><label><span>工序阶段</span><select value={entry.payload.stageGroup === 'backend' || entry.payload.stageGroup === 'finish' ? String(entry.payload.stageGroup) : 'frontend'} onChange={event => updateReviewEntryPayload(entry.id, 'stageGroup', event.target.value)}><option value="frontend">前工序</option><option value="backend">后工序</option><option value="finish">包装/收尾</option></select></label></div>}</>}
-                  {entry.kind === 'STRIPPING' && <label><span>正式参数处理</span><select value={entry.payload.publicationDecision === 'REPLACE_CURRENT' || entry.payload.publicationDecision === 'RECORD_ONLY' ? String(entry.payload.publicationDecision) : 'APPEND'} onChange={event => updateReviewEntryPayload(entry.id, 'publicationDecision', event.target.value)}><option value="APPEND">新增；完全相同则复用</option><option value="REPLACE_CURRENT">替换同产品、同位置当前版本</option><option value="RECORD_ONLY">仅保留样品审核记录，不进入参数库</option></select><small>同一产品、同一位置参数不同会阻断静默新增；选择“替换”后才建立新版本。</small></label>}
+                  {entry.kind === 'STRIPPING' && <label><span>正式参数处理</span><select value={entry.payload.publicationDecision === 'RECORD_ONLY' ? 'RECORD_ONLY' : 'APPEND'} onChange={event => updateReviewEntryPayload(entry.id, 'publicationDecision', event.target.value)}><option value="APPEND">新增；完全相同则复用</option><option value="RECORD_ONLY">仅保留样品审核记录，不进入参数库</option></select><small>相同参数自动复用；不同参数进入连接器参数待处理，不影响样品正常完成。</small></label>}
                   <div className="sample-package-edit-grid">{editablePayloadKeys[entry.kind].map(key => <label className={key === 'content' || key === 'remark' ? 'wide' : ''} key={key}><span>{payloadLabels[key]}</span>{key === 'timeBasis' ? <select value={entry.payload[key] === 'per_batch' ? 'per_batch' : 'per_unit'} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)}><option value="per_unit">按件</option><option value="per_batch">按批</option></select> : key === 'content' || key === 'remark' ? <textarea value={String(entry.payload[key] ?? '')} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)} /> : <input type={['recommendedSeconds', 'setupSeconds', 'occurrences'].includes(key) ? 'number' : 'text'} min={key === 'setupSeconds' ? 0 : undefined} step={key === 'occurrences' ? 1 : 'any'} value={String(entry.payload[key] ?? '')} onChange={event => updateReviewEntryPayload(entry.id, key, event.target.value)} />}</label>)}</div>
                 </article>)}
                 {!reviewEntryDrafts.length && <p className="sample-package-edit-empty">本包没有可编辑的数据记录。</p>}

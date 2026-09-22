@@ -245,7 +245,7 @@ function isSectionKind(kind: SampleDataKindDTO): kind is SectionKind {
   return kind === 'PROCESS_TIME' || kind === 'STRIPPING';
 }
 
-export default function SampleCaptureMobile({ code, user: _user }: { code: string; user: CurrentUserDTO }) {
+export default function SampleCaptureMobile({ code, user: _user, embedded = false, onDirtyChange, onBack }: { code: string; user: CurrentUserDTO; embedded?: boolean; onDirtyChange?: (dirty: boolean)=>void; onBack?: ()=>void }) {
   const [task, setTask] = useState<SampleTaskDTO | null>(null);
   const [processes, setProcesses] = useState<ProcessOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -472,6 +472,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     const items = photoQueue.map(({ objectUrl: _objectUrl, ...item }) => item);
     void writePhotoStoreValue(photoQueueKey, items.length ? { version: 2, items } : null).catch(() => setMessage('照片队列保存失败，请保持页面打开后重试'));
   }, [photoQueue, photoQueueKey]);
+  useEffect(() => { onDirtyChange?.(!!(formHasData || dirtySections.size || photoQueue.length || saving || savingSection || submitting || photoUploading)); }, [onDirtyChange, formHasData, dirtySections.size, photoQueue.length, saving, savingSection, submitting, photoUploading]);
   useEffect(() => {
     const warnUnsaved = (event: BeforeUnloadEvent) => {
       if (!formHasData && !dirtySections.size && !photoQueue.length) return;
@@ -856,7 +857,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
   if (!task) return <main className="sample-capture-failure"><AlertTriangle /><strong>无法打开样品任务</strong><p>{error || '二维码无效或任务不存在'}</p><button type="button" onClick={() => void load()}><RefreshCw />重新读取</button></main>;
   if (hardClosed) return <main className="sample-capture-terminal">
     <header className="sample-capture-header">
-      <Link href="/production?branch=samples" aria-label="返回样品执行"><ArrowLeft /></Link>
+      <>{embedded ? <button type="button" aria-label="返回试制记录" onClick={onBack}><ArrowLeft /></button> : <Link href="/weekly-plan-center?branch=samples" aria-label="返回样品计划"><ArrowLeft /></Link>}</>
       <div><span>样品资料历史</span><strong>{task.code}</strong></div>
       <button type="button" aria-label="刷新" onClick={() => void load()}><RefreshCw /></button>
     </header>
@@ -919,7 +920,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
     <input className="sample-photo-input-hidden" ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={event => void choosePhotos(event.target.files, 'CAMERA')} />
     <input className="sample-photo-input-hidden" ref={albumInputRef} type="file" accept="image/*" multiple onChange={event => void choosePhotos(event.target.files, 'ALBUM')} />
     {!focused && <header className="sample-capture-header">
-      <Link href="/production?branch=samples" aria-label="返回样品执行"><ArrowLeft /></Link>
+      <>{embedded ? <button type="button" aria-label="返回试制记录" onClick={onBack}><ArrowLeft /></button> : <Link href="/weekly-plan-center?branch=samples" aria-label="返回样品计划"><ArrowLeft /></Link>}</>
       <div><span>样品数据采集</span><strong>{task.code}</strong></div>
       <button type="button" aria-label="刷新" onClick={() => void load()}><RefreshCw /></button>
     </header>}
@@ -933,7 +934,7 @@ export default function SampleCaptureMobile({ code, user: _user }: { code: strin
         <div><span style={sampleCustomerLevelStyle(task.customerLevelCode)}>{task.customerLevelLabel || task.customerLevelCode || '未分级'}</span><em>{collectedKinds.size ? `已采集 ${collectedKinds.size} 类` : taskStatusText(task)}</em></div>
         <h1>{task.specification}</h1>
         <p>{task.customerName} · {task.productName || '未设置品名'}</p>
-        <dl><div><dt>计划日期</dt><dd>{task.dueDate || '未设置'}</dd></div><div><dt>成员</dt><dd>{task.assignees.map(item => item.name).join('、') || '未指派'}</dd></div><div><dt>当前状态</dt><dd>{taskStatusText(task)}</dd></div></dl>
+        <dl><div><dt>计划日期</dt><dd>{task.dueDate || '未设置'}</dd></div><div><dt>当前状态</dt><dd>{taskStatusText(task)}</dd></div></dl>
       </section>
       <section className="sample-sync-strip" aria-label="采集同步状态">
         <div><Database /><span>未保存</span><strong>{dirtySections.size + (formHasData ? 1 : 0)}</strong></div>

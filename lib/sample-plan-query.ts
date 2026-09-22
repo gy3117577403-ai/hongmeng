@@ -26,7 +26,7 @@ export function samplePlanQuery(params: URLSearchParams, employeeId?: string | n
   if (taskType && !['NEW','REPEAT'].includes(taskType)) throw new SampleQueryError('样品类型无效');
   if (taskType) filters.push(Prisma.sql`t.task_type=${taskType}`);
   const requestedWeek = params.get('week');
-  if (requestedWeek === 'unplanned') filters.push(Prisma.sql`t.plan_week_start_date IS NULL AND ${unfinished}`);
+  if (requestedWeek === 'unplanned') filters.push(Prisma.sql`t.plan_week_start_date IS NULL`);
   else if (requestedWeek) {
     let week: string | null;
     try { week = sampleWeek(requestedWeek); } catch (e) { throw new SampleQueryError(e instanceof SamplePlanError ? e.message : '计划周无效'); }
@@ -42,7 +42,7 @@ export function samplePlanQuery(params: URLSearchParams, employeeId?: string | n
     const like = `%${keyword.replace(/[\\%_]/g, '\\$&')}%`;
     filters.push(params.get('search') === 'model'
       ? Prisma.sql`t.specification_snapshot ILIKE ${like}`
-      : Prisma.sql`(t.code ILIKE ${like} OR t.source_order_no ILIKE ${like} OR t.customer_name_snapshot ILIKE ${like} OR t.product_name_snapshot ILIKE ${like} OR t.specification_snapshot ILIKE ${like} OR EXISTS (SELECT 1 FROM sample_task_assignees a JOIN employees e ON e.id=a.employee_id WHERE a.task_id=t.id AND (e.name ILIKE ${like} OR e.employee_no ILIKE ${like})))`);
+      : Prisma.sql`(t.code ILIKE ${like} OR t.source_order_no ILIKE ${like} OR t.customer_name_snapshot ILIKE ${like} OR t.product_name_snapshot ILIKE ${like} OR t.specification_snapshot ILIKE ${like})`);
   }
   if (params.get('customer')) filters.push(Prisma.sql`t.customer_name_snapshot=${params.get('customer')}`);
   if (params.get('level')) filters.push(Prisma.sql`t.customer_level_code=${params.get('level')}`);
@@ -84,6 +84,7 @@ export async function listSamplePlans(params: URLSearchParams, employeeId?: stri
     const countsSql = SAMPLE_VIEWS.map(view => Prisma.sql`COUNT(*) FILTER (WHERE ${query.views[view]})::int AS ${Prisma.raw('"'+view+'"')}`);
     const [counts] = await tx.$queryRaw<Array<Record<SamplePlanView, number>>>(Prisma.sql`SELECT ${Prisma.join(countsSql)} FROM sample_tasks t WHERE ${query.base}`);
     const total = counts[query.view];
+    const globalCompleted = await tx.sampleTask.count({ where: { deletedAt: null, status: 'COMPLETED', ...(params.get('taskType') ? { taskType: params.get('taskType')! } : {}) } });
     let materialCounts: Record<string,number> | undefined;
     if (params.get('warehouse') === 'true') {
       const allStates = new URLSearchParams(params); allStates.delete('materialStatus');
@@ -102,7 +103,7 @@ export async function listSamplePlans(params: URLSearchParams, employeeId?: stri
     const customers = await tx.sampleTask.findMany({ where: { deletedAt: null }, distinct: ['customerNameSnapshot'], select: { customerNameSnapshot: true }, orderBy: { customerNameSnapshot: 'asc' } });
     const compact = params.get('compact') === 'true';
     const summaryOnly = params.get('summary') === 'true';
-    const summaryInclude = { ...sampleTaskInclude, entries: { ...sampleTaskInclude.entries, take: 0 }, photos: { ...sampleTaskInclude.photos, take: 0 }, draftSections: { ...sampleTaskInclude.draftSections, take: 0 }, completions: { ...sampleTaskInclude.completions, take: 0 }, _count: { select: { finishedGoods: true, entries: { where: { deletedAt: null } }, photos: { where: { deletedAt: null } } } } } satisfies Prisma.SampleTaskInclude;
+    const summaryInclude = { ...sampleTaskInclude, entries: { ...sampleTaskInclude.entries, take: 0 }, photos: { ...sampleTaskInclude.photos, take: 0 }, draftSections: { ...sampleTaskInclude.draftSections, take: 0 }, completions: { ...sampleTaskInclude.completions, take: 0 }, _count: { select: { finishedGoods: true, parameterConflicts: { where: { status: 'PENDING' } }, entries: { where: { deletedAt: null } }, photos: { where: { deletedAt: null } } } } } satisfies Prisma.SampleTaskInclude;
     const tasks = compact
       ? await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, select: { id: true, specificationSnapshot: true, customerNameSnapshot: true, code: true, status: true, dueDate: true, warningDays: true } })
       : summaryOnly ? (await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, include: summaryInclude })).map(task => {
@@ -111,6 +112,6 @@ export async function listSamplePlans(params: URLSearchParams, employeeId?: stri
       }) : (await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, include: sampleTaskInclude })).map(serializeSampleTask);
     const byId = new Map(tasks.map(task => [task.id, task]));
     const published = await tx.$queryRaw<Array<{ count: number }>>(Prisma.sql`SELECT (SELECT count(*) FROM sample_data_entries e JOIN sample_tasks t ON t.id=e.task_id WHERE ${query.base} AND t.status<>'CANCELLED' AND e.deleted_at IS NULL AND e.review_status='PUBLISHED')::int + (SELECT count(*) FROM sample_photos p JOIN sample_tasks t ON t.id=p.task_id WHERE ${query.base} AND t.status<>'CANCELLED' AND p.deleted_at IS NULL AND p.review_status='PUBLISHED')::int AS count`);
-    return { ok: true, materialCounts, tasks: ids.map(row => byId.get(row.id)), viewCounts: counts, pagination: { page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total/query.pageSize)) }, customers: customers.map(row => row.customerNameSnapshot), summary: { quantity: totals.quantity, completedQuantity: totals.completed, total: counts.ALL-counts.CANCELLED, dueToday: counts.TODAY, overdue: counts.OVERDUE, pendingReview: counts.PENDING_REVIEW, collecting: counts.PLANNED+counts.IN_PROGRESS, completed: counts.COMPLETED, publishedItems: published[0].count } };
+    return { ok: true, globalCompleted, materialCounts, tasks: ids.map(row => byId.get(row.id)), viewCounts: counts, pagination: { page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total/query.pageSize)) }, customers: customers.map(row => row.customerNameSnapshot), summary: { quantity: totals.quantity, completedQuantity: totals.completed, total: counts.ALL-counts.CANCELLED, dueToday: counts.TODAY, overdue: counts.OVERDUE, pendingReview: counts.PENDING_REVIEW, collecting: counts.PLANNED+counts.IN_PROGRESS, completed: counts.COMPLETED, publishedItems: published[0].count } };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 20000 });
 }

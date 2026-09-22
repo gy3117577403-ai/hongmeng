@@ -211,7 +211,7 @@ test('sample planning workspace uses one compact master-detail surface instead o
   const stylesheet = readFileSync('app/sample-team-workbench.css', 'utf8');
 
   assert.match(component, /className="sample-team-zero-state"/);
-  assert.match(component, /className="sample-team-statusbar"/);
+  assert.match(component, /className="su-status"/);
   assert.match(component, /className="sample-detail-tabs"/);
   assert.match(component, /任务概览/);
   assert.match(component, /采集数据/);
@@ -256,6 +256,6 @@ test('production and planning preserve the mode drawer while sample kitting uses
   assert.doesNotMatch(planning, /sample-module-branch-entry/);
   assert.doesNotMatch(sample, /sample-team-branch-tabs/);
   assert.match(warehousePage, /branch === 'samples'.*SampleWarehouseCenter/s);
-  assert.match(sample, /不扣库存、不生成正式领料/);
+  assert.match(sample, /不关联库存扣减/);
   assert.match(sample, /kind === 'MATERIAL'/);
 });

@@ -1,4 +1,5 @@
 'use client';
+import ConnectorConflictPanel from '@/components/ConnectorConflictPanel';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FileUp, History, Paperclip, Plus, RotateCcw, Search } from 'lucide-react';
@@ -120,6 +121,9 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [stats, setStats] = useState<ConnectorParameterStatsDTO>({ total: 0, missingOuter: 0, missingInner: 0, missingInsertion: 0, missingAny: 0, highlighted: 0, fileCount: 0, linked: 0, sampleSynced: 0, history: 0 });
   const [keyword, setKeyword] = useState('');
   const [filter, setFilter] = useState('all');
+  const [conflictsOpen, setConflictsOpen] = useState(false);
+  const [pendingConflicts, setPendingConflicts] = useState(0);
+  useEffect(()=>{setConflictsOpen(new URLSearchParams(window.location.search).get('view')==='conflicts');},[]);
   const [view, setView] = useState<'all' | 'linked' | 'sample' | 'history'>('all');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -210,7 +214,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       }
       setItems(Array.isArray(d.parameters) ? d.parameters : []);
       setTotal(Number(d.total || 0));
-      if (d.stats) setStats(d.stats);
+      if (d.stats) { setStats(d.stats); setPendingConflicts(d.stats.pendingConflicts || 0); }
     } catch (reason) {
       if (!(reason instanceof Error && reason.name === 'AbortError')) setMsg('连接器参数加载失败');
     } finally {
@@ -827,12 +831,14 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             ['sample', '样品同步', stats.sampleSynced || 0],
             ['history', '历史版本', stats.history || 0],
           ] as const).map(([key, label, count]) => (
-            <button key={key} className={view === key ? 'active' : ''} type="button" aria-pressed={view === key} onClick={() => { setView(key); setPage(1); }}>
+            <button key={key} className={!conflictsOpen && view === key ? 'active' : ''} type="button" aria-pressed={!conflictsOpen && view === key} onClick={() => { setView(key); setPage(1); setConflictsOpen(false); }}>
               <span>{label}</span><b>{count}</b>
             </button>
           ))}
+          <button className={conflictsOpen?'active':''} aria-pressed={conflictsOpen} onClick={()=>setConflictsOpen(true)}>参数待处理 <b>{pendingConflicts}</b></button>
         </nav>
 
+        {conflictsOpen ? <ConnectorConflictPanel onCountChanged={setPendingConflicts}/> : <>
         <section className="hm-parameters-query" aria-label="连接器参数搜索与筛选">
           <label className="hm-parameters-search" htmlFor="connector-parameter-search">
             <span>搜索参数</span>
@@ -1002,6 +1008,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
 
         </section>
 
+        </>}
         {fileDrawerOpen && <>
         <button className="connector-file-scrim" type="button" aria-label="关闭原始资料抽屉" onClick={closeFileDrawer} />
         <aside ref={fileDrawerRef} id="connector-parameter-files" className="connector-file-drawer open" aria-label="原始资料附件" role="dialog" aria-modal="true" tabIndex={-1}>

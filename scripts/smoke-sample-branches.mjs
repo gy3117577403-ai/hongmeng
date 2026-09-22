@@ -119,4 +119,37 @@ const imported = await req('commit mixed sample branches', '/api/sample-tasks/im
 assert.equal(imported.createdTaskCount,2);
 const importedList = await req('verify imported sample plans', `/api/sample-tasks?view=ALL&week=${week}&summary=true&keyword=${tag}-IMPORT`);
 assert.equal(importedList.tasks.length,2);assert.ok(importedList.tasks.every(t=>t.planWeekStartDate===week && t.documentReviewRequired));
+// A duplicate in an approved sample must never roll back its completion or warehouse transfer.
+async function parameterSample(values, position='A端') {
+  let task=(await req('create parameter sample on approved product','/api/sample-tasks',{drawingLibraryItemId:fresh.drawingLibraryItemId,taskType:'NEW',sampleQuantity:2,customerLevelCode:'A'},201)).task;
+  task=(await req('save connector sample data',`/api/sample-tasks/${task.id}/entries`,{kind:'STRIPPING',label:position,payload:{model:tag+'-CN',outerPeelMm:String(values),positionLabel:position},expectedTaskVersion:task.version,clientMutationId:randomUUID()},201)).task;
+  task=(await req('submit connector sample',`/api/sample-tasks/${task.id}/submit`,{expectedVersion:task.version,clientMutationId:randomUUID()})).task;
+  const review={decision:'CONFIRM',submissionId:task.activeSubmission.id,submissionRevision:task.activeSubmission.revision,expectedTaskVersion:task.version,clientMutationId:randomUUID()};
+  await req('approve sample even with differing connector parameters',`/api/sample-tasks/${task.id}/review`,review);
+  await req('replayed package never transfers twice',`/api/sample-tasks/${task.id}/review`,review);
+  task=await detail(task);assert.equal(task.status,'COMPLETED');assert.equal(task.completedQuantity,2);assert.equal(task.finishedGoodsCount,1);
+  const goods=(await req('duplicate parameters allow finished goods transfer',`/api/finished-goods?sampleTaskId=${task.id}&filter=all&scope=all`)).data;
+  assert.equal(goods.rows.reduce((sum,row)=>sum+row.pending,0),2);
+  return task;
+}
+const originalParameterSample=await parameterSample(18);
+const equalParameterSample=await parameterSample(18);assert.equal(equalParameterSample.parameterConflictCount,0);
+const differentParameterSample=await parameterSample(22);assert.equal(differentParameterSample.parameterConflictCount,1);
+let conflicts=await req('list deferred sample parameters',`/api/connector-parameters/conflicts?keyword=${tag}`);
+let conflict=conflicts.items.find(item=>item.taskId===differentParameterSample.id);assert.ok(conflict);assert.equal(conflict.candidate.outerPeelMm,'22');assert.equal(conflict.current[0].values.outerPeelMm,'18');
+const discard={action:'DISCARD',expectedVersion:conflict.version};
+await req('delete only the pending duplicate',`/api/connector-parameters/conflicts/${conflict.id}`,discard,200,'PATCH');
+await req('duplicate deletion is idempotent',`/api/connector-parameters/conflicts/${conflict.id}`,discard,200,'PATCH');
+let completedTask=await detail(differentParameterSample);assert.equal(completedTask.parameterConflictCount,0);assert.equal(completedTask.entries[0].payload.outerPeelMm,'22');assert.equal(completedTask.finishedGoodsCount,1);assert.equal(completedTask.status,'COMPLETED');
+const replaceParameterSample=await parameterSample(25);
+conflicts=await req('read pending replacement comparison',`/api/connector-parameters/conflicts?keyword=${tag}`);conflict=conflicts.items.find(item=>item.taskId===replaceParameterSample.id);
+await req('stale comparison rejected',`/api/connector-parameters/conflicts/${conflict.id}`,{action:'REPLACE',expectedVersion:conflict.version,currentSignature:'stale'},409,'PATCH');
+const replaceInput={action:'REPLACE',expectedVersion:conflict.version,currentSignature:conflict.currentSignature};
+await req('cover product parameter and keep original revision',`/api/connector-parameters/conflicts/${conflict.id}`,replaceInput,200,'PATCH');
+await req('cover operation is idempotent',`/api/connector-parameters/conflicts/${conflict.id}`,replaceInput,200,'PATCH');
+completedTask=await detail(replaceParameterSample);assert.equal(completedTask.parameterConflictCount,0);assert.equal(completedTask.finishedGoodsCount,1);assert.equal(completedTask.status,'COMPLETED');
+const unchangedSource=await detail(originalParameterSample);assert.equal(unchangedSource.entries[0].payload.outerPeelMm,'18');
+const history=await req('null-week completed samples are reachable',`/api/sample-tasks?view=COMPLETED&week=unplanned&taskType=NEW&keyword=${tag}&summary=true`);assert.ok(history.tasks.some(t=>t.id===originalParameterSample.id));assert.ok(history.globalCompleted>=4);
+const records=await req('retained parameter conflict history',`/api/connector-parameters/conflicts?status=RESOLVED&keyword=${tag}`);assert.ok(records.items.some(item=>item.id===conflict.id&&item.resolution==='REPLACE'));
+
 const output=process.env.SAMPLE_BRANCH_QA_OUTPUT || 'artifacts/sample-branches/http.json';await fs.mkdir(path.dirname(output),{recursive:true});await fs.writeFile(output,JSON.stringify({ok:true,tag,base,checks,taskIds:[repeat.id,fresh.id],note:'Disposable runtime only; image remains unmodified.'},null,2));console.log(`Sample branch HTTP acceptance: ${checks.length} checks passed`);

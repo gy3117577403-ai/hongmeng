@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { connectorConflictDetail, resolveConnectorConflict } from '../lib/connector-parameter-conflicts';
 import { publishSampleEntry } from '../lib/sample-team-publish';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
@@ -309,23 +310,50 @@ test(
         },
       });
       entryIds.push(replacementEntry.id);
-      await assert.rejects(
-        prisma.$transaction(tx => publishSampleEntry(tx, task, replacementEntry, actorSnapshot, 'APPEND')),
-        /已经存在不同的当前剥皮参数/,
-      );
-      const replacement = await prisma.$transaction(tx => publishSampleEntry(tx, task, replacementEntry, actorSnapshot, 'REPLACE_MATCHING'));
+      const deferred = await prisma.$transaction(tx => publishSampleEntry(tx, task, replacementEntry, actorSnapshot, 'APPEND'));
+      assert.equal(deferred.entityType, 'connector_parameter_conflict');
+      assert.equal(deferred.reviewStatus, 'APPROVED');
+      const replay = await prisma.$transaction(tx => publishSampleEntry(tx, task, replacementEntry, actorSnapshot, 'REPLACE_MATCHING'));
+      assert.equal(replay.entityId, deferred.entityId);
+      const conflict = await prisma.$transaction(tx => connectorConflictDetail(tx, deferred.entityId!));
+      await assert.rejects(resolveConnectorConflict(conflict.id, {action:'REPLACE', expectedVersion:1, currentSignature:'outdated'}, actorSnapshot), /当前参数已被更新/);
+      const resolved = await resolveConnectorConflict(conflict.id, {action:'REPLACE', expectedVersion:1, currentSignature:conflict.currentSignature}, actorSnapshot);
+      assert.equal(resolved.status,'RESOLVED');
       const bindingVersions = await prisma.productConnectorParameterBinding.findMany({
         where: { drawingLibraryItemId: item.id, positionKey: 'a端' },
         include: { connectorParameter: true },
         orderBy: { version: 'asc' },
       });
-      assert.equal(replacement.reviewStatus, 'PUBLISHED');
+      assert.equal((await prisma.sampleDataEntry.findUniqueOrThrow({where:{id:replacementEntry.id}})).reviewStatus, 'PUBLISHED');
       assert.equal(bindingVersions.length, 2);
       assert.equal(bindingVersions[0]?.isCurrent, false);
       assert.equal(bindingVersions[0]?.status, 'SUPERSEDED');
       assert.equal(bindingVersions[1]?.isCurrent, true);
       assert.equal(bindingVersions[1]?.connectorParameter.outerPeelMm, '20');
 
+      const replayResolved = await prisma.$transaction(tx => publishSampleEntry(tx, task, replacementEntry, actorSnapshot, 'APPEND'));
+      assert.equal(replayResolved.entityId, resolved.current[0].id);
+      assert.equal((resolved.original as any[])[0].values.outerPeelMm, '18');
+      assert.equal((resolved.candidate as any).outerPeelMm, '20');
+      const nextEntry = await prisma.sampleDataEntry.create({ data: { taskId: task.id, kind: 'STRIPPING', label: 'A端', payload: { model: 'HV-01', outerPeelMm: '23', innerPeelMm: '8', positionLabel: 'A端' }, reviewStatus: 'APPROVED' } });
+      await assert.rejects(prisma.$transaction(async tx => { await publishSampleEntry(tx, task, nextEntry, actorSnapshot, 'APPEND'); throw new Error('rollback downstream failure'); }), /rollback downstream failure/);
+      assert.equal(await prisma.connectorParameterConflict.count({where:{sourceEntryId:nextEntry.id}}),0,'downstream failure rolls back candidate');
+      const next = await prisma.$transaction(tx => publishSampleEntry(tx, task, nextEntry, actorSnapshot, 'APPEND'));
+      const nextDetail = await prisma.$transaction(tx => connectorConflictDetail(tx,next.entityId!));
+      await assert.rejects(resolveConnectorConflict(nextDetail.id,{action:'KEEP_SEPARATE',expectedVersion:1,currentSignature:nextDetail.currentSignature,positionLabel:123 as any},actorSnapshot),/处理动作或版本无效/);
+      const both = await Promise.all([1,2].map(()=>resolveConnectorConflict(nextDetail.id,{action:'KEEP_SEPARATE',expectedVersion:1,currentSignature:nextDetail.currentSignature,positionLabel:'B端'},actorSnapshot)));
+      assert.equal(both[0].status,'RESOLVED');assert.equal(both[1].status,'RESOLVED');
+      assert.equal(await prisma.productConnectorParameterBinding.count({where:{drawingLibraryItemId:item.id,positionKey:'b端',isCurrent:true}}),1,'simultaneous resolution publishes once');
+      const currentA = await prisma.productConnectorParameterBinding.findFirstOrThrow({where:{drawingLibraryItemId:item.id,positionKey:'a端',isCurrent:true},include:{connectorParameter:true}});
+      assert.equal(currentA.connectorParameter.outerPeelMm,'20','separate position preserves A');
+      assert.equal(((await prisma.sampleDataEntry.findUniqueOrThrow({where:{id:nextEntry.id}})).payload as any).positionLabel,'A端','source snapshot is immutable');
+      const discardedEntry = await prisma.sampleDataEntry.create({data:{taskId:task.id,kind:'STRIPPING',label:'A端',payload:{model:'HV-01',outerPeelMm:'24',positionLabel:'A端'},reviewStatus:'APPROVED'}});
+      const discarded = await prisma.$transaction(tx=>publishSampleEntry(tx,task,discardedEntry,actorSnapshot,'APPEND'));
+      await resolveConnectorConflict(discarded.entityId!,{action:'DISCARD',expectedVersion:1},actorSnapshot);
+      const discardedReplay=await prisma.$transaction(tx=>publishSampleEntry(tx,task,discardedEntry,actorSnapshot,'APPEND'));
+      assert.equal(discardedReplay.entityType,'connector_parameter_conflict_resolved');
+      assert.equal((await prisma.sampleDataEntry.findUniqueOrThrow({where:{id:discardedEntry.id}})).deletedAt,null,'discard does not remove sample evidence');
+      assert.equal(await prisma.productConnectorParameterBinding.count({where:{sourceSampleEntryId:discardedEntry.id}}),0);
       if (connectorBinding) connectorParameterIds.push(connectorBinding.connectorParameterId);
     } finally {
       await prisma.$transaction(async tx => {
@@ -345,6 +373,7 @@ test(
           await tx.productProcessTimeEntry.deleteMany({ where: { profileId: { in: profiles.map(profile => profile.id) } } });
           await tx.productTimeProfile.deleteMany({ where: { id: { in: profiles.map(profile => profile.id) } } });
         }
+        await tx.connectorParameterConflict.deleteMany({ where: { taskId: task.id } });
         await tx.sampleDataEntry.deleteMany({ where: { taskId: task.id } });
         await tx.sampleTask.delete({ where: { id: task.id } });
         await tx.processDefinition.delete({ where: { id: processDefinition.id } });
