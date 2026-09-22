@@ -88,3 +88,5 @@
 .sp-detail-dialog .su-embedded-capture .sample-category-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 .sp-detail-dialog .su-embedded-capture .sample-capture-submitbar{position:sticky;bottom:0;right:auto;left:auto;transform:none;width:100%;max-width:none;margin-top:18px;border-radius:10px;z-index:5}
 .sp-detail-dialog .su-embedded-capture input,.sp-detail-dialog .su-embedded-capture select{min-height:42px;font-size:13px}
+
+body > .sb-overlay{z-index:1200}

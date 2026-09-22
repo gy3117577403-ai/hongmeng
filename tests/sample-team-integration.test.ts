@@ -145,6 +145,7 @@ test(
     });
     const entryIds: string[] = [];
     const connectorParameterIds: string[] = [];
+    let otherProductId: string | null = null;
 
     try {
       const section = await prisma.sampleDraftSection.create({
@@ -300,6 +301,9 @@ test(
       assert.equal(completions, 0);
       assert.equal(laborClaims, 0);
 
+      const otherProduct = await prisma.drawingLibraryItem.create({data:{customerName:'shared-parameter-test',specification:prefix+'-OTHER',libraryKey:prefix+'-OTHER'}});
+      otherProductId = otherProduct.id;
+      const otherBinding = await prisma.productConnectorParameterBinding.create({data:{drawingLibraryItemId:otherProduct.id,connectorParameterId:connectorBinding!.connectorParameterId,positionKey:'a端',positionLabel:'A端',version:1,isCurrent:true,status:'PUBLISHED',parameterSnapshot:{outerPeelMm:'18'}}});
       const replacementEntry = await prisma.sampleDataEntry.create({
         data: {
           taskId: task.id,
@@ -330,6 +334,8 @@ test(
       assert.equal(bindingVersions[0]?.status, 'SUPERSEDED');
       assert.equal(bindingVersions[1]?.isCurrent, true);
       assert.equal(bindingVersions[1]?.connectorParameter.outerPeelMm, '20');
+      const retainedOther = await prisma.productConnectorParameterBinding.findUniqueOrThrow({where:{id:otherBinding.id},include:{connectorParameter:true}});
+      assert.equal(retainedOther.isCurrent,true);assert.equal(retainedOther.connectorParameter.outerPeelMm,'18','resolution cannot replace another product using the same parameter');
 
       const replayResolved = await prisma.$transaction(tx => publishSampleEntry(tx, task, replacementEntry, actorSnapshot, 'APPEND'));
       assert.equal(replayResolved.entityId, resolved.current[0].id);
@@ -359,7 +365,8 @@ test(
       await prisma.$transaction(async tx => {
         const boundParameters = await tx.productConnectorParameterBinding.findMany({ where: { drawingLibraryItemId: item.id }, select: { connectorParameterId: true } });
         await tx.samplePublicationLink.deleteMany({ where: { sampleTaskId: task.id } });
-        await tx.productConnectorParameterBinding.deleteMany({ where: { drawingLibraryItemId: item.id } });
+        await tx.productConnectorParameterBinding.deleteMany({ where: { drawingLibraryItemId: {in:[item.id,...(otherProductId?[otherProductId]:[])]} } });
+        if(otherProductId)await tx.drawingLibraryItem.delete({where:{id:otherProductId}});
         const parameterIds = [...new Set([...connectorParameterIds, ...boundParameters.map(binding => binding.connectorParameterId)])];
         if (parameterIds.length) {
           await tx.connectorParameter.deleteMany({ where: { id: { in: parameterIds } } });

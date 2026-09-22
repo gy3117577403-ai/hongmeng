@@ -60,6 +60,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
           for (const binding of existing.productBindings) {
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`connector-parameter-binding:${binding.drawingLibraryItemId}`}))`;
+            const currentBinding = await tx.productConnectorParameterBinding.findUnique({ where: { id: binding.id }, select: { isCurrent: true, status: true, connectorParameterId: true } });
+            if (!currentBinding?.isCurrent || currentBinding.status !== 'PUBLISHED' || currentBinding.connectorParameterId !== existing.id) {
+              throw new Error('CONNECTOR_PARAMETER_EDIT_CONFLICT');
+            }
             const latest = await tx.productConnectorParameterBinding.aggregate({ where: { drawingLibraryItemId: binding.drawingLibraryItemId }, _max: { version: true } });
             await tx.productConnectorParameterBinding.update({
               where: { id: binding.id },

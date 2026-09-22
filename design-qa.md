@@ -1,3 +1,55 @@
+# Sample unified workbench v1.34.221 — 2026-09-22
+
+Final result: passed for requested UI and browser interactions. Production data counts and Sealos deployment are outside this UI acceptance.
+
+## Source, implementation, and intentional changes
+
+- Source: output/sample-plan-ui-next/01-user-sample-plan.png (2557 x 1368). This is the user-marked starting screen, not a target to reproduce unchanged. Approved direction: one plan page, overlay trial workbench, no owner controls, completed history visible, deferred duplicate-parameter handling.
+- Implementation: actual React application components bundled in a local fixture harness at http://127.0.0.1:3396. API responses in this browser harness are synthetic and are not database verification or production counts. Real HTTP/PostgreSQL/S3 acceptance passed separately in run 35720273401; final commit reruns the same acceptance.
+- Target tablet: 1366 x 1024 CSS pixels, device ratio approximately 1. Screenshots 01-plan-1366.png, 02-trial-modal-1366.png, 03-completed-history-1366.png, 04-parameter-comparison-1366.png, 05-capture-form-1366.png, 06-drawing-modal-1366.png under output/sample-unified-v134221.
+- Combined comparison: source-normalized.png and 08-plan-reference-aspect.png were opened together, followed by detail-source-toolbar-table.png and detail-toolbar-table.png. Source was downsampled to 1366 x 731 for composition comparison; its original CSS density is unknown, so no pixel-exact font claim is made. Runtime used 1366 x 731 for this comparison and 1366 x 1024 for tablet acceptance. Screenshot transport is JPEG despite local .png suffixes.
+- Wide layout DOM checked at 2557 x 1368: body scrollWidth equals viewport width. Wide screenshot transport produced a stale-scale/cropped image and is excluded from visual acceptance; the normalized comparison was recaptured after reload.
+
+## Findings resolved and post-fix evidence
+
+- P1: global app header covered the parameter comparison dialog. Raised the direct body overlay above app chrome, retained photo overlay ordering, and recaptured 04-parameter-comparison-1366.png. Header, close control, comparison and confirmation remain visible.
+- P2: embedded capture retained the phone-only 430 px layout. Scoped desktop override expands it to 1120 px inside the trial modal, uses static form header and sticky form footer. Measured width 1120, body width 1366; screenshot 05 confirms three measurement inputs on one row.
+- P2: underlying trial modal could receive Escape while a photo viewer was open. Hide the base modal while its higher-order photo viewer is active, matching existing edit/QR/return handling.
+- P2: a REPEAT fixture carrying stale pending-submission counts could open an unavailable review tab. Main row action now branches on task type before pending count. Post-fix old-product dialog shows only overview, drawing review, completion/warehouse; no capture or package review.
+- P2: final item on a paged conflict queue could leave an empty page after resolution. API clamps page after count and UI applies the returned page.
+
+No remaining actionable P0/P1/P2 visual findings in tested states.
+
+## Required fidelity surfaces
+
+- Typography: existing Chinese application stack retained; distinct product title, operational labels, and quieter metadata. Long connector and product names remain readable through appropriate wrapping/title hints. Owner column and member-based search copy removed. Snapshot transport softness is not treated as font-rendering evidence.
+- Layout: compact title, primary task-status tabs, week strip, filters, then a continuous data table. Tablet shows eight full rows; footer remains in view. Trial dialog approximately 94vw x 92vh, inner content scrolls; header/tabs/actions remain separate. Intentional deviation from old page: no separate execution window, expanded record work area.
+- Colors/tokens: orange primary action and selected state, pale cool surface, restrained warm gradient and shallow shadow for 2.5D depth. Blue in-progress, green approved, amber attention, red returned retained. Glass applied to overlay/backdrop, not document text.
+- Assets/image quality: original application mark and Lucide icons reused. No generated UI raster substituted for components. Document viewer uses a synthetic labelled PDF for QA only; it fits the available canvas.
+- Copy/content: completed tab explicitly means all historical records of the current sample type, including no-week and archived samples. Candidate comparison says current and sample values, replacement scope, and no second warehouse transfer. Historical comparison retains original baseline instead of relabelling the new current value as the old one.
+
+## Browser evidence
+
+- Completed tab shows 8 seeded historical completed NEW samples, including no-week and archived rows. Week/search/date constraints clear for direct history access. This does not assert the production count.
+- Trial opens as a dialog without leaving the plan route. Close/reopen at the last row preserves scrollTop 324 and one selected checkbox.
+- New plan/edit flow has no owner selector. REPEAT dialog has no capture/photo/SOP requirement.
+- Actual embedded capture component supports sections, multi-row stripping parameters and retained local draft. Switching tab or closing with unsaved data displays a leave/retain-draft decision; leave then opens the requested drawing tab.
+- Drawing preview fits the modal; version, fixture choice, review controls and close control do not overlap.
+- Candidate deletion moves one seeded item out of pending. Replacement similarly updates the queue; processed-history comparison is read-only. Real transaction/idempotency behavior is covered by PostgreSQL and HTTP tests, not inferred from the fixture UI.
+- Browser console: no captured warnings/errors during the final tablet interaction checks.
+
+## Implementation checklist
+
+- [x] Preserve completed/no-week/archived records in history query.
+- [x] Remove owner-facing UI while preserving stored audit/source data.
+- [x] Use a single desktop trial modal with draft protection and context retention.
+- [x] Complete samples independently of deferred parameter differences; preserve evidence/history.
+- [x] Verify tablet composition, focus/close, old-product branch, and real HTTP/storage workflow separately.
+
+---
+
+## Prior QA history retained below
+
 # Sample planning and manual warehouse kitting - v1.34.220
 
 Final result: passed for the changed pages and interactions. No remaining actionable P0/P1/P2 findings.
