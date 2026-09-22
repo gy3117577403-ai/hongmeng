@@ -125,6 +125,8 @@ type SampleImportCandidate = {
 };
 
 type SampleImportRow = {
+  taskType?: 'NEW' | 'REPEAT';
+  planWeekStartDate?: string | null;
   rowNumber: number;
   customerName: string;
   productName: string;
@@ -1270,8 +1272,8 @@ export default function SampleTeamCenter({
               <div className="sample-import-rule"><Info /><span><strong>图纸库只复用产品资料，不复用旧样品任务。</strong>重复计划会直接阻止，页面不提供强制重复导入。</span></div>
               <div className="sample-import-table-wrap">
                 <table className="sample-import-table">
-                  <thead><tr><th>行</th><th>客户 / 产品</th><th>型号 / 规格</th><th>等级</th><th>数量 / 日期</th><th>匹配结果</th></tr></thead>
-                  <tbody>{importPreview.rows.map(row => <tr key={row.rowNumber} className={`status-${row.matchStatus.toLowerCase()}`}><td>{row.rowNumber}</td><td><strong>{row.customerName || '—'}</strong><small>{row.productName || '—'}</small></td><td>{row.specification || '—'}</td><td><em style={sampleCustomerLevelStyle(row.customerLevelCode)}>{row.customerLevelCode || '—'}</em></td><td><strong>{row.sampleQuantity || '—'}</strong><small>{row.dueDate || '—'}</small></td><td><b>{row.matchStatus === 'REUSE' ? '复用' : row.matchStatus === 'CREATE' ? '新建' : row.matchStatus === 'CONFIRM' ? '待确认' : '已阻止'}</b><small>{row.message}</small></td></tr>)}</tbody>
+                  <thead><tr><th>行</th><th>客户 / 产品</th><th>型号 / 规格</th><th>类型 / 计划周</th><th>等级</th><th>数量 / 日期</th><th>匹配结果</th></tr></thead>
+                  <tbody>{importPreview.rows.map(row => <tr key={row.rowNumber} className={`status-${row.matchStatus.toLowerCase()}`}><td>{row.rowNumber}</td><td><strong>{row.customerName || '—'}</strong><small>{row.productName || '—'}</small></td><td>{row.specification || '—'}</td><td><strong>{row.taskType === 'REPEAT' ? '老产品制作' : '新品试制'}</strong><small>{row.planWeekStartDate || '待排期'}</small></td><td><em style={sampleCustomerLevelStyle(row.customerLevelCode)}>{row.customerLevelCode || '—'}</em></td><td><strong>{row.sampleQuantity || '—'}</strong><small>{row.dueDate || '—'}</small></td><td><b>{row.matchStatus === 'REUSE' ? '复用' : row.matchStatus === 'CREATE' ? '新建' : row.matchStatus === 'CONFIRM' ? '待确认' : '已阻止'}</b><small>{row.message}</small></td></tr>)}</tbody>
                 </table>
               </div>
             </>}
@@ -1437,4 +1439,5 @@ export default function SampleTeamCenter({
     </main>
   );
 }
+
 

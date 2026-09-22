@@ -152,6 +152,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const metadataUpdate = action === 'UPDATE';
       const scheduleUpdate = metadataUpdate || action === 'SCHEDULE';
       const taskType = metadataUpdate && body.taskType !== undefined ? sampleTaskType(body.taskType) : existing.taskType;
+      if (taskType === 'REPEAT' && existing.dataPurpose !== 'PRODUCTION') throw new SamplePlanError('老产品制作请建立正式样品计划，测试任务保留原记录');
       if (taskType !== existing.taskType && (existing.completedQuantity || existing.activeSubmissionId || existing.submissionRevision || await tx.sampleDataEntry.count({ where: { taskId: existing.id, deletedAt: null } }) || await tx.samplePhoto.count({ where: { taskId: existing.id, deletedAt: null } }) || (await tx.sampleDraftSection.findMany({ where: { taskId: existing.id } })).some(s => sampleDraftSectionHasData(s.payload))))
         throw new SamplePlanError('任务已有采集、审核或完成记录，请保留原任务，另建本次制作计划', 409);
       const planWeek = scheduleUpdate && body.planWeekStartDate !== undefined ? sampleWeek(body.planWeekStartDate) : existing.planWeekStartDate?.toISOString().slice(0, 10) || null;
@@ -174,6 +175,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         : null;
       if (metadataUpdate && !customerLevel) throw new Error('INVALID_SAMPLE_LEVEL');
       if (sampleQuantity !== null && sampleQuantity < existing.completedQuantity) throw new SamplePlanError('计划数量不能少于已完成数量');
+      if (metadataUpdate && existing.dataPurpose === 'PRODUCTION' && body.sampleQuantity !== undefined && (!sampleQuantity || sampleQuantity < 1)) throw new SamplePlanError('正式样品计划数量须为正整数');
       const updated = await tx.sampleTask.updateMany({
         where: { id: existing.id, version: expectedVersion },
         data: {

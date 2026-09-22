@@ -36,6 +36,9 @@ const patch = (task, input, expected = 200) => req(input.action, `/api/sample-ta
 for (const task of [repeat,fresh]) {
   const materials = (await req('sample material task exists', `/api/sample-tasks/${task.id}/materials`)).task;
   assert.equal(materials.sampleTaskId, task.id); assert.equal(materials.status, 'pending');
+  const requirements = ['PURCHASED','CUSTOMER'].map((supplySource,i)=>({id:'line-'+i,model:'CN-'+i,quantity:5,prepared:0,unit:'个',supplySource}));
+  const saved = (await req('save sample material demand', `/api/sample-tasks/${task.id}/materials`, { version:materials.version,requirements },200,'PATCH')).task;
+  await req('cannot confirm incomplete material', `/api/sample-tasks/${task.id}/materials`, { version:saved.version,requirements,confirm:true },409,'PATCH');
 }
 const filtered = await req('repeat weekly summary', `/api/sample-tasks?view=ALL&taskType=REPEAT&week=${week}&summary=true&keyword=${tag}`);
 assert.equal(filtered.tasks.length, 1); assert.equal(filtered.tasks[0].id, repeat.id); assert.equal(filtered.tasks[0].photos.length, 0);
@@ -69,6 +72,13 @@ fresh=await detail(fresh); fresh=(await patch(fresh,{action:'COMPLETE',confirmNo
 for (const task of [repeat,fresh]) {
   const goods=(await req('sample finished warehouse source',`/api/finished-goods?sampleTaskId=${task.id}&filter=all&scope=all`)).data;
   assert.equal(goods.rows.reduce((n,r)=>n+r.pending,0),5);assert.ok(goods.rows.every(r=>r.sampleTaskId===task.id && r.note.startsWith('样品完成') && r.productionWorkDate===today));
+  const source=goods.rows[0];
+  await req('receive sample finished stock','/api/finished-goods',{action:'RECEIVE',lotId:source.lotId,quantity:source.pending,version:source.version,checked:true});
+  let lot=(await req('read sample receipt evidence',`/api/finished-goods?lotId=${source.lotId}`)).data.lot;
+  assert.equal(lot.pending,0);assert.equal(lot.available,source.pending);
+  await req('ship sample from finished warehouse','/api/finished-goods',{action:'QUICK_SHIP',lotId:lot.id,quantity:1,version:lot.version,checked:true});
+  lot=(await req('read sample shipment evidence',`/api/finished-goods?lotId=${source.lotId}`)).data.lot;
+  assert.equal(lot.available,source.pending-1);assert.ok(lot.ledger.some(e=>e.kind==='SHIP' && e.quantity===1));assert.match(lot.note,/样品完成/);
 }
 const old=(await req('find completed repeat',`/api/sample-tasks?view=COMPLETED&taskType=REPEAT&week=${week}&summary=true&keyword=${tag}`)).tasks;assert.equal(old[0].id,repeat.id);
 await req('download branch export',`/api/sample-tasks/export?view=ALL&taskType=REPEAT&week=${week}&keyword=${tag}`);
