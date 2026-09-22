@@ -106,7 +106,7 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_purchasing_ci'
           npx prisma migrate deploy
-          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-notifications.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/drawing-plan-week-integration.test.ts
+          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-notifications.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
       - name: Issue work order PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

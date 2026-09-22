@@ -11,7 +11,7 @@ export async function POST(_req: Request, { params }: { params: { fileId: string
   try {
     const user = await requireUser();
     const deletedFile = await prisma.drawingLibraryFile.findFirst({
-      where: { id: params.fileId, deletedAt: { not: null }, libraryItem: { deletedAt: null } },
+      where: { id: params.fileId, deletedAt: { not: null }, retiredForReplacementAt: null, libraryItem: { deletedAt: null } },
       include: { category: { select: { code: true } } },
     });
     if (!deletedFile) return NextResponse.json({ ok: false, error: '回收站中未找到该文件' }, { status: 404 });

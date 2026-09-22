@@ -368,17 +368,19 @@ export default function SampleTeamCenter({
   user,
   mode,
   modeDrawerInitiallyOpen = false,
+  modalContext,
 }: {
   user: CurrentUserDTO;
   mode: CenterMode;
   modeDrawerInitiallyOpen?: boolean;
+  modalContext?: { taskId: string; queue: string[]; onClose: () => void };
 }) {
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [taskType, setTaskType] = useState<'NEW' | 'REPEAT'>('NEW');
   const [planWeek, setPlanWeek] = useState(sampleCurrentWeek);
   const [includeCarry, setIncludeCarry] = useState(false);
-  const [planningDetailOpen, setPlanningDetailOpen] = useState(false);
+  const [planningDetailOpen, setPlanningDetailOpen] = useState(!!modalContext);
   const detailOpenRef = useRef(false); detailOpenRef.current = planningDetailOpen;
   const [totalQuantity, setTotalQuantity] = useState(0);
   const [globalCompleted, setGlobalCompleted] = useState(0);
@@ -387,11 +389,13 @@ export default function SampleTeamCenter({
   const [commandMenu, setCommandMenu] = useState(false);
   function safelyLeave(action: () => void) { if (captureDirty) setLeaveAction(() => action); else action(); }
   function navigateDetail(tab: DetailTab) { safelyLeave(() => { setDetailTab(tab); setCaptureDirty(false); setRefreshToken(v=>v+1); }); }
-  function closeDetail() { safelyLeave(() => { setPlanningDetailOpen(false); setCaptureDirty(false); setRefreshToken(v=>v+1); }); }
+  function closeDetail() { safelyLeave(() => { setPlanningDetailOpen(false); setCaptureDirty(false); setRefreshToken(v=>v+1);
+    if (window.history.state?.sampleModal === historyMarker.current) window.history.back();
+    modalContext?.onClose(); }); }
   const [detailTask, setDetailTask] = useState<SampleTaskDTO | null>(null);
   const [tasks, setTasks] = useState<SampleTaskDTO[]>([]);
   const [summary, setSummary] = useState<SampleTeamSummaryDTO>(emptySummary);
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(modalContext?.taskId || '');
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [taskView, setTaskView] = useState<TaskViewFilter>('UNFINISHED');
@@ -450,6 +454,30 @@ export default function SampleTeamCenter({
   const initialSelectedRef = useRef(false);
   const lastDetailTaskRef = useRef('');
 
+  const detailQueue = modalContext?.queue || tasks.map(t => t.id);
+  const historyMarker = useRef(`sample-modal-${Math.random().toString(36).slice(2)}`);
+  const backAction = useRef(() => {});
+  backAction.current = () => {
+    if (captureDirty || photoViewerIndex !== null || editOpen || qrTask || packageDialog || deletePreview) {
+      window.history.pushState({ ...window.history.state, sampleModal: historyMarker.current }, '', window.location.href);
+      if (photoViewerIndex !== null) { setPhotoViewerIndex(null); return; }
+      if (editOpen) { setEditOpen(false); return; }
+      if (qrTask) { setQrTask(null); return; }
+      if (packageDialog) { setPackageDialog(null); return; }
+      if (deletePreview) { setDeletePreview(null); return; }
+    }
+    closeDetail();
+  };
+  useEffect(() => {
+    if (!planningDetailOpen || mode !== 'planning') return;
+    const base = new URL(window.location.href);
+    base.searchParams.delete('taskId'); base.searchParams.delete('from');
+    window.history.replaceState(window.history.state, '', base);
+    window.history.pushState({ ...window.history.state, sampleModal: historyMarker.current }, '', base);
+    const back = () => { if (window.history.state?.sampleModal !== historyMarker.current) backAction.current(); };
+    window.addEventListener('popstate', back);
+    return () => window.removeEventListener('popstate', back);
+  }, [planningDetailOpen, mode]);
   const [todayKey, setTodayKey] = useState(chinaTodayKey);
   useEffect(() => {
     const refresh = () => { if (document.visibilityState !== 'hidden') { setTodayKey(chinaTodayKey()); setRefreshToken(value => value+1); } };
@@ -473,6 +501,7 @@ export default function SampleTeamCenter({
   function clearFilters() { setKeyword(''); setFilters({ customer: '', dateBy: 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: 'issued_desc' }); setPage(1); setFocusId(''); setPlanWeek(''); setIncludeCarry(false); setTaskView(taskView === 'COMPLETED' ? 'COMPLETED' : 'ALL'); }
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    if (modalContext) { setQueryReady(true); return; }
     const view = params.get('sampleView') as TaskViewFilter;
     if (SAMPLE_VIEWS.includes(view)) { setTaskView(view); if (view === 'COMPLETED' || view === 'ALL') setPlanWeek(''); if (view === 'COMPLETED') setFilters(v=>({...v,dateBy:'completed',sort:'completed_desc'})); }
     const id = params.get('taskId');
@@ -513,7 +542,7 @@ export default function SampleTeamCenter({
   }, [createOpen, editOpen, importOpen, moreFilters]);
 
   useEffect(() => {
-    if (!queryReady) return;
+    if (!queryReady || modalContext) return;
     const controller = new AbortController();
     setLoading(true);
     setError('');
@@ -1076,8 +1105,8 @@ export default function SampleTeamCenter({
 
   const statusBar = <section className="su-status" aria-label="样品任务状态筛选"><div className="su-primary-scopes">{(['UNFINISHED','COMPLETED','ALL'] as const).map(view=><button key={view} className={taskView===view?'active':''} aria-pressed={taskView===view} onClick={()=>changeView(view)}>{view==='UNFINISHED'?'未完成':view==='COMPLETED'?'已完成':'全部'}{view==='COMPLETED'&&<b title="此类型全部历史已完成数量">{loading ? '…' : globalCompleted}</b>}</button>)}</div><div className="su-attention-scopes">{taskViews.filter(v=>['DRAWING_REVIEW','SHORTAGE',...(taskType==='NEW'?['PENDING_REVIEW']:[])].includes(v.key)).map(v=><button key={v.key} className={taskView===v.key?'active':''} onClick={()=>changeView(v.key)}>{v.icon}{v.label}<b>{v.count}</b></button>)}</div><span className="su-scope-caption">{planWeek==='unplanned'?'未安排计划周':planWeek?`${planWeek} 当周`:'所有计划周'} · 当前 {pagination.total} 项 / {totalQuantity.toLocaleString()} 件</span></section>;
   return (
-    <main className={`sample-team-page sample-branches-page hm-workbench-root hm-workbench-navigation-overlay ${mode === 'planning' ? 'sp-planning-page' : ''}`}>
-      <AppWorkbenchHeader
+    <main style={modalContext ? { display: 'contents' } : undefined} className={`sample-team-page sample-branches-page hm-workbench-root hm-workbench-navigation-overlay ${mode === 'planning' ? 'sp-planning-page' : ''}`}>
+      {!modalContext && <AppWorkbenchHeader
         user={user}
         activeHref={moduleConfig.activeHref}
         subtitle={moduleConfig.subtitle}
@@ -1087,9 +1116,9 @@ export default function SampleTeamCenter({
         onSidebarExpandedChange={handleNavigationExpandedChange}
         moduleModeSwitcher={{ mode: 'sample', drawerId: moduleConfig.drawerId, drawerOpen: modeDrawer.open, onToggle: toggleModeDrawer, openFromSidebar: false }}
         menuItems={[{ label: '退出登录', onSelect: () => { void logout(); } }]}
-      />
+      />}
 
-      <div className={`sample-team-main${modeDrawer.open ? ' mode-drawer-open' : ''}`}>
+      {!modalContext && <div className={`sample-team-main${modeDrawer.open ? ' mode-drawer-open' : ''}`}>
         <header className="sample-team-commandbar">
           <div className="sample-team-title">
             <span id="sample-team-navigation-trigger" className="sample-team-navigation-trigger" />
@@ -1167,10 +1196,11 @@ export default function SampleTeamCenter({
 
 
         </section>}
-      </div>
+      </div>}
 
-          <SamplePlanningDetail planning={mode === 'planning'} open={planningDetailOpen && !packageDialog && !editOpen && !qrTask && !deletePreview && photoViewerIndex === null} title={selected?.taskType==='REPEAT'?'样品制作':'样品试制'} onClose={closeDetail} navigation={<div className="su-detail-nav"><span>{tasks.findIndex(t=>t.id===selectedId)+1} / {tasks.length}</span>{[-1,1].map(direction=><button key={direction} aria-label={direction<0?'上一项样品':'下一项样品'} disabled={!tasks[tasks.findIndex(t=>t.id===selectedId)+direction]} onClick={()=>safelyLeave(()=>{const next=tasks[tasks.findIndex(t=>t.id===selectedId)+direction];if(next){setSelectedId(next.id);setDetailTask(null);setCaptureDirty(false);}})}>{direction<0?'上一项':'下一项'}</button>)}</div>}>
+          <SamplePlanningDetail planning={mode === 'planning'} open={planningDetailOpen && !packageDialog && !editOpen && !qrTask && !deletePreview && photoViewerIndex === null} title={selected?.taskType==='REPEAT'?'样品制作':'样品试制'} onClose={closeDetail} navigation={<div className="su-detail-nav"><span>{detailQueue.indexOf(selectedId)+1} / {detailQueue.length}</span>{[-1,1].map(direction=><button key={direction} aria-label={direction<0?'上一项样品':'下一项样品'} disabled={!detailQueue[detailQueue.indexOf(selectedId)+direction]} onClick={()=>safelyLeave(()=>{const next=detailQueue[detailQueue.indexOf(selectedId)+direction];if(next){setSelectedId(next);setDetailTask(null);setCaptureDirty(false);}})}>{direction<0?'上一项':'下一项'}</button>)}</div>}>
           <section className="sample-task-detail">
+            {!selected && <div className="sb-empty" role="status">{error ? <><strong>{error}</strong><button onClick={() => { setError(''); setRefreshToken(v => v + 1); }}>重新加载</button></> : <><Loader2 className="spin"/>正在读取样品详情…</>}</div>}
             {selected && detailTask?.id !== selected.id && <div className="sb-empty"><Loader2 className="spin"/>正在读取任务详情</div>}
             {selected && detailTask?.id === selected.id && <>
               <header className="sample-detail-head">

@@ -48,6 +48,7 @@ export async function GET(req: NextRequest) {
       }),
       prisma.drawingLibraryFile.findMany({
         where: {
+          retiredForReplacementAt: null,
           deletedAt: { not: null },
           libraryItem: {
             deletedAt: null,

@@ -11,6 +11,9 @@ import { safeFilename, validateFileContent } from '@/lib/validation';
 import { inspectMediaImage } from '@/lib/media-assets';
 import { lockFixtureBusiness, qfJson } from '@/lib/quality-fixture-service';
 import { FixtureError } from '@/lib/quality-fixture-domain';
+import { retireReplacedDrawing } from '@/lib/drawing-replacement';
+import { drawingFileHistory } from '@/lib/drawing-file-history';
+import { lockSopScope } from '@/lib/sop/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,6 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const displayName = cleanText(form.get('displayName'), 160);
     const remark = cleanText(form.get('remark'), 500);
     const replaceFileId = cleanText(form.get('replaceFileId'), 100);
+    const discardPrevious = form.get('discardPrevious') === 'true';
     const up = form.get('file');
     if (!categoryId && !categoryName) return NextResponse.json({ ok: false, error: '请选择资料分类' }, { status: 400 });
     if (!(up instanceof File)) return NextResponse.json({ ok: false, error: '请选择文件' }, { status: 400 });
@@ -57,6 +61,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         : prisma.resourceCategory.findFirst({ where: { OR: [{ name: categoryName }, { code: categoryName }] } }),
     ]);
     if (!item || !category) return NextResponse.json({ ok: false, error: '图纸资料记录或分类不存在' }, { status: 404 });
+    if (discardPrevious && (!replaceFileId || !['drawing', 'sop'].includes(category.code))) return NextResponse.json({ ok: false, error: '请选择需要更换的图纸或 SOP' }, { status: 400 });
+
+    // A retry after a lost response returns the committed replacement, never creates a second file.
+    if (discardPrevious) {
+      const previous = await prisma.drawingReplacementJob.findUnique({ where: { sourceFileId: replaceFileId! } });
+      if (previous && previous.libraryItemId === item.id && previous.actorId === user.id) {
+        const done = await prisma.drawingLibraryFile.findFirst({ where: { id: previous.replacementFileId, deletedAt: null, isCurrent: true, sha256 }, include: {
+          category: { select: { id: true, name: true, code: true, sortOrder: true } }, uploadedBy: { select: { displayName: true, username: true } },
+        } });
+        if (done) return NextResponse.json({ ok: true, file: serializeDrawingLibraryFile(done), replacement: true });
+      }
+    }
 
     const key = `drawing-library/${item.id}/${category.code}/${ymd(new Date())}/${crypto.randomUUID()}-${safeFilename(up.name)}`;
     await putObject({ key, body, contentType: mimeType, originalName: up.name });
@@ -65,13 +81,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     try {
       result = await prisma.$transaction(async tx => {
         await lockFixtureBusiness(tx);
+        if (discardPrevious) await lockSopScope(tx, item.id);
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`drawing-library:${item.id}:${category.id}`}))`;
         const replaces = replaceFileId ? await tx.drawingLibraryFile.findFirst({ where: { id: replaceFileId, libraryItemId: item.id,
           categoryId: category.id, deletedAt: null, isCurrent: true } }) : null;
         if (replaceFileId && !replaces) throw new FixtureError('待替换文件已变化，请刷新后选择当前版本', 'FIXTURE_CONFLICT', 409);
         const files = await tx.drawingLibraryFile.findMany({
           where: { libraryItemId: item.id, categoryId: category.id },
-          select: { version: true },
+          select: { id: true, version: true, originalName: true, createdAt: true, supersedesFileId: true, sourceType: true, firstUploadedAt: true },
         });
         const version = `V1.${files.reduce((n, existing) => Math.max(n, versionMinor(existing.version)), -1) + 1}`;
         const mediaAsset = await tx.mediaAsset.create({ data: {
@@ -99,6 +116,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             uploadedById: user.id,
             remark,
             supersedesFileId: replaces?.id,
+            firstUploadedAt: replaces ? drawingFileHistory(replaces, files).firstUploadedAt : null,
           },
           include: {
             category: { select: { id: true, name: true, code: true, sortOrder: true } },
@@ -106,13 +124,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           },
         });
         if (replaces) {
-          await tx.drawingLibraryFile.update({ where: { id: replaces.id }, data: { isCurrent: false } });
+          if (discardPrevious) await retireReplacedDrawing(tx, replaces, created, user, remark || '');
+          else await tx.drawingLibraryFile.update({ where: { id: replaces.id }, data: { isCurrent: false } });
           await tx.qfEvent.create({ data: { entityType: 'DOCUMENT_RETURN', entityId: item.id, action: 'REPLACE_DOCUMENT',
             actorId: user.id, actorName: user.displayName || user.username, reason: remark || '',
             snapshot: qfJson({ before: { id: replaces.id, name: replaces.displayName || replaces.originalName, version: replaces.version },
               after: { id: created.id, name: created.displayName || created.originalName, version: created.version } }) } });
         }
         await tx.drawingLibraryItem.update({ where: { id: item.id }, data: { updatedAt: new Date() } });
+        if (discardPrevious) return { file: created, sync: { queued: true } };
         await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: item.id });
         const sync = await synchronizeDrawingLibraryWorkOrderStatus(tx, item.id);
         return { file: created, sync };
@@ -129,8 +149,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       targetType: 'drawing_library_file',
       targetId: file.id,
       detail: { libraryKey: item.libraryKey, categoryCode: category.code, fileName: up.name, fileSize: up.size, version, ...sync },
-    });
-    return NextResponse.json({ ok: true, file: serializeDrawingLibraryFile(file), sync });
+    }).catch(error => console.error('[drawing-upload-log]', error instanceof Error ? error.name : 'Log failure'));
+    return NextResponse.json({ ok: true, file: serializeDrawingLibraryFile(file), sync, replacement: discardPrevious });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     if (e instanceof FixtureError) return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });

@@ -1,7 +1,7 @@
 name: Sample Branch Preflight
 on:
   push:
-    branches: ["codex/sample-branches-v134218", "codex/sample-planning-warehouse-v134220", "codex/sample-unified-workbench-v134221"]
+    branches: ["codex/drawing-replacement-v134223", "codex/sample-branches-v134218", "codex/sample-planning-warehouse-v134220", "codex/sample-unified-workbench-v134221"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -35,7 +35,7 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run test:sample-integration
       - run: npm run test:material-follow-up-integration
-      - run: npx tsx --test --test-concurrency=1 tests/drawing-plan-week-integration.test.ts tests/finished-goods-integration.test.ts
+      - run: npx tsx --test --test-concurrency=1 tests/drawing-plan-week-integration.test.ts tests/finished-goods-integration.test.ts tests/drawing-replacement-integration.test.ts
       - run: npm run build
       - name: Real sample HTTP and storage acceptance
         env:

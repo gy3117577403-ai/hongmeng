@@ -10,6 +10,7 @@ function itemFixture(overrides: Partial<DrawingLibraryItemWithFiles> = {}): Draw
   return {
     id: 'item-1',
     fixtureRequired: null,
+    needsConfirmation: false,
     customerName: '测试客户',
     customerCode: '10001',
     productName: '测试线束',
@@ -60,6 +61,7 @@ test('drawing library serialization exposes live SOP metadata and PDF control mo
       sourcePdfOverlayVersionId: 'overlay-1',
       supersedesFileId: null,
       isCurrent: true,
+      retiredForReplacementAt: null, firstUploadedAt: null,
       sourcePdfOverlayVersion: { controlMode: 'controlled' },
     }],
   }), [{ id: 'category-sop', name: 'SOP指导书', code: 'sop', sortOrder: 2 }]);
@@ -105,6 +107,7 @@ test('legacy files and deleted SOP metadata are not mislabeled', () => {
       sourcePdfOverlayVersionId: null,
       supersedesFileId: null,
       isCurrent: true,
+      retiredForReplacementAt: null, firstUploadedAt: null,
     }],
   }), [{ id: 'category-sop', name: 'SOP指导书', code: 'sop', sortOrder: 2 }]);
 
@@ -135,6 +138,7 @@ test('files are never guessed as uncontrolled when version metadata was not join
       sourcePdfOverlayVersionId: 'overlay-controlled',
       supersedesFileId: null,
       isCurrent: true,
+      retiredForReplacementAt: null, firstUploadedAt: null,
     }],
   }), [{ id: 'category-sop', name: 'SOP指导书', code: 'sop', sortOrder: 2 }]);
 
@@ -164,6 +168,7 @@ test('rich SOP publications expose their own controlled status', () => {
       sourcePdfOverlayVersionId: null,
       supersedesFileId: null,
       isCurrent: true,
+      retiredForReplacementAt: null, firstUploadedAt: null,
       sourceSopVersion: { controlMode: 'controlled' },
     }],
   }), [{ id: 'category-sop', name: 'SOP指导书', code: 'sop', sortOrder: 2 }]);

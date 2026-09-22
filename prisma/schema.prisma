@@ -3221,6 +3221,7 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
+  needsConfirmation Boolean @default(false) @map("needs_confirmation")
   documentReturns QfDocumentReturn[]
   reviewAttachments QfReviewAttachment[]
   fixtureRequired Boolean? @map("fixture_required")
@@ -4428,6 +4429,8 @@ model DocumentDisplaySetting {
 }
 
 model DrawingLibraryFile {
+  retiredForReplacementAt DateTime? @map("retired_for_replacement_at")
+  firstUploadedAt DateTime? @map("first_uploaded_at")
   documentReturns QfDocumentReturn[] @relation("ReturnedFile")
   returnResponses QfDocumentReturn[] @relation("ResponseFile")
   id                          String              @id @default(uuid())
@@ -4478,6 +4481,28 @@ model DrawingLibraryFile {
   @@index([libraryItemId, categoryId, isCurrent, deletedAt])
   @@index([supersedesFileId])
   @@map("drawing_library_files")
+}
+
+model DrawingReplacementJob {
+  id String @id @default(uuid())
+  sourceFileId String @unique
+  replacementFileId String @unique
+  libraryItemId String
+  actorId String
+  actorName String
+  reason String @default("")
+  objectKeys Json
+  syncPending Boolean @default(true)
+  purgePending Boolean @default(true)
+  attempts Int @default(0)
+  lastError String?
+  retryAt DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([syncPending, retryAt])
+  @@index([purgePending, retryAt])
+  @@map("drawing_replacement_jobs")
 }
 
 model OperationLog {

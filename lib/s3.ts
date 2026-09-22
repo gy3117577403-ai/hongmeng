@@ -1,4 +1,4 @@
-import {DeleteObjectCommand,GetObjectCommand,PutObjectCommand,S3Client} from '@aws-sdk/client-s3';
+import {DeleteObjectCommand,DeleteObjectsCommand,ListObjectVersionsCommand,GetObjectCommand,PutObjectCommand,S3Client} from '@aws-sdk/client-s3';
 import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 import {createHash} from 'node:crypto';
 import {Readable} from 'stream';
@@ -11,6 +11,20 @@ export function s3(){internalClient??=client(env('S3_ENDPOINT'));return internal
 function publicS3(){externalClient??=client(process.env.S3_PUBLIC_ENDPOINT||env('S3_ENDPOINT'));return externalClient}
 export async function putObject(input:{key:string;body:Buffer;contentType:string;originalName:string}){await s3().send(new PutObjectCommand({Bucket:bucket(),Key:input.key,Body:input.body,ContentType:input.contentType,Metadata:{originalName:encodeURIComponent(input.originalName)}}))}
 export async function deleteObject(key:string){await s3().send(new DeleteObjectCommand({Bucket:bucket(),Key:key}))}
+/** Delete exact-key versions as well as delete markers; prefix neighbours are never removed. */
+export async function purgeObjectVersions(key: string) {
+  let keyMarker: string | undefined, versionMarker: string | undefined;
+  do {
+    const page = await s3().send(new ListObjectVersionsCommand({ Bucket: bucket(), Prefix: key, KeyMarker: keyMarker, VersionIdMarker: versionMarker }));
+    const objects = [...(page.Versions || []), ...(page.DeleteMarkers || [])].filter(o => o.Key === key).map(o => ({ Key: key, VersionId: o.VersionId }));
+    if (objects.length) {
+      const deleted = await s3().send(new DeleteObjectsCommand({ Bucket: bucket(), Delete: { Objects: objects, Quiet: true } }));
+      if (deleted.Errors?.length) throw new Error('旧附件版本清理未完成');
+    }
+    keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+    versionMarker = page.IsTruncated ? page.NextVersionIdMarker : undefined;
+  } while (keyMarker);
+}
 export type S3CleanupSummary={requested:number;deleted:number;failed:number};
 export function s3ObjectKeyFingerprint(key:string){return createHash('sha256').update(key).digest('hex').slice(0,12)}
 function cleanupErrorName(reason:unknown){

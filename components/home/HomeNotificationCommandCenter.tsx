@@ -1,4 +1,5 @@
 'use client';
+import type { CurrentUserDTO } from '@/types';
 
 import {
   AlertTriangle,
@@ -159,6 +160,7 @@ function readableRequestError(reason: unknown, fallback: string): string {
 }
 
 export default function HomeNotificationCommandCenter({
+  user,
   enabled,
   onUnreadCountChange,
   onNotificationsChange,
@@ -166,6 +168,7 @@ export default function HomeNotificationCommandCenter({
   onFocusClear,
   refreshKey,
 }: {
+  user: CurrentUserDTO;
   enabled: boolean;
   onUnreadCountChange?: (count: number) => void;
   onNotificationsChange?: () => void | Promise<void>;
@@ -580,7 +583,7 @@ export default function HomeNotificationCommandCenter({
           <button type="button" className={sampleOpen ? 'active' : ''} aria-pressed={sampleOpen} onClick={() => setSampleState(current => ({ ...current, active: true }))}><FlaskConical aria-hidden="true"/><span>样品</span><b>{sampleCounts.UNFINISHED}</b></button>
         </nav>
 
-        {sampleOpen ? <HomeSampleTasks state={sampleState} onChange={setSampleState} onCounts={setSampleCounts} onNavigate={saveSampleReturn} refreshKey={refreshKey}/> : <div className="hm-hcc-message-pane">
+        {sampleOpen ? <HomeSampleTasks user={user} state={sampleState} onChange={setSampleState} onCounts={setSampleCounts} onNavigate={saveSampleReturn} refreshKey={refreshKey}/> : <div className="hm-hcc-message-pane">
           <div className="hm-hcc-message-toolbar">
             <label><Search aria-hidden="true" /><input aria-label="搜索消息" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索消息" /></label>
             {view === 'pending' && <button type="button" className={unreadOnly ? 'active' : ''} aria-pressed={unreadOnly} onClick={() => setUnreadOnly(value => !value)}><Filter aria-hidden="true" />仅看未读</button>}

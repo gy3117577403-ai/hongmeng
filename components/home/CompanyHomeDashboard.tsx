@@ -832,6 +832,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
           </section>
 
           <HomeNotificationCommandCenter
+            user={user}
             enabled={canReadNotifications}
             refreshKey={data.generatedAt}
             focusRequest={focusRequest}

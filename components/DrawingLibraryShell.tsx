@@ -1,4 +1,5 @@
 'use client';
+import DrawingQuickActions from '@/components/DrawingQuickActions';
 import DrawingReturnNotice from '@/components/quality-fixtures/DrawingReturnNotice';
 import DocumentReturnPanel from '@/components/quality-fixtures/DocumentReturnPanel';
 import DrawingFileHistory, { fileTimeLabel } from '@/components/quality-fixtures/DrawingFileHistory';
@@ -252,6 +253,7 @@ export function DrawingLibraryShell({
   const restoredScrollKey = useRef('');
   const [filter, setFilter] = useState<DrawingFilter>('all');
   const [sopFilter, setSopFilter] = useState<SopFilter>('all');
+  const [confirmationFilter, setConfirmationFilter] = useState(false);
   const [customer, setCustomer] = useState('全部客户');
   const requestedActiveItem = initialItems.find(item => item.id === requestedItemId) || null;
   const initialPreviewItem = requestedActiveItem || (!requestedItemId ? initialItems[0] : null);
@@ -312,6 +314,7 @@ export function DrawingLibraryShell({
   const requestedItemLoadingRef = useRef('');
 
   const visibleItems = useMemo(() => items.filter(item => {
+    if (confirmationFilter && !item.needsConfirmation) return false;
     if (filter === 'review_failed' && !item.returnSummary?.some(r => ['OPEN','READY'].includes(r.status))) return false;
     if (filter === 'review_recheck' && !item.returnSummary?.some(r => r.status === 'REVIEWING')) return false;
     if (customer !== '全部客户' && item.customerName !== customer) return false;
@@ -319,7 +322,7 @@ export function DrawingLibraryShell({
     if (sopFilter === 'unset') return !item.sopMetadata;
     if (sopFilter === 'missing_drawing') return item.sopMetadata?.drawingStatus === 'missing';
     return item.sopMetadata?.sopStage === sopFilter;
-  }), [customer, items, sopFilter, filter]);
+  }), [customer, items, sopFilter, filter, confirmationFilter]);
   const referenceResolutionPending = !selectedId && (referenceResolving || !!missingReference);
   const selectedItem = visibleItems.find(item => item.id === selectedId)
     || (!referenceResolutionPending ? visibleItems[0] : null);
@@ -340,10 +343,10 @@ export function DrawingLibraryShell({
   const activeStructuredCount = activeStructuredRecords.length + activeConnectorParameters.length;
   const showStructuredPreview = activeStructuredCount > 0 && (previewMode === 'structured' || !selectedFile);
   const isSopCategory = activeCategory?.code === 'sop';
-  const hasActiveFilters = !!week || !!keyword.trim() || filter !== 'all' || customer !== '全部客户' || sopFilter !== 'all';
+  const hasActiveFilters = !!week || !!keyword.trim() || filter !== 'all' || customer !== '全部客户' || sopFilter !== 'all' || confirmationFilter;
   const activeFilterLabel = filterOptions.find(([key]) => key === filter)?.[1] || '全部';
   const visibleFileCount = useMemo(() => visibleItems.reduce((total, item) => total + item.fileCount, 0), [visibleItems]);
-  const scrollKey = 'drawing-list-scroll:' + JSON.stringify([week, keyword, filter, customer, sopFilter]);
+  const scrollKey = 'drawing-list-scroll:' + JSON.stringify([week, keyword, filter, customer, sopFilter, confirmationFilter]);
   useEffect(() => {
     if (!filtersRestored || loading || !visibleItems.length || restoredScrollKey.current === scrollKey) return;
     restoredScrollKey.current = scrollKey;
@@ -749,7 +752,7 @@ export function DrawingLibraryShell({
       setWeek('');
       setFilter('all');
       setCustomer('全部客户');
-      setSopFilter('all');
+      setSopFilter('all'); setConfirmationFilter(false);
     });
   }
 
@@ -1079,9 +1082,9 @@ export function DrawingLibraryShell({
           <PlanWeekFilter compact value={week} onChange={changeWeek} />
           <select className="library-customer" aria-label="客户筛选" value={customer} onChange={e => { const value=e.target.value; requestPreviewLeave(() => setCustomer(value)); }}>{customers.map(item => <option key={`${item.customerName}-${item.customerCode || ''}`} value={item.customerName}>{item.customerName}（{item.itemCount}）</option>)}{!customers.length && <option value="全部客户">全部客户（0）</option>}</select>
           <button className="library-rejected" type="button" aria-pressed={filter === 'review_failed'} onClick={() => requestPreviewLeave(() => setFilter(filter === 'review_failed' ? 'all' : 'review_failed'))}><FileWarning size={15} />审核不通过</button>
-          <details className="library-popover-menu library-filter-menu"><summary>更多筛选{(filter !== 'all' && filter !== 'review_failed' || sopFilter !== 'all') && <i />}</summary><div>
-            <label>资料状态<select aria-label="资料状态筛选" value={filter} onChange={e => { const value=e.target.value as DrawingFilter; requestPreviewLeave(() => setFilter(value)); }}>{filterOptions.map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
-            <label>SOP 状态<select aria-label="SOP 状态筛选" value={sopFilter} onChange={e => { const value=e.target.value as SopFilter; requestPreviewLeave(() => setSopFilter(value)); }}>{sopFilterOptions.map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+          <details className="library-popover-menu library-filter-menu"><summary>更多筛选{(filter !== 'all' && filter !== 'review_failed' || sopFilter !== 'all' || confirmationFilter) && <i />}</summary><div>
+            <label className="dq-filter-confirm"><input type="checkbox" checked={confirmationFilter} onChange={e => { const checked=e.target.checked; requestPreviewLeave(() => setConfirmationFilter(checked)); }}/>仅需确认</label><label>资料状态<select aria-label="资料状态筛选" value={filter} onChange={e => { const value=e.target.value as DrawingFilter; requestPreviewLeave(() => setFilter(value)); }}>{filterOptions.map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+            <label>资料阶段<select aria-label="SOP 状态筛选" value={sopFilter} onChange={e => { const value=e.target.value as SopFilter; requestPreviewLeave(() => setSopFilter(value)); }}>{sopFilterOptions.map(([key,label]) => <option key={key} value={key}>{label}</option>)}</select></label>
           </div></details>
           <button className="library-clear" type="button" disabled={!hasActiveFilters} onClick={clearFilters}>清除筛选</button>
           {(filter !== 'all' && filter !== 'review_failed' || sopFilter !== 'all') && <div className="library-filter-chips">{filter !== 'all' && filter !== 'review_failed' && <button type="button" onClick={() => requestPreviewLeave(() => setFilter('all'))}>{activeFilterLabel}<span>×</span></button>}{sopFilter !== 'all' && <button type="button" onClick={() => requestPreviewLeave(() => setSopFilter('all'))}>{sopFilterOptions.find(([key]) => key === sopFilter)?.[1]}<span>×</span></button>}</div>}
@@ -1169,6 +1172,11 @@ export function DrawingLibraryShell({
 
               <div className="library-document-head">
                 <div className="library-document-identity"><h1 title={selectedItem.specification}>{selectedItem.specification}</h1><p title={`${selectedItem.customerName} · ${selectedItem.productName || ''}`}>{selectedItem.customerName}{hasText(selectedItem.productName) ? ` · ${selectedItem.productName}` : ''}</p></div>
+                <DrawingQuickActions key={selectedItem.id} item={selectedItem} categories={categories} enabled={canManageDrawing} onMessage={setMsg} onChanged={async (fileId, categoryId) => {
+                  if (fileId) { setSelectedFileId(fileId); setActiveCategoryId(categoryId!); setQualityWarningMode(false); setPreviewMode('file'); }
+                  await loadData();
+                  window.dispatchEvent(new Event('quality-fixture-changed'));
+                }} />
                 <div className="drawing-head-actions">
                   {canManageDrawing && isSopCategory && (
                     <div className="drawing-sop-mode-switch" role="group" aria-label="SOP 查看模式">

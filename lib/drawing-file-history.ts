@@ -2,6 +2,7 @@ type HistoryFile = {
   id: string; supersedesFileId?: string | null; originalName: string; displayName?: string | null;
   version: string; sourceType?: string | null; sourceSopVersionId?: string | null; sourcePdfOverlayVersionId?: string | null;
   createdAt: Date; uploadedBy?: { displayName?: string | null; username: string } | null;
+  firstUploadedAt?: Date | null;
 };
 
 /** Content versions are immutable rows. Metadata updatedAt is deliberately not used. */
@@ -15,7 +16,7 @@ export function drawingFileHistory(file: HistoryFile, files: HistoryFile[]) {
   const oldest = history.at(-1)!;
   const originKnown = !oldest.supersedesFileId && oldest.sourceType === "MANUAL_UPLOAD";
   return {
-    firstUploadedAt: originKnown ? oldest.createdAt.toISOString() : null,
+    firstUploadedAt: file.firstUploadedAt?.toISOString() || (originKnown ? oldest.createdAt.toISOString() : null),
     contentChangedAt: file.supersedesFileId ? file.createdAt.toISOString() : null,
     recordedAt: file.createdAt.toISOString(),
     timeKind: file.sourceType === "MANUAL_UPLOAD" ? "UPLOAD" : file.sourceSopVersionId || file.sourcePdfOverlayVersionId ? "PUBLISH" : "RECORD",

@@ -180,6 +180,7 @@ export type ProductConnectorParameterBindingDTO = {
 };
 
 export type DrawingLibraryItemDTO = {
+  needsConfirmation?: boolean;
   returnSummary?: Array<{ id: string; fileId: string | null; kind: string; reason: string; status: string; returnedByName: string; createdAt: string; responseFileId: string | null }>;
   id: string;
   planBatchCount?: number;

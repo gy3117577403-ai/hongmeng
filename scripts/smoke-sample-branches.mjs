@@ -152,4 +152,40 @@ const unchangedSource=await detail(originalParameterSample);assert.equal(unchang
 const history=await req('null-week completed samples are reachable',`/api/sample-tasks?view=COMPLETED&week=unplanned&taskType=NEW&keyword=${tag}&summary=true`);assert.ok(history.tasks.some(t=>t.id===originalParameterSample.id));assert.ok(history.globalCompleted>=4);
 const records=await req('retained parameter conflict history',`/api/connector-parameters/conflicts?status=RESOLVED&keyword=${tag}`);assert.ok(records.items.some(item=>item.id===conflict.id&&item.resolution==='REPLACE'));
 
+// Document quick actions run against the same real HTTP/S3 runtime as the released image.
+const replacementTask=(await req('create replacement acceptance sample','/api/sample-tasks',{taskType:'REPEAT',customerName:tag,productName:'Sample cable',specification:tag+'-REPLACE',customerLevelCode:'A',sampleQuantity:2,planWeekStartDate:week,issuedDate:today,dueDate:today,plannedCompletionDate:today},201)).task;
+await approve(replacementTask);
+const productUrl=`/api/drawing-library/${replacementTask.drawingLibraryItemId}`;
+let product=(await req('read product before replacement',productUrl)).item;
+await req('restore lifecycle selector independently of SOP',productUrl+'/metadata',{sopStage:'validating',needsConfirmation:true},200,'PATCH');
+product=(await req('read saved lifecycle fields',productUrl)).item;assert.equal(product.sopMetadata.sopStage,'validating');assert.equal(product.needsConfirmation,true);
+const original=product.files[0];
+const signed=await fetch(base+`/api/drawing-library/files/${original.id}/download`,{headers:{Cookie:cookie},redirect:'manual'});
+assert.equal(signed.status,307);const oldObjectUrl=signed.headers.get('location');assert.ok(oldObjectUrl);
+const replacementForm=(content=bytes)=>{const form=new FormData();form.set('categoryId',original.categoryId);form.set('replaceFileId',original.id);form.set('discardPrevious','true');form.set('file',new Blob([content],{type:'application/pdf'}),'corrected.pdf');form.set('remark','Corrected dimensions');return form;};
+await req('invalid replacement preserves old document',productUrl+'/files/upload',replacementForm(new TextEncoder().encode('invalid pdf')),400);
+await req('old document still readable after failed upload',`/api/drawing-library/files/${original.id}/content`);
+const replaced=(await req('replace approved drawing without BOM',productUrl+'/files/upload',replacementForm())).file;
+const replay=(await req('lost response retry returns committed replacement',productUrl+'/files/upload',replacementForm())).file;assert.equal(replay.id,replaced.id);
+await req('old original cannot be previewed',`/api/drawing-library/files/${original.id}/content`,undefined,404);
+await req('old original cannot be restored',`/api/drawing-library/files/${original.id}/restore`,{},404);
+const trash=await req('retired original not in recycle bin','/api/drawing-library/trash?itemId='+product.id);assert.ok(!(trash.files||[]).some(f=>f.id===original.id));
+await req('replacement downloads real bytes',`/api/drawing-library/files/${replaced.id}/content`);
+let replacementPackage,objectDeleted=false;
+for(let attempt=0;attempt<40;attempt++){
+ const docs=await req('wait for replacement review synchronization',`/api/sample-tasks/${replacementTask.id}/documents`);
+ replacementPackage=docs.packages[0];
+ const object=await fetch(oldObjectUrl,{signal:AbortSignal.timeout(10000)});await object.arrayBuffer();objectDeleted=object.status===404;
+ if(objectDeleted&&replacementPackage?.drawingFiles?.some(f=>f.id===replaced.id)&&replacementPackage.status==='REVIEWING')break;
+ await new Promise(resolve=>setTimeout(resolve,1500));
+}
+assert.ok(objectDeleted,'old S3 original is physically removed, including previously signed download');
+assert.equal(replacementPackage.status,'REVIEWING');assert.equal(replacementPackage.supervisorId,null);assert.equal(replacementPackage.qualityId,null);
+assert.ok(replacementPackage.drawingFiles.some(f=>f.id===replaced.id));
+await req('quality rechecks replacement','/api/quality-fixtures',{action:'APPROVE',id:replacementPackage.id,version:replacementPackage.version,reviewRole:'QUALITY',confirmed:true});
+replacementPackage=(await req('read second replacement review',`/api/sample-tasks/${replacementTask.id}/documents`)).packages[0];
+await req('supervisor rechecks replacement','/api/quality-fixtures',{action:'APPROVE',id:replacementPackage.id,version:replacementPackage.version,reviewRole:'SUPERVISOR',confirmed:true});
+await req('replacement sample prints after both reviewers',`/sample-print/${replacementTask.id}`);
+product=(await req('quick states survive replacement',productUrl)).item;assert.equal(product.sopMetadata.sopStage,'validating');assert.equal(product.needsConfirmation,true);assert.ok(!product.files.some(f=>f.id===original.id));
+
 const output=process.env.SAMPLE_BRANCH_QA_OUTPUT || 'artifacts/sample-branches/http.json';await fs.mkdir(path.dirname(output),{recursive:true});await fs.writeFile(output,JSON.stringify({ok:true,tag,base,checks,taskIds:[repeat.id,fresh.id],note:'Disposable runtime only; image remains unmodified.'},null,2));console.log(`Sample branch HTTP acceptance: ${checks.length} checks passed`);

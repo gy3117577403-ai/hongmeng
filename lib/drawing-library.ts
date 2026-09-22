@@ -221,6 +221,7 @@ export function serializeDrawingLibraryItem(item: DrawingLibraryItemWithFiles, c
   return {
     id: item.id,
     customerName: item.customerName,
+    needsConfirmation: item.needsConfirmation || false,
     customerCode: item.customerCode,
     productName: item.productName,
     specification: item.specification,
