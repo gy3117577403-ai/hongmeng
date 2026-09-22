@@ -79,7 +79,7 @@ export async function synchronizeSampleWarehouse(tx: Tx, id: string, actor: Acto
     await tx.materialFollowUpTask.updateMany({ where: { warehouseTaskId: task.id, status: { notIn: ['RESOLVED','CANCELLED'] } }, data: { status: 'CANCELLED', latestProgress: '样品计划已取消，请核对已配物料', version: { increment: 1 } } });
   }
   if (cancelled || quantityChanged) {
-    await tx.warehouseMaterialTask.update({ where: { id: task.id }, data: { requirementsConfirmed: false, status: cancelled ? 'cancelled' : task.status === 'completed' ? 'pending' : task.status, completedAt: cancelled || task.status === 'completed' ? null : task.completedAt, version: { increment: 1 }, updatedById: actor.id } });
-    await tx.warehouseMaterialActivity.create({ data: { taskId: task.id, action: cancelled ? 'sample_cancelled' : 'sample_quantity_changed', actorId: actor.id, fromStatus: task.status, toStatus: cancelled ? 'cancelled' : 'pending', content: cancelled ? '样品计划取消，请核对已配物料；历史配料记录保留' : '样品计划数量已变更，请复核配料需求和已配数量' } });
+    await tx.warehouseMaterialTask.update({ where: { id: task.id }, data: { requirementsConfirmed: false, status: cancelled ? 'cancelled' : task.status === 'completed' ? 'pending' : task.status, completedAt: cancelled || task.status === 'completed' ? null : task.completedAt, completedById: cancelled || task.status === 'completed' ? null : task.completedById, version: { increment: 1 }, updatedById: actor.id } });
+    await tx.warehouseMaterialActivity.create({ data: { taskId: task.id, action: cancelled ? 'sample_cancelled' : 'sample_quantity_changed', actorId: actor.id, fromStatus: task.status, toStatus: cancelled ? 'cancelled' : task.status === 'completed' ? 'pending' : task.status, content: cancelled ? '样品计划取消，请核对已配物料；历史配料记录保留' : '样品计划数量已变更，请复核实物是否配齐' } });
   }
 }

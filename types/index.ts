@@ -310,12 +310,13 @@ export type SamplePhotoDTO = {
   contentUrl: string;
 };
 
-export type SampleScheduleChange = { at: string; actor: string; reason: string; fromDue: string | null; toDue: string | null; fromIssued: string | null; toIssued: string | null; fromWarning: number; toWarning: number };
+export type SampleScheduleChange = { fromWeek?: string | null; toWeek?: string | null; fromPlannedCompletion?: string | null; toPlannedCompletion?: string | null; at: string; actor: string; reason: string; fromDue: string | null; toDue: string | null; fromIssued: string | null; toIssued: string | null; fromWarning: number; toWarning: number };
 
 export type SampleTaskDTO = {
   id: string;
   taskType?: 'NEW' | 'REPEAT';
   planWeekStartDate?: string | null;
+  plannedCompletionDate?: string | null;
   documentReviewRequired?: boolean;
   approvedPackageId?: string | null;
   completedQuantity?: number;

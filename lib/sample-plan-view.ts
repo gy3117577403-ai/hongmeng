@@ -1,6 +1,6 @@
 import { chinaDateKey } from './china-date';
 
-export const SAMPLE_VIEWS = ['UNFINISHED', 'TODAY', 'SOON', 'OVERDUE', 'PLANNED', 'IN_PROGRESS', 'PENDING_REVIEW', 'COMPLETED', 'CANCELLED', 'ALL'] as const;
+export const SAMPLE_VIEWS = ['UNFINISHED', 'TODAY', 'SOON', 'OVERDUE', 'PLANNED', 'IN_PROGRESS', 'PENDING_REVIEW', 'COMPLETED', 'CANCELLED', 'ALL', 'DRAWING_REVIEW', 'SHORTAGE'] as const;
 export type SamplePlanView = typeof SAMPLE_VIEWS[number];
 export type SampleWarning = 'NONE' | 'MISSING' | 'NORMAL' | 'SOON' | 'TODAY' | 'OVERDUE';
 export function sampleWarning(task: { status: string; dueDate: string | null; warningDays?: number }, today = chinaDateKey(new Date())): { kind: SampleWarning; label: string } {

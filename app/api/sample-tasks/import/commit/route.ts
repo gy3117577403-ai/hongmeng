@@ -31,6 +31,7 @@ type CommitRow = {
   customerLevelCode: string;
   sampleQuantity: number;
   dueDate: string;
+  plannedCompletionDate: string | null;
   issuedDate: string | null;
   warningDays: number;
   libraryKey: string;
@@ -55,10 +56,12 @@ function normalizeRow(value: unknown): { row: CommitRow | null; error: string } 
   const level = sampleCustomerLevel(record.customerLevelCode);
   const sampleQuantity = parsePositiveInteger(record.sampleQuantity);
   const dueDate = parseSamplePlanDate(record.dueDate);
+  const plannedCompletionDate = record.plannedCompletionDate ? parseSamplePlanDate(record.plannedCompletionDate) : null;
   const libraryKey = cleanImportText(record.libraryKey, 240);
   const issuedDate = record.issuedDate ? parseSamplePlanDate(record.issuedDate) : null;
   const warningDays = record.warningDays === undefined ? 2 : Number(record.warningDays);
   const errors: string[] = [];
+  if (record.plannedCompletionDate && !plannedCompletionDate) errors.push('计划完成日期无效');
   let taskType: 'NEW' | 'REPEAT' = 'NEW', planWeekStartDate: string | null = null;
   try { taskType = sampleTaskType(record.taskType); planWeekStartDate = sampleWeek(record.planWeekStartDate); } catch { errors.push('样品类型或计划周无效'); }
   if (record.issuedDate && !issuedDate) errors.push('计划下达日期无效');
@@ -78,7 +81,7 @@ function normalizeRow(value: unknown): { row: CommitRow | null; error: string } 
   if (errors.length || !level || sampleQuantity === null || !dueDate) return { row: null, error: errors.join('；') };
   return {
     row: {
-      taskType, planWeekStartDate,
+      taskType, planWeekStartDate, plannedCompletionDate,
       rowNumber,
       customerName,
       productName,
@@ -206,6 +209,7 @@ export async function POST(req: NextRequest) {
             customerLevelColor: level.color,
             sampleQuantity: row.sampleQuantity,
             dueDate,
+            plannedCompletionDate: row.plannedCompletionDate ? new Date(row.plannedCompletionDate) : null,
             issuedDate: row.issuedDate ? new Date(`${row.issuedDate}T00:00:00Z`) : null,
             taskType: row.taskType,
             planWeekStartDate: row.planWeekStartDate ? new Date(row.planWeekStartDate) : null,

@@ -6,8 +6,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     await requireUser();
-    const taskType = sampleTaskType(req.nextUrl.searchParams.get('taskType'));
-    const groups = await prisma.sampleTask.groupBy({ by: ['planWeekStartDate', 'status'], where: { deletedAt: null, taskType, status: { not: 'CANCELLED' } }, _count: { _all: true }, orderBy: { planWeekStartDate: 'desc' } });
+    const taskType = req.nextUrl.searchParams.get('taskType') ? sampleTaskType(req.nextUrl.searchParams.get('taskType')) : undefined;
+    const groups = await prisma.sampleTask.groupBy({ by: ['planWeekStartDate', 'status'], where: { deletedAt: null, taskType, ...(req.nextUrl.searchParams.get('warehouse') === 'true' ? { dataPurpose: 'PRODUCTION', warehouseTask: { isNot: null } } : {}), status: { not: 'CANCELLED' } }, _count: { _all: true }, orderBy: { planWeekStartDate: 'desc' } });
     const weeks = new Map<string, { week: string; total: number; unfinished: number }>();
     for (const group of groups) {
       const key = group.planWeekStartDate?.toISOString().slice(0, 10) || 'unplanned';

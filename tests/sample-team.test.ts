@@ -237,7 +237,7 @@ test('pending review summary counts active submission packages rather than child
   assert.match(serializer, /pendingReview:\s*task\.activeSubmission\?\.status === 'PENDING' \? 1 : 0/);
 });
 
-test('production, planning, and warehouse share a push-down mass/sample mode drawer', () => {
+test('production and planning preserve the mode drawer while sample kitting uses an independent workbench', () => {
   const navigation = readFileSync('lib/platform-navigation.ts', 'utf8');
   const drawer = readFileSync('components/layout/ModuleModeDrawer.tsx', 'utf8');
   const foundation = readFileSync('app/styles/hm-workbench-foundation.css', 'utf8');
@@ -255,7 +255,7 @@ test('production, planning, and warehouse share a push-down mass/sample mode dra
   assert.doesNotMatch(production, /sample-module-branch-entry/);
   assert.doesNotMatch(planning, /sample-module-branch-entry/);
   assert.doesNotMatch(sample, /sample-team-branch-tabs/);
-  assert.match(warehousePage, /branch === 'samples'.*mode="materials"/s);
+  assert.match(warehousePage, /branch === 'samples'.*SampleWarehouseCenter/s);
   assert.match(sample, /不扣库存、不生成正式领料/);
   assert.match(sample, /kind === 'MATERIAL'/);
 });

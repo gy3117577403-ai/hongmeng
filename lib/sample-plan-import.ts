@@ -14,6 +14,7 @@ export const SAMPLE_PLAN_IMPORT_HEADERS = [
   '提前预警天数（选填）',
   '样品类型（选填）',
   '计划周（选填）',
+  '计划完成日期（选填）',
 ] as const;
 
 export type SamplePlanImportStatus = 'REUSE' | 'CREATE' | 'CONFIRM' | 'BLOCKED';
@@ -35,6 +36,7 @@ export type SamplePlanImportRow = {
   customerLevelCode: string;
   sampleQuantity: number;
   dueDate: string;
+  plannedCompletionDate?: string | null;
   taskType?: 'NEW' | 'REPEAT';
   planWeekStartDate?: string | null;
   issuedDate?: string | null;
@@ -49,12 +51,13 @@ export type SamplePlanImportRow = {
 const HEADER_ALIASES: Record<(typeof SAMPLE_PLAN_IMPORT_HEADERS)[number], readonly string[]> = {
   '样品类型（选填）': ['样品类型（选填）', '样品类型', '新品/老产品'],
   '计划周（选填）': ['计划周（选填）', '计划周', '计划周开始日期'],
+  '计划完成日期（选填）': ['计划完成日期（选填）', '计划完成日期', '内部完成日期'],
   客户名称: ['客户名称', '客户'],
   产品名称: ['产品名称', '品名'],
   '型号/规格': ['型号/规格', '型号规格', '产品规格', '规格'],
   客户等级: ['客户等级', '等级'],
   样品数量: ['样品数量', '数量'],
-  计划日期: ['计划出货日期', '出货日期', '计划日期', '完成日期', '交期'],
+  计划日期: ['客户交期', '计划出货日期', '出货日期', '计划日期', '完成日期', '交期'],
   '计划下达日期（选填）': ['计划下达日期（选填）', '计划下达日期', '下达日期'],
   '提前预警天数（选填）': ['提前预警天数（选填）', '提前预警天数', '预警天数'],
   '图纸库编号（选填）': ['图纸库编号（选填）', '图纸库编号(选填)', '图纸库编号', '图纸库ID', '图纸库id'],
@@ -149,11 +152,14 @@ export function parseSamplePlanRow(
   const sampleQuantity = parsePositiveInteger(value('样品数量'));
   const dueDate = parseSamplePlanDate(value('计划日期'));
   const libraryKey = Number.isInteger(columns['图纸库编号（选填）']) ? cleanImportText(value('图纸库编号（选填）'), 240) : '';
+  const rawPlanned = value('计划完成日期（选填）');
+  const plannedCompletionDate = rawPlanned ? parseSamplePlanDate(rawPlanned) : null;
   const rawIssued = value('计划下达日期（选填）');
   const issuedDate = rawIssued ? parseSamplePlanDate(rawIssued) : null;
   const rawWarning = value('提前预警天数（选填）');
   const warningDays = rawWarning === undefined || rawWarning === null || rawWarning === '' ? 2 : Number(rawWarning);
   const errors: string[] = [];
+  if (rawPlanned && !plannedCompletionDate) errors.push('计划完成日期无效');
   const rawType = cleanImportText(value('样品类型（选填）')).toUpperCase();
   const taskType = ['老产品','老产品制作','REPEAT'].includes(rawType) ? 'REPEAT' as const : 'NEW' as const;
   if (rawType && !['新品','新品试制','NEW','老产品','老产品制作','REPEAT'].includes(rawType)) errors.push('样品类型只能填新品或老产品');
@@ -180,7 +186,7 @@ export function parseSamplePlanRow(
   return {
     row: {
       rowNumber,
-      taskType, planWeekStartDate,
+      taskType, planWeekStartDate, plannedCompletionDate,
       customerName,
       productName,
       specification,

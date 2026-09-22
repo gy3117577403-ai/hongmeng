@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
     const specification = cleanSampleText(body.specification, 180);
     const assignedEmployeeIds = employeeIds(body.assigneeEmployeeIds);
     const dueDate = parseOptionalSampleDate(body.dueDate);
+    const plannedCompletionDate = parseOptionalSampleDate(body.plannedCompletionDate);
     const issuedDate = parseOptionalSampleDate(body.issuedDate || chinaDateKey(new Date()));
     const warningDays = body.warningDays === undefined ? 2 : Number(body.warningDays);
     if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) return NextResponse.json({ ok: false, error: '提前预警天数须为 0 至 30 的整数' }, { status: 400 });
@@ -111,7 +112,7 @@ export async function POST(req: NextRequest) {
           taskType: sampleTaskType(body.taskType),
           planWeekStartDate: sampleWeek(body.planWeekStartDate) ? new Date(sampleWeek(body.planWeekStartDate)!) : null,
           documentReviewRequired: dataPurpose === 'PRODUCTION',
-          dueDate,
+          dueDate, plannedCompletionDate,
           issuedDate,
           warningDays,
           priority: customerLevel.priority,

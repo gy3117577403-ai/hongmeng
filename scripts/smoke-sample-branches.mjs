@@ -29,17 +29,41 @@ await req('login isolated runtime', '/api/auth/login', { username: process.env.S
 const config = (await req('load existing review settings', '/api/quality-fixtures')).data;
 await req('configure isolated reviewers', '/api/quality-fixtures', { action: 'SAVE_SETTINGS', version: config.settings?.version, supervisorIds: [config.actorId], qualityIds: [config.actorId] });
 const today = new Date(Date.now()+8*3600000).toISOString().slice(0,10), monday = new Date(today+'T00:00:00Z'); monday.setUTCDate(monday.getUTCDate()-(monday.getUTCDay()+6)%7); const week = monday.toISOString().slice(0,10);
-const create = async type => (await req('create '+type, '/api/sample-tasks', { taskType: type, customerName: tag, productName: 'Sample cable', specification: tag+'-'+type, customerLevelCode: 'A', sampleQuantity: 5, planWeekStartDate: week, issuedDate: today, dueDate: today, planRemark: 'Isolated sample branch verification' }, 201)).task;
+const create = async type => (await req('create '+type, '/api/sample-tasks', { taskType: type, customerName: tag, productName: 'Sample cable', specification: tag+'-'+type, customerLevelCode: 'A', sampleQuantity: 5, planWeekStartDate: week, issuedDate: today, dueDate: today, plannedCompletionDate: today, planRemark: 'Isolated sample branch verification' }, 201)).task;
 let repeat = await create('REPEAT'), fresh = await create('NEW');
 const detail = async task => (await req('reload sample task', `/api/sample-tasks/${task.id}`)).task;
 const patch = (task, input, expected = 200) => req(input.action, `/api/sample-tasks/${task.id}`, { expectedVersion: task.version, ...input }, expected, 'PATCH');
 for (const task of [repeat,fresh]) {
   const materials = (await req('sample material task exists', `/api/sample-tasks/${task.id}/materials`)).task;
   assert.equal(materials.sampleTaskId, task.id); assert.equal(materials.status, 'pending');
-  const requirements = ['PURCHASED','CUSTOMER'].map((supplySource,i)=>({id:'line-'+i,model:'CN-'+i,quantity:5,prepared:0,unit:'个',supplySource}));
-  const saved = (await req('save sample material demand', `/api/sample-tasks/${task.id}/materials`, { version:materials.version,requirements },200,'PATCH')).task;
-  await req('cannot confirm incomplete material', `/api/sample-tasks/${task.id}/materials`, { version:saved.version,requirements,confirm:true },409,'PATCH');
+  const url=`/api/sample-tasks/${task.id}/materials`;
+  const complete=(await req('physical kitting complete without BOM or material list',url,{version:materials.version,action:'complete'},200,'PATCH')).task;
+  assert.equal(complete.status,'completed');assert.ok(complete.completedAt);assert.equal(complete.requirements.length,0);
+  const lines=['PURCHASED','CUSTOMER'].map((supplySource,i)=>({supplySource,materialModel:'CN-'+i}));
+  await req('multi-line report rolls back on missing model',url,{version:complete.version,action:'report_shortages',shortages:[lines[0],{supplySource:'CUSTOMER',materialModel:''}]},400,'PATCH');
+  const unchanged=(await req('failed report creates no shortage',url)).task;assert.equal(unchanged.version,complete.version);assert.equal(unchanged.activeExceptions.length,0);
+  const reported=(await req('report purchased and customer material shortages atomically',url,{version:complete.version,action:'report_shortages',shortages:lines},200,'PATCH')).task;
+  assert.equal(reported.status,'exception');assert.equal(reported.activeExceptions.length,2);assert.ok(reported.activeExceptions.every(e=>e.followUpId && e.shortageQuantity===null));
+  await req('duplicate report rejected by version',url,{version:complete.version,action:'report_shortages',shortages:lines},409,'PATCH');
+  await req('open shortages prevent manual complete',url,{version:reported.version,action:'complete'},409,'PATCH');
+  let current=reported;
+  for(const event of reported.activeExceptions) current=(await req('warehouse confirms individual arrival',url,{version:current.version,action:'resolve',exceptionId:event.id,resolution:'pending',note:'实物到料确认'},200,'PATCH')).task;
+  assert.equal(current.status,'pending');assert.equal(current.activeExceptions.length,0);
+  current=(await req('explicit final kitting confirmation',url,{version:current.version,action:'complete'},200,'PATCH')).task;
+  assert.equal(current.status,'completed');assert.ok(current.activities.some(a=>a.action==='report_exception'));
 }
+const warehouseList=await req('separate warehouse completed filter',`/api/sample-tasks?warehouse=true&view=ALL&materialStatus=completed&summary=true&keyword=${tag}`);
+assert.equal(warehouseList.pagination.total,2);assert.equal(warehouseList.materialCounts.completed,2);assert.equal(warehouseList.materialCounts.all,2);
+const laterWeek=new Date(monday.getTime()+7*86400000).toISOString().slice(0,10);
+await req('batch reschedule requires reason','/api/sample-tasks/schedule',{items:[{id:repeat.id,version:repeat.version}],week:laterWeek},400,'PATCH');
+await req('stale item makes entire batch fail','/api/sample-tasks/schedule',{items:[{id:repeat.id,version:repeat.version},{id:fresh.id,version:99999}],week:laterWeek,reason:'冲突检查'},409,'PATCH');
+assert.equal((await detail(repeat)).planWeekStartDate,week);
+await req('batch reschedule two sample plans','/api/sample-tasks/schedule',{items:[{id:repeat.id,version:repeat.version},{id:fresh.id,version:fresh.version}],week:laterWeek,reason:'样品排期调整'},200,'PATCH');
+repeat=await detail(repeat);fresh=await detail(fresh);
+assert.equal(repeat.planWeekStartDate,laterWeek);assert.equal(repeat.dueDate,today);assert.equal(repeat.plannedCompletionDate,today);
+await req('restore test week with audit','/api/sample-tasks/schedule',{items:[{id:repeat.id,version:repeat.version},{id:fresh.id,version:fresh.version}],week,reason:'恢复验收计划周'},200,'PATCH');
+repeat=await detail(repeat);fresh=await detail(fresh);assert.ok(repeat.scheduleHistory.some(c=>c.reason==='样品排期调整'));
+
 const filtered = await req('repeat weekly summary', `/api/sample-tasks?view=ALL&taskType=REPEAT&week=${week}&summary=true&keyword=${tag}`);
 assert.equal(filtered.tasks.length, 1); assert.equal(filtered.tasks[0].id, repeat.id); assert.equal(filtered.tasks[0].photos.length, 0);
 await patch(repeat, { action: 'COMPLETE_REPEAT', mutationId: randomUUID(), quantity: 1, workDate: today }, 409);

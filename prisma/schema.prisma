@@ -4007,6 +4007,7 @@ model SampleTask {
   sampleQuantity           Int?                 @map("sample_quantity")
   taskType                 String               @default("NEW") @map("task_type")
   planWeekStartDate        DateTime?            @map("plan_week_start_date") @db.Date
+  plannedCompletionDate    DateTime?            @map("planned_completion_date") @db.Date
   documentReviewRequired  Boolean              @default(false) @map("document_review_required")
   approvedPackageId       String?              @map("approved_package_id")
   completedQuantity       Int                  @default(0) @map("completed_quantity")

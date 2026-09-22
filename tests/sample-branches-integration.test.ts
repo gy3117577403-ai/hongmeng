@@ -9,7 +9,7 @@ import { syncProductDocuments } from '../lib/quality-fixture-sync';
 import { drawingPlanWeekScope } from '../lib/drawing-plan-week';
 import { listSamplePlans } from '../lib/sample-plan-query';
 import { loadFinishedGoods, mutateFinishedGoods } from '../lib/finished-goods-service';
-import { mutateWarehouseException } from '../lib/material-exception-service';
+import { mutateWarehouseException, reportSampleShortages } from '../lib/material-exception-service';
 
 test('sample branches retain drawing review, independent material events and atomic finished stock', { skip: process.env.RUN_DB_INTEGRATION !== '1' }, async t => {
   const tag = 'SAMPLE-BRANCH-' + randomUUID().slice(0,8);
@@ -40,6 +40,15 @@ test('sample branches retain drawing review, independent material events and ato
       assert.equal((await listSamplePlans(new URLSearchParams({ keyword: tag, taskType: 'REPEAT', week: '2026-09-28', carry: 'true' }))).pagination.total, 1);
       assert.equal((await getTask()).dueDate!.toISOString().slice(0,10), '2026-09-29');
     });
+    await t.test('unplanned queue excludes completed history and keeps independent completion date', async () => {
+      await prisma.sampleTask.update({where:{id:task.id},data:{planWeekStartDate:null,plannedCompletionDate:new Date('2026-09-26')}});
+      const list=()=>listSamplePlans(new URLSearchParams({keyword:tag,week:'unplanned',view:'ALL',summary:'true'}));
+      assert.equal((await list()).pagination.total,1);
+      assert.equal(((await list()).tasks[0] as any).plannedCompletionDate,'2026-09-26');
+      await prisma.sampleTask.update({where:{id:task.id},data:{status:'COMPLETED'}});
+      assert.equal((await list()).pagination.total,0);
+      await prisma.sampleTask.update({where:{id:task.id},data:{status:task.status,planWeekStartDate:task.planWeekStartDate}});
+    });
     await t.test('quality may review first; both signatures needed while BOM and warehouse remain pending', async () => {
       await assert.rejects(() => prisma.$transaction(async tx => assertSampleDrawingApproved(tx, await getTask())), /双方审核/);
       await sign('QUALITY');
@@ -51,14 +60,23 @@ test('sample branches retain drawing review, independent material events and ato
       assert.equal(warehouse!.status, 'pending');
     });
     await t.test('purchased and customer shortages create separate sample events and retain warehouse confirmation', async () => {
-      for (const source of ['PURCHASED','CUSTOMER']) {
-        const w = await prisma.warehouseMaterialTask.findUniqueOrThrow({ where: { id: warehouse!.id } });
-        await mutateWarehouseException(w.id, { action: 'report_exception', version: w.version, exceptionType: 'shortage', exceptionNote: '等待样品备料', supplySource: source, materialModel: source+'-CN', shortageQuantity: 2, unit: '个' }, user.id, true);
-      }
+      let w = await prisma.warehouseMaterialTask.findUniqueOrThrow({ where: { id: warehouse!.id } });
+      await assert.rejects(()=>reportSampleShortages(task.id,{version:w.version,shortages:[{supplySource:'PURCHASED',materialModel:'will-rollback'},{supplySource:'CUSTOMER',materialModel:''}]},user.id,true),/型号/);
+      assert.equal(await prisma.warehouseMaterialExceptionCase.count({where:{warehouseTaskId:w.id}}),0,'invalid second line rolls back the first');
+      const complete = await mutateWarehouseException(w.id,{version:w.version,action:'complete'},user.id,true);
+      assert.equal(complete.status,'completed'); assert.deepEqual(complete.requirements,[]); assert.ok(complete.completedAt);
+      await reportSampleShortages(task.id,{version:complete.version,shortages:['PURCHASED','CUSTOMER'].map(supplySource=>({supplySource,materialModel:supplySource+'-CN'}))},user.id,true);
       const events = await prisma.warehouseMaterialExceptionCase.findMany({ where: { warehouseTaskId: warehouse!.id }, include: { followUpTask: true } });
       assert.equal(events.length, 2); assert.ok(events.every(e => e.followUpTask));
-      const w = await prisma.warehouseMaterialTask.findUniqueOrThrow({ where: { id: warehouse!.id } });
-      await assert.rejects(() => mutateWarehouseException(w.id, { action: 'complete', version: w.version }, user.id, true), /配料清单/);
+      assert.ok(events.every(e=>e.shortageQuantity===null),'quantity and note are optional');
+      w = await prisma.warehouseMaterialTask.findUniqueOrThrow({ where: { id: warehouse!.id } });
+      await assert.rejects(() => mutateWarehouseException(w.id, { action: 'complete', version: w.version }, user.id, true), /解决所有缺料/);
+      const visible=await listSamplePlans(new URLSearchParams({keyword:tag,warehouse:'true',materialStatus:'exception',view:'ALL',summary:'true'}));
+      assert.equal(visible.pagination.total,1);assert.equal(visible.materialCounts?.exception,1);assert.equal(visible.materialCounts?.all,1);
+      for(const event of events){ w=await prisma.warehouseMaterialTask.findUniqueOrThrow({where:{id:w.id}});await mutateWarehouseException(w.id,{action:'resolve',version:w.version,exceptionId:event.id,resolution:'pending',note:'仓库确认已到料'},user.id,true);}
+      w=await prisma.warehouseMaterialTask.findUniqueOrThrow({where:{id:w.id}});assert.equal(w.status,'pending','all shortages resolved still requires explicit complete');
+      await assert.rejects(()=>mutateWarehouseException(w.id,{action:'complete',version:w.version},user.id,false),/仓库人员/);
+      await mutateWarehouseException(w.id,{action:'complete',version:w.version},user.id,true);
     });
     await t.test('partial completion is atomic, preserves actual review and adds sample pending stock exactly once', async () => {
       const body = { expectedVersion: task.version, mutationId: 'part-one', quantity: 2, workDate: '2026-09-21', note: '第一批' };

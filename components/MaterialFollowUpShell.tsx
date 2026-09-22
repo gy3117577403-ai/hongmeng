@@ -227,6 +227,8 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
       setSelectedId(requested);
     }
     const requestedScope = params.get('scope');
+    const requestedSource = params.get('source');
+    if (requestedSource && ['ALL','PURCHASED','CUSTOMER','UNKNOWN'].includes(requestedSource)) setSource(requestedSource);
     if (requestedScope === 'history' || requestedScope === 'preparation') setScope(requestedScope);
     const weekStart = params.get('weekStart');
     if (weekStart) setSelectedWeek(weekStart);

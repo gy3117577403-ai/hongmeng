@@ -156,17 +156,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (taskType !== existing.taskType && (existing.completedQuantity || existing.activeSubmissionId || existing.submissionRevision || await tx.sampleDataEntry.count({ where: { taskId: existing.id, deletedAt: null } }) || await tx.samplePhoto.count({ where: { taskId: existing.id, deletedAt: null } }) || (await tx.sampleDraftSection.findMany({ where: { taskId: existing.id } })).some(s => sampleDraftSectionHasData(s.payload))))
         throw new SamplePlanError('任务已有采集、审核或完成记录，请保留原任务，另建本次制作计划', 409);
       const planWeek = scheduleUpdate && body.planWeekStartDate !== undefined ? sampleWeek(body.planWeekStartDate) : existing.planWeekStartDate?.toISOString().slice(0, 10) || null;
+      const plannedCompletionDate = !scheduleUpdate || body.plannedCompletionDate === undefined ? existing.plannedCompletionDate : parseOptionalSampleDate(body.plannedCompletionDate);
       const dueDate = !scheduleUpdate || body.dueDate === undefined ? existing.dueDate : parseOptionalSampleDate(body.dueDate);
       const issuedDate = !scheduleUpdate || body.issuedDate === undefined ? existing.issuedDate : parseOptionalSampleDate(body.issuedDate);
       const warningDays = !scheduleUpdate || body.warningDays === undefined ? existing.warningDays : Number(body.warningDays);
       if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) throw new Error('INVALID_WARNING_DAYS');
       const dateKey = (date: Date | null) => date?.toISOString().slice(0, 10) || null;
-      const scheduleChanged = dateKey(dueDate) !== dateKey(existing.dueDate) || dateKey(issuedDate) !== dateKey(existing.issuedDate) || warningDays !== existing.warningDays || planWeek !== dateKey(existing.planWeekStartDate);
+      const scheduleChanged = dateKey(plannedCompletionDate) !== dateKey(existing.plannedCompletionDate) || dateKey(dueDate) !== dateKey(existing.dueDate) || dateKey(issuedDate) !== dateKey(existing.issuedDate) || warningDays !== existing.warningDays || planWeek !== dateKey(existing.planWeekStartDate);
       if (scheduleChanged && dueDate && issuedDate && dueDate < issuedDate) throw new Error('INVALID_SCHEDULE_RANGE');
       const scheduleReason = cleanSampleText(body.scheduleReason, 500);
       if (scheduleChanged && !scheduleReason) throw new Error('SCHEDULE_REASON_REQUIRED');
       const scheduleHistory = Array.isArray(existing.scheduleHistory) ? existing.scheduleHistory : [];
-      if (scheduleChanged) scheduleHistory.push({ at: now.toISOString(), actor: actor.name, reason: scheduleReason, fromDue: dateKey(existing.dueDate), toDue: dateKey(dueDate), fromIssued: dateKey(existing.issuedDate), toIssued: dateKey(issuedDate), fromWarning: existing.warningDays, toWarning: warningDays, fromWeek: dateKey(existing.planWeekStartDate), toWeek: planWeek });
+      if (scheduleChanged) scheduleHistory.push({ at: now.toISOString(), actor: actor.name, reason: scheduleReason, fromDue: dateKey(existing.dueDate), toDue: dateKey(dueDate), fromIssued: dateKey(existing.issuedDate), toIssued: dateKey(issuedDate), fromWarning: existing.warningDays, toWarning: warningDays, fromWeek: dateKey(existing.planWeekStartDate), toWeek: planWeek, fromPlannedCompletion: dateKey(existing.plannedCompletionDate), toPlannedCompletion: dateKey(plannedCompletionDate) });
       const sampleQuantity = !metadataUpdate || body.sampleQuantity === undefined
         ? existing.sampleQuantity
         : parseOptionalNonNegativeInteger(body.sampleQuantity);
@@ -189,7 +190,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           taskType,
           planWeekStartDate: planWeek ? new Date(planWeek) : null,
           documentReviewRequired: existing.documentReviewRequired || taskType !== existing.taskType && taskType === 'REPEAT',
-          dueDate,
+          dueDate, plannedCompletionDate,
           issuedDate,
           warningDays,
           scheduleHistory: scheduleHistory as Prisma.InputJsonValue,

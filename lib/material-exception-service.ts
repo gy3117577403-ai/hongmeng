@@ -31,7 +31,7 @@ export async function synchronizeWarehouseExceptions(tx: Tx, id: string, actorId
     expectedAt: expected,
     completedAt: !events.length && fallback === 'completed' ? new Date() : null,
   };
-  const updated = await tx.warehouseMaterialTask.update({ where: { id }, data: { ...state, ...(state.status !== 'completed' ? { requirementsConfirmed: false } : {}), completedById: state.status === 'completed' ? actorId : null, updatedById: actorId, version: { increment: 1 } } });
+  const updated = await tx.warehouseMaterialTask.update({ where: { id }, data: { ...state, requirementsConfirmed: state.status === 'completed', completedById: state.status === 'completed' ? actorId : null, updatedById: actorId, version: { increment: 1 } } });
   if (updated.workOrderId) {
     await tx.workOrder.update({ where: { id: updated.workOrderId }, data: { materialStatus: events.length ? state.exceptionNote!.slice(0, 200) : warehouseLegacyMaterialStatus(state) } });
     await synchronizeMaterialProductionHold(tx, { ...state, workOrderId: updated.workOrderId, warehouseTaskId: id, actorId });
@@ -41,12 +41,24 @@ export async function synchronizeWarehouseExceptions(tx: Tx, id: string, actorId
 
 export async function mutateWarehouseException(id: string, input: Input, actorId: string, canConfirm: boolean) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new MaterialInputError('提交内容不正确');
-  return prisma.$transaction(async tx => {
+  return prisma.$transaction(tx => updateWarehouseException(tx, id, input, actorId, canConfirm));
+}
+
+async function updateWarehouseException(tx: Tx, id: string, input: Input, actorId: string, canConfirm: boolean) {
     const current = await lockWarehouse(tx, id);
     version(current.version, input.version);
     const action = text(input.action, 40);
-    if (current.sampleTaskId && (action === 'complete' || action === 'resolve' && input.resolution === 'completed') && !current.requirementsConfirmed) throw new MaterialInputError('请在样品配料清单中核对数量后确认完成', 409);
+    // Sample kitting is confirmed against the physical materials, independently of any legacy list.
+    if (current.sampleTaskId && ['report_exception', 'update_exception'].includes(action)) {
+      const existingEvent = action === 'update_exception' && input.exceptionId ? await tx.warehouseMaterialExceptionCase.findFirst({ where: { id: String(input.exceptionId), warehouseTaskId: id, status: 'OPEN' } }) : null;
+      const source = input.supplySource ?? existingEvent?.supplySource;
+      const model = text(input.materialModel ?? existingEvent?.materialModel, 160);
+      if (!['PURCHASED', 'CUSTOMER'].includes(String(source))) throw new MaterialInputError('请选择采购物料或客供物料');
+      if (!model) throw new MaterialInputError('请填写缺料型号');
+      input = { ...input, supplySource: source, materialModel: model, exceptionNote: text(input.exceptionNote, 400) || existingEvent?.exceptionNote || model };
+    }
     if (!canConfirm && !['report_exception', 'update_exception'].includes(action)) throw new MaterialInputError('实物确认及配料完成须由仓库人员操作', 403);
+    if (action === 'complete' && await tx.warehouseMaterialExceptionCase.count({ where: { warehouseTaskId: id, status: 'OPEN' } })) throw new MaterialInputError('请先解决所有缺料，再确认已配齐', 409);
     const transition = prepareWarehouseTaskTransition({ ...current, status: current.status as WarehouseMaterialStatus, exceptionType: current.exceptionType as WarehouseExceptionType | null }, input);
     if (!transition.ok) throw new MaterialInputError(transition.error, transition.statusCode);
     const now = new Date();
@@ -85,6 +97,22 @@ export async function mutateWarehouseException(id: string, input: Input, actorId
     const next = await synchronizeWarehouseExceptions(tx, id, actorId, transition.next.status === 'completed' ? 'completed' : 'pending');
     await tx.warehouseMaterialActivity.create({ data: { taskId: id, action, fromStatus: current.status, toStatus: next.status, content, actorId, detail: { exceptionCaseId: eventId || null } } });
     return tx.warehouseMaterialTask.findUniqueOrThrow({ where: { id }, include: warehouseMaterialTaskDetailInclude });
+}
+
+/** Add a multi-line shortage report atomically; a stale version cannot create duplicate follow-ups. */
+export async function reportSampleShortages(sampleId: string, input: Input, actorId: string, canConfirm: boolean) {
+  if (!Array.isArray(input.shortages) || !input.shortages.length || input.shortages.length > 20) throw new MaterialInputError('请登记 1 至 20 项缺料');
+  const lines = input.shortages as Input[];
+  return prisma.$transaction(async tx => {
+    const identity = await tx.warehouseMaterialTask.findUnique({ where: { sampleTaskId: sampleId }, select: { id: true } });
+    if (!identity) throw new MaterialInputError('样品配料任务不存在', 404);
+    let nextVersion = input.version;
+    for (const line of lines) {
+      if (!line || typeof line !== 'object' || Array.isArray(line)) throw new MaterialInputError('缺料格式无效');
+      const next = await updateWarehouseException(tx, identity.id, { ...line, action: 'report_exception', exceptionType: 'shortage', version: nextVersion }, actorId, canConfirm);
+      nextVersion = next.version;
+    }
+    return tx.warehouseMaterialTask.findUniqueOrThrow({ where: { id: identity.id }, include: warehouseMaterialTaskDetailInclude });
   });
 }
 

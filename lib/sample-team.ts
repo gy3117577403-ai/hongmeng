@@ -458,6 +458,7 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     id: task.id,
     taskType: task.taskType as 'NEW' | 'REPEAT',
     planWeekStartDate: task.planWeekStartDate?.toISOString().slice(0, 10) || null,
+    plannedCompletionDate: task.plannedCompletionDate?.toISOString().slice(0, 10) || null,
     documentReviewRequired: task.documentReviewRequired,
     approvedPackageId: task.approvedPackageId,
     completedQuantity: task.completedQuantity,

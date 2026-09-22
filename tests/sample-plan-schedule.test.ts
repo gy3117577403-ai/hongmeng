@@ -31,3 +31,15 @@ test('new import columns keep issue date distinct and old templates remain suppo
   const old = findSamplePlanHeaderRow([headers.slice(0,6).map(v=>v==='计划出货日期'?'计划日期':v)])!;
   assert.equal(parseSamplePlanRow(values.slice(0,6),2,old.columns).row!.issuedDate,null);
 });
+
+test('planned completion import does not replace due date or week and rejects invalid dates', () => {
+  const headers=['客户名称','产品名称','型号/规格','客户等级','样品数量','客户交期','计划周','计划完成日期'];
+  const columns=findSamplePlanHeaderRow([headers])!.columns;
+  const values=['测试客户','线束','MODEL-200','A',4,'2026-09-30','2026-09-21','2026-09-25'];
+  const parsed=parseSamplePlanRow(values,2,columns);
+  assert.deepEqual(parsed.errors,[]);
+  assert.equal(parsed.row!.dueDate,'2026-09-30');
+  assert.equal(parsed.row!.plannedCompletionDate,'2026-09-25');
+  assert.equal(parsed.row!.planWeekStartDate,'2026-09-21');
+  assert.ok(parseSamplePlanRow([...values.slice(0,7),'2026-02-30'],2,columns).errors.includes('计划完成日期无效'));
+});
