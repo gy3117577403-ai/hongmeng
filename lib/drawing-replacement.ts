@@ -60,7 +60,7 @@ export async function syncDrawingReplacement(tx: Tx, job: DrawingReplacementJob)
   const issues = await tx.qfDocumentReturn.findMany({ where: { libraryItemId: job.libraryItemId, status: { not: 'RESOLVED' } } });
   if (p?.status === 'DRAFT' && issues.length && issues.every(i => i.status === 'READY' && i.responseText) && p.needFixture !== null) {
     // All return replies ready: retain reasons and submit a new, unsigned review round.
-    const submitted = await resubmitDocumentReturns(tx, { libraryItemId: job.libraryItemId, versions: Object.fromEntries(issues.map(i => [i.id, i.version])) }, actor);
+    const submitted = await resubmitDocumentReturns(tx, { libraryItemId: job.libraryItemId, versions: Object.fromEntries(issues.map(i => [i.id, i.version])) }, actor, { activeOrdersOnly: true });
     p = await tx.qfPackage.findUnique({ where: { id: submitted.id } });
   }
   if (p) await tx.qfPlanBinding.updateMany({ where: { packageId: { in: priorIds }, workOrder: {

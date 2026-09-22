@@ -180,7 +180,7 @@ for(let attempt=0;attempt<40;attempt++){
  await new Promise(resolve=>setTimeout(resolve,1500));
 }
 assert.ok(objectDeleted,'old S3 original is physically removed, including previously signed download');
-assert.equal(replacementPackage.status,'REVIEWING');assert.equal(replacementPackage.supervisor,'');assert.equal(replacementPackage.quality,'');assert.ok(!replacementPackage.supervisorAt&&!replacementPackage.qualityAt);
+assert.equal(replacementPackage.status,'REVIEWING');assert.equal(replacementPackage.supervisorName,'');assert.equal(replacementPackage.qualityName,'');assert.equal(replacementPackage.supervisorAt,null);assert.equal(replacementPackage.qualityAt,null);
 assert.ok(replacementPackage.drawingFiles.some(f=>f.id===replaced.id));
 await req('quality rechecks replacement','/api/quality-fixtures',{action:'APPROVE',id:replacementPackage.id,version:replacementPackage.version,reviewRole:'QUALITY',confirmed:true});
 replacementPackage=(await req('read second replacement review',`/api/sample-tasks/${replacementTask.id}/documents`)).packages[0];

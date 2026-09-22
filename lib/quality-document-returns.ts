@@ -100,7 +100,7 @@ export async function fileDescendsFrom(tx: Pick<Tx, "drawingLibraryFile">, candi
   return false;
 }
 
-export async function resubmitDocumentReturns(tx: Tx, input: PcInput, actor: PcActor) {
+export async function resubmitDocumentReturns(tx: Tx, input: PcInput, actor: PcActor, options: { activeOrdersOnly?: boolean } = {}) {
   const libraryItemId = pcText(input.libraryItemId, "产品", 100);
   const issues = await tx.qfDocumentReturn.findMany({ where: { libraryItemId, ...activeReturnWhere }, orderBy: { createdAt: "asc" } });
   if (!issues.length) conflict("没有待重新提交的退回事项");
@@ -127,7 +127,8 @@ export async function resubmitDocumentReturns(tx: Tx, input: PcInput, actor: PcA
   } });
   const priorIds = [...new Set(issues.flatMap(i => [i.sourcePackageId, i.submittedPackageId].filter((id): id is string => !!id)))];
   const returnedFileIds = new Set(issues.map(i => i.fileId).filter((id): id is string => !!id));
-  const candidates = await tx.qfPlanBinding.findMany({ where: { workOrder: { drawingLibraryItemId: libraryItemId, deletedAt: null } },
+  const candidates = await tx.qfPlanBinding.findMany({ where: { workOrder: { drawingLibraryItemId: libraryItemId, deletedAt: null,
+    ...(options.activeOrdersOnly ? { completedAt: null, status: { notIn: ['completed', 'cancelled', 'archived'] } } : {}) } },
     include: { package: { select: { drawingFiles: true, sopFiles: true } } } });
   // An older binding to the same rejected file needs the corrected round too.
   // Unrelated historical versions remain attached to their original approval.

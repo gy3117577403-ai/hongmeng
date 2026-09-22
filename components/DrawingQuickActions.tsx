@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRightLeft, Check, FileUp, X } from 'lucide-react';
 import type { DrawingLibraryItemDTO, ResourceCategoryDTO, SopStageDTO } from '@/types';
+import { PdfViewer } from '@/components/PdfViewer';
 import '@/app/drawing-quick-actions.css';
 
 export default function DrawingQuickActions({ item, categories, enabled, onChanged, onMessage }: {
@@ -75,7 +76,7 @@ export default function DrawingQuickActions({ item, categories, enabled, onChang
         <label>修改说明 <small>选填</small><textarea disabled={busy} maxLength={500} value={reason} onChange={e => setReason(e.target.value)} placeholder="简要说明本次修改内容"/></label>
         {selected && <p className="dq-replace-note">确认后用新文件替换这一份{noun}，旧文件不进入回收站。其他文件保持原样。</p>}
         {error && <p role="alert" className="dq-error">{error}</p>}
-      </aside><div className="dq-local-preview">{preview ? file?.type.startsWith('image/') ? <img src={preview} alt="待上传文件预览"/> : <iframe src={preview} title="待上传 PDF 预览"/> : <div><FileUp size={44}/><strong>先核对，再更换</strong><span>这里预览你选择的新文件</span></div>}</div></div>
+      </aside><div className="dq-local-preview">{preview ? file?.type.startsWith('image/') ? <img src={preview} alt="待上传文件预览"/> : <div className="dq-pdf-preview"><PdfViewer fileId="local-replacement" title={file?.name || '待上传 PDF'} contentUrl={preview} downloadUrl={preview} viewUrl={preview} dashboardMode initialFitMode="fit-window"/></div> : <div><FileUp size={44}/><strong>先核对，再更换</strong><span>这里预览你选择的新文件</span></div>}</div></div>
       <footer><span>{busy ? '正在保存，请稍候…' : '审核中、已通过、已退回均可更换'}</span><button disabled={busy} onClick={() => setKind(null)}>取消</button><button className="primary" disabled={busy || !file || current.length > 0 && !selected} onClick={() => void submit()}>{busy ? '保存中…' : selected ? '确认更换' : '确认上传'}</button></footer>
     </section></div>, document.body)}
   </>;

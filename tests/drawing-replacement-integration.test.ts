@@ -61,6 +61,22 @@ test('quick document replacement retires exactly one file and creates independen
     await sign(p.id, 'SUPERVISOR'); await assert.rejects(() => assertFixturePrintReady(prisma, f.order.id));
     await sign(p.id, 'QUALITY'); assert.ok(await assertFixturePrintReady(prisma, f.order.id));
   });
+  await t.test('a returned SOP is replaced and resubmitted while retaining its reason and completed facts', async () => {
+    const f = await fixture();
+    const submitted = await cmd({ action: 'SUBMIT', id: f.p.id, version: f.p.version });
+    await cmd({ action: 'RETURN', id: submitted.id, version: submitted.version, reviewRole: 'QUALITY', fileIds: [f.file.id], reason: '尺寸错误' });
+    const done = await prisma.workOrder.create({ data: { code: tag + randomUUID(), productName: '历史完成', stage: 'frontend', drawingLibraryItemId: f.product.id, status: 'completed', completedAt: new Date() } });
+    await prisma.qfPlanBinding.create({ data: { workOrderId: done.id, packageId: f.p.id, selectedById: admin.id } });
+    const next = await replace(f.file);
+    await prisma.$transaction(async tx => { await lockFixtureBusiness(tx); await syncDrawingReplacement(tx, await tx.drawingReplacementJob.findUniqueOrThrow({ where: { sourceFileId: f.file.id } })); });
+    const issue = await prisma.qfDocumentReturn.findFirstOrThrow({ where: { fileId: f.file.id } });
+    assert.equal(issue.reason, '尺寸错误'); assert.equal(issue.responseFileId, next.id); assert.equal(issue.status, 'REVIEWING');
+    assert.equal((await refresh(issue.submittedPackageId!)).status, 'REVIEWING');
+    assert.equal((await prisma.qfPlanBinding.findUniqueOrThrow({ where: { workOrderId: done.id } })).packageId, f.p.id);
+    assert.equal((await prisma.workOrder.findUniqueOrThrow({ where: { id: done.id } })).status, 'completed');
+    await sign(issue.submittedPackageId!, 'QUALITY'); await sign(issue.submittedPackageId!, 'SUPERVISOR');
+    assert.equal((await prisma.qfDocumentReturn.findUniqueOrThrow({ where: { id: issue.id } })).status, 'RESOLVED');
+  });
   await t.test('generated SOP retires its publishing pointer without blocking replacement', async () => {
     const f = await fixture();
     const doc = await prisma.sopDocument.create({ data: { drawingLibraryItemId: f.product.id, title: '在线SOP', sopStage: 'validating' } });
