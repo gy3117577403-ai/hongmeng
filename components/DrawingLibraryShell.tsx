@@ -360,16 +360,17 @@ export function DrawingLibraryShell({
     if (filterOptions.some(([key]) => key === savedFilter)) setFilter(savedFilter);
     if (sopFilterOptions.some(([key]) => key === savedSop)) setSopFilter(savedSop);
     if (params.get('customer')) setCustomer(params.get('customer')!);
+    setConfirmationFilter(params.get('needsConfirmation') === '1');
     setFiltersRestored(true);
   }, []);
   useEffect(() => {
     if (!filtersRestored) return;
     const url = new URL(window.location.href);
-    for (const [key, value] of [['week', week], ['keyword', keyword], ['libraryFilter', filter === 'all' ? '' : filter], ['customer', customer === '全部客户' ? '' : customer], ['sop', sopFilter === 'all' ? '' : sopFilter]]) {
+    for (const [key, value] of [['week', week], ['keyword', keyword], ['libraryFilter', filter === 'all' ? '' : filter], ['customer', customer === '全部客户' ? '' : customer], ['sop', sopFilter === 'all' ? '' : sopFilter], ['needsConfirmation', confirmationFilter ? '1' : '']]) {
       if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
     }
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
-  }, [week, keyword, filter, customer, sopFilter, filtersRestored]);
+  }, [week, keyword, filter, customer, sopFilter, confirmationFilter, filtersRestored]);
 
   function changeWeek(next: string) {
     requestPreviewLeave(() => {
