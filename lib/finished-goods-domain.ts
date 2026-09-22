@@ -42,6 +42,7 @@ export function fgAssertStock(stock: Stock): void {
   if (Object.values(stock).some(q => !Number.isSafeInteger(q) || q < 0)) throw new FinishedGoodsError('库存不足或已被其他操作占用，请刷新后重试', 'FG_STOCK_CONFLICT', 409);
 }
 export const FG_KINDS: Record<string, string> = {
+  SAMPLE_PENDING: '样品完成',
   PRODUCTION_PENDING: '生产待接收', SOURCE_CORRECTION: '来源撤回', RECEIVE: '实物接收', UNRECEIVE: '撤销接收',
   HOLD: '留库', RELEASE_HOLD: '释放留库', RESERVE: '发货占用', RELEASE_RESERVATION: '释放占用', SHIP: '实际发货',
   RETURN: '退货接收', UNBLOCK: '解除隔离', BLOCK: '库存隔离', REWORK_OUT: '返工转出', REWORK_RETURN: '返工回库',
@@ -52,7 +53,7 @@ export const FG_KINDS: Record<string, string> = {
 export type FgRow = Stock & {
   id: string; lotId: string; shipmentId?: string; lineId?: string; shipmentNumber?: string; shipmentVersion?: number;
   workOrderId: string | null; workOrderCode: string; productName: string; specification: string; productKey: string; unit: string;
-  customerName: string; ownerType: string; sourceKind: string; sourceQuantity: number; location: string; note: string;
+  customerName: string; ownerType: string; sourceKind: string; sampleTaskId?: string | null; sourceQuantity: number; location: string; note: string;
   openingReview: boolean; version: number; createdAt: string; receivedAt: string | null; status: string; blockedReason: string;
   quantity: number; returned: number; carrier: string; waybills: string[]; method: string; recipient: string; phone: string;
   address: string; boxes: number; handoverName: string; batchId: string; batchNumber: string; shippedAt: string | null;

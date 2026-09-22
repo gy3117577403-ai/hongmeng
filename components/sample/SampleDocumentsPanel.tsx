@@ -1,0 +1,56 @@
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { CheckCircle2, FileText, Loader2, RefreshCw, ShieldCheck, Upload } from 'lucide-react';
+import { PdfViewer } from '@/components/PdfViewer';
+import { ImageViewer } from '@/components/ImageViewer';
+import type { SampleTaskDTO } from '@/types';
+import { SampleDialog, sampleRequest, sampleStamp } from './SampleBranchControls';
+type Doc = { id: string; name: string; mimeType: string; version: string };
+type Pack = { id: string; version: number; revision: string; sequence: number; status: string; reason: string; supervisorName: string; supervisorAt: string | null; qualityName: string; qualityAt: string | null; drawingFiles: Doc[]; sopFiles: Doc[]; roles: ('SUPERVISOR' | 'QUALITY')[]; createdAt: string };
+type Context = { product: { id: string; fixtureRequired: boolean | null }; packages: Pack[]; boundPackageId: string | null; files: { id: string; originalName: string; displayName: string; mimeType: string; version: string; category: { code: string }; createdAt: string }[] };
+const statusName: Record<string, string> = { DRAFT: '待提交', REVIEWING: '待双方审核', SUPERVISOR: '待主管审核', QUALITY: '待品质审核', APPROVED: '双方已通过', RETURNED: '已退回', REVOKED: '已撤销', SUPERSEDED: '历史审核版本' };
+export default function SampleDocumentsPanel({ task, onChanged }: { task: SampleTaskDTO; onChanged: () => void }) {
+  const [context, setContext] = useState<Context | null>(null), [packId, setPackId] = useState(''), [fileId, setFileId] = useState('');
+  const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
+  const [review, setReview] = useState<{ role: 'SUPERVISOR' | 'QUALITY'; action: 'APPROVE' | 'RETURN'; key: string; pack: Pack } | null>(null);
+  const [confirmed, setConfirmed] = useState(false), [reason, setReason] = useState(''), [returnIds, setReturnIds] = useState<string[]>([]);
+  const uploadRef = useRef<HTMLInputElement>(null), uploadKind = useRef('drawing');
+  const closed = ['COMPLETED','CANCELLED'].includes(task.status);
+  async function refresh(signal?: AbortSignal) {
+    const body = await sampleRequest(`/api/sample-tasks/${task.id}/documents`, { signal });
+    setContext(body); setPackId(id => body.packages.some((p: Pack) => p.id === id && p.status !== 'SUPERSEDED' && p.status !== 'REVOKED') ? id : body.packages.find((p: Pack) => p.id === body.boundPackageId && p.status === 'APPROVED')?.id || body.packages[0]?.id || '');
+  }
+  useEffect(() => { const ctrl = new AbortController(); setLoading(true); refresh(ctrl.signal).catch(e => { if (e.name !== 'AbortError') setError(e.message); }).finally(() => { if (!ctrl.signal.aborted) setLoading(false); }); return () => ctrl.abort(); }, [task.id]);
+  useEffect(() => { if (!message) return; const timer = setTimeout(() => setMessage(''), 4000); return () => clearTimeout(timer); }, [message]);
+  const pack = context?.packages.find(p => p.id === packId) || context?.packages[0];
+  const docs: Doc[] = pack ? [...pack.drawingFiles, ...pack.sopFiles] : (context?.files || []).map(f => ({ id: f.id, name: f.displayName || f.originalName, mimeType: f.mimeType, version: f.version }));
+  const selected = docs.find(f => f.id === fileId) || docs[0];
+  async function mutation(input: Record<string, unknown>, key = crypto.randomUUID()) {
+    return sampleRequest('/api/quality-fixtures', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key }, body: JSON.stringify(input) });
+  }
+  async function run(action: () => Promise<unknown>, success: string) {
+    setBusy(true); setError('');
+    try { await action(); await refresh(); onChanged(); setMessage(success); } catch (e) { setError(e instanceof Error ? e.message : '操作失败'); } finally { setBusy(false); }
+  }
+  async function upload(file: File) {
+    const form = new FormData(); form.set('file', file); form.set('kind', uploadKind.current); form.set('product', task.drawingLibraryItemId);
+    await run(async () => { await sampleRequest('/api/quality-fixtures/files', { method: 'POST', body: form }); await sampleRequest(`/api/sample-tasks/${task.id}/documents`, { method: 'POST' }); setPackId(''); }, '文件已上传，资料审核已同步');
+  }
+  function openReview(role: 'SUPERVISOR' | 'QUALITY', action: 'APPROVE' | 'RETURN') {
+    if (!pack) return; setReview({ role, action, key: crypto.randomUUID(), pack }); setReason(''); setConfirmed(false); setReturnIds(selected ? [selected.id] : []); setError('');
+  }
+  async function decide() {
+    if (!review) return;
+    await run(async () => { await mutation({ action: review.action, id: review.pack.id, version: review.pack.version, reviewRole: review.role, confirmed, reason, fileIds: returnIds }, review.key); setReview(null); }, review.action === 'APPROVE' ? '本项审核已通过' : '已退回技术处理');
+  }
+  if (loading) return <div className="sb-empty"><Loader2 className="spin"/>正在读取图纸与审核记录</div>;
+  return <section className="sb-documents">
+    <header className="sb-doc-context"><label>版本<select aria-label="图纸审核版本" value={pack?.id || ''} onChange={e => { setPackId(e.target.value); setFileId(''); }}>{context?.packages.length ? context.packages.map(p => <option key={p.id} value={p.id}>{p.revision} · 第 {p.sequence} 次{p.id === context.boundPackageId ? ' · 本次制作采用' : ''}</option>) : <option value="">当前图纸</option>}</select></label><span className={`sb-status ${pack?.status === 'APPROVED' ? 'good' : ''}`}>{pack ? statusName[pack.status] || pack.status : '尚未提交'}</span><label>治具<select aria-label="样品是否需要治具" disabled={busy || closed} value={context?.product.fixtureRequired === null ? '' : context?.product.fixtureRequired ? 'yes' : 'no'} onChange={e => e.target.value && void run(() => mutation({ action: 'SET_REQUIREMENT', productIds: [task.drawingLibraryItemId], needFixture: e.target.value === 'yes', expectedNeedFixture: context?.product.fixtureRequired }), '治具要求已更新')}><option value="">待选择</option><option value="yes">需要治具</option><option value="no">无需治具</option></select></label><div className="sb-spacer"/><Link href={`/drawing-library?itemId=${task.drawingLibraryItemId}`}>图纸资料库 ↗</Link>{!closed && <><button disabled={busy} onClick={() => { uploadKind.current = 'drawing'; uploadRef.current?.click(); }}><Upload size={15}/>上传图纸</button>{task.taskType !== 'REPEAT' && <button disabled={busy} onClick={() => { uploadKind.current = 'sop'; uploadRef.current?.click(); }}>上传 SOP</button>}</>}<button aria-label="刷新图纸审核" disabled={busy} onClick={() => void run(() => sampleRequest(`/api/sample-tasks/${task.id}/documents`, { method: 'POST' }), '资料已同步')}><RefreshCw size={15}/></button><input hidden type="file" ref={uploadRef} accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void upload(file); }}/></header>
+    <div className="sb-doc-picker"><FileText size={17}/><select aria-label="选择预览图纸" value={selected?.id || ''} onChange={e => setFileId(e.target.value)}>{docs.length ? docs.map(f => <option key={f.id} value={f.id}>{pack?.sopFiles.some(s => s.id === f.id) ? 'SOP' : '图纸'} · {f.name} · {f.version}</option>) : <option value="">尚未上传图纸</option>}</select>{selected && <a href={`/api/drawing-library/files/${selected.id}/content`} target="_blank" rel="noreferrer">新窗口 ↗</a>}</div>
+    <div className="sb-document-canvas">{selected ? selected.mimeType.startsWith('image/') ? <ImageViewer dashboardMode paperMode initialFitMode="fit-window" fileId={selected.id} title={selected.name} contentUrl={`/api/drawing-library/files/${selected.id}/content`} downloadUrl={`/api/drawing-library/files/${selected.id}/content`}/> : <PdfViewer dashboardMode initialFitMode="fit-window" fileId={selected.id} title={selected.name} contentUrl={`/api/drawing-library/files/${selected.id}/content`} viewUrl={`/api/drawing-library/files/${selected.id}/content`} downloadUrl={`/api/drawing-library/files/${selected.id}/content`}/> : <div className="sb-empty"><FileText size={38}/><h3>上传本次制作使用的图纸</h3><p>资料复用图纸资料库，主管与品质双方通过后可打印和制作。</p>{!closed && <button className="sb-primary" disabled={busy} onClick={() => { uploadKind.current = 'drawing'; uploadRef.current?.click(); }}><Upload size={16}/>上传图纸</button>}</div>}</div>
+    <footer className="sb-document-review"><div className="sb-signatures">{(['SUPERVISOR','QUALITY'] as const).map(role => { const signed = role === 'SUPERVISOR' ? pack?.supervisorAt : pack?.qualityAt; return <div key={role} className={signed ? 'signed' : ''}><ShieldCheck size={22}/><span><strong>{role === 'SUPERVISOR' ? '主管审核' : '品质审核'}</strong><small>{signed ? `${role === 'SUPERVISOR' ? pack?.supervisorName : pack?.qualityName} · ${sampleStamp(signed)}` : '待通过'}</small></span>{!closed && pack?.roles.includes(role) && <div><button disabled={busy} onClick={() => openReview(role, 'RETURN')}>退回</button><button className="sb-primary" disabled={busy} onClick={() => openReview(role, 'APPROVE')}>通过</button></div>}</div>; })}</div><div className="sb-doc-primary">{pack?.status === 'RETURNED' ? <><span className="sb-return-reason" title={pack.reason}>{pack.reason}</span><Link href={`/drawing-library?itemId=${task.drawingLibraryItemId}&returns=1`}>处理退回 ↗</Link></> : <small>顺序不限，双方通过 · 配料、BOM 与治具独立跟进</small>}{!closed && (!pack || pack.status === 'DRAFT') && <button className="sb-primary" disabled={busy || !docs.length} onClick={() => void run(async () => { if (pack) await mutation({ action: 'SUBMIT', id: pack.id, version: pack.version }); else await sampleRequest(`/api/sample-tasks/${task.id}/documents`, { method: 'POST' }); }, '资料已提交审核')}>{busy ? '正在提交…' : '提交双方审核'}</button>}</div></footer>
+    {message && <div className="sb-toast" role="status"><CheckCircle2 size={18}/>{message}</div>}{error && !review && <div className="sb-toast sb-error" role="alert">{error}<button aria-label="关闭提示" onClick={() => setError('')}>×</button></div>}
+    {review && <SampleDialog title={`${review.role === 'SUPERVISOR' ? '主管' : '品质'}${review.action === 'APPROVE' ? '审核确认' : '退回图纸资料'}`} busy={busy} onClose={() => setReview(null)}><div className="sb-dialog-body"><strong>{task.specification}</strong><p>{review.pack.revision} · 第 {review.pack.sequence} 次</p>{review.action === 'APPROVE' ? <label className="sb-check"><input type="checkbox" checked={confirmed} disabled={busy} onChange={e => setConfirmed(e.target.checked)}/>我已核对当前版本资料，可以用于本次样品制作</label> : <><fieldset><legend>选择有问题的文件</legend>{[...review.pack.drawingFiles, ...review.pack.sopFiles].map(f => <label className="sb-check" key={f.id}><input type="checkbox" checked={returnIds.includes(f.id)} disabled={busy} onChange={e => setReturnIds(ids => e.target.checked ? [...ids, f.id] : ids.filter(id => id !== f.id))}/>{f.name}</label>)}</fieldset><label>退回原因<textarea value={reason} maxLength={2000} disabled={busy} onChange={e => setReason(e.target.value)} placeholder="说明不正确的数据和位置，方便技术处理"/></label></>}{error && <p className="sb-error" role="alert">{error}</p>}</div><footer><button disabled={busy} onClick={() => setReview(null)}>取消</button><button className="sb-primary" disabled={busy || (review.action === 'APPROVE' ? !confirmed : !reason.trim() || !returnIds.length)} onClick={() => void decide()}>{busy ? '正在保存…' : review.action === 'APPROVE' ? '确认本项通过' : '退回技术处理'}</button></footer></SampleDialog>}
+  </section>;
+}

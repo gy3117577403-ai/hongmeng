@@ -61,6 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ ok: false, error: '仓库尚未登记实际到料，不能调整受影响计划' }, { status: 409 });
     }
     const workOrder = current.warehouseTask.workOrder;
+    if (!workOrder) return NextResponse.json({ ok: false, error: '请在样品组计划中调整该任务的计划周与交期' }, { status: 409 });
     const batch = workOrder.productionPlanBatch;
     if (!batch || batch.deletedAt || batch.planOrder.deletedAt) {
       return NextResponse.json({ ok: false, error: '该缺料任务没有可调整的正式排产批次' }, { status: 409 });

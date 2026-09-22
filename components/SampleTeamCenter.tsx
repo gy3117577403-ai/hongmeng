@@ -1,6 +1,12 @@
 'use client';
 
 import QRCode from 'qrcode';
+import '@/app/sample-branches.css';
+import { SampleBranchControls } from '@/components/sample/SampleBranchControls';
+import SampleDocumentsPanel from '@/components/sample/SampleDocumentsPanel';
+import SampleMaterialsPanel from '@/components/sample/SampleMaterialsPanel';
+import SampleCompletionPanel from '@/components/sample/SampleCompletionPanel';
+import { sampleCurrentWeek } from '@/lib/sample-plan-domain';
 import SampleSchedulePanel from '@/components/sample/SampleSchedulePanel';
 import { SAMPLE_VIEWS, sampleDateRange, sampleWarning, type SamplePlanView } from '@/lib/sample-plan-view';
 import {
@@ -56,7 +62,7 @@ import type {
 
 type CenterMode = 'planning' | 'execution' | 'materials';
 type TaskViewFilter = SamplePlanView;
-type DetailTab = 'overview' | 'data' | 'materials' | 'photos' | 'review' | 'published';
+type DetailTab = 'documents' | 'warehouse' | 'completion' | 'overview' | 'data' | 'materials' | 'photos' | 'review' | 'published';
 type SampleDeletePreview = {
   task: { id: string; code: string; customerName: string; productName: string | null; specification: string; status: string; version: number; dataPurpose: string; completedAt: string | null; archivedAt: string | null };
   impact: { entryCount: number; photoCount: number; submissionCount: number; publishedDrawingFileCount: number; productDataRecordCount: number; connectorBindingCount: number; affectedProductTimeProfileCount: number; objectDeletionCount: number };
@@ -88,6 +94,8 @@ type ContextPayload = {
 };
 
 type PlanForm = {
+  taskType: 'NEW' | 'REPEAT';
+  planWeekStartDate: string;
   dataPurpose: 'PRODUCTION' | 'TEST' | 'TRAINING';
   drawingLibraryItemId: string;
   customerName: string;
@@ -174,6 +182,7 @@ const emptySummary: SampleTeamSummaryDTO = {
 };
 
 const emptyPlanForm: PlanForm = {
+  taskType: 'NEW', planWeekStartDate: '',
   dataPurpose: 'PRODUCTION',
   drawingLibraryItemId: '',
   customerName: '',
@@ -359,6 +368,10 @@ export default function SampleTeamCenter({
 }) {
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [taskType, setTaskType] = useState<'NEW' | 'REPEAT'>('NEW');
+  const [planWeek, setPlanWeek] = useState(sampleCurrentWeek);
+  const [includeCarry, setIncludeCarry] = useState(false);
+  const [detailTask, setDetailTask] = useState<SampleTaskDTO | null>(null);
   const [tasks, setTasks] = useState<SampleTaskDTO[]>([]);
   const [summary, setSummary] = useState<SampleTeamSummaryDTO>(emptySummary);
   const [selectedId, setSelectedId] = useState('');
@@ -429,14 +442,16 @@ export default function SampleTeamCenter({
     return () => { clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, []);
   const visibleTasks = tasks;
-  const selected = tasks.find(task => task.id === selectedId) || tasks[0] || null;
+  const summaryTask = tasks.find(task => task.id === selectedId) || tasks[0] || null;
+  const selected = detailTask?.id === summaryTask?.id ? detailTask : summaryTask;
   const queryString = useMemo(() => {
     const query = new URLSearchParams({ view: taskView, page: String(page), pageSize: '40', dateBy: filters.dateBy, sort: filters.sort });
+    query.set('taskType', taskType); query.set('week', planWeek); query.set('carry', String(includeCarry)); query.set('summary', 'true');
     if (debouncedKeyword) query.set('keyword', debouncedKeyword);
     for (const key of ['customer', 'level', 'member', 'risk', 'from', 'to'] as const) if (filters[key]) query.set(key, filters[key]);
     if (focusId) query.set('focusId', focusId);
     return query.toString();
-  }, [taskView, page, filters, debouncedKeyword, focusId]);
+  }, [taskView, page, filters, debouncedKeyword, focusId, taskType, planWeek, includeCarry]);
   function changeFilters(next: Partial<typeof filters>) { setFilters(current => ({ ...current, ...next })); setPage(1); setFocusId(''); }
   function changeView(view: TaskViewFilter) { setTaskView(view); setPage(1); setFocusId(''); }
   function clearFilters() { setKeyword(''); setFilters({ customer: '', dateBy: 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: 'issued_desc' }); setPage(1); setFocusId(''); setTaskView('UNFINISHED'); }
@@ -445,9 +460,14 @@ export default function SampleTeamCenter({
     const view = params.get('sampleView') as TaskViewFilter;
     if (SAMPLE_VIEWS.includes(view)) setTaskView(view);
     const id = params.get('taskId');
-    if (id) { setFocusId(id); setSelectedId(id); }
+    if (id) {
+      fetch(`/api/sample-tasks/${encodeURIComponent(id)}`, { cache: 'no-store' }).then(responseJson).then(body => {
+        if (!body.task) { setError(body.error || '任务不存在'); return; }
+        setTaskType(body.task.taskType || 'NEW'); setPlanWeek(body.task.planWeekStartDate || 'unplanned'); setTaskView('ALL'); setFocusId(id); setSelectedId(id); setDetailTask(body.task);
+      }).catch(() => { setFocusId(''); setError('指定任务加载失败，请从任务清单重新选择'); }).finally(() => setQueryReady(true));
+    }
     const keyword = params.get('sampleSearch') || '';
-    setKeyword(keyword); setDebouncedKeyword(keyword); setQueryReady(true);
+    setKeyword(keyword); setDebouncedKeyword(keyword); if (!id) setQueryReady(true);
   }, []);
   const visibleMembers = showAllMembers ? context.members : context.members.filter(member => member.sampleTeam);
   const visibleProducts = useMemo(() => {
@@ -509,6 +529,13 @@ export default function SampleTeamCenter({
   }, [queryString, queryReady, refreshToken]);
 
   useEffect(() => {
+    if (!selectedId) return;
+    const controller = new AbortController();
+    fetch(`/api/sample-tasks/${encodeURIComponent(selectedId)}`, { cache: 'no-store', signal: controller.signal }).then(async response => { const body = await responseJson(response); if (!response.ok) throw new Error(body.error || '任务详情加载失败'); if (!controller.signal.aborted) setDetailTask(body.task); }).catch(e => { if (e.name !== 'AbortError') setError(e.message); });
+    return () => controller.abort();
+  }, [selectedId, refreshToken]);
+
+  useEffect(() => {
     setSelectedId(current => visibleTasks.some(task => task.id === current) ? current : visibleTasks[0]?.id || '');
   }, [visibleTasks]);
 
@@ -520,7 +547,7 @@ export default function SampleTeamCenter({
     }
     if (lastDetailTaskRef.current === selected.id) return;
     lastDetailTaskRef.current = selected.id;
-    setDetailTab(mode === 'materials' ? 'materials' : selected.counts.pendingReview > 0 ? 'review' : 'overview');
+    setDetailTab(mode === 'materials' ? 'warehouse' : selected.taskType === 'REPEAT' ? 'documents' : selected.counts.pendingReview > 0 ? 'review' : 'overview');
   }, [mode, selected]);
 
   useEffect(() => {
@@ -532,13 +559,14 @@ export default function SampleTeamCenter({
   function replaceTask(task: SampleTaskDTO | null | undefined) {
     if (!task) return;
     setFocusId('');
+    setDetailTask(task);
     setTasks(current => current.map(item => item.id === task.id ? task : item));
     setSelectedId(task.id);
     setRefreshToken(value => value + 1);
   }
 
   function openCreate() {
-    setForm({ ...emptyPlanForm, issuedDate: chinaTodayKey() });
+    setForm({ ...emptyPlanForm, taskType, planWeekStartDate: planWeek === 'unplanned' ? '' : planWeek, issuedDate: chinaTodayKey() });
     setProductSearch('');
     setShowAllMembers(context.sampleMemberCount === 0);
     setFormError('');
@@ -620,6 +648,7 @@ export default function SampleTeamCenter({
     setEditingTarget({ id: task.id, version: task.version });
     const level = sampleCustomerLevelOrDefault(task.customerLevelCode);
     setForm({
+      taskType: task.taskType || 'NEW', planWeekStartDate: task.planWeekStartDate || '',
       dataPurpose: task.dataPurpose,
       drawingLibraryItemId: task.drawingLibraryItemId,
       customerName: task.customerName,
@@ -665,6 +694,7 @@ export default function SampleTeamCenter({
         const body = await responseJson(response);
         if (!response.ok) throw new Error(body.error || '计划保存失败');
         replaceTask(body.task as SampleTaskDTO);
+        setTaskType(body.task.taskType || form.taskType); setPlanWeek(body.task.planWeekStartDate || 'unplanned'); setFocusId(body.task.id);
         setEditOpen(false);
         setMessage('样品计划已更新');
       } else {
@@ -681,7 +711,7 @@ export default function SampleTeamCenter({
         setDebouncedKeyword('');
         setRefreshToken(value => value + 1);
         if (body.task?.id) {
-          setFocusId(body.task.id); setSelectedId(body.task.id);
+          setTaskType(body.task.taskType || form.taskType); setPlanWeek(body.task.planWeekStartDate || 'unplanned'); setDetailTask(body.task); setFocusId(body.task.id); setSelectedId(body.task.id);
           const url = new URL(window.location.href);
           url.searchParams.set('taskId', body.task.id);
           url.searchParams.set('sampleView', 'UNFINISHED');
@@ -964,7 +994,7 @@ export default function SampleTeamCenter({
       ? 3
       : selected.status === 'SUBMITTED' || selected.counts.pendingReview > 0
         ? 2
-        : selected.status === 'IN_PROGRESS'
+        : selected.status === 'IN_PROGRESS' && (!selected.documentReviewRequired || selected.drawingReviewStatus === 'APPROVED')
           ? 1
           : 0;
   const taskViews = [
@@ -973,22 +1003,22 @@ export default function SampleTeamCenter({
     { key: 'SOON' as const, label: '即将到期', count: viewCounts.SOON, icon: <Clock3 size={15} />, attention: true },
     { key: 'OVERDUE' as const, label: '已经逾期', count: viewCounts.OVERDUE, icon: <Clock3 size={15} />, danger: true },
     { key: 'PLANNED' as const, label: '待开始', count: viewCounts.PLANNED, icon: <CircleDot size={15} /> },
-    { key: 'IN_PROGRESS' as const, label: '采集中', count: viewCounts.IN_PROGRESS, icon: <Camera size={15} /> },
+    { key: 'IN_PROGRESS' as const, label: taskType === 'REPEAT' ? '制作中' : '采集中', count: viewCounts.IN_PROGRESS, icon: <Camera size={15} /> },
     { key: 'PENDING_REVIEW' as const, label: '待整包审核', count: viewCounts.PENDING_REVIEW, icon: <ClipboardCheck size={15} />, unit: '单', attention: true },
     { key: 'COMPLETED' as const, label: '已完成', count: viewCounts.COMPLETED, icon: <CheckCircle2 size={15} /> },
     { key: 'CANCELLED' as const, label: '已取消', count: viewCounts.CANCELLED, icon: <X size={15} />, quiet: true },
   ];
-  const detailTabs: Array<{ key: DetailTab; label: string; count?: number; attention?: boolean }> = !selected ? [] : mode === 'materials' ? [
-    { key: 'overview' as const, label: '准备概览' },
-    { key: 'materials' as const, label: '辅料数据', count: materialEntries.length },
-    { key: 'photos' as const, label: '样品照片', count: selected.photos.length },
-    { key: 'published' as const, label: '正式资料', count: publishedCount },
-  ] : [
-    { key: 'overview' as const, label: '任务概览' },
-    { key: 'data' as const, label: '采集数据', count: selected.entries.length },
-    { key: 'photos' as const, label: '过程照片', count: selected.photos.length },
-    { key: 'review' as const, label: '整包审核', count: selected.counts.pendingReview, attention: true },
-    { key: 'published' as const, label: '已处理', count: publishedCount },
+  const detailTabs: Array<{ key: DetailTab; label: string; count?: number; attention?: boolean }> = !selected ? [] : [
+    { key: 'overview', label: '任务概览' },
+    { key: 'documents', label: '图纸审核' },
+    { key: 'warehouse', label: '仓库配料' },
+    ...(selected.taskType === 'REPEAT' ? [] : [
+      { key: 'data' as const, label: '采集数据', count: selected.counts.data },
+      { key: 'photos' as const, label: '过程照片', count: selected.counts.photos },
+      { key: 'review' as const, label: '整包审核', count: selected.counts.pendingReview, attention: true },
+      { key: 'published' as const, label: '已处理', count: publishedCount },
+    ]),
+    { key: 'completion', label: '完成 / 成品仓', count: selected.finishedGoodsCount || 0 },
   ];
   const moduleConfig = mode === 'planning' ? {
     activeHref: '/weekly-plan-center',
@@ -1018,10 +1048,10 @@ export default function SampleTeamCenter({
     sampleTitle: '样品执行',
   } : {
     activeHref: '/workspace/warehouse',
-    subtitle: '样品辅料数据与照片准备',
+    subtitle: '样品仓库配料与物料跟进',
     eyebrow: '仓库管理 / 样品组',
     title: '样品物料准备',
-    description: '查看与补充样品辅料、过程及成品照片',
+    description: '登记需求、核对配料、跟进采购及客供缺料',
     moduleLabel: '仓库管理',
     drawerId: 'sample-materials-mode-drawer',
     massHref: '/workspace/warehouse',
@@ -1042,7 +1072,7 @@ export default function SampleTeamCenter({
   }
 
   return (
-    <main className="sample-team-page hm-workbench-root hm-workbench-navigation-overlay">
+    <main className="sample-team-page sample-branches-page hm-workbench-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
         user={user}
         activeHref={moduleConfig.activeHref}
@@ -1065,7 +1095,6 @@ export default function SampleTeamCenter({
               <p>{moduleConfig.description}</p>
             </div>
           </div>
-          <div className="sample-team-rule-note"><Info size={16} /><span>{mode === 'materials' ? '样品辅料与照片全部选填' : '样品任务只记录资料'}<strong>{mode === 'materials' ? '不扣库存、不生成正式领料' : '不统计产量与个人效率'}</strong></span></div>
           <div className="sample-team-command-actions">
             <Link className="hm-workbench-button" href="/home?sampleReturn=1" prefetch={false}>返回首页</Link>
             <a className="hm-workbench-button" href={`/api/sample-tasks/export?${queryString}`} download><Download size={15} />导出清单</a>
@@ -1087,8 +1116,10 @@ export default function SampleTeamCenter({
           onClose={modeDrawer.close}
         />
 
+        <SampleBranchControls type={taskType} week={planWeek} carry={includeCarry} refresh={refreshToken} onChange={(kind, week, carry) => { setTaskType(kind); setPlanWeek(week); setIncludeCarry(carry); setPage(1); setFocusId(''); setSelectedId(''); setDetailTask(null); }} />
+
         {<section className="sample-team-statusbar" aria-label="样品任务状态筛选">
-          <div>{taskViews.map(item => <button type="button" className={`${taskView === item.key ? 'active' : ''}${item.danger && item.count ? ' danger' : ''}${item.attention && item.count ? ' attention' : ''}${item.quiet ? ' quiet' : ''}`} aria-pressed={taskView === item.key} key={item.key} onClick={() => changeView(item.key)}>{item.icon}<span>{item.label}</span><b>{item.count}{item.unit || ''}</b></button>)}</div>
+          <div>{taskViews.filter(item => taskType !== 'REPEAT' || item.key !== 'PENDING_REVIEW').map(item => <button type="button" className={`${taskView === item.key ? 'active' : ''}${item.danger && item.count ? ' danger' : ''}${item.attention && item.count ? ' attention' : ''}${item.quiet ? ' quiet' : ''}`} aria-pressed={taskView === item.key} key={item.key} onClick={() => changeView(item.key)}>{item.icon}<span>{item.label}</span><b>{item.count}{item.unit || ''}</b></button>)}</div>
           <span className="sample-team-published-total"><CheckCircle2 size={15} />正式资料 <strong>{summary.publishedItems}</strong> 项</span>
         </section>}
 
@@ -1108,7 +1139,7 @@ export default function SampleTeamCenter({
         {error && <div className="sample-team-error"><AlertTriangle size={18} /><span>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 
         {loading && !tasks.length ? <section className="sample-team-loading"><Loader2 className="spin" size={28} /><strong>正在加载样品任务</strong></section>
-          : viewCounts.ALL === 0 && !debouncedKeyword && !Object.values(filters).some(value => value && !['issued', 'all', 'issued_desc'].includes(value)) ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'planning' ? '从第一条样品任务开始' : mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '建立任务与产品关联后，员工即可扫码填写数据和拍照；所有采集项都可留空。' : mode === 'materials' ? '计划中心下达样品任务后，可在这里选填辅料数据与上传照片；不会扣减库存。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />每个产品的本次提交只做一次整包审核</div></section>
+          : viewCounts.ALL === 0 && !debouncedKeyword && !Object.values(filters).some(value => value && !['issued', 'all', 'issued_desc'].includes(value)) ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'planning' ? '从第一条样品任务开始' : mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '选择新品或老产品，安排计划周，准备图纸与物料。' : mode === 'materials' ? '正式样品计划下达后，仓库可在这里登记物料需求并确认配料。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />{taskType === 'REPEAT' ? '老产品仅审核图纸资料，完成后转成品仓。' : '新品保留现有采集与整包审核流程。'}</div></section>
             : !tasks.length || !visibleTasks.length ? <section className="sample-filter-empty"><span className="sample-empty-icon"><Search size={30} /></span><h2>没有符合条件的样品任务</h2><p>调整搜索内容或任务状态后再查看。</p><button type="button" onClick={clearFilters}>清除筛选</button></section>
               : <section className="sample-team-workspace">
           <aside className="sample-task-list" aria-label="样品任务列表">
@@ -1123,8 +1154,8 @@ export default function SampleTeamCenter({
                   <h3 title={task.specification}><small className="sample-task-sequence">{String((pagination.page-1)*pagination.pageSize+index+1).padStart(3, '0')}</small>{task.specification}</h3>
                   <p>{task.productName || '未设置品名'}</p>
                   <div className="sample-task-date-pair"><span>下达 {dateText(task.issuedDate)}</span><span>出货 {dateText(task.dueDate)}</span></div>
-                  <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{warning.label}</span><span><UserRound size={12} />{task.assignees.map(item => item.name).join('、') || '未指派'}</span></div>
-                  <footer><span><FileText size={12} />数据 {task.counts.data}</span><span><ImageIcon size={12} />照片 {task.counts.photos}</span>{task.counts.pendingReview > 0 && <b>待审 1 包</b>}{task.status === 'COMPLETED' && <span>{task.archivedAt ? '已归档' : '未归档'}</span>}</footer>
+                  <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{task.taskType === 'REPEAT' && task.status === 'IN_PROGRESS' ? '制作中' : taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{warning.label}</span><span><UserRound size={12} />{task.assignees.map(item => item.name).join('、') || '未指派'}</span></div>
+                  <footer><span className={task.drawingReviewStatus === 'APPROVED' ? 'sb-good-text' : ''}>图纸 {task.drawingReviewStatus === 'APPROVED' ? '已通过' : task.drawingReviewStatus === 'RETURNED' ? '已退回' : '待审核'}</span><span>配料 {task.materialStatus === 'completed' ? '已齐' : task.materialStatus === 'exception' ? '缺料' : '待准备'}</span><b>{task.completedQuantity || 0} / {task.sampleQuantity || '—'}</b></footer>
                 </button>;
               })}
             </div>
@@ -1132,14 +1163,15 @@ export default function SampleTeamCenter({
           </aside>
 
           <section className="sample-task-detail">
-            {selected && <>
+            {selected && detailTask?.id !== selected.id && <div className="sb-empty"><Loader2 className="spin"/>正在读取任务详情</div>}
+            {selected && detailTask?.id === selected.id && <>
               <header className="sample-detail-head">
                 <div><div className="sample-detail-identity"><span style={sampleCustomerLevelStyle(selected.customerLevelCode)}>{taskLevelText(selected)}</span><small>{selected.code}</small></div><h2>{selected.specification}</h2><p>{selected.customerName} · {selected.productName || '未设置品名'}{selected.sourceOrderNo ? ` · 来源 ${selected.sourceOrderNo}` : ''}</p></div>
                 <div className="sample-detail-actions">
-                  {!terminalTask && <button type="button" onClick={() => void openQr(selected)}><QrCode size={15} />二维码</button>}
+                  {!terminalTask && selected.taskType !== 'REPEAT' && <button type="button" onClick={() => void openQr(selected)}><QrCode size={15} />二维码</button>}
                   {mode === 'planning' && !terminalTask && <button type="button" onClick={() => openEdit(selected)}><Pencil size={15} />编辑计划</button>}
                   {mode !== 'materials' && selected.status === 'PLANNED' && <button className="primary" type="button" onClick={() => void taskAction(selected, 'START')}>开始任务</button>}
-                  {mode !== 'materials' && selected.status === 'IN_PROGRESS' && selected.counts.data + selected.counts.photos === 0 && <button type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>无资料完成</button>}
+                  {mode !== 'materials' && selected.taskType !== 'REPEAT' && selected.status === 'IN_PROGRESS' && selected.counts.data + selected.counts.photos === 0 && <button type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>无资料完成</button>}
                   {mode === 'planning' && selected.status === 'COMPLETED' && <button type="button" onClick={() => void taskAction(selected, selected.archivedAt ? 'UNARCHIVE' : 'ARCHIVE')}>{selected.archivedAt ? '取消归档' : '归档'}</button>}
                   {mode === 'planning' && user.laborRole === 'ADMIN' && selected.status === 'COMPLETED' && <button className="danger" type="button" disabled={deleteBusy} onClick={() => void openDeleteTask(selected)}><Trash2 size={15} />删除</button>}
                 </div>
@@ -1147,9 +1179,14 @@ export default function SampleTeamCenter({
 
               <nav className="sample-detail-tabs" aria-label="样品任务详情"><div>{detailTabs.map(tab => <button type="button" className={`${detailTab === tab.key ? 'active' : ''}${tab.attention && tab.count ? ' attention' : ''}`} aria-pressed={detailTab === tab.key} key={tab.key} onClick={() => setDetailTab(tab.key)}><span>{tab.label}</span>{typeof tab.count === 'number' && <em>{tab.count}</em>}</button>)}</div></nav>
 
-              <div className="sample-detail-body hm-scroll-region" tabIndex={0}>
-                {detailTab === 'overview' && <section className="sample-overview-content">
-                  <ol className={`sample-stage-rail ${selected.status === 'CANCELLED' ? 'cancelled' : ''}`}>{['待开始', '采集中', '待审核', '已归档'].map((label, index) => <li className={index < stageIndex ? 'done' : index === stageIndex ? 'current' : ''} key={label}><span>{index < stageIndex ? <CheckCircle2 size={15} /> : index + 1}</span><strong>{label}</strong></li>)}</ol>
+              <div className={`sample-detail-body hm-scroll-region${detailTab === 'documents' ? ' sb-preview-body' : ''}`} tabIndex={0}>
+                {detailTab === 'documents' && <SampleDocumentsPanel key={selected.id} task={selected} onChanged={() => setRefreshToken(v => v + 1)} />}
+                {detailTab === 'warehouse' && <SampleMaterialsPanel key={selected.id} task={selected} user={user} onChanged={() => setRefreshToken(v => v + 1)} />}
+                {(detailTab === 'completion' || detailTab === 'overview' && selected.taskType === 'REPEAT') && <SampleCompletionPanel key={selected.id} task={selected} onSaved={replaceTask} onTab={setDetailTab} />}
+
+                {detailTab === 'overview' && selected.taskType !== 'REPEAT' && <section className="sample-overview-content">
+                  <ol className={`sample-stage-rail ${selected.status === 'CANCELLED' ? 'cancelled' : ''}`}>{['资料准备', '试制采集', '整包审核', '完成转仓'].map((label, index) => <li className={index < stageIndex ? 'done' : index === stageIndex ? 'current' : ''} key={label}><span>{index < stageIndex ? <CheckCircle2 size={15} /> : index + 1}</span><strong>{label}</strong></li>)}</ol>
+                  <div className="sb-preparation-links"><button onClick={() => setDetailTab('documents')}><FileText size={21}/><span><strong>图纸资料审核</strong><small>{selected.drawingReviewStatus === 'APPROVED' ? '资料已审核' : '查看图纸与双方审核'}</small></span><ArrowRight size={16}/></button><button onClick={() => setDetailTab('warehouse')}><PackageCheck size={21}/><span><strong>仓库配料</strong><small>{selected.materialStatus === 'completed' ? '已配齐' : selected.materialStatus === 'exception' ? '有缺料待跟进' : '填写物料与配料数量'}</small></span><ArrowRight size={16}/></button></div>
                   <SampleSchedulePanel key={selected.id} task={selected} editable={mode === 'planning' && !terminalTask} onSaved={replaceTask} />
                   <section className="sample-detail-facts">
                     <div><span>任务状态</span><strong>{taskStatusLabels[selected.status]}</strong><small>{dataStatusLabels[selected.dataStatus]}</small></div>
@@ -1305,6 +1342,8 @@ export default function SampleTeamCenter({
         <section className="sample-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-plan-dialog-title">
           <header><div><span>{editOpen ? '编辑样品计划' : '新增样品计划'}</span><h2 id="sample-plan-dialog-title">{editOpen ? selected?.code : '建立任务与产品关联'}</h2></div><button type="button" aria-label="关闭" onClick={() => { if (!saving) { setCreateOpen(false); setEditOpen(false); } }}><X /></button></header>
           <div className="sample-plan-dialog-body hm-scroll-region" tabIndex={0}>
+            <section className="sample-plan-section"><div className="sample-section-title"><strong>本次任务类型</strong></div><div className="sb-branch-switch">{(['NEW','REPEAT'] as const).map(kind => <button type="button" key={kind} aria-pressed={form.taskType === kind} className={form.taskType === kind ? 'active' : ''} onClick={() => setForm(current => ({ ...current, taskType: kind, dataPurpose: kind === 'REPEAT' ? 'PRODUCTION' : current.dataPurpose }))}>{kind === 'NEW' ? '新品试制' : '老产品制作'}</button>)}</div><p>{form.taskType === 'REPEAT' ? '复用图纸，双方审核后制作，完成转成品仓。' : '图纸审核、仓库配料、试制采集与整包审核。'}</p><label className="sb-plan-week-label">计划周<input type="date" value={form.planWeekStartDate} onChange={e => setForm(current => ({ ...current, planWeekStartDate: e.target.value }))}/><small>选择该周任一日期；留空进入待排期，出货日期单独保留。</small></label></section>
+
             {!editOpen && <section className="sample-plan-section">
               <div className="sample-section-title"><strong>产品</strong><small>可选择现有产品，也可直接建立新规格主档</small></div>
               <label className="sample-product-search"><Search size={15} /><input value={productSearch} onChange={event => setProductSearch(event.target.value)} placeholder="搜索客户、规格或品名" /></label>
@@ -1344,7 +1383,7 @@ export default function SampleTeamCenter({
                 {editOpen && <label className="wide"><span>日期或预警调整原因</span><input value={form.scheduleReason} maxLength={500} onChange={event => setForm(current => ({ ...current, scheduleReason: event.target.value }))} placeholder="修改日期或预警时必填" /></label>}
                 <label><span>计划出货日期</span><input type="date" value={form.dueDate} onChange={event => setForm(current => ({ ...current, dueDate: event.target.value }))} /></label>
               </div>
-              {!editOpen && user.laborRole === 'ADMIN' && <label className="sample-data-purpose-field"><span>数据用途</span><select value={form.dataPurpose} onChange={event => setForm(current => ({ ...current, dataPurpose: event.target.value as PlanForm['dataPurpose'] }))}><option value="PRODUCTION">正式业务数据</option><option value="TEST">测试数据（可批量退役）</option><option value="TRAINING">培训数据</option></select><small>只有新建时可标记；正式数据不会被测试清理工具自动退役。</small></label>}
+              {!editOpen && form.taskType !== 'REPEAT' && user.laborRole === 'ADMIN' && <label className="sample-data-purpose-field"><span>数据用途</span><select value={form.dataPurpose} onChange={event => setForm(current => ({ ...current, dataPurpose: event.target.value as PlanForm['dataPurpose'] }))}><option value="PRODUCTION">正式业务数据</option><option value="TEST">测试数据（可批量退役）</option><option value="TRAINING">培训数据</option></select><small>只有新建时可标记；正式数据不会被测试清理工具自动退役。</small></label>}
             </section>
 
             <section className="sample-plan-section">
@@ -1353,7 +1392,7 @@ export default function SampleTeamCenter({
             </section>
             {formError && <div className="sample-form-error"><AlertTriangle size={16} />{formError}</div>}
           </div>
-          <footer><span>计划建立后，现场采集内容仍全部选填。</span><div><button type="button" disabled={saving} onClick={() => { setCreateOpen(false); setEditOpen(false); }}>取消</button><button className="primary" type="button" disabled={saving} onClick={() => void savePlan()}>{saving ? <><Loader2 className="spin" size={15} />保存中</> : editOpen ? '保存计划' : '创建样品任务'}</button></div></footer>
+          <footer><span>{form.taskType === 'REPEAT' ? '老产品只审核图纸资料。' : '新品采集内容仍全部选填。'}</span><div><button type="button" disabled={saving} onClick={() => { setCreateOpen(false); setEditOpen(false); }}>取消</button><button className="primary" type="button" disabled={saving} onClick={() => void savePlan()}>{saving ? <><Loader2 className="spin" size={15} />保存中</> : editOpen ? '保存计划' : '创建样品任务'}</button></div></footer>
         </section>
       </div>}
 
@@ -1398,3 +1437,4 @@ export default function SampleTeamCenter({
     </main>
   );
 }
+

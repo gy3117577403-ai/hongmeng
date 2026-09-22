@@ -1,4 +1,5 @@
 import { MaterialFollowUpStatus, Prisma } from '@prisma/client';
+import { sampleMaterialSource, sampleMaterialSourceSelect } from '@/lib/sample-material-source';
 import type {
   MaterialFollowUpRiskDTO,
   MaterialFollowUpStatusDTO,
@@ -37,6 +38,8 @@ export const materialFollowUpListInclude = Prisma.validator<Prisma.MaterialFollo
   },
   warehouseTask: {
     select: {
+      sampleTaskId: true,
+      sampleTask: { select: sampleMaterialSourceSelect },
       status: true,
       exceptionType: true,
       exceptionNote: true,
@@ -239,8 +242,10 @@ export function serializeMaterialFollowUpTask(
   const status = task.status as MaterialFollowUpStatusDTO;
   const risk = materialFollowUpRisk(status, task.ownerId, task.expectedAt, now);
   const detail = task as MaterialFollowUpDetailRecord;
+  const source = task.warehouseTask.workOrder || sampleMaterialSource(task.warehouseTask.sampleTask);
   return {
     id: task.id,
+    sampleTaskId: task.warehouseTask.sampleTaskId,
     warehouseTaskId: task.warehouseTaskId,
     warehouseExceptionId: task.warehouseExceptionId,
     status,
@@ -264,19 +269,19 @@ export function serializeMaterialFollowUpTask(
     },
     exceptionCase: serializeWarehouseExceptionCase(task.warehouseException),
     workOrder: {
-      ...task.warehouseTask.workOrder,
-      plannedAt: task.warehouseTask.workOrder.plannedAt?.toISOString() || null,
-      weekStartDate: task.warehouseTask.workOrder.weekStartDate?.toISOString() || null,
-      weekEndDate: task.warehouseTask.workOrder.weekEndDate?.toISOString() || null,
-      planning: task.warehouseTask.workOrder.productionPlanBatch ? {
-        batchId: task.warehouseTask.workOrder.productionPlanBatch.id,
-        orderId: task.warehouseTask.workOrder.productionPlanBatch.planOrder.id,
-        releaseState: task.warehouseTask.workOrder.productionPlanBatch.releaseState,
-        weekStartDate: task.warehouseTask.workOrder.productionPlanBatch.weekStartDate.toISOString(),
-        weekEndDate: task.warehouseTask.workOrder.productionPlanBatch.weekEndDate.toISOString(),
-        plannedCompletionDate: task.warehouseTask.workOrder.productionPlanBatch.plannedCompletionDate.toISOString(),
-        customerDueDate: task.warehouseTask.workOrder.productionPlanBatch.planOrder.customerDueDate.toISOString(),
-        updatedAt: task.warehouseTask.workOrder.productionPlanBatch.updatedAt.toISOString(),
+      ...source,
+      plannedAt: source.plannedAt?.toISOString() || null,
+      weekStartDate: source.weekStartDate?.toISOString() || null,
+      weekEndDate: source.weekEndDate?.toISOString() || null,
+      planning: source.productionPlanBatch ? {
+        batchId: source.productionPlanBatch.id,
+        orderId: source.productionPlanBatch.planOrder.id,
+        releaseState: source.productionPlanBatch.releaseState,
+        weekStartDate: source.productionPlanBatch.weekStartDate.toISOString(),
+        weekEndDate: source.productionPlanBatch.weekEndDate.toISOString(),
+        plannedCompletionDate: source.productionPlanBatch.plannedCompletionDate.toISOString(),
+        customerDueDate: source.productionPlanBatch.planOrder.customerDueDate.toISOString(),
+        updatedAt: source.productionPlanBatch.updatedAt.toISOString(),
       } : null,
     },
     activities: Array.isArray(detail.activities)

@@ -63,6 +63,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string; 
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${params.id}`}))`;
       const task = await tx.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
       if (!task) throw new Error('SAMPLE_TASK_NOT_FOUND');
+      if (task.taskType === 'REPEAT') throw new Error('SAMPLE_REPEAT_CAPTURE_DISABLED');
       if (task.status === 'CANCELLED' || task.status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
       const existing = await tx.sampleDraftSection.findUnique({
         where: { taskId_kind: { taskId: task.id, kind: params.kind } },
@@ -198,6 +199,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string; 
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof Error && error.message === 'SAMPLE_REPEAT_CAPTURE_DISABLED') return NextResponse.json({ ok: false, error: '老产品制作只审核图纸资料，无需采集或整包审核' }, { status: 409 });
     if (error instanceof Error) {
       const response = responseFor(error);
       if (response) return response;

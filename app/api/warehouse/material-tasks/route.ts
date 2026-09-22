@@ -76,6 +76,7 @@ export async function GET(req: NextRequest) {
       requestedWeekStart: requestedWeek,
     });
 
+    // Sample warehouse workbench reads its own tasks by task id; this endpoint stays production-scoped.
     const summaryWhere: Prisma.WarehouseMaterialTaskWhereInput = { workOrder: { is: workOrderWhere } };
     const where: Prisma.WarehouseMaterialTaskWhereInput = { ...summaryWhere };
     const source = params.get('source') || 'ALL';
@@ -196,13 +197,13 @@ export async function GET(req: NextRequest) {
         : second.weekStartDate.localeCompare(first.weekStartDate)
     ));
     const carryoverByWorkOrder = scope === 'current'
-      ? await loadProductionCarryoverMetadata(naturalWeek.start, records.map(record => record.workOrder.id))
+      ? await loadProductionCarryoverMetadata(naturalWeek.start, records.flatMap(record => record.workOrder ? [record.workOrder.id] : []))
       : new Map();
 
     return NextResponse.json({
       ok: true,
       tasks: records.map(record => {
-        const carryover = carryoverByWorkOrder.get(record.workOrder.id);
+        const carryover = carryoverByWorkOrder.get(record.workOrder?.id || '');
         return {
           ...serializeWarehouseMaterialTask(record),
           carryover: carryover

@@ -523,6 +523,11 @@ jobs:
             PERFORMANCE_QA_OUTPUT=artifacts/performance-loading/release-http.json \
             node scripts/smoke-performance-loading.mjs
 
+          SAMPLE_BRANCH_QA_ALLOW=disposable-sample-branches \
+            SAMPLE_BRANCH_QA_BASE=http://127.0.0.1:3000 \
+            SAMPLE_BRANCH_QA_OUTPUT=artifacts/sample-branches/release-http.json \
+            node scripts/smoke-sample-branches.mjs
+
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -779,6 +784,10 @@ jobs:
             SMOKE_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
             SMOKE_ADMIN_CHANGED_PASSWORD="$SMOKE_ADMIN_CHANGED_PASSWORD" \
             node scripts/smoke-sample-capture.mjs
+          SAMPLE_BRANCH_QA_ALLOW=disposable-sample-branches \
+            SAMPLE_BRANCH_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_BRANCH_QA_OUTPUT=artifacts/sample-branches/hangzhou-http.json \
+            node scripts/smoke-sample-branches.mjs
 
           mkdir -p artifacts/quality-data-v1
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
@@ -909,6 +918,13 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload sample branch acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-branches-${{ github.ref_name }}
+          path: artifacts/sample-branches/*http.json
+          if-no-files-found: warn
       - name: Upload performance loading acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

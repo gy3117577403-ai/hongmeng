@@ -105,7 +105,7 @@ async function main() {
       addFinding(
         'ACTIVE_WAREHOUSE_EVENT_COUNT',
         task.id,
-        `${task.workOrder.code} 当前异常必须对应至少一个活动事件`,
+        `${task.workOrder?.code || task.id} 当前异常必须对应至少一个活动事件`,
       );
     }
   }

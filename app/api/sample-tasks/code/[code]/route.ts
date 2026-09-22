@@ -10,7 +10,7 @@ export async function GET(_req: Request, { params }: { params: { code: string } 
   try {
     await requireUser();
     const task = await prisma.sampleTask.findFirst({
-      where: { qrCode: params.code, deletedAt: null },
+      where: { qrCode: params.code, deletedAt: null, taskType: 'NEW' },
       include: sampleTaskInclude,
     });
     if (!task) return NextResponse.json({ ok: false, error: '样品二维码无效或任务不存在' }, { status: 404 });

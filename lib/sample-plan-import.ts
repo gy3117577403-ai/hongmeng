@@ -1,5 +1,6 @@
 import { drawingLibraryKey, invalidSpecificationReason } from '@/lib/drawing-library';
 import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
+import { sampleWeek } from '@/lib/sample-plan-domain';
 
 export const SAMPLE_PLAN_IMPORT_HEADERS = [
   '客户名称',
@@ -11,6 +12,8 @@ export const SAMPLE_PLAN_IMPORT_HEADERS = [
   '图纸库编号（选填）',
   '计划下达日期（选填）',
   '提前预警天数（选填）',
+  '样品类型（选填）',
+  '计划周（选填）',
 ] as const;
 
 export type SamplePlanImportStatus = 'REUSE' | 'CREATE' | 'CONFIRM' | 'BLOCKED';
@@ -32,6 +35,8 @@ export type SamplePlanImportRow = {
   customerLevelCode: string;
   sampleQuantity: number;
   dueDate: string;
+  taskType?: 'NEW' | 'REPEAT';
+  planWeekStartDate?: string | null;
   issuedDate?: string | null;
   warningDays?: number;
   libraryKey: string;
@@ -42,6 +47,8 @@ export type SamplePlanImportRow = {
 };
 
 const HEADER_ALIASES: Record<(typeof SAMPLE_PLAN_IMPORT_HEADERS)[number], readonly string[]> = {
+  '样品类型（选填）': ['样品类型（选填）', '样品类型', '新品/老产品'],
+  '计划周（选填）': ['计划周（选填）', '计划周', '计划周开始日期'],
   客户名称: ['客户名称', '客户'],
   产品名称: ['产品名称', '品名'],
   '型号/规格': ['型号/规格', '型号规格', '产品规格', '规格'],
@@ -98,12 +105,13 @@ export function parsePositiveInteger(value: unknown): number | null {
   return Number.isSafeInteger(number) && number > 0 ? number : null;
 }
 
-export function samplePlanFingerprint(row: Pick<SamplePlanImportRow, 'customerName' | 'specification' | 'customerLevelCode' | 'sampleQuantity' | 'dueDate'>) {
+export function samplePlanFingerprint(row: Pick<SamplePlanImportRow, 'customerName' | 'specification' | 'customerLevelCode' | 'sampleQuantity' | 'dueDate' | 'taskType' | 'planWeekStartDate'>) {
   return [
     drawingLibraryKey(row.customerName, row.specification).toLocaleLowerCase('zh-CN'),
     row.customerLevelCode.toUpperCase(),
     String(row.sampleQuantity),
     row.dueDate,
+    row.taskType || 'NEW', row.planWeekStartDate || '',
   ].join('|');
 }
 
@@ -146,6 +154,13 @@ export function parseSamplePlanRow(
   const rawWarning = value('提前预警天数（选填）');
   const warningDays = rawWarning === undefined || rawWarning === null || rawWarning === '' ? 2 : Number(rawWarning);
   const errors: string[] = [];
+  const rawType = cleanImportText(value('样品类型（选填）')).toUpperCase();
+  const taskType = ['老产品','老产品制作','REPEAT'].includes(rawType) ? 'REPEAT' as const : 'NEW' as const;
+  if (rawType && !['新品','新品试制','NEW','老产品','老产品制作','REPEAT'].includes(rawType)) errors.push('样品类型只能填新品或老产品');
+  const rawWeek = value('计划周（选填）');
+  const parsedWeek = rawWeek ? parseSamplePlanDate(rawWeek) : null;
+  if (rawWeek && !parsedWeek) errors.push('计划周日期无效');
+  const planWeekStartDate = parsedWeek ? sampleWeek(parsedWeek) : null;
   if (rawIssued && !issuedDate) errors.push('计划下达日期无效');
   if (issuedDate && dueDate && issuedDate > dueDate) errors.push('出货日期不能早于下达日期');
   if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) errors.push('提前预警天数须为 0 至 30 的整数');
@@ -165,6 +180,7 @@ export function parseSamplePlanRow(
   return {
     row: {
       rowNumber,
+      taskType, planWeekStartDate,
       customerName,
       productName,
       specification,

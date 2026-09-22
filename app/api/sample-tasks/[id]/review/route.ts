@@ -1,4 +1,7 @@
+import { FixtureError } from '@/lib/quality-fixture-domain';
 import { NextRequest, NextResponse } from 'next/server';
+import { assertSampleDrawingApproved, transferSampleCompletion } from '@/lib/sample-plan-operations';
+import { SamplePlanError } from '@/lib/sample-plan-domain';
 import { Prisma } from '@prisma/client';
 import { ForbiddenError, forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { hasCapability } from '@/lib/department-access';
@@ -283,6 +286,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         include: { drawingLibraryItem: { select: { id: true, specification: true } } },
       });
       if (!task) throw new SamplePackageReviewError('样品任务不存在', 'SAMPLE_TASK_NOT_FOUND', 404);
+      if (task.taskType === 'REPEAT') throw new SamplePackageReviewError('老产品只审核图纸资料', 'SAMPLE_REPEAT_CAPTURE_DISABLED', 409);
       if (task.version !== expectedTaskVersion) {
         throw new SamplePackageReviewError('样品任务已被其他人修改，请刷新后重试', 'SAMPLE_TASK_CONFLICT');
       }
@@ -693,6 +697,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         },
       });
       if (submissionUpdated.count !== 1) throw new SamplePackageReviewError('提交包已被其他人处理', 'SAMPLE_SUBMISSION_CONFLICT');
+      await assertSampleDrawingApproved(tx, task);
+      await transferSampleCompletion(tx, task, actor, { mutationId: `package:${submission.id}`, quantity: task.sampleQuantity! - task.completedQuantity });
       const taskUpdated = await tx.sampleTask.updateMany({
         where: { id: task.id, version: expectedTaskVersion, status: 'SUBMITTED', activeSubmissionId: submission.id },
         data: {
@@ -738,6 +744,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof SamplePlanError || error instanceof FixtureError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     if (error instanceof ForbiddenError) return forbidden(error.message);
     if (error instanceof SamplePackageReviewError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code, issues: error.issues }, { status: error.status });

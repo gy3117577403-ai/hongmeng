@@ -157,6 +157,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     if (!clientMutationId) return NextResponse.json({ ok: false, error: '缺少照片上传编号，请重新选择照片' }, { status: 400 });
     const task = await prisma.sampleTask.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!task) return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
+    if (task.taskType === 'REPEAT') return NextResponse.json({ ok: false, error: '老产品制作无需采集照片' }, { status: 409 });
     if (task.status === 'CANCELLED' || task.status === 'COMPLETED') {
       return NextResponse.json({ ok: false, error: '已完成或已取消任务仅支持查看历史，不能新增照片' }, { status: 409 });
     }

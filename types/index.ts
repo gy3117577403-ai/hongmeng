@@ -314,6 +314,17 @@ export type SampleScheduleChange = { at: string; actor: string; reason: string; 
 
 export type SampleTaskDTO = {
   id: string;
+  taskType?: 'NEW' | 'REPEAT';
+  planWeekStartDate?: string | null;
+  documentReviewRequired?: boolean;
+  approvedPackageId?: string | null;
+  completedQuantity?: number;
+  materialTaskId?: string | null;
+  materialStatus?: string | null;
+  materialConfirmed?: boolean;
+  drawingReviewStatus?: string | null;
+  completions?: Array<{ id: string; quantity: number; workDate: string; actorName: string; createdAt: string }>;
+  finishedGoodsCount?: number;
   code: string;
   qrCode: string;
   captureUrl: string;
@@ -1512,6 +1523,10 @@ export type WarehouseMaterialExceptionCaseDTO = {
 
 export type WarehouseMaterialTaskDTO = {
   id: string;
+  sampleTaskId?: string | null;
+  sampleTaskType?: string;
+  requirements?: import('@/lib/sample-plan-domain').SampleMaterialLine[];
+  requirementsConfirmed?: boolean;
   workOrderId: string;
   status: WarehouseMaterialStatus;
   statusText: string;
@@ -1589,6 +1604,7 @@ export type MaterialFollowUpActivityDTO = {
 };
 
 export type MaterialFollowUpTaskDTO = {
+  sampleTaskId?: string | null;
   id: string;
   warehouseTaskId: string;
   warehouseExceptionId: string;

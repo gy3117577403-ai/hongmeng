@@ -235,7 +235,7 @@ async function stockAction(tx: Tx, input: FgInput, actor: FgActor): Promise<Resu
     await assertShippable(tx, lot);
     const bucket = 'available';
     lot = await ledger(tx, lot, { ...fgStock(lot), [bucket]: lot[bucket] - quantity }, action, quantity, actor, reason);
-    const newLot = await tx.fgLot.create({ data: { sourceKey: `allocation:${randomUUID()}`, sourceKind: 'ALLOCATION', workOrderId: lot.workOrderId, workOrderCode: lot.workOrderCode, productKey: lot.productKey, productName: lot.productName, specification: lot.specification, unit: lot.unit, ownerType: 'CUSTOMER', customerName: customer, sourceQuantity: quantity, [bucket]: quantity, location: lot.location, note: `来自公共备货 ${lot.id}；${reason}`, receivedAt: lot.receivedAt, productionWorkDate: lot.productionWorkDate, productionCompletedAt: lot.productionCompletedAt, transferredAt: lot.transferredAt } });
+    const newLot = await tx.fgLot.create({ data: { sourceKey: `allocation:${randomUUID()}`, sourceKind: 'ALLOCATION', workOrderId: lot.workOrderId, sampleTaskId: lot.sampleTaskId, workOrderCode: lot.workOrderCode, productKey: lot.productKey, productName: lot.productName, specification: lot.specification, unit: lot.unit, ownerType: 'CUSTOMER', customerName: customer, sourceQuantity: quantity, [bucket]: quantity, location: lot.location, note: `来自公共备货 ${lot.id}；${reason}`, receivedAt: lot.receivedAt, productionWorkDate: lot.productionWorkDate, productionCompletedAt: lot.productionCompletedAt, transferredAt: lot.transferredAt } });
     await ledger(tx, newLot, fgStock(newLot), action, quantity, actor, reason, lot.id);
     return { id: newLot.id };
   } else throw new FinishedGoodsError('不支持的库存操作');
@@ -261,7 +261,7 @@ async function returnShipment(tx: Tx, input: FgInput, actor: FgActor): Promise<R
   const quantity = fgQty(input.quantity); const reason = fgRequired(input.reason, '退货原因');
   if (quantity > line.quantity - line.returned) conflict('退货数量超过原单尚未退回数量');
   const source = line.lot;
-  const lot = await tx.fgLot.create({ data: { sourceKey: `return:${randomUUID()}`, sourceKind: 'RETURN', workOrderId: source.workOrderId, workOrderCode: source.workOrderCode, productKey: source.productKey, productName: source.productName, specification: source.specification, unit: source.unit, customerName: source.customerName, ownerType: source.ownerType, sourceQuantity: quantity, blocked: quantity, location: fgText(input.location, 100) || '退货隔离区', note: reason, receivedAt: new Date() } });
+  const lot = await tx.fgLot.create({ data: { sourceKey: `return:${randomUUID()}`, sourceKind: 'RETURN', workOrderId: source.workOrderId, sampleTaskId: source.sampleTaskId, workOrderCode: source.workOrderCode, productKey: source.productKey, productName: source.productName, specification: source.specification, unit: source.unit, customerName: source.customerName, ownerType: source.ownerType, sourceQuantity: quantity, blocked: quantity, location: fgText(input.location, 100) || '退货隔离区', note: reason, receivedAt: new Date() } });
   const receipt = await tx.fgReturn.create({ data: { lineId: line.id, lotId: lot.id, quantity, reason, actorName: nameOf(actor) } });
   await tx.fgShipmentLine.update({ where: { id: line.id }, data: { returned: { increment: quantity } } });
   await tx.fgLedger.create({ data: { lotId: lot.id, kind: 'RETURN', quantity, before: { pending: 0, available: 0, reserved: 0, held: 0, blocked: 0 }, after: fgStock(lot), reference: line.shipment.id, reason, actorId: actor.id, actorName: nameOf(actor) } });
@@ -294,7 +294,7 @@ async function reworkReceive(tx: Tx, input: FgInput, actor: FgActor): Promise<Re
   }
   await tx.fgRework.update({ where: { id }, data: { returned: { increment: quantity } } });
   const source = rework.lot;
-  const lot = await tx.fgLot.create({ data: { sourceKey: `rework:${randomUUID()}`, sourceKind: 'REWORK', workOrderId: source.workOrderId, workOrderCode: source.workOrderCode, productKey: source.productKey, productName: source.productName, specification: source.specification, unit: source.unit, customerName: source.customerName, ownerType: source.ownerType, sourceQuantity: quantity, blocked: quantity, location: fgText(input.location, 100) || '返工回库区', note: reason, receivedAt: new Date() } });
+  const lot = await tx.fgLot.create({ data: { sourceKey: `rework:${randomUUID()}`, sourceKind: 'REWORK', workOrderId: source.workOrderId, sampleTaskId: source.sampleTaskId, workOrderCode: source.workOrderCode, productKey: source.productKey, productName: source.productName, specification: source.specification, unit: source.unit, customerName: source.customerName, ownerType: source.ownerType, sourceQuantity: quantity, blocked: quantity, location: fgText(input.location, 100) || '返工回库区', note: reason, receivedAt: new Date() } });
   await tx.fgLedger.create({ data: { lotId: lot.id, kind: 'REWORK_RETURN', quantity, before: { pending: 0, available: 0, reserved: 0, held: 0, blocked: 0 }, after: fgStock(lot), reference: id, reason, actorId: actor.id, actorName: nameOf(actor) } });
   return { id: lot.id };
 }
@@ -399,7 +399,7 @@ export async function mutateFinishedGoods(input: FgInput, actor: FgActor, idempo
   return conflict();
 }
 
-export async function loadFinishedGoods(input: { date?: string; dateTo?: string; dateBasis?: string; sort?: string; scope?: string; view?: string; filter?: string; q?: string; batchId?: string; page?: number; pageSize?: number }): Promise<FgWorkbench> {
+export async function loadFinishedGoods(input: { date?: string; dateTo?: string; dateBasis?: string; sort?: string; scope?: string; view?: string; filter?: string; q?: string; sampleTaskId?: string; batchId?: string; page?: number; pageSize?: number }): Promise<FgWorkbench> {
   const date = fgDate(input.date);
   const workDate = fgDate();
   const dateTo = input.dateTo ? fgDate(input.dateTo) : date;
@@ -438,7 +438,7 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
     const supplementIds = new Set(supplements.map(s => s.workOrderId));
     const block = (lot: FgLot): string => !['PRODUCTION','ALLOCATION'].includes(lot.sourceKind) || (lot.sourceKind === 'ALLOCATION' && !lot.workOrderId) ? '' : !lot.workOrderId || !validOrders.has(lot.workOrderId) ? '生产来源已移除' : supplementIds.has(lot.workOrderId) ? '补充工序未完成' : '';
     const base = (lot: FgLot): FgRow => ({
-      ...fgStock(lot), id: lot.id, lotId: lot.id, workOrderId: lot.workOrderId, workOrderCode: lot.workOrderCode, productKey: lot.productKey,
+      ...fgStock(lot), id: lot.id, lotId: lot.id, workOrderId: lot.workOrderId, sampleTaskId: lot.sampleTaskId, workOrderCode: lot.workOrderCode, productKey: lot.productKey,
       productName: lot.productName, specification: lot.specification, unit: lot.unit, customerName: lot.customerName, ownerType: lot.ownerType,
       sourceKind: lot.sourceKind, sourceQuantity: lot.sourceQuantity, location: lot.location, note: lot.note, openingReview: lot.openingReview,
       legacyClosedAt: lot.legacyClosedAt?.toISOString() || null, legacyQuantity: lot.legacyQuantity,
@@ -460,7 +460,7 @@ export async function loadFinishedGoods(input: { date?: string; dateTo?: string;
     const shippedRows: FgRow[] = shipped.flatMap(shipment => shipment.lines.map(line => ({ ...base(line.lot), ...shipmentFields(shipment), id: line.id, lineId: line.id, quantity: line.quantity, returned: line.returned, status: 'shipped', blockedReason: '', shipmentLineCount: shipment.lines.length })));
     const legacyRows: FgRow[] = legacyLots.map(lot => ({ ...base(lot), quantity: lot.legacyQuantity, status: 'legacy', blockedReason: '' }));
     const receiptRows: FgRow[] = receipts.map(entry => ({ ...base(entry.lot), id: entry.id, quantity: Math.abs(entry.quantity), receivedAt: entry.createdAt.toISOString(), status: 'received', note: entry.reason, blockedReason: '' }));
-    const commonFilter = (row: FgRow): boolean => (!productionDates || allHistory || Boolean(row.productionWorkDate && row.productionWorkDate >= date && row.productionWorkDate <= dateTo)) && (!q || [row.workOrderCode, fgShortWorkOrder(row.workOrderCode), row.productName, row.specification, row.customerName, row.location, row.shipmentNumber, row.waybills.join(' ')].join(' ').toLocaleLowerCase().includes(q)) && (!input.batchId || row.batchId === input.batchId);
+    const commonFilter = (row: FgRow): boolean => (!input.sampleTaskId || row.sampleTaskId === input.sampleTaskId) && (!productionDates || allHistory || Boolean(row.productionWorkDate && row.productionWorkDate >= date && row.productionWorkDate <= dateTo)) && (!q || [row.workOrderCode, fgShortWorkOrder(row.workOrderCode), row.productName, row.specification, row.customerName, row.location, row.shipmentNumber, row.waybills.join(' ')].join(' ').toLocaleLowerCase().includes(q)) && (!input.batchId || row.batchId === input.batchId);
     // The workbench is one row per source lot. History/batches retain every handover line.
     const queueLots = new Map(stockRows.map(row => [row.lotId, row]));
     for (const row of shippedRows) if (!queueLots.has(row.lotId)) queueLots.set(row.lotId, row);

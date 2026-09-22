@@ -1,5 +1,8 @@
 import { listSamplePlans, SampleQueryError } from '@/lib/sample-plan-query';
 import { NextRequest, NextResponse } from 'next/server';
+import { SamplePlanError, sampleTaskType, sampleWeek } from '@/lib/sample-plan-domain';
+import { ensureSampleWarehouse } from '@/lib/sample-plan-operations';
+import { syncProductDocuments } from '@/lib/quality-fixture-sync';
 import { DrawingLibraryResolutionError, resolveOrCreateDrawingProduct } from '@/lib/drawing-library-resolution';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -60,6 +63,8 @@ export async function POST(req: NextRequest) {
     const sampleQuantity = parseOptionalNonNegativeInteger(body.sampleQuantity);
     const customerLevel = sampleCustomerLevel(body.customerLevelCode);
     const dataPurpose = body.dataPurpose === 'TEST' || body.dataPurpose === 'TRAINING' ? body.dataPurpose : 'PRODUCTION';
+    if (dataPurpose === 'PRODUCTION' && (!sampleQuantity || sampleQuantity < 1)) throw new SamplePlanError('请填写大于零的样品计划数量');
+    if (sampleTaskType(body.taskType) === 'REPEAT' && dataPurpose !== 'PRODUCTION') throw new SamplePlanError('老产品制作仅用于正式样品计划');
 
     if (!drawingLibraryItemId && (!customerName || !specification)) {
       return NextResponse.json({ ok: false, error: '请选择现有产品，或填写客户和产品规格建立样品主档' }, { status: 400 });
@@ -103,6 +108,9 @@ export async function POST(req: NextRequest) {
           customerLevelLabel: customerLevel.label,
           customerLevelColor: customerLevel.color,
           sampleQuantity,
+          taskType: sampleTaskType(body.taskType),
+          planWeekStartDate: sampleWeek(body.planWeekStartDate) ? new Date(sampleWeek(body.planWeekStartDate)!) : null,
+          documentReviewRequired: dataPurpose === 'PRODUCTION',
           dueDate,
           issuedDate,
           warningDays,
@@ -123,8 +131,10 @@ export async function POST(req: NextRequest) {
               }
             : undefined,
         },
-        select: { id: true, code: true },
+        select: { id: true, code: true, status: true, dataPurpose: true },
       });
+      await ensureSampleWarehouse(tx, created);
+      if (dataPurpose === 'PRODUCTION') await tx.qfSyncQueue.upsert({ where: { libraryItemId: item.id }, create: { libraryItemId: item.id }, update: { updatedAt: new Date() } });
       await tx.operationLog.create({
         data: {
           userId: actor.id,
@@ -146,6 +156,7 @@ export async function POST(req: NextRequest) {
     const task = await prisma.sampleTask.findUnique({ where: { id: taskId }, include: sampleTaskInclude });
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null }, { status: 201 });
   } catch (error) {
+    if (error instanceof SamplePlanError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof DrawingLibraryResolutionError) return NextResponse.json({ ok: false, error: error.message, code: error.code, itemIds: error.itemIds }, { status: 409 });
     if (error instanceof Error) {

@@ -14,6 +14,8 @@ model FgLot {
   sourceKind String @default("PRODUCTION")
   movementId String? @unique
   workOrderId String?
+  sampleTaskId String?
+  sampleTask SampleTask? @relation(fields: [sampleTaskId], references: [id], onDelete: Restrict)
   workOrderCode String
   productKey String
   productName String
@@ -44,6 +46,7 @@ model FgLot {
   lines FgShipmentLine[]
   reworks FgRework[]
   @@index([workOrderId])
+  @@index([sampleTaskId])
   @@index([customerName, productKey])
   @@index([createdAt])
   @@index([legacyClosedAt])
@@ -3017,7 +3020,11 @@ model ProcessRouteActivity {
 
 model WarehouseMaterialTask {
   id             String                           @id @default(uuid())
-  workOrderId    String                           @unique @map("work_order_id")
+  workOrderId    String?                          @unique @map("work_order_id")
+  sampleTaskId   String?                          @unique @map("sample_task_id")
+  sampleTask     SampleTask?                      @relation(fields: [sampleTaskId], references: [id], onDelete: Restrict)
+  requirements  Json                             @default("[]")
+  requirementsConfirmed Boolean                  @default(false) @map("requirements_confirmed")
   status         String                           @default("pending")
   exceptionType  String?                          @map("exception_type")
   exceptionNote  String?                          @map("exception_note")
@@ -3028,7 +3035,7 @@ model WarehouseMaterialTask {
   version        Int                              @default(0)
   createdAt      DateTime                         @default(now()) @map("created_at")
   updatedAt      DateTime                         @updatedAt @map("updated_at")
-  workOrder      WorkOrder                        @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  workOrder      WorkOrder?                       @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
   completedBy    User?                            @relation("WarehouseTaskCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
   updatedBy      User?                            @relation("WarehouseTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   activities     WarehouseMaterialActivity[]
@@ -3998,6 +4005,14 @@ model SampleTask {
   customerLevelLabel       String?              @map("customer_level_label")
   customerLevelColor       String?              @map("customer_level_color")
   sampleQuantity           Int?                 @map("sample_quantity")
+  taskType                 String               @default("NEW") @map("task_type")
+  planWeekStartDate        DateTime?            @map("plan_week_start_date") @db.Date
+  documentReviewRequired  Boolean              @default(false) @map("document_review_required")
+  approvedPackageId       String?              @map("approved_package_id")
+  completedQuantity       Int                  @default(0) @map("completed_quantity")
+  warehouseTask           WarehouseMaterialTask?
+  completions             SampleCompletion[]
+  finishedGoods           FgLot[]
   dueDate                  DateTime?            @map("due_date") @db.Date
   issuedDate               DateTime?            @map("issued_date") @db.Date
   warningDays              Int                  @default(2) @map("warning_days")
@@ -4044,6 +4059,7 @@ model SampleTask {
   acceptedSubmission       SampleSubmission?    @relation("SampleTaskAcceptedSubmission", fields: [acceptedSubmissionId], references: [id], onDelete: SetNull)
 
   @@index([drawingLibraryItemId, createdAt])
+  @@index([deletedAt, taskType, planWeekStartDate, status])
   @@index([deletedAt, status, issuedDate])
   @@index([status, dueDate])
   @@index([dataStatus, updatedAt])
@@ -4052,6 +4068,24 @@ model SampleTask {
   @@index([deleteBatchId])
   @@index([deletedAt])
   @@map("sample_tasks")
+}
+
+model SampleCompletion {
+  id          String    @id @default(uuid())
+  taskId      String    @map("task_id")
+  task        SampleTask @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  mutationId  String    @map("mutation_id")
+  requestHash String    @map("request_hash")
+  quantity    Int
+  approvedPackageId String? @map("approved_package_id")
+  workDate    DateTime  @map("work_date") @db.Date
+  note        String    @default("")
+  actorId     String    @map("actor_id")
+  actorName   String    @map("actor_name")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  @@unique([taskId, mutationId])
+  @@index([taskId, createdAt])
+  @@map("sample_completions")
 }
 
 model SampleTaskImportBatch {

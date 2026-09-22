@@ -13,6 +13,8 @@ import {
   samplePlanFingerprint,
 } from '@/lib/sample-plan-import';
 import { sampleActor, sampleQrCode, sampleRequestHash, sampleTaskCode } from '@/lib/sample-team';
+import { sampleWeek, sampleTaskType } from '@/lib/sample-plan-domain';
+import { ensureSampleWarehouse } from '@/lib/sample-plan-operations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,6 +22,8 @@ export const dynamic = 'force-dynamic';
 type ImportDecision = { mode: 'reuse'; drawingLibraryItemId: string } | { mode: 'create' };
 
 type CommitRow = {
+  taskType: 'NEW' | 'REPEAT';
+  planWeekStartDate: string | null;
   rowNumber: number;
   customerName: string;
   productName: string;
@@ -55,6 +59,8 @@ function normalizeRow(value: unknown): { row: CommitRow | null; error: string } 
   const issuedDate = record.issuedDate ? parseSamplePlanDate(record.issuedDate) : null;
   const warningDays = record.warningDays === undefined ? 2 : Number(record.warningDays);
   const errors: string[] = [];
+  let taskType: 'NEW' | 'REPEAT' = 'NEW', planWeekStartDate: string | null = null;
+  try { taskType = sampleTaskType(record.taskType); planWeekStartDate = sampleWeek(record.planWeekStartDate); } catch { errors.push('样品类型或计划周无效'); }
   if (record.issuedDate && !issuedDate) errors.push('计划下达日期无效');
   if (issuedDate && dueDate && issuedDate > dueDate) errors.push('出货日期不能早于下达日期');
   if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) errors.push('提前预警天数须为 0 至 30 的整数');
@@ -72,6 +78,7 @@ function normalizeRow(value: unknown): { row: CommitRow | null; error: string } 
   if (errors.length || !level || sampleQuantity === null || !dueDate) return { row: null, error: errors.join('；') };
   return {
     row: {
+      taskType, planWeekStartDate,
       rowNumber,
       customerName,
       productName,
@@ -173,6 +180,8 @@ export async function POST(req: NextRequest) {
           where: {
             drawingLibraryItemId: item.id,
             customerLevelCode: level.code,
+            taskType: row.taskType,
+            planWeekStartDate: row.planWeekStartDate ? new Date(row.planWeekStartDate) : null,
             sampleQuantity: row.sampleQuantity,
             dueDate,
             deletedAt: null,
@@ -198,6 +207,9 @@ export async function POST(req: NextRequest) {
             sampleQuantity: row.sampleQuantity,
             dueDate,
             issuedDate: row.issuedDate ? new Date(`${row.issuedDate}T00:00:00Z`) : null,
+            taskType: row.taskType,
+            planWeekStartDate: row.planWeekStartDate ? new Date(row.planWeekStartDate) : null,
+            documentReviewRequired: true,
             warningDays: row.warningDays,
             priority: level.priority,
             createdById: actor.id,
@@ -205,8 +217,10 @@ export async function POST(req: NextRequest) {
             updatedById: actor.id,
             updatedByName: actor.name,
           },
-          select: { id: true, code: true },
+          select: { id: true, code: true, status: true, dataPurpose: true },
         });
+        await ensureSampleWarehouse(tx, task);
+        await tx.qfSyncQueue.upsert({ where: { libraryItemId: item.id }, create: { libraryItemId: item.id }, update: { updatedAt: new Date() } });
         createdTaskCount += 1;
         results.push({ rowNumber: row.rowNumber, status: 'CREATED', message: '样品计划已创建', taskId: task.id, taskCode: task.code, drawingLibraryItemId: item.id });
       }

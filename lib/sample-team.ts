@@ -53,6 +53,9 @@ export const SAMPLE_TASK_STATUSES: readonly SampleTaskStatusDTO[] = [
 ] as const;
 
 export const sampleTaskInclude = {
+  warehouseTask: { select: { id: true, status: true, requirementsConfirmed: true } },
+  completions: { orderBy: { createdAt: 'desc' as const }, take: 50 },
+  _count: { select: { finishedGoods: true } },
   drawingLibraryItem: {
     select: {
       id: true,
@@ -60,6 +63,7 @@ export const sampleTaskInclude = {
       productName: true,
       specification: true,
       libraryKey: true,
+      fixturePackages: { orderBy: { sequence: 'desc' as const }, take: 1, select: { id: true, status: true } },
     },
   },
   assignees: {
@@ -452,6 +456,17 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
   const activeRecords = [...task.entries, ...task.photos];
   return {
     id: task.id,
+    taskType: task.taskType as 'NEW' | 'REPEAT',
+    planWeekStartDate: task.planWeekStartDate?.toISOString().slice(0, 10) || null,
+    documentReviewRequired: task.documentReviewRequired,
+    approvedPackageId: task.approvedPackageId,
+    completedQuantity: task.completedQuantity,
+    materialTaskId: task.warehouseTask?.id || null,
+    materialStatus: task.warehouseTask?.status || null,
+    materialConfirmed: task.warehouseTask?.requirementsConfirmed || false,
+    drawingReviewStatus: task.drawingLibraryItem.fixturePackages?.[0]?.status || null,
+    completions: (task.completions || []).map(c => ({ id: c.id, quantity: c.quantity, workDate: c.workDate.toISOString().slice(0, 10), actorName: c.actorName, createdAt: c.createdAt.toISOString() })),
+    finishedGoodsCount: task._count?.finishedGoods || 0,
     code: task.code,
     qrCode: task.qrCode,
     captureUrl: `/sample-capture/${encodeURIComponent(task.qrCode)}`,

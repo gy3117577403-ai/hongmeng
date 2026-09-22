@@ -8,6 +8,7 @@ export function requiresDocumentReview(scope: { documentReviewRequired?: boolean
 export const fixturePlanScope: Prisma.DrawingLibraryItemWhereInput = {
   deletedAt: null,
   OR: [
+    { sampleTasks: { some: { deletedAt: null, status: { notIn: ['CANCELLED','COMPLETED'] }, documentReviewRequired: true } } },
     { productionPlanOrders: { some: { deletedAt: null, status: { notIn: ["cancelled", "completed"] }, batches: { some: { deletedAt: null, releaseState: { notIn: ["cancelled", "archived"] }, documentReviewRequired: true } } } } },
     { workOrders: { some: { deletedAt: null, planActive: true, status: { notIn: ["cancelled", "completed"] }, documentReviewRequired: true } } },
   ],

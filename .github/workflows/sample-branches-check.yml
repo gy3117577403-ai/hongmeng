@@ -1,0 +1,38 @@
+name: Sample Branch Preflight
+on:
+  push:
+    branches: ["codex/sample-branches-v134218"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sample-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hongmeng_sample_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_sample_ci?schema=public
+      RUN_DB_INTEGRATION: "1"
+      DAILY_PLAN_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npx tsc --noEmit
+      - run: npm run test:sample-integration
+      - run: npm run test:material-follow-up-integration
+      - run: npx tsx --test --test-concurrency=1 tests/drawing-plan-week-integration.test.ts tests/finished-goods-integration.test.ts

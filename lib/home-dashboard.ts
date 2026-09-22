@@ -634,8 +634,8 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
   ];
   const workstreams: HomeWorkstream[] = [
     productionWorkstream(allActions),
-    warehouseWorkstream(warehouseTasks, now),
-    materialWorkstream(materialTasks, now),
+    warehouseWorkstream(warehouseTasks.flatMap(task => task.workOrder ? [{ ...task, workOrder: task.workOrder }] : []), now),
+    materialWorkstream(materialTasks.flatMap(task => task.warehouseTask.workOrder ? [{ ...task, warehouseTask: { ...task.warehouseTask, workOrder: task.warehouseTask.workOrder } }] : []), now),
     laborWorkstream(laborPools, workDateKey),
   ];
 

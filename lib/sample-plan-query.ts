@@ -3,6 +3,7 @@ import { prisma } from './prisma';
 import { chinaDateKey } from './china-date';
 import { SAMPLE_VIEWS, type SamplePlanView } from './sample-plan-view';
 import { parseOptionalSampleDate, sampleTaskInclude, serializeSampleTask } from './sample-team';
+import { sampleWeek, SamplePlanError } from './sample-plan-domain';
 
 export class SampleQueryError extends Error {}
 export function samplePlanQuery(params: URLSearchParams, employeeId?: string | null, today = chinaDateKey(new Date())) {
@@ -19,6 +20,19 @@ export function samplePlanQuery(params: URLSearchParams, employeeId?: string | n
     PENDING_REVIEW: pending, COMPLETED: Prisma.sql`t.status='COMPLETED'`, CANCELLED: Prisma.sql`t.status='CANCELLED'`,
   };
   const filters: Prisma.Sql[] = [Prisma.sql`t.deleted_at IS NULL`];
+  const taskType = params.get('taskType');
+  if (taskType && !['NEW','REPEAT'].includes(taskType)) throw new SampleQueryError('样品类型无效');
+  if (taskType) filters.push(Prisma.sql`t.task_type=${taskType}`);
+  const requestedWeek = params.get('week');
+  if (requestedWeek === 'unplanned') filters.push(Prisma.sql`t.plan_week_start_date IS NULL`);
+  else if (requestedWeek) {
+    let week: string | null;
+    try { week = sampleWeek(requestedWeek); } catch (e) { throw new SampleQueryError(e instanceof SamplePlanError ? e.message : '计划周无效'); }
+    filters.push(params.get('carry') === 'true'
+      ? Prisma.sql`(t.plan_week_start_date=${week}::date OR (t.plan_week_start_date<${week}::date AND ${unfinished}))`
+      : Prisma.sql`t.plan_week_start_date=${week}::date`);
+  }
+  if (params.get('materialStatus')) filters.push(Prisma.sql`EXISTS (SELECT 1 FROM warehouse_material_tasks w WHERE w.sample_task_id=t.id AND w.status=${params.get('materialStatus')})`);
   const keyword = params.get('keyword')?.trim().slice(0, 100);
   if (keyword) {
     const like = `%${keyword.replace(/[\\%_]/g, '\\$&')}%`;
@@ -76,9 +90,14 @@ export async function listSamplePlans(params: URLSearchParams, employeeId?: stri
     const ids = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`SELECT t.id FROM sample_tasks t WHERE ${query.base} AND (${query.views[query.view]}) ORDER BY ${query.order} LIMIT ${query.pageSize} OFFSET ${(page-1)*query.pageSize}`);
     const customers = await tx.sampleTask.findMany({ where: { deletedAt: null }, distinct: ['customerNameSnapshot'], select: { customerNameSnapshot: true }, orderBy: { customerNameSnapshot: 'asc' } });
     const compact = params.get('compact') === 'true';
+    const summaryOnly = params.get('summary') === 'true';
+    const summaryInclude = { ...sampleTaskInclude, entries: { ...sampleTaskInclude.entries, take: 0 }, photos: { ...sampleTaskInclude.photos, take: 0 }, draftSections: { ...sampleTaskInclude.draftSections, take: 0 }, completions: { ...sampleTaskInclude.completions, take: 0 }, _count: { select: { finishedGoods: true, entries: { where: { deletedAt: null } }, photos: { where: { deletedAt: null } } } } } satisfies Prisma.SampleTaskInclude;
     const tasks = compact
       ? await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, select: { id: true, specificationSnapshot: true, customerNameSnapshot: true, code: true, status: true, dueDate: true, warningDays: true } })
-      : (await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, include: sampleTaskInclude })).map(serializeSampleTask);
+      : summaryOnly ? (await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, include: summaryInclude })).map(task => {
+        const dto = serializeSampleTask(task);
+        return { ...dto, dataStatus: task.dataStatus, counts: { ...dto.counts, data: task._count.entries, photos: task._count.photos } };
+      }) : (await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, include: sampleTaskInclude })).map(serializeSampleTask);
     const byId = new Map(tasks.map(task => [task.id, task]));
     const published = await tx.$queryRaw<Array<{ count: number }>>(Prisma.sql`SELECT (SELECT count(*) FROM sample_data_entries e JOIN sample_tasks t ON t.id=e.task_id WHERE ${query.base} AND t.status<>'CANCELLED' AND e.deleted_at IS NULL AND e.review_status='PUBLISHED')::int + (SELECT count(*) FROM sample_photos p JOIN sample_tasks t ON t.id=p.task_id WHERE ${query.base} AND t.status<>'CANCELLED' AND p.deleted_at IS NULL AND p.review_status='PUBLISHED')::int AS count`);
     return { ok: true, tasks: ids.map(row => byId.get(row.id)), viewCounts: counts, pagination: { page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total/query.pageSize)) }, customers: customers.map(row => row.customerNameSnapshot), summary: { total: counts.ALL-counts.CANCELLED, dueToday: counts.TODAY, overdue: counts.OVERDUE, pendingReview: counts.PENDING_REVIEW, collecting: counts.PLANNED+counts.IN_PROGRESS, completed: counts.COMPLETED, publishedItems: published[0].count } };

@@ -35,6 +35,7 @@ export function planWeekStartRange(week: string): { gte: Date; lt: Date } {
 export function drawingPlanWeekScope(week: string, reviewRequired = false): Prisma.DrawingLibraryItemWhereInput {
   const weekStartDate = planWeekStartRange(week);
   return { OR: [
+    { sampleTasks: { some: { deletedAt: null, dataPurpose: 'PRODUCTION', status: { not: 'CANCELLED' }, planWeekStartDate: new Date(`${planWeekStart(week)}T00:00:00Z`), ...(reviewRequired ? { documentReviewRequired: true } : {}) } } },
     { productionPlanOrders: { some: { deletedAt: null, status: { not: 'cancelled' }, batches: { some: {
       deletedAt: null, weekStartDate, releaseState: { notIn: ['cancelled', 'archived'] }, ...(reviewRequired ? { documentReviewRequired: true } : {}),
     } } } } },

@@ -130,13 +130,15 @@ export async function POST(req: NextRequest) {
     const matchedItemIds = matchedRows.map(row => row.matchedItemId).filter((value): value is string => Boolean(value));
     const existingTasks = matchedItemIds.length ? await prisma.sampleTask.findMany({
       where: { drawingLibraryItemId: { in: matchedItemIds }, deletedAt: null, status: { not: 'CANCELLED' } },
-      select: { id: true, code: true, drawingLibraryItemId: true, customerLevelCode: true, sampleQuantity: true, dueDate: true },
+      select: { id: true, code: true, drawingLibraryItemId: true, customerLevelCode: true, sampleQuantity: true, dueDate: true, taskType: true, planWeekStartDate: true },
     }) : [];
     const finalRows = [...parsedRows, ...matchedRows.map(row => {
       if (!row.matchedItemId || row.matchStatus !== 'REUSE') return row;
       const duplicate = existingTasks.find(task => task.drawingLibraryItemId === row.matchedItemId
         && (task.customerLevelCode || '').toUpperCase() === row.customerLevelCode
         && task.sampleQuantity === row.sampleQuantity
+        && task.taskType === (row.taskType || 'NEW')
+        && (task.planWeekStartDate?.toISOString().slice(0, 10) || null) === (row.planWeekStartDate || null)
         && task.dueDate && chinaDateKey(task.dueDate) === row.dueDate);
       return duplicate
         ? { ...row, matchStatus: 'BLOCKED' as const, message: `系统已有相同计划 ${duplicate.code}，已阻止重复导入`, matchedItemId: null }

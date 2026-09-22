@@ -1,4 +1,7 @@
+import { FixtureError } from '@/lib/quality-fixture-domain';
 import { NextRequest, NextResponse } from 'next/server';
+import { SamplePlanError, sampleTaskType, sampleWeek } from '@/lib/sample-plan-domain';
+import { assertSampleDrawingApproved, completeSampleRepeat, synchronizeSampleWarehouse, transferSampleCompletion } from '@/lib/sample-plan-operations';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -48,6 +51,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ ok: false, error: '样品任务版本已失效，请刷新后重试' }, { status: 400 });
     }
     const action = cleanSampleText(body.action, 30) || 'UPDATE';
+    if (action === 'COMPLETE_REPEAT') {
+      const id = await prisma.$transaction(tx => completeSampleRepeat(tx, params.id, body, actor), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      const task = await prisma.sampleTask.findUniqueOrThrow({ where: { id }, include: sampleTaskInclude });
+      return NextResponse.json({ ok: true, task: serializeSampleTask(task) });
+    }
     if (!['UPDATE', 'SCHEDULE', 'START', 'COMPLETE', 'CANCEL', 'ARCHIVE', 'UNARCHIVE'].includes(action)) {
       return NextResponse.json({ ok: false, error: '不支持的样品任务操作' }, { status: 400 });
     }
@@ -62,11 +70,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const lifecycle: Prisma.SampleTaskUncheckedUpdateInput = {};
       let noDataCompletion = false;
       if (action === 'START') {
+        await assertSampleDrawingApproved(tx, existing);
         if (status === 'CANCELLED' || status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
         if (status === 'SUBMITTED' || existing.activeSubmissionId) throw new Error('SAMPLE_TASK_SUBMITTED');
         status = 'IN_PROGRESS';
         lifecycle.startedAt = existing.startedAt || now;
       } else if (action === 'COMPLETE') {
+        if (existing.taskType === 'REPEAT') throw new SamplePlanError('请使用老产品完成登记');
+        await assertSampleDrawingApproved(tx, existing);
         if (status === 'CANCELLED' || status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
         {
           const [blockingEntries, blockingPhotos, totalEntries, totalPhotos, sections] = await Promise.all([
@@ -91,6 +102,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           lifecycle.archivedById = actor.id;
           lifecycle.archivedByName = actor.name;
           lifecycle.archiveReason = noDataCompletion ? '无采集数据完成后归档' : '任务完成后归档';
+          await transferSampleCompletion(tx, existing, actor, { mutationId: `complete:${existing.version}`, quantity: existing.sampleQuantity! - existing.completedQuantity, workDate: body.workDate });
         }
       } else if (action === 'CANCEL') {
         if (status === 'CANCELLED' || status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
@@ -139,17 +151,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       }
       const metadataUpdate = action === 'UPDATE';
       const scheduleUpdate = metadataUpdate || action === 'SCHEDULE';
+      const taskType = metadataUpdate && body.taskType !== undefined ? sampleTaskType(body.taskType) : existing.taskType;
+      if (taskType !== existing.taskType && (existing.completedQuantity || existing.activeSubmissionId || existing.submissionRevision || await tx.sampleDataEntry.count({ where: { taskId: existing.id, deletedAt: null } }) || await tx.samplePhoto.count({ where: { taskId: existing.id, deletedAt: null } }) || (await tx.sampleDraftSection.findMany({ where: { taskId: existing.id } })).some(s => sampleDraftSectionHasData(s.payload))))
+        throw new SamplePlanError('任务已有采集、审核或完成记录，请保留原任务，另建本次制作计划', 409);
+      const planWeek = scheduleUpdate && body.planWeekStartDate !== undefined ? sampleWeek(body.planWeekStartDate) : existing.planWeekStartDate?.toISOString().slice(0, 10) || null;
       const dueDate = !scheduleUpdate || body.dueDate === undefined ? existing.dueDate : parseOptionalSampleDate(body.dueDate);
       const issuedDate = !scheduleUpdate || body.issuedDate === undefined ? existing.issuedDate : parseOptionalSampleDate(body.issuedDate);
       const warningDays = !scheduleUpdate || body.warningDays === undefined ? existing.warningDays : Number(body.warningDays);
       if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) throw new Error('INVALID_WARNING_DAYS');
       const dateKey = (date: Date | null) => date?.toISOString().slice(0, 10) || null;
-      const scheduleChanged = dateKey(dueDate) !== dateKey(existing.dueDate) || dateKey(issuedDate) !== dateKey(existing.issuedDate) || warningDays !== existing.warningDays;
+      const scheduleChanged = dateKey(dueDate) !== dateKey(existing.dueDate) || dateKey(issuedDate) !== dateKey(existing.issuedDate) || warningDays !== existing.warningDays || planWeek !== dateKey(existing.planWeekStartDate);
       if (scheduleChanged && dueDate && issuedDate && dueDate < issuedDate) throw new Error('INVALID_SCHEDULE_RANGE');
       const scheduleReason = cleanSampleText(body.scheduleReason, 500);
       if (scheduleChanged && !scheduleReason) throw new Error('SCHEDULE_REASON_REQUIRED');
       const scheduleHistory = Array.isArray(existing.scheduleHistory) ? existing.scheduleHistory : [];
-      if (scheduleChanged) scheduleHistory.push({ at: now.toISOString(), actor: actor.name, reason: scheduleReason, fromDue: dateKey(existing.dueDate), toDue: dateKey(dueDate), fromIssued: dateKey(existing.issuedDate), toIssued: dateKey(issuedDate), fromWarning: existing.warningDays, toWarning: warningDays });
+      if (scheduleChanged) scheduleHistory.push({ at: now.toISOString(), actor: actor.name, reason: scheduleReason, fromDue: dateKey(existing.dueDate), toDue: dateKey(dueDate), fromIssued: dateKey(existing.issuedDate), toIssued: dateKey(issuedDate), fromWarning: existing.warningDays, toWarning: warningDays, fromWeek: dateKey(existing.planWeekStartDate), toWeek: planWeek });
       const sampleQuantity = !metadataUpdate || body.sampleQuantity === undefined
         ? existing.sampleQuantity
         : parseOptionalNonNegativeInteger(body.sampleQuantity);
@@ -157,6 +173,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         ? sampleCustomerLevel(body.customerLevelCode === undefined ? existing.customerLevelCode : body.customerLevelCode)
         : null;
       if (metadataUpdate && !customerLevel) throw new Error('INVALID_SAMPLE_LEVEL');
+      if (sampleQuantity !== null && sampleQuantity < existing.completedQuantity) throw new SamplePlanError('计划数量不能少于已完成数量');
       const updated = await tx.sampleTask.updateMany({
         where: { id: existing.id, version: expectedVersion },
         data: {
@@ -167,6 +184,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           customerLevelLabel: metadataUpdate ? customerLevel!.label : existing.customerLevelLabel,
           customerLevelColor: metadataUpdate ? customerLevel!.color : existing.customerLevelColor,
           sampleQuantity,
+          taskType,
+          planWeekStartDate: planWeek ? new Date(planWeek) : null,
+          documentReviewRequired: existing.documentReviewRequired || taskType !== existing.taskType && taskType === 'REPEAT',
           dueDate,
           issuedDate,
           warningDays,
@@ -179,6 +199,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         },
       });
       if (updated.count !== 1) throw new Error('SAMPLE_TASK_CONFLICT');
+      await synchronizeSampleWarehouse(tx, existing.id, actor, action === 'CANCEL', sampleQuantity !== existing.sampleQuantity);
       if (assigneeIds && action === 'UPDATE') {
         const employees = assigneeIds.length
           ? await tx.employee.findMany({
@@ -212,6 +233,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const task = await prisma.sampleTask.findUnique({ where: { id: resultId }, include: sampleTaskInclude });
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null });
   } catch (error) {
+    if (error instanceof SamplePlanError || error instanceof FixtureError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });

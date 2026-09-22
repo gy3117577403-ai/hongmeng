@@ -180,3 +180,5 @@ main.fg-shell.hm-workbench-root.hm-workbench-root { --hm-shell-header:0px; paddi
 .fg-shell .fg-completed-date{border:0;background:none;padding:2px 0;font-size:12px;font-variant-numeric:tabular-nums;color:#3d6283}
 .fg-detail-times{display:flex;flex-wrap:wrap;gap:12px 20px}
 .fg-toolbar>select[aria-label="日期筛选方式"]{max-width:140px;flex-shrink:0}
+
+.fg-sample-note{display:block;color:#c15d0b;font-size:11px;line-height:17px;white-space:nowrap}.fg-spec-cell:has(.fg-sample-note){padding-top:5px;padding-bottom:5px}

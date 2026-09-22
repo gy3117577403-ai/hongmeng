@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { sampleMaterialSource, sampleMaterialSourceSelect } from '@/lib/sample-material-source';
 import type {
   MaterialFollowUpStatusDTO,
   WarehouseExceptionType,
@@ -134,6 +135,7 @@ export const warehouseExceptionText: Record<WarehouseExceptionType, string> = {
 };
 
 export const warehouseMaterialTaskListInclude = Prisma.validator<Prisma.WarehouseMaterialTaskInclude>()({
+  sampleTask: { select: sampleMaterialSourceSelect },
   workOrder: {
     select: {
       id: true,
@@ -390,9 +392,14 @@ export function serializeWarehouseMaterialTask(
   const activeFollowUp = task.followUpTasks[0] || null;
   const lastResolvedException = task.exceptionCases.find(e => e.status === 'RESOLVED') || null;
   const synchronizedExpectedAt = task.expectedAt || activeFollowUp?.expectedAt;
+  const source = task.workOrder || sampleMaterialSource(task.sampleTask);
   return {
     id: task.id,
-    workOrderId: task.workOrderId,
+    workOrderId: task.workOrderId || '',
+    sampleTaskId: task.sampleTaskId,
+    sampleTaskType: task.sampleTask?.taskType,
+    requirements: task.requirements as unknown as import('@/lib/sample-plan-domain').SampleMaterialLine[],
+    requirementsConfirmed: task.requirementsConfirmed,
     status,
     statusText: warehouseStatusText[status],
     exceptionType,
@@ -425,10 +432,10 @@ export function serializeWarehouseMaterialTask(
     activeExceptions: task.exceptionCases.filter(e => e.status === 'OPEN').map(e => ({ ...serializeWarehouseExceptionCase(e), followUpId: e.followUpTask?.id || null, followUpStatus: e.followUpTask?.status || null, owner: e.followUpTask?.owner || null })),
     lastResolvedException: lastResolvedException ? serializeWarehouseExceptionCase(lastResolvedException) : null,
     workOrder: {
-      ...task.workOrder,
-      plannedAt: task.workOrder.plannedAt?.toISOString() || null,
-      weekStartDate: task.workOrder.weekStartDate?.toISOString() || null,
-      weekEndDate: task.workOrder.weekEndDate?.toISOString() || null,
+      ...source,
+      plannedAt: source.plannedAt?.toISOString() || null,
+      weekStartDate: source.weekStartDate?.toISOString() || null,
+      weekEndDate: source.weekEndDate?.toISOString() || null,
     },
     activities: Array.isArray(detailTask.activities)
       ? detailTask.activities.map(activity => ({

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { sampleMaterialSource, sampleMaterialSourceSelect } from '@/lib/sample-material-source';
 import { prisma } from '@/lib/prisma';
 import { prepareWarehouseTaskTransition, warehouseMaterialTaskDetailInclude, warehouseLegacyMaterialStatus } from '@/lib/warehouse-material';
 import { materialFollowUpDetailInclude, prepareMaterialFollowUpTransition } from '@/lib/material-follow-up';
@@ -14,9 +15,9 @@ function version(actual: number, supplied: unknown) {
 }
 async function lockWarehouse(tx: Tx, id: string) {
   await tx.$queryRaw`SELECT id FROM warehouse_material_tasks WHERE id=${id} FOR UPDATE`;
-  const task = await tx.warehouseMaterialTask.findUnique({ where: { id }, include: { workOrder: { select: { weekStartDate: true, weekEndDate: true, deletedAt: true } } } });
-  if (!task || task.workOrder.deletedAt) throw new MaterialInputError('配料任务不存在或关联工单已删除', 404);
-  return task;
+  const task = await tx.warehouseMaterialTask.findUnique({ where: { id }, include: { sampleTask: { select: sampleMaterialSourceSelect }, workOrder: { select: { weekStartDate: true, weekEndDate: true, deletedAt: true } } } });
+  if (!task || task.workOrder?.deletedAt || task.sampleTask?.deletedAt || task.sampleTask?.status === 'CANCELLED') throw new MaterialInputError('配料任务不存在或来源已取消', 404);
+  return { ...task, workOrder: task.workOrder || { ...sampleMaterialSource(task.sampleTask), deletedAt: null } };
 }
 
 // All open events contribute to the order summary. Closing one event cannot close its siblings.
@@ -30,9 +31,11 @@ export async function synchronizeWarehouseExceptions(tx: Tx, id: string, actorId
     expectedAt: expected,
     completedAt: !events.length && fallback === 'completed' ? new Date() : null,
   };
-  const updated = await tx.warehouseMaterialTask.update({ where: { id }, data: { ...state, completedById: state.status === 'completed' ? actorId : null, updatedById: actorId, version: { increment: 1 } } });
-  await tx.workOrder.update({ where: { id: updated.workOrderId }, data: { materialStatus: events.length ? state.exceptionNote!.slice(0, 200) : warehouseLegacyMaterialStatus(state) } });
-  await synchronizeMaterialProductionHold(tx, { ...state, workOrderId: updated.workOrderId, warehouseTaskId: id, actorId });
+  const updated = await tx.warehouseMaterialTask.update({ where: { id }, data: { ...state, ...(state.status !== 'completed' ? { requirementsConfirmed: false } : {}), completedById: state.status === 'completed' ? actorId : null, updatedById: actorId, version: { increment: 1 } } });
+  if (updated.workOrderId) {
+    await tx.workOrder.update({ where: { id: updated.workOrderId }, data: { materialStatus: events.length ? state.exceptionNote!.slice(0, 200) : warehouseLegacyMaterialStatus(state) } });
+    await synchronizeMaterialProductionHold(tx, { ...state, workOrderId: updated.workOrderId, warehouseTaskId: id, actorId });
+  }
   return updated;
 }
 
@@ -42,6 +45,7 @@ export async function mutateWarehouseException(id: string, input: Input, actorId
     const current = await lockWarehouse(tx, id);
     version(current.version, input.version);
     const action = text(input.action, 40);
+    if (current.sampleTaskId && (action === 'complete' || action === 'resolve' && input.resolution === 'completed') && !current.requirementsConfirmed) throw new MaterialInputError('请在样品配料清单中核对数量后确认完成', 409);
     if (!canConfirm && !['report_exception', 'update_exception'].includes(action)) throw new MaterialInputError('实物确认及配料完成须由仓库人员操作', 403);
     const transition = prepareWarehouseTaskTransition({ ...current, status: current.status as WarehouseMaterialStatus, exceptionType: current.exceptionType as WarehouseExceptionType | null }, input);
     if (!transition.ok) throw new MaterialInputError(transition.error, transition.statusCode);
