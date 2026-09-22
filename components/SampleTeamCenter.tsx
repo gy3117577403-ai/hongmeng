@@ -12,6 +12,8 @@ import { sampleCurrentWeek } from '@/lib/sample-plan-domain';
 import SampleSchedulePanel from '@/components/sample/SampleSchedulePanel';
 import { SAMPLE_VIEWS, sampleDateRange, sampleWarning, type SamplePlanView } from '@/lib/sample-plan-view';
 import {
+  FlaskConical,
+  Layers3,
   AlertTriangle,
   ArrowRight,
   CalendarDays,
@@ -452,13 +454,13 @@ export default function SampleTeamCenter({
   const summaryTask = tasks.find(task => task.id === selectedId) || tasks[0] || null;
   const selected = detailTask?.id === summaryTask?.id ? detailTask : summaryTask;
   const queryString = useMemo(() => {
-    const query = new URLSearchParams({ view: taskView, page: String(page), pageSize: '40', dateBy: filters.dateBy, sort: filters.sort });
+    const query = new URLSearchParams({ view: taskView, page: String(page), pageSize: mode === 'planning' ? '20' : '40', dateBy: filters.dateBy, sort: filters.sort });
     query.set('taskType', taskType); query.set('week', planWeek); query.set('carry', String(includeCarry)); query.set('summary', 'true');
     if (debouncedKeyword) query.set('keyword', debouncedKeyword);
     for (const key of ['customer', 'level', 'member', 'risk', 'from', 'to'] as const) if (filters[key]) query.set(key, filters[key]);
     if (focusId) query.set('focusId', focusId);
     return query.toString();
-  }, [taskView, page, filters, debouncedKeyword, focusId, taskType, planWeek, includeCarry]);
+  }, [taskView, page, filters, debouncedKeyword, focusId, taskType, planWeek, includeCarry, mode]);
   function changeFilters(next: Partial<typeof filters>) { setFilters(current => ({ ...current, ...next })); setPage(1); setFocusId(''); }
   function changeView(view: TaskViewFilter) { setTaskView(view); setPage(1); setFocusId(''); }
   function clearFilters() { setKeyword(''); setFilters({ customer: '', dateBy: 'issued', period: 'all', from: '', to: '', level: '', member: '', risk: '', sort: 'issued_desc' }); setPage(1); setFocusId(''); setTaskView('UNFINISHED'); }
@@ -1083,6 +1085,10 @@ export default function SampleTeamCenter({
     modeDrawer.toggle();
   }
 
+  const statusBar = <section className="sample-team-statusbar" aria-label="样品任务状态筛选">
+          <div>{taskViews.filter(item => (taskType !== 'REPEAT' || item.key !== 'PENDING_REVIEW') && (mode !== 'planning' || ['ALL','UNFINISHED','DRAWING_REVIEW','SHORTAGE','PENDING_REVIEW','COMPLETED','CANCELLED'].includes(item.key))).map(item => <button type="button" className={`${taskView === item.key ? 'active' : ''}${item.danger && item.count ? ' danger' : ''}${item.attention && item.count ? ' attention' : ''}${item.quiet ? ' quiet' : ''}`} aria-pressed={taskView === item.key} key={item.key} onClick={() => changeView(item.key)}>{item.icon}<span>{item.label}</span><b>{item.count}{item.unit || ''}</b></button>)}</div>
+          <span className="sample-team-published-total"><CheckCircle2 size={15} />正式资料 <strong>{summary.publishedItems}</strong> 项</span>
+        </section>;
   return (
     <main className={`sample-team-page sample-branches-page hm-workbench-root hm-workbench-navigation-overlay ${mode === 'planning' ? 'sp-planning-page' : ''}`}>
       <AppWorkbenchHeader
@@ -1107,6 +1113,7 @@ export default function SampleTeamCenter({
               <p>{moduleConfig.description}</p>
             </div>
           </div>
+          {mode === 'planning' && <div className="sb-branch-switch sp-header-branches" role="group" aria-label="样品类型">{(['NEW','REPEAT'] as const).map(kind=><button key={kind} className={taskType===kind?'active':''} aria-pressed={taskType===kind} onClick={()=>{setTaskType(kind);setPage(1);setFocusId('');setSelectedId('');setDetailTask(null);}}>{kind==='NEW'?<FlaskConical size={18}/>:<Layers3 size={18}/>}<span>{kind==='NEW'?'新品试制':'老产品制作'}</span></button>)}</div>}
           <div className="sample-team-command-actions">
             <Link className="hm-workbench-button" href={mode === 'planning' ? '/production?branch=samples' : '/weekly-plan-center?branch=samples'} prefetch={false}>{mode === 'planning' ? '样品执行' : '样品计划'}<ArrowRight size={15}/></Link>
             <a className="hm-workbench-button" href={`/api/sample-tasks/export?${queryString}`} download><Download size={15} />导出清单</a>
@@ -1128,12 +1135,9 @@ export default function SampleTeamCenter({
           onClose={modeDrawer.close}
         />
 
-        <SampleBranchControls type={taskType} week={planWeek} carry={includeCarry} refresh={refreshToken} onChange={(kind, week, carry) => { setTaskType(kind || 'NEW'); setPlanWeek(week); setIncludeCarry(carry); setPage(1); setFocusId(''); setSelectedId(''); setDetailTask(null); }} />
+        <SampleBranchControls hideType={mode === 'planning'} type={taskType} week={planWeek} carry={includeCarry} refresh={refreshToken} onChange={(kind, week, carry) => { setTaskType(kind || 'NEW'); setPlanWeek(week); setIncludeCarry(carry); setPage(1); setFocusId(''); setSelectedId(''); setDetailTask(null); }} />
 
-        {<section className="sample-team-statusbar" aria-label="样品任务状态筛选">
-          <div>{taskViews.filter(item => (taskType !== 'REPEAT' || item.key !== 'PENDING_REVIEW') && (mode !== 'planning' || ['ALL','UNFINISHED','DRAWING_REVIEW','SHORTAGE','PENDING_REVIEW','COMPLETED','CANCELLED'].includes(item.key))).map(item => <button type="button" className={`${taskView === item.key ? 'active' : ''}${item.danger && item.count ? ' danger' : ''}${item.attention && item.count ? ' attention' : ''}${item.quiet ? ' quiet' : ''}`} aria-pressed={taskView === item.key} key={item.key} onClick={() => changeView(item.key)}>{item.icon}<span>{item.label}</span><b>{item.count}{item.unit || ''}</b></button>)}</div>
-          <span className="sample-team-published-total"><CheckCircle2 size={15} />正式资料 <strong>{summary.publishedItems}</strong> 项</span>
-        </section>}
+        {mode !== 'planning' && statusBar}
 
         <section className="sample-plan-filters" aria-label="样品计划筛选">
           <div className="sample-plan-filter-line">
@@ -1147,6 +1151,8 @@ export default function SampleTeamCenter({
           {filters.period === 'custom' && <div className="sample-plan-filter-line"><label>从 <input aria-label="开始日期" type="date" value={filters.from} onChange={event => changeFilters({ from: event.target.value })}/></label><label>至 <input aria-label="结束日期" type="date" value={filters.to} onChange={event => changeFilters({ to: event.target.value })}/></label></div>}
           {moreFilters && <div className="sample-plan-filter-line"><select aria-label="客户等级筛选" value={filters.level} onChange={event => changeFilters({ level: event.target.value })}><option value="">全部等级</option>{['A','B','C','D'].map(level => <option value={level} key={level}>{level}级</option>)}</select><select aria-label="样品成员筛选" value={filters.member} onChange={event => changeFilters({ member: event.target.value })}><option value="">全部成员</option>{context.members.map(member => <option value={member.id} key={member.id}>{member.name} · {member.employeeNo}</option>)}</select><select aria-label="交期预警筛选" value={filters.risk} onChange={event => changeFilters({ risk: event.target.value })}><option value="">全部交期</option><option value="WARNING">需关注交期</option><option value="MISSING">未设置出货日期</option></select></div>}
         </section>
+
+        {mode === 'planning' && <div className="sp-planning-summary"><strong>{pagination.total} <small>项计划</small><span> / </span>{totalQuantity.toLocaleString()} <small>件 / 套</small></strong>{statusBar}</div>}
 
         {error && <div className="sample-team-error"><AlertTriangle size={18} /><span>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 

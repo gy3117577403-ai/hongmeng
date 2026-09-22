@@ -1,3 +1,51 @@
+# Sample planning and manual warehouse kitting - v1.34.220
+
+Final result: passed for the changed pages and interactions. No remaining actionable P0/P1/P2 findings.
+
+## Scope and evidence boundaries
+
+The accepted source visuals are the two generated UI references in C:/Users/31175/.codex/generated_images/01a0b0a4-7f03-7f10-8cb8-39e12c3eb52f/ (exec-8c62c6ab-062d-4047-aa7c-2b5c21428d31.png and exec-39150c62-8e42-4ab9-a62b-9f59ba64a2f4.png). They express layout, not live business totals.
+
+The browser loaded the actual React components and application styles using an isolated local fixture harness. All example models, counts, drawings and actions in screenshots are synthetic QA data; no production business data was changed. Separate real HTTP, PostgreSQL, Prisma migration and S3 tests passed in preflight run 35700228903 at eabbf27. The final release pipeline additionally tests the immutable image.
+
+Artifacts: output/sample-planning-warehouse-v134220/ui/.
+
+## Visual comparison
+
+Full-page reference and implementation were opened together at 1672 x 941. Tablet acceptance used 1366 x 1024. Body measurements were exactly viewport size with no outer horizontal or vertical overflow. The planning table begins at y=257 at tablet size and shows eight complete rows; the table owns scrolling and keeps its header and selection footer visible.
+
+Preserved composition: compact title and NEW/REPEAT switch, week navigation, filters, inline counts/status filters, full-width plan table. Warehouse is a separate queue/detail page; it shows only manually reported shortages, with no inferred BOM or full-material requirements list.
+
+Intentional differences from generated previews:
+- Existing application Chinese fonts, Lucide icons, permission-aware navigation, approved status vocabulary and import/export actions are retained.
+- The warehouse queue uses 260 px at tablet size / 290 px desktop to give shortage details more room.
+- The glass shortage form is a centered, focus-trapped modal rather than a fixed side card. This supports multiple shortage lines with internal scrolling while keeping the 1366 px viewport usable.
+- The table separates internal planned-completion and customer due dates into distinct columns; there is no implied quantity-based material demand calculation.
+
+Visual issues resolved during review: title switch drifting away from title, redundant status strip consuming table height, clipped native date field, required-field asterisks wrapping onto separate lines, misleading empty-shortage text after all shortages were resolved. The final form keeps labels and required marks together. Glass dialogs overlay the page without changing the main layout.
+
+## Interaction acceptance
+
+- NEW and REPEAT planning tables render separate data; REPEAT has no capture/photo/package-review requirements.
+- A REPEAT row opens the wide drawing dialog. The drawing defaults to fit, the PDF preview has the main area, and supervisor/quality review actions remain visible. Closing with Escape restores the table.
+- Selecting plans exposes batch scheduling. An empty adjustment reason disables submission. The next-week shortcut changed 10 sample fixtures from current week to next week; current-week count became 0 and next-week count 12. Internal completion date 09-24 and customer due date 09-25 were preserved.
+- Warehouse links open the independent sample-kitting page focused on the selected sample.
+- A multi-line shortage report accepted PURCHASED and CUSTOMER sources, including a blank optional quantity. The new records appeared in the shortage table; completing kitting stayed disabled while any shortage remained open.
+- Warehouse arrival confirmation resolves one shortage at a time. Resolving the last row returns to pending; an explicit Confirm complete action marks kitting completed and records actor/time.
+- Operation history displays creation, individual arrivals and final kitting confirmation.
+- Floating notifications do not move content. Modals support Escape, focus containment and disabled duplicate-submit controls.
+- Browser console showed no errors during the exercised flows.
+
+## Validation
+
+- TypeScript: passed.
+- Lint: passed with pre-existing warnings.
+- Full local unit suite: 1442 tests, 1229 passed, 213 database-gated skipped, 0 failed.
+- Core preflight: passed PostgreSQL integration, actual HTTP/object-storage flows and build.
+- Final release image and anonymous Hangzhou pull acceptance are recorded separately in the release delivery report.
+
+---
+
 # Planning Center compact scroll acceptance
 
 - source visual truth: C:/Users/31175/.codex/generated_images/01a09c04-b600-7040-a09d-8b14cee44d09/exec-f9ac2963-b235-4c97-b474-73ea56f192ba.png

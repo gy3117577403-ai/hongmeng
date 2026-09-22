@@ -113,7 +113,7 @@ export async function reportSampleShortages(sampleId: string, input: Input, acto
       nextVersion = next.version;
     }
     return tx.warehouseMaterialTask.findUniqueOrThrow({ where: { id: identity.id }, include: warehouseMaterialTaskDetailInclude });
-  });
+  }, { timeout: 20_000 });
 }
 
 async function updateFollowUp(tx: Tx, id: string, input: Input, actorId: string) {
