@@ -31,10 +31,12 @@ try {
     const checks=[], errors=[];
     page.on('pageerror', error => errors.push(String(error)));
     const check=(condition,label)=>{if(!condition)throw Error(label);checks.push(label)};
-    const api=async(path,method='GET',data)=>page.evaluate(async input=>{
-      const response=await fetch(input.path,{method:input.method,headers:{'content-type':'application/json'},body:input.data?JSON.stringify(input.data):undefined});
-      return {status:response.status,body:await response.json().catch(()=>({}))};
-    },{path,method,data});
+    // BrowserContext.request shares the browser cookie jar but survives page
+    // redirects during account switching.
+    const api=async(path,method='GET',data)=>{
+      const response=await page.context().request.fetch(origin+path,{method,headers:{'content-type':'application/json'},...(data?{data}:{})});
+      return {status:response.status(),body:await response.json().catch(()=>({}))};
+    };
     const shot=async name=>page.screenshot({path:dir+'/'+name+'.png',fullPage:false});
     const login=async kind=>{
       await page.context().clearCookies(); await page.goto(origin+'/login');
@@ -77,10 +79,12 @@ try {
       await shot('warehouse-registered-1366x1024');
       await page.locator('.mw-ui-event').filter({hasText:material}).getByRole('link',{name:/查看跟进/}).click();
       await page.waitForURL(url=>url.pathname==='/workspace/procurement'&&url.searchParams.get('taskId')===followId);
+      await page.getByRole('heading',{name:f.workOrder.specification}).waitFor({timeout:30000});
+      await page.locator('.mf-order.active').waitFor({timeout:30000});
       const returnTo=await page.evaluate(()=>new URL(location.href).searchParams.get('returnTo')||'');
       check(returnTo.includes('taskId='+encodeURIComponent(f.warehouseTaskId))&&returnTo.includes('status=exception'),'follow-up preserves exact warehouse context');
-      await page.getByRole('heading',{name:f.workOrder.specification}).waitFor({timeout:30000});
       check(await page.getByRole('heading',{name:f.workOrder.specification}).count()===1,'linked issue opens in follow-up detail');
+      check((await page.locator('.mf-order.active').textContent()).includes(material),'linked issue remains selected in follow-up list');
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'follow-up fits 1366 tablet width');
       await shot('follow-up-linked-1366x1024');
 
@@ -156,6 +160,7 @@ try {
       check(resolved.status==='RESOLVED'&&resolved.exceptionCase.status==='RESOLVED','warehouse physical verification closes same issue');
       await page.getByRole('button',{name:'完成配料'}).click();
       await page.waitForFunction(id=>new URL(location.href).searchParams.get('taskId')===id&&new URL(location.href).searchParams.get('status')==='completed',f.warehouseTaskId);
+      await page.locator('.mw-ui-order.active.mw-ui-order-completed').waitFor({timeout:30000});
       check((await api('/api/warehouse/material-tasks/'+f.warehouseTaskId)).body.task.status==='completed','warehouse task is completed');
       await shot('warehouse-closed-1366x1024');
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'1366 tablet has no page-level horizontal overflow');
