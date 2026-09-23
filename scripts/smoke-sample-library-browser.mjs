@@ -46,7 +46,7 @@ try{
    await page.setViewportSize({width:1366,height:1024});await page.goto(origin+'/weekly-plan-center?branch=samples');await page.getByLabel('样品库二维码',{exact:true}).click();await page.getByRole('dialog',{name:'手机样品库二维码'}).waitFor();await shot('planning-qr-1366');await page.getByLabel('关闭二维码').click();check(await page.evaluate(()=>window.location.pathname)==='/weekly-plan-center','closing planning QR retains planning context');
    await page.goto(origin+'/home');await page.getByRole('navigation',{name:'消息业务分类'}).getByRole('button',{name:/样品/}).click();await page.getByLabel('搜索样品产品型号').fill('D014503');await page.locator('.sample-home-library-entry a').click();await page.getByLabel('搜索样品型号').waitFor();await page.getByLabel('返回入口').click();await page.waitForURL(u=>u.pathname==='/home');await page.getByLabel('搜索样品产品型号').waitFor();check(await page.getByLabel('搜索样品产品型号').inputValue()==='D014503','home library returns to original home panel and search');
    check(errors.length===0,'no uncaught browser errors');return {ok:true,checks};
-  }catch(error){await shot('failure').catch(()=>{});throw error;}
+  }catch(error){await shot('failure').catch(()=>{});const ui=await page.locator('body').ariaSnapshot().catch(()=>'unavailable');throw Error(error.message+'\\nCompleted checks: '+JSON.stringify(checks)+'\\nUI: '+ui);}
  }`);
  const result=cli(['run-code','--filename',file]);writeFileSync(join(dir,'browser-result.txt'),result);const section=result.match(/### Result\r?\n([\s\S]*?)(?:\r?\n### |$)/),accepted=section?JSON.parse(section[1].trim()):null;if(accepted?.ok!==true||accepted.checks?.length<20)throw Error(result);console.log(result);
 }finally{try{cli(['close']);}catch{}rmSync(file,{force:true});}

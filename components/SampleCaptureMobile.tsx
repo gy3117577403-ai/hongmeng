@@ -1042,7 +1042,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
       </div>}
       {form.kind === 'NOTICE' && <div className="sample-mobile-fields">
         <div className="two"><label><span>事项分类</span><input disabled={readOnly} value={form.category} onChange={event => setForm(current => ({ ...current, category: event.target.value }))} placeholder="工艺/质量" /></label><label><span>提示等级</span><input disabled={readOnly} value={form.severity} onChange={event => setForm(current => ({ ...current, severity: event.target.value }))} /></label></div>
-        <label><span>注意事项内容</span><textarea disabled={readOnly} value={form.content} onChange={event => setForm(current => ({ ...current, content: event.target.value }))} /></label>
+        <label><span>注意事项内容</span><textarea aria-label="注意事项内容" disabled={readOnly} value={form.content} onChange={event => setForm(current => ({ ...current, content: event.target.value }))} /></label>
         <label><span>适用工序</span><input disabled={readOnly} value={form.processName} onChange={event => setForm(current => ({ ...current, processName: event.target.value }))} /></label>
       </div>}
       {form.kind === 'CUSTOM' && <div className="sample-mobile-fields"><div className="two"><label><span>记录值</span><input disabled={readOnly} value={form.value} onChange={event => setForm(current => ({ ...current, value: event.target.value }))} /></label><label><span>单位</span><input disabled={readOnly} value={form.unit} onChange={event => setForm(current => ({ ...current, unit: event.target.value }))} /></label></div></div>}
