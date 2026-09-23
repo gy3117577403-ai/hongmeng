@@ -37,7 +37,9 @@ async function main() {
   const css = [];
   for (const route of cssRoutes) css.push(await (await request('packaged employee stylesheet', route)).text());
   assert.ok(css.some(text => text.includes('.hr-profile-save-status') && text.includes('.hr-workbench-v5')));
-  await request('account management page', '/workspace/employees/accounts');
+  const accountEntry = await request('legacy account entry redirects to HR', '/workspace/employees/accounts', { status: 307 });
+  assert.equal(accountEntry.headers.get('location'), '/workspace/employees?accountAccess=1');
+  await request('account modal retains the HR workbench', accountEntry.headers.get('location'));
   const roster = await (await request('load synthetic employee roster', '/api/employees')).json();
   const employee = roster.employees.find(item => item.employeeNo === '0001');
   assert.ok(employee && roster.employees.length >= 36);

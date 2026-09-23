@@ -239,8 +239,13 @@ try {
   const hrAccountPage = await fetch(base + '/workspace/employees/accounts', {
     headers: { Cookie: cookies.hr }, redirect: 'manual',
   });
-  assert.equal(hrAccountPage.status, 200, 'HR employee-account page must be accessible');
-  assert.match(await hrAccountPage.text(), /员工账号管理/);
+  assert.equal(hrAccountPage.status, 307, 'legacy account entry must open the HR account modal');
+  assert.equal(hrAccountPage.headers.get('location'), '/workspace/employees?accountAccess=1');
+  const hrAccountHost = await fetch(base + hrAccountPage.headers.get('location'), {
+    headers: { Cookie: cookies.hr }, redirect: 'manual',
+  });
+  assert.equal(hrAccountHost.status, 200, 'HR account modal host must remain accessible');
+  assert.match(await hrAccountHost.text(), /hr-workbench-v5/);
   assert.ok(!hrAccounts.data.users.some(user => user.id === users.admin.id || user.id === users.hr.id));
   for (const path of [`/api/users/${users.admin.id}/reset-password`, `/api/users/${users.hr.id}/reset-password`, `/api/users/${users.supervisor.id}/access-grants`]) {
     assert.equal((await request(path, 'hr', { password: resetPassword, profileKey: 'ADMIN_GLOBAL' }, 'POST')).status, 403);
