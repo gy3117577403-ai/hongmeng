@@ -10,19 +10,19 @@ export async function GET() {
   try {
     await requireUser();
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = '鸿蒙样品计划';
+    workbook.creator = '杭连采购';
     workbook.created = new Date();
     const sheet = workbook.addWorksheet('样品计划导入', {
       views: [{ state: 'frozen', ySplit: 4 }],
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
     });
-    sheet.mergeCells('A1:L1');
+    sheet.mergeCells('A1:Q1');
     sheet.getCell('A1').value = '样品计划批量导入模板';
     sheet.getCell('A1').font = { name: 'Microsoft YaHei', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
     sheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
     sheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF05A0A' } };
     sheet.getRow(1).height = 30;
-    sheet.mergeCells('A2:L2');
+    sheet.mergeCells('A2:Q2');
     sheet.getCell('A2').value = '每行建立 1 个样品计划；前 6 列必填，图纸库编号可留空由系统自动匹配。请勿改列名。';
     sheet.getCell('A2').font = { name: 'Microsoft YaHei', size: 10, color: { argb: 'FF9A3412' } };
     sheet.getCell('A2').alignment = { vertical: 'middle', wrapText: true };
@@ -46,12 +46,12 @@ export async function GET() {
     sheet.columns = [
       { width: 20 }, { width: 24 }, { width: 34 }, { width: 12 },
       { width: 13 }, { width: 15 }, { width: 34 }, { width: 23 }, { width: 23 },
-      { width: 20 }, { width: 22 }, { width: 23 },
+      { width: 20 }, { width: 22 }, { width: 23 }, {width:26}, {width:26}, {width:20}, {width:32}, {width:32},
     ];
     for (let rowIndex = 5; rowIndex <= 504; rowIndex += 1) {
       const row = sheet.getRow(rowIndex);
       row.height = 22;
-      for (let column = 1; column <= 12; column += 1) {
+      for (let column = 1; column <= SAMPLE_PLAN_IMPORT_HEADERS.length; column += 1) {
         const cell = row.getCell(column);
         cell.font = { name: 'Microsoft YaHei', size: 10 };
         cell.alignment = { vertical: 'middle', wrapText: column === 3 || column === 7 };
@@ -74,6 +74,8 @@ export async function GET() {
       row.getCell(10).dataValidation = { type: 'list', allowBlank: true, formulae: ['"新品,老产品"'], showErrorMessage: true, error: '请选择新品或老产品' };
       row.getCell(11).numFmt = 'yyyy-mm-dd';
       row.getCell(12).numFmt = 'yyyy-mm-dd';
+      row.getCell(13).numFmt = '0.###';
+      row.getCell(13).dataValidation = {type:'decimal',operator:'between',formulae:[0.001,1440],allowBlank:true,showErrorMessage:true,error:'填写每套分钟数，最多三位小数，范围 0.001 至 1440。'};
       row.getCell(9).dataValidation = { type: 'whole', operator: 'between', formulae: [0, 30], allowBlank: true, showErrorMessage: true, error: '请输入 0 至 30 的整数' };
       row.getCell(6).numFmt = 'yyyy-mm-dd';
       row.getCell(6).dataValidation = {
@@ -81,19 +83,21 @@ export async function GET() {
         showErrorMessage: true, errorTitle: '计划日期错误', error: '请选择有效的计划日期。',
       };
     }
-    sheet.autoFilter = { from: 'A4', to: 'L504' };
+    sheet.autoFilter = { from: 'A4', to: 'Q504' };
 
     const help = workbook.addWorksheet('填写说明');
     help.columns = [{ width: 22 }, { width: 74 }];
     help.addRow(['项目', '说明']);
     [
-      ['样品类型与计划周', '类型填新品或老产品，留空兼容旧模板按新品导入。计划周填该周任一日期，自动归到周一；留空进入待排期。计划周与出货交期独立。老产品只审核图纸资料。'],
+      ['样品类型与计划周', '类型填新品或老产品。类型、计划周留空时继承导入窗口中的选择；周列可填“待排期”。计划周填任一天会归到周一，与客户交期独立。'],
+      ['单套计划工时', '单位为分钟/套，最多三位小数。总工时=单套分钟数×数量；12.5 分钟×24 套=5 小时。留空标记工时待补，更新已有计划时留空保留原工时。'],
+      ['订单与更新', '来源订单号与订单行区分真实业务批次；更新原计划可填样品计划编号，在预览中选择更新并填写原因。已完成计划通过更正入口处理。'],
       ['下达日期与预警', '计划下达日期可填；历史日期不清楚时留空，系统显示未记录，不推测补填。提前预警天数为 0 至 30 的整数，留空默认 2 天。'],
       ['前 6 列', '必填：客户名称、产品名称、型号/规格、客户等级、样品数量、计划日期。'],
       ['客户等级', '只能填写 A、B、C、D；系统固定显示为 A红、B黄、C蓝、D绿。'],
       ['图纸库编号', '选填。已明确知道图纸库编号时填写，可精确复用；留空时系统按客户和型号/规格自动匹配。'],
       ['匹配结果', '唯一精确匹配直接复用；没有匹配自动新建；相似但不唯一时上传预览会要求人工确认。'],
-      ['重复数据', '同一文件中的重复行、以及系统内已有的同产品/等级/数量/计划日期任务会被阻止，不提供强制重复导入。'],
+      ['重复数据', '疑似重复行会提示人工选择更新、跳过或新建独立批次。同一来源订单行不允许重复创建；不同真实批次请填写不同订单号/行号。'],
       ['导入上限', '每个文件最多 500 行有效数据，只支持 .xlsx。'],
     ].forEach(values => help.addRow(values));
     help.getRow(1).font = { name: 'Microsoft YaHei', bold: true, color: { argb: 'FFFFFFFF' } };

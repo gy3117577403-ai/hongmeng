@@ -46,8 +46,8 @@ test('sample branches retain drawing review, independent material events and ato
       assert.equal((await list()).pagination.total,1);
       assert.equal(((await list()).tasks[0] as any).plannedCompletionDate,'2026-09-26');
       await prisma.sampleTask.update({where:{id:task.id},data:{status:'COMPLETED',archivedAt:new Date()}});
-      assert.equal((await list()).pagination.total,1);
-      const completed=await listSamplePlans(new URLSearchParams({keyword:tag,week:'unplanned',view:'COMPLETED'}));
+      assert.equal((await list()).pagination.total,0,'closed unrecorded weeks are history, not waiting for scheduling');
+      const completed=await listSamplePlans(new URLSearchParams({keyword:tag,view:'COMPLETED'}));
       assert.equal(completed.pagination.total,1);
       assert.ok(completed.globalCompleted>=1);
       assert.ok((completed.tasks[0] as any).archivedAt,'archived completed record is included');
@@ -59,7 +59,7 @@ test('sample branches retain drawing review, independent material events and ato
     await t.test('quality may review first; both signatures needed while BOM and warehouse remain pending', async () => {
       await assert.rejects(() => prisma.$transaction(async tx => assertSampleDrawingApproved(tx, await getTask())), /双方审核/);
       await sign('QUALITY');
-      await assert.rejects(() => complete({ expectedVersion: task.version, mutationId: 'too-early', quantity: 1 }), /双方审核/);
+      await assert.rejects(() => complete({ expectedVersion: task.version, mutationId: 'too-early', quantity: 1, workDate:'2026-09-01' }), /双方审核/);
       await sign('SUPERVISOR');
       await prisma.$transaction(async tx => assertSampleDrawingApproved(tx, await getTask(), false));
       assert.equal((await getTask()).approvedPackageId, null, 'read-only print readiness does not bind');
@@ -102,7 +102,7 @@ test('sample branches retain drawing review, independent material events and ato
     });
     await t.test('over-completion and failed transaction cannot leave orphan stock', async () => {
       const current = await getTask();
-      await assert.rejects(() => complete({ expectedVersion: current.version, mutationId: 'over', quantity: 4 }), /整数/);
+      await assert.rejects(() => complete({ expectedVersion: current.version, mutationId: 'over', quantity: 4, workDate:'2026-09-21' }), /整数/);
       await assert.rejects(() => prisma.$transaction(async tx => { await transferSampleCompletion(tx, current, actor, { mutationId: 'rollback', quantity: 1 }); throw new Error('forced rollback'); }), /forced rollback/);
       assert.equal((await getTask()).completedQuantity, 2); assert.equal(await prisma.fgLot.count({ where: { sampleTaskId: task.id } }), 1);
     });

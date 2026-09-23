@@ -6,6 +6,8 @@ import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
+import { sampleUnitTime } from '@/lib/sample-plan-time';
+import { correctSamplePlan } from '@/lib/sample-plan-correction';
 import {
   cleanSampleText,
   parseOptionalNonNegativeInteger,
@@ -51,7 +53,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ ok: false, error: '样品任务版本已失效，请刷新后重试' }, { status: 400 });
     }
     const action = cleanSampleText(body.action, 30) || 'UPDATE';
-    if (action === 'COMPLETE_REPEAT') {
+    if (action === 'CORRECT_METADATA' || action === 'CORRECT_COMPLETION') {
+      await prisma.$transaction(tx=>correctSamplePlan(tx,params.id,body,actor),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+      const task=await prisma.sampleTask.findUniqueOrThrow({where:{id:params.id},include:sampleTaskInclude});
+      return NextResponse.json({ok:true,task:serializeSampleTask(task)});
+    }
+    if (action === 'COMPLETE_REPEAT' || action === 'COMPLETE_PHYSICAL') {
       const id = await prisma.$transaction(tx => completeSampleRepeat(tx, params.id, body, actor), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
       const task = await prisma.sampleTask.findUniqueOrThrow({ where: { id }, include: sampleTaskInclude });
       return NextResponse.json({ ok: true, task: serializeSampleTask(task) });
@@ -96,6 +103,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
             if (body.confirmNoData !== true) throw new Error('SAMPLE_TASK_CONFIRM_NO_DATA_REQUIRED');
             noDataCompletion = true;
           }
+          // Non-production legacy tasks may finish without creating physical stock.
+          if (existing.dataPurpose === 'PRODUCTION') throw new SamplePlanError('请使用完成登记，确认实际数量和现场完成日期');
           status = 'COMPLETED';
           lifecycle.completedAt = now;
           lifecycle.archivedAt = now;
@@ -171,6 +180,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const sampleQuantity = !metadataUpdate || body.sampleQuantity === undefined
         ? existing.sampleQuantity
         : parseOptionalNonNegativeInteger(body.sampleQuantity);
+      const unitPlannedMilliseconds = metadataUpdate && body.unitPlannedMinutes !== undefined ? sampleUnitTime(body.unitPlannedMinutes) : existing.unitPlannedMilliseconds;
       const customerLevel = metadataUpdate
         ? sampleCustomerLevel(body.customerLevelCode === undefined ? existing.customerLevelCode : body.customerLevelCode)
         : null;
@@ -183,6 +193,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           status,
           ...lifecycle,
           sourceOrderNo: !metadataUpdate || body.sourceOrderNo === undefined ? existing.sourceOrderNo : cleanSampleText(body.sourceOrderNo, 120),
+          sourceOrderLine: !metadataUpdate || body.sourceOrderLine === undefined ? existing.sourceOrderLine : cleanSampleText(body.sourceOrderLine,80),
+          unitPlannedMilliseconds,
+          planTimeSource: unitPlannedMilliseconds === existing.unitPlannedMilliseconds ? existing.planTimeSource : unitPlannedMilliseconds === null ? null : 'manual',
           customerLevelCode: metadataUpdate ? customerLevel!.code : existing.customerLevelCode,
           customerLevelLabel: metadataUpdate ? customerLevel!.label : existing.customerLevelLabel,
           customerLevelColor: metadataUpdate ? customerLevel!.color : existing.customerLevelColor,
@@ -228,7 +241,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           action: action === 'UPDATE' ? 'update_sample_task' : `sample_task_${action.toLowerCase()}`,
           targetType: 'sample_task',
           targetId: existing.id,
-          detail: { fromStatus: existing.status, toStatus: status, expectedVersion, noDataCompletion, ...(scheduleChanged ? { scheduleChange: scheduleHistory[scheduleHistory.length - 1] } : {}) },
+          detail: { actor:actor.name,fromStatus: existing.status, toStatus: status, expectedVersion, noDataCompletion, ...(metadataUpdate ? {before:{sampleQuantity:existing.sampleQuantity,unitPlannedMilliseconds:existing.unitPlannedMilliseconds,sourceOrderNo:existing.sourceOrderNo,sourceOrderLine:existing.sourceOrderLine,planRemark:existing.planRemark},after:{sampleQuantity,unitPlannedMilliseconds,sourceOrderNo:body.sourceOrderNo ?? existing.sourceOrderNo,sourceOrderLine:body.sourceOrderLine ?? existing.sourceOrderLine,planRemark:body.planRemark ?? existing.planRemark}} : {}), ...(scheduleChanged ? { scheduleChange: scheduleHistory[scheduleHistory.length - 1] } : {}) } as Prisma.InputJsonValue,
         },
       });
       return existing.id;

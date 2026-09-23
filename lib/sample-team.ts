@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { samplePlanTime } from './sample-plan-time';
 import type {
   SampleDataKindDTO,
   SampleDataPurposeDTO,
@@ -54,6 +55,7 @@ export const SAMPLE_TASK_STATUSES: readonly SampleTaskStatusDTO[] = [
 
 export const sampleTaskInclude = {
   warehouseTask: { select: { id: true, status: true, requirementsConfirmed: true } },
+  finishedGoods: { select: {sourceQuantity:true,pending:true,available:true,reserved:true,held:true,blocked:true,lines:{where:{shipment:{status:'SHIPPED'}},select:{quantity:true,returned:true}}} },
   completions: { orderBy: { createdAt: 'desc' as const }, take: 50 },
   _count: { select: { finishedGoods: true, parameterConflicts: { where: { status: 'PENDING' } } } },
   drawingLibraryItem: {
@@ -63,7 +65,7 @@ export const sampleTaskInclude = {
       productName: true,
       specification: true,
       libraryKey: true,
-      fixturePackages: { orderBy: { sequence: 'desc' as const }, take: 1, select: { id: true, status: true } },
+      fixturePackages: { orderBy: { sequence: 'desc' as const }, take: 1, select: { id: true, status: true, drawingFiles: true, sopFiles: true } },
     },
   },
   assignees: {
@@ -462,12 +464,22 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     documentReviewRequired: task.documentReviewRequired,
     approvedPackageId: task.approvedPackageId,
     completedQuantity: task.completedQuantity,
+    completedQuantityKnown: task.completedQuantityKnown,
+    unitPlannedMilliseconds: task.unitPlannedMilliseconds,
+    planTimeSource: task.planTimeSource,
+    ...samplePlanTime(task),
+    sourceOrderLine: task.sourceOrderLine,
+    importMutationId: task.importMutationId,
+    importSourceRow: task.importSourceRow,
+    importFileName: task.importFileName,
+    drawingDocumentCount: [task.drawingLibraryItem.fixturePackages?.[0]?.drawingFiles, task.drawingLibraryItem.fixturePackages?.[0]?.sopFiles].reduce<number>((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0),
     materialTaskId: task.warehouseTask?.id || null,
     materialStatus: task.warehouseTask?.status || null,
     materialConfirmed: task.warehouseTask?.requirementsConfirmed || false,
     drawingReviewStatus: task.drawingLibraryItem.fixturePackages?.[0]?.status || null,
     completions: (task.completions || []).map(c => ({ id: c.id, quantity: c.quantity, workDate: c.workDate.toISOString().slice(0, 10), actorName: c.actorName, createdAt: c.createdAt.toISOString() })),
     finishedGoodsCount: task._count?.finishedGoods || 0,
+    stockSummary: task.finishedGoods?.length || !task._count?.finishedGoods ? (task.finishedGoods || []).reduce((sum,lot)=>({transferred:sum.transferred+lot.sourceQuantity,pending:sum.pending+lot.pending,available:sum.available+lot.available,reserved:sum.reserved+lot.reserved,held:sum.held+lot.held,blocked:sum.blocked+lot.blocked,shipped:sum.shipped+lot.lines.reduce((total,line)=>total+Math.max(0,line.quantity-line.returned),0)}),{transferred:0,pending:0,available:0,reserved:0,held:0,blocked:0,shipped:0}) : undefined,
     code: task.code,
     qrCode: task.qrCode,
     captureUrl: `/sample-capture/${encodeURIComponent(task.qrCode)}`,

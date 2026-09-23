@@ -57,18 +57,29 @@ export async function completeSampleRepeat(tx: Tx, id: string, input: Record<str
   if (!mutationId) throw new SamplePlanError('缺少本次完成登记编号，请重新打开窗口');
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${id}`}))`;
   const task = await tx.sampleTask.findFirst({ where: { id, deletedAt: null } });
-  if (!task || task.taskType !== 'REPEAT') throw new SamplePlanError('老产品任务不存在', 404);
+  if (!task) throw new SamplePlanError('样品任务不存在', 404);
   const prior = await tx.sampleCompletion.findUnique({ where: { taskId_mutationId: { taskId: id, mutationId } } });
   if (prior) { await transferSampleCompletion(tx, task, actor, { mutationId, quantity: input.quantity, workDate: input.workDate, note: input.note }); return id; }
   if (task.version !== Number(input.expectedVersion)) throw new SamplePlanError('任务已更新，请刷新后重新登记', 409);
   if (['CANCELLED','COMPLETED'].includes(task.status)) throw new SamplePlanError('任务已经结束', 409);
+  if (!input.workDate) throw new SamplePlanError('请填写本次现场完成日期');
+  if (task.taskType === 'NEW') {
+    const [entries, photos, sections] = await Promise.all([
+      tx.sampleDataEntry.findMany({where:{taskId:id,deletedAt:null},select:{reviewStatus:true}}),
+      tx.samplePhoto.findMany({where:{taskId:id,deletedAt:null},select:{reviewStatus:true}}),
+      tx.sampleDraftSection.findMany({where:{taskId:id},select:{payload:true,revision:true,lastSubmittedRevision:true}}),
+    ]);
+    const { sampleDraftSectionHasData, sampleDraftSectionHasUnsubmittedChange } = await import('./sample-team');
+    if (task.activeSubmissionId || [...entries,...photos].some(row=>['DRAFT','PENDING','CHANGES_REQUESTED'].includes(row.reviewStatus)) || sections.some(sampleDraftSectionHasUnsubmittedChange)) throw new SamplePlanError('仍有采集资料待处理，请先完成整包审核',409);
+    if (!entries.length && !photos.length && !sections.some(s=>sampleDraftSectionHasData(s.payload)) && input.confirmNoData !== true) throw new SamplePlanError('没有采集记录，请确认本次无需采集资料');
+  }
   await assertSampleDrawingApproved(tx, task);
   const quantity = sampleCompletionQuantity(input.quantity, task.sampleQuantity, task.completedQuantity);
-  if (task.dataPurpose !== 'PRODUCTION') throw new SamplePlanError('老产品制作仅用于正式样品计划');
+  if (task.dataPurpose !== 'PRODUCTION') throw new SamplePlanError('实物完成转仓仅用于正式样品计划');
   await transferSampleCompletion(tx, task, actor, { mutationId, quantity, workDate: input.workDate, note: input.note });
   const done = task.completedQuantity + quantity === task.sampleQuantity;
   await tx.sampleTask.update({ where: { id }, data: { status: done ? 'COMPLETED' : 'IN_PROGRESS', startedAt: task.startedAt || new Date(), completedAt: done ? new Date() : null, archivedAt: done ? new Date() : null, archivedById: done ? actor.id : null, archivedByName: done ? actor.name : null, archiveReason: done ? '样品完成' : null, updatedById: actor.id, updatedByName: actor.name, version: { increment: 1 } } });
-  await tx.operationLog.create({ data: { userId: actor.id, action: 'sample_repeat_complete', targetType: 'sample_task', targetId: id, detail: { quantity, workDate: input.workDate, mutationId, completed: done, note: '样品完成' } as Prisma.InputJsonValue } });
+  await tx.operationLog.create({ data: { userId: actor.id, action: task.taskType==='REPEAT'?'sample_repeat_complete':'sample_new_complete', targetType: 'sample_task', targetId: id, detail: { quantity, workDate: input.workDate, mutationId, completed: done, note: '样品完成' } as Prisma.InputJsonValue } });
   return id;
 }
 export async function synchronizeSampleWarehouse(tx: Tx, id: string, actor: Actor, cancelled: boolean, quantityChanged = false) {

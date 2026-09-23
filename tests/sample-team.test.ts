@@ -85,7 +85,9 @@ test('review contract is package-level, optimistic, idempotent, and has exactly 
   assert.match(reviewRoute, /sampleDataEntry\.updateMany\(\{\s*where:\s*\{\s*id:\s*entry\.id/);
   assert.match(reviewRoute, /status:\s*'CONFIRMED'/);
   assert.match(reviewRoute, /acceptedSubmissionId:\s*submission\.id/);
-  assert.match(reviewRoute, /status:\s*'COMPLETED'/);
+  assert.match(reviewRoute, /status: completed \? 'COMPLETED' : 'IN_PROGRESS'/);
+  assert.match(reviewRoute, /quantity: completion.quantity, workDate: completion.workDate/);
+  assert.doesNotMatch(reviewRoute, /quantity: task.sampleQuantity! - task.completedQuantity/);
 });
 
 test('durable sample section drafts validate row shape, limits, and proposed process boundaries', () => {
@@ -211,7 +213,7 @@ test('sample planning workspace uses one compact master-detail surface instead o
   const stylesheet = readFileSync('app/sample-team-workbench.css', 'utf8');
 
   assert.match(component, /className="sample-team-zero-state"/);
-  assert.match(component, /className="su-status"/);
+  assert.match(component, /className="su-status(?: [^"]*)?"/);
   assert.match(component, /className="sample-detail-tabs"/);
   assert.match(component, /任务概览/);
   assert.match(component, /采集数据/);

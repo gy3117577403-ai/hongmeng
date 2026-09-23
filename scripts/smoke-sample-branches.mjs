@@ -80,7 +80,7 @@ async function approve(task) {
   const content = await req('download stored drawing', `/api/drawing-library/files/${pack.drawingFiles[0].id}/content`); assert.ok(Buffer.isBuffer(content) && content.byteLength > 100);
   if (pack.status === 'DRAFT') { await req('submit drawing only', '/api/quality-fixtures', { action:'SUBMIT',id:pack.id,version:pack.version }); context=await req('reload submitted review',`/api/sample-tasks/${task.id}/documents`);pack=context.packages[0]; }
   await req('quality reviews first', '/api/quality-fixtures', { action:'APPROVE',id:pack.id,version:pack.version,reviewRole:'QUALITY',confirmed:true });
-  if (task.taskType==='REPEAT') await patch(task,{action:'COMPLETE_REPEAT',mutationId:randomUUID(),quantity:1},409);
+  if (task.taskType==='REPEAT') await patch(task,{action:'COMPLETE_REPEAT',mutationId:randomUUID(),quantity:1,workDate:today},409);
   context=await req('load supervisor remaining review',`/api/sample-tasks/${task.id}/documents`); pack=context.packages[0];
   await req('supervisor confirms second', '/api/quality-fixtures', { action:'APPROVE',id:pack.id,version:pack.version,reviewRole:'SUPERVISOR',confirmed:true });
   const print = await req('approved sample printing', `/sample-print/${task.id}`); assert.match(print,/Sample cable|样品/);
@@ -92,7 +92,7 @@ await patch(repeat,{...completion,quantity:1},409);
 await patch(repeat,{action:'COMPLETE_REPEAT',mutationId:randomUUID(),quantity:4,workDate:today},400);
 repeat=(await patch(repeat,{action:'COMPLETE_REPEAT',mutationId:randomUUID(),quantity:3,workDate:today})).task;
 assert.equal(repeat.status,'COMPLETED');assert.equal(repeat.completedQuantity,5);assert.equal(repeat.finishedGoodsCount,2);
-fresh=await detail(fresh); fresh=(await patch(fresh,{action:'COMPLETE',confirmNoData:true,workDate:today})).task;assert.equal(fresh.status,'COMPLETED');assert.equal(fresh.completedQuantity,5);
+fresh=await detail(fresh); fresh=(await patch(fresh,{action:'COMPLETE_PHYSICAL',mutationId:randomUUID(),quantity:5,confirmNoData:true,workDate:today})).task;assert.equal(fresh.status,'COMPLETED');assert.equal(fresh.completedQuantity,5);
 for (const task of [repeat,fresh]) {
   const goods=(await req('sample finished warehouse source',`/api/finished-goods?sampleTaskId=${task.id}&filter=all&scope=all`)).data;
   assert.equal(goods.rows.reduce((n,r)=>n+r.pending,0),5);assert.ok(goods.rows.every(r=>r.sampleTaskId===task.id && r.note.startsWith('样品完成') && r.productionWorkDate===today));
@@ -120,18 +120,24 @@ assert.equal(imported.createdTaskCount,2);
 const importedList = await req('verify imported sample plans', `/api/sample-tasks?view=ALL&week=${week}&summary=true&keyword=${tag}-IMPORT`);
 assert.equal(importedList.tasks.length,2);assert.ok(importedList.tasks.every(t=>t.planWeekStartDate===week && t.documentReviewRequired));
 // A duplicate in an approved sample must never roll back its completion or warehouse transfer.
-async function parameterSample(values, position='A端') {
+async function parameterSample(values, position='A端', physical=true) {
   let task=(await req('create parameter sample on approved product','/api/sample-tasks',{drawingLibraryItemId:fresh.drawingLibraryItemId,taskType:'NEW',sampleQuantity:2,customerLevelCode:'A'},201)).task;
   task=(await req('save connector sample data',`/api/sample-tasks/${task.id}/entries`,{kind:'STRIPPING',label:position,payload:{model:tag+'-CN',outerPeelMm:String(values),positionLabel:position},expectedTaskVersion:task.version,clientMutationId:randomUUID()},201)).task;
   task=(await req('submit connector sample',`/api/sample-tasks/${task.id}/submit`,{expectedVersion:task.version,clientMutationId:randomUUID()})).task;
-  const review={decision:'CONFIRM',submissionId:task.activeSubmission.id,submissionRevision:task.activeSubmission.revision,expectedTaskVersion:task.version,clientMutationId:randomUUID()};
+  const review={decision:'CONFIRM',...(physical?{completion:{quantity:2,workDate:today}}:{}),submissionId:task.activeSubmission.id,submissionRevision:task.activeSubmission.revision,expectedTaskVersion:task.version,clientMutationId:randomUUID()};
   await req('approve sample even with differing connector parameters',`/api/sample-tasks/${task.id}/review`,review);
   await req('replayed package never transfers twice',`/api/sample-tasks/${task.id}/review`,review);
-  task=await detail(task);assert.equal(task.status,'COMPLETED');assert.equal(task.completedQuantity,2);assert.equal(task.finishedGoodsCount,1);
+  task=await detail(task);if(!physical){assert.equal(task.status,'IN_PROGRESS');assert.equal(task.completedQuantity,0);assert.equal(task.finishedGoodsCount,0);return task;}assert.equal(task.status,'COMPLETED');assert.equal(task.completedQuantity,2);assert.equal(task.finishedGoodsCount,1);
   const goods=(await req('duplicate parameters allow finished goods transfer',`/api/finished-goods?sampleTaskId=${task.id}&filter=all&scope=all`)).data;
   assert.equal(goods.rows.reduce((sum,row)=>sum+row.pending,0),2);
   return task;
 }
+let reviewOnly=await parameterSample(13,'审核资料验收',false);
+reviewOnly=(await patch(reviewOnly,{action:'COMPLETE_PHYSICAL',mutationId:randomUUID(),quantity:1,workDate:today})).task;
+assert.equal(reviewOnly.status,'IN_PROGRESS');assert.equal(reviewOnly.completedQuantity,1);assert.equal(reviewOnly.finishedGoodsCount,1);
+const actual=reviewOnly.completions[0];
+reviewOnly=(await patch(reviewOnly,{action:'CORRECT_COMPLETION',mutationId:randomUUID(),completionId:actual.id,quantity:0,workDate:today,reason:'隔离验收：修正录入'})).task;
+assert.equal(reviewOnly.completedQuantity,0);assert.equal(reviewOnly.stockSummary.pending,0);
 const originalParameterSample=await parameterSample(18);
 const equalParameterSample=await parameterSample(18);assert.equal(equalParameterSample.parameterConflictCount,0);
 const differentParameterSample=await parameterSample(22);assert.equal(differentParameterSample.parameterConflictCount,1);
@@ -149,7 +155,7 @@ await req('cover product parameter and keep original revision',`/api/connector-p
 await req('cover operation is idempotent',`/api/connector-parameters/conflicts/${conflict.id}`,replaceInput,200,'PATCH');
 completedTask=await detail(replaceParameterSample);assert.equal(completedTask.parameterConflictCount,0);assert.equal(completedTask.finishedGoodsCount,1);assert.equal(completedTask.status,'COMPLETED');
 const unchangedSource=await detail(originalParameterSample);assert.equal(unchangedSource.entries[0].payload.outerPeelMm,'18');
-const history=await req('null-week completed samples are reachable',`/api/sample-tasks?view=COMPLETED&week=unplanned&taskType=NEW&keyword=${tag}&summary=true`);assert.ok(history.tasks.some(t=>t.id===originalParameterSample.id));assert.ok(history.globalCompleted>=4);
+const history=await req('null-week completed samples are reachable',`/api/sample-tasks?view=COMPLETED&taskType=NEW&keyword=${tag}&summary=true`);assert.ok(history.tasks.some(t=>t.id===originalParameterSample.id));assert.ok(history.globalCompleted>=4);
 const records=await req('retained parameter conflict history',`/api/connector-parameters/conflicts?status=RESOLVED&keyword=${tag}`);assert.ok(records.items.some(item=>item.id===conflict.id&&item.resolution==='REPLACE'));
 
 // Document quick actions run against the same real HTTP/S3 runtime as the released image.
@@ -187,5 +193,17 @@ replacementPackage=(await req('read second replacement review',`/api/sample-task
 await req('supervisor rechecks replacement','/api/quality-fixtures',{action:'APPROVE',id:replacementPackage.id,version:replacementPackage.version,reviewRole:'SUPERVISOR',confirmed:true});
 await req('replacement sample prints after both reviewers',`/sample-print/${replacementTask.id}`);
 product=(await req('quick states survive replacement',productUrl)).item;assert.equal(product.sopMetadata.sopStage,'validating');assert.equal(product.needsConfirmation,true);assert.ok(!product.files.some(f=>f.id===original.id));
+
+// Prepare an actual spreadsheet for the browser upload flow, never production data.
+if(process.env.SAMPLE_PLAN_BROWSER_FIXTURE){
+ const fixturePath=process.env.SAMPLE_PLAN_BROWSER_FIXTURE;
+ await fs.mkdir(path.dirname(fixturePath),{recursive:true});
+ const excelPath=path.join(path.dirname(fixturePath),'sample-plan-ui.xlsx');
+ const uiBook=XLSX.utils.book_new();
+ const uiRows=Array.from({length:24},(_,index)=>[tag+'-UI','界面验收线束',tag+'-UI-'+String(index+1).padStart(2,'0'),'A',24,today,'',today,2,index===23?'REPEAT':'','',today,index===22?'':12.5,'UI-ORDER-'+index,'1','','导入后应立即可见']);
+ XLSX.utils.book_append_sheet(uiBook,XLSX.utils.aoa_to_sheet([headers,...uiRows]),'样品计划');
+ await fs.writeFile(excelPath,XLSX.write(uiBook,{type:'buffer',bookType:'xlsx'}));
+ await fs.writeFile(fixturePath,JSON.stringify({marker:tag,week,username:process.env.SEED_ADMIN_USERNAME,password:process.env.SMOKE_ADMIN_CHANGED_PASSWORD,excelPath,completedId:fresh.id}));
+}
 
 const output=process.env.SAMPLE_BRANCH_QA_OUTPUT || 'artifacts/sample-branches/http.json';await fs.mkdir(path.dirname(output),{recursive:true});await fs.writeFile(output,JSON.stringify({ok:true,tag,base,checks,taskIds:[repeat.id,fresh.id],note:'Disposable runtime only; image remains unmodified.'},null,2));console.log(`Sample branch HTTP acceptance: ${checks.length} checks passed`);

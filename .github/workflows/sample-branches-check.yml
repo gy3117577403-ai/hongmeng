@@ -1,7 +1,7 @@
 name: Sample Branch Preflight
 on:
   push:
-    branches: ["codex/drawing-replacement-v134223", "codex/sample-branches-v134218", "codex/sample-planning-warehouse-v134220", "codex/sample-unified-workbench-v134221"]
+    branches: ["codex/sample-planning-realignment-v134232", "codex/drawing-replacement-v134223", "codex/sample-branches-v134218", "codex/sample-planning-warehouse-v134220", "codex/sample-unified-workbench-v134221"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -53,6 +53,7 @@ jobs:
           S3_SECRET_ACCESS_KEY: sample-branch-ci-storage-only-123456
           APP_BASE_URL: http://127.0.0.1:3000
           SAMPLE_BRANCH_QA_ALLOW: disposable-sample-branches
+          SAMPLE_PLAN_BROWSER_FIXTURE: /tmp/sample-planning-fixture.json
         run: |
           set -euo pipefail
           bash scripts/pull-ci-minio.sh
@@ -67,10 +68,13 @@ jobs:
             sleep 2
           done
           node scripts/smoke-sample-branches.mjs
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          node scripts/smoke-sample-planning-browser.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: sample-branches-preflight
           path: |
+            output/playwright/sample-planning
             artifacts/sample-branches
             sample-branch-server.log

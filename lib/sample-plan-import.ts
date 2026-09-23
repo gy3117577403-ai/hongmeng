@@ -1,6 +1,7 @@
 import { drawingLibraryKey, invalidSpecificationReason } from '@/lib/drawing-library';
 import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
 import { sampleWeek } from '@/lib/sample-plan-domain';
+import { sampleUnitTime } from '@/lib/sample-plan-time';
 
 export const SAMPLE_PLAN_IMPORT_HEADERS = [
   '客户名称',
@@ -15,6 +16,11 @@ export const SAMPLE_PLAN_IMPORT_HEADERS = [
   '样品类型（选填）',
   '计划周（选填）',
   '计划完成日期（选填）',
+  '单套计划工时（分钟/套）',
+  '来源订单号（选填）',
+  '订单行号（选填）',
+  '样品计划编号（更新时填写）',
+  '备注（选填）',
 ] as const;
 
 export type SamplePlanImportStatus = 'REUSE' | 'CREATE' | 'CONFIRM' | 'BLOCKED';
@@ -29,6 +35,13 @@ export type SamplePlanImportCandidate = {
 };
 
 export type SamplePlanImportRow = {
+  unitPlannedMinutes?: number | null;
+  sourceOrderNo?: string;
+  sourceOrderLine?: string;
+  planCode?: string;
+  planRemark?: string;
+  existingPlans?: Array<{id:string;code:string;version:number;status:string;sampleQuantity:number|null;sourceOrderNo:string|null}>;
+  duplicateInFile?: number;
   rowNumber: number;
   customerName: string;
   productName: string;
@@ -49,6 +62,11 @@ export type SamplePlanImportRow = {
 };
 
 const HEADER_ALIASES: Record<(typeof SAMPLE_PLAN_IMPORT_HEADERS)[number], readonly string[]> = {
+  '单套计划工时（分钟/套）': ['单套计划工时（分钟/套）','单套计划工时（分钟）','单套计划工时','单套工时','单件计划工时（分钟）','工时'],
+  '来源订单号（选填）': ['来源订单号（选填）','来源订单号','订单号'],
+  '订单行号（选填）': ['订单行号（选填）','订单行号'],
+  '样品计划编号（更新时填写）': ['样品计划编号（更新时填写）','样品计划编号','任务编号'],
+  '备注（选填）': ['备注（选填）','备注'],
   '样品类型（选填）': ['样品类型（选填）', '样品类型', '新品/老产品'],
   '计划周（选填）': ['计划周（选填）', '计划周', '计划周开始日期'],
   '计划完成日期（选填）': ['计划完成日期（选填）', '计划完成日期', '内部完成日期'],
@@ -105,10 +123,12 @@ export function parseSamplePlanDate(value: unknown): string | null {
 export function parsePositiveInteger(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const number = typeof value === 'number' ? value : Number(cleanImportText(value, 30));
-  return Number.isSafeInteger(number) && number > 0 ? number : null;
+  return Number.isSafeInteger(number) && number > 0 && number <= 2147483647 ? number : null;
 }
 
-export function samplePlanFingerprint(row: Pick<SamplePlanImportRow, 'customerName' | 'specification' | 'customerLevelCode' | 'sampleQuantity' | 'dueDate' | 'taskType' | 'planWeekStartDate'>) {
+export function samplePlanFingerprint(row: Pick<SamplePlanImportRow, 'customerName' | 'specification' | 'customerLevelCode' | 'sampleQuantity' | 'dueDate' | 'taskType' | 'planWeekStartDate' | 'sourceOrderNo' | 'sourceOrderLine' | 'planCode'>) {
+  if (row.planCode) return `plan:${row.planCode}`;
+  if (row.sourceOrderNo) return `order:${drawingLibraryKey(row.customerName,row.specification)}:${row.sourceOrderNo}:${row.sourceOrderLine || ''}`;
   return [
     drawingLibraryKey(row.customerName, row.specification).toLocaleLowerCase('zh-CN'),
     row.customerLevelCode.toUpperCase(),
@@ -143,6 +163,7 @@ export function parseSamplePlanRow(
   raw: unknown[],
   rowNumber: number,
   columns: Record<string, number>,
+  defaults: { taskType?: 'NEW' | 'REPEAT'; planWeekStartDate?: string | null } = {},
 ): { row: Omit<SamplePlanImportRow, 'matchStatus' | 'message' | 'matchedItemId' | 'candidates'> | null; errors: string[] } {
   const value = (header: (typeof SAMPLE_PLAN_IMPORT_HEADERS)[number]) => raw[columns[header]];
   const customerName = cleanImportText(value('客户名称'));
@@ -161,12 +182,15 @@ export function parseSamplePlanRow(
   const errors: string[] = [];
   if (rawPlanned && !plannedCompletionDate) errors.push('计划完成日期无效');
   const rawType = cleanImportText(value('样品类型（选填）')).toUpperCase();
-  const taskType = ['老产品','老产品制作','REPEAT'].includes(rawType) ? 'REPEAT' as const : 'NEW' as const;
+  const taskType = !rawType ? defaults.taskType || 'NEW' : ['老产品','老产品制作','REPEAT'].includes(rawType) ? 'REPEAT' as const : 'NEW' as const;
   if (rawType && !['新品','新品试制','NEW','老产品','老产品制作','REPEAT'].includes(rawType)) errors.push('样品类型只能填新品或老产品');
   const rawWeek = value('计划周（选填）');
-  const parsedWeek = rawWeek ? parseSamplePlanDate(rawWeek) : null;
-  if (rawWeek && !parsedWeek) errors.push('计划周日期无效');
-  const planWeekStartDate = parsedWeek ? sampleWeek(parsedWeek) : null;
+  const unplanned = ['待排期','unplanned'].includes(String(rawWeek));
+  const parsedWeek = rawWeek && !unplanned ? parseSamplePlanDate(rawWeek) : null;
+  if (rawWeek && !unplanned && !parsedWeek) errors.push('计划周日期无效');
+  const planWeekStartDate = unplanned ? null : parsedWeek ? sampleWeek(parsedWeek) : defaults.planWeekStartDate || null;
+  let unitPlannedMinutes: number | null = null;
+  try { const time = sampleUnitTime(value('单套计划工时（分钟/套）')); unitPlannedMinutes = time === null ? null : time / 60000; } catch(e) { errors.push(e instanceof Error ? e.message : '工时无效'); }
   if (rawIssued && !issuedDate) errors.push('计划下达日期无效');
   if (issuedDate && dueDate && issuedDate > dueDate) errors.push('出货日期不能早于下达日期');
   if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) errors.push('提前预警天数须为 0 至 30 的整数');
@@ -187,6 +211,11 @@ export function parseSamplePlanRow(
     row: {
       rowNumber,
       taskType, planWeekStartDate, plannedCompletionDate,
+      unitPlannedMinutes,
+      sourceOrderNo: cleanImportText(value('来源订单号（选填）'),120),
+      sourceOrderLine: cleanImportText(value('订单行号（选填）'),80),
+      planCode: cleanImportText(value('样品计划编号（更新时填写）'),100),
+      planRemark: cleanImportText(value('备注（选填）'),1000),
       customerName,
       productName,
       specification,

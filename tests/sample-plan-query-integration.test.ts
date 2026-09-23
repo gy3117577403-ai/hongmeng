@@ -13,7 +13,7 @@ test('full sample statistics, focused pagination, model search and soft deletion
   try {
     await prisma.sampleTask.createMany({data:rows});
     const q=(extra:Record<string,string>={})=>listSamplePlans(new URLSearchParams({customer:prefix,compact:'true',...extra}));
-    const first=await q(); assert.equal(first.pagination.total,310); assert.equal(first.tasks.length,40); assert.equal(first.viewCounts.COMPLETED,10); assert.equal(first.viewCounts.CANCELLED,4); assert.equal(first.viewCounts.ALL,324);
+    const first=await q(); assert.equal(first.pagination.total,310); assert.equal(first.tasks.length,40); assert.equal(first.viewCounts.COMPLETED,10); assert.equal(first.viewCounts.CANCELLED,4); assert.equal(first.viewCounts.ALL,320);
     const last=await q({page:'8'}); assert.equal(last.tasks.length,30); assert.equal(last.pagination.page,8);
     const id=last.tasks[29]!.id;
     const focused=await q({focusId:id}); assert.ok(focused.tasks.some(task=>task!.id===id)); assert.equal(focused.pagination.page,8);

@@ -59,10 +59,12 @@ test('bulk import routes require preview, idempotent commit, drawing reuse, and 
   assert.match(template, /SAMPLE_PLAN_IMPORT_HEADERS/);
   assert.match(template, /dataValidation/);
   assert.match(preview, /matchStatus: 'CONFIRM'/);
-  assert.match(preview, /系统已有相同计划/);
+  assert.match(preview, /existingPlans/);
+  assert.match(commit, /planChoice\?\.mode === 'update'/);
+  assert.match(commit, /target.version !== planChoice.expectedVersion/);
   assert.match(commit, /sampleTaskImportBatch\.findUnique/);
   assert.match(commit, /pg_advisory_xact_lock/);
-  assert.match(commit, /status: \{ not: 'CANCELLED' \}/);
+  assert.match(commit, /status:\s*\{\s*not:\s*'CANCELLED'\s*\}/);
   assert.doesNotMatch(commit, /forceImport|仍然导入|ignoreDuplicate/);
   assert.match(schema, /model SampleTaskImportBatch/);
   assert.match(migration, /sample_task_import_batches_mutation_id_key/);

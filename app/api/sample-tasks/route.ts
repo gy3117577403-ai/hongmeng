@@ -14,6 +14,7 @@ import {
 } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
+import { sampleUnitTime } from '@/lib/sample-plan-time';
 import {
   cleanSampleText,
   parseOptionalNonNegativeInteger,
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest) {
     if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) return NextResponse.json({ ok: false, error: '提前预警天数须为 0 至 30 的整数' }, { status: 400 });
     if (issuedDate && dueDate && dueDate < issuedDate) return NextResponse.json({ ok: false, error: '出货日期不能早于下达日期' }, { status: 400 });
     const sampleQuantity = parseOptionalNonNegativeInteger(body.sampleQuantity);
+    const unitPlannedMilliseconds = sampleUnitTime(body.unitPlannedMinutes);
     const customerLevel = sampleCustomerLevel(body.customerLevelCode);
     const dataPurpose = body.dataPurpose === 'TEST' || body.dataPurpose === 'TRAINING' ? body.dataPurpose : 'PRODUCTION';
     if (dataPurpose === 'PRODUCTION' && (!sampleQuantity || sampleQuantity < 1)) throw new SamplePlanError('请填写大于零的样品计划数量');
@@ -102,6 +104,9 @@ export async function POST(req: NextRequest) {
           qrCode: sampleQrCode(),
           drawingLibraryItemId: item.id,
           sourceOrderNo: cleanSampleText(body.sourceOrderNo, 120),
+          sourceOrderLine: cleanSampleText(body.sourceOrderLine,80),
+          unitPlannedMilliseconds,
+          planTimeSource: unitPlannedMilliseconds === null ? null : 'manual',
           customerNameSnapshot: item.customerName,
           productNameSnapshot: item.productName,
           specificationSnapshot: item.specification,

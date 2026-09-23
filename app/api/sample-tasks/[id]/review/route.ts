@@ -245,6 +245,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const clientMutationId = cleanSampleText(body.clientMutationId, 100);
     const comment = cleanSampleText(body.comment, 1000);
     const edits = jsonRecord(body.edits);
+    const completion = body.completion ? jsonRecord(body.completion) : null;
 
     if (!decision || !submissionId || !clientMutationId) {
       return NextResponse.json({ ok: false, error: '提交包、审核动作或操作编号缺失' }, { status: 400 });
@@ -265,6 +266,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       decision,
       comment,
       edits,
+      completion,
     });
 
     await prisma.$transaction(async tx => {
@@ -698,20 +700,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       });
       if (submissionUpdated.count !== 1) throw new SamplePackageReviewError('提交包已被其他人处理', 'SAMPLE_SUBMISSION_CONFLICT');
       await assertSampleDrawingApproved(tx, task);
-      await transferSampleCompletion(tx, task, actor, { mutationId: `package:${submission.id}`, quantity: task.sampleQuantity! - task.completedQuantity });
+      let completed = task.dataPurpose !== 'PRODUCTION';
+      if (completion) {
+        if (!completion.workDate) throw new SamplePlanError('请填写现场完成日期');
+        const recorded = await transferSampleCompletion(tx, task, actor, { mutationId: `package:${submission.id}`, quantity: completion.quantity, workDate: completion.workDate, note: completion.note });
+        completed = !!recorded && task.completedQuantity + recorded.quantity === task.sampleQuantity;
+      }
       const taskUpdated = await tx.sampleTask.updateMany({
         where: { id: task.id, version: expectedTaskVersion, status: 'SUBMITTED', activeSubmissionId: submission.id },
         data: {
-          status: 'COMPLETED',
+          status: completed ? 'COMPLETED' : 'IN_PROGRESS',
           dataStatus: 'PROCESSED',
           activeSubmissionId: null,
           acceptedSubmissionId: submission.id,
           submittedAt: null,
-          completedAt: now,
-          archivedAt: now,
-          archivedById: actor.id,
-          archivedByName: actor.name,
-          archiveReason: '整包审核确认后自动归档',
+          completedAt: completed ? now : null,
+          archivedAt: completed ? now : null,
+          archivedById: completed ? actor.id : null,
+          archivedByName: completed ? actor.name : null,
+          archiveReason: completed ? '资料已通过且现场数量登记完成' : null,
           updatedById: actor.id,
           updatedByName: actor.name,
           version: { increment: 1 },

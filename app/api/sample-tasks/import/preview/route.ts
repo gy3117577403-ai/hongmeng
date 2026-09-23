@@ -16,6 +16,7 @@ import {
   type SamplePlanImportRow,
 } from '@/lib/sample-plan-import';
 import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
+import { sampleTaskType, sampleWeek, SamplePlanError } from '@/lib/sample-plan-domain';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
   try {
     await requireUser();
     const form = await req.formData();
+    const defaults = { taskType: sampleTaskType(form.get('taskType') || 'NEW'), planWeekStartDate: sampleWeek(form.get('week') === 'unplanned' ? null : form.get('week')) };
     const file = form.get('file');
     if (!(file instanceof File)) return NextResponse.json({ ok: false, error: '请选择 Excel 文件' }, { status: 400 });
     if (!file.name.toLowerCase().endsWith('.xlsx')) return NextResponse.json({ ok: false, error: '只支持 .xlsx 模板文件' }, { status: 400 });
@@ -70,7 +72,7 @@ export async function POST(req: NextRequest) {
       if (parsedRows.length + candidatesForMatch.length >= MAX_IMPORT_ROWS) {
         return NextResponse.json({ ok: false, error: `每次最多导入 ${MAX_IMPORT_ROWS} 行有效数据` }, { status: 400 });
       }
-      const parsed = parseSamplePlanRow(raw, index + 1, header.columns);
+      const parsed = parseSamplePlanRow(raw, index + 1, header.columns, defaults);
       if (!parsed.row) parsedRows.push(blockedRow(raw, index + 1, header.columns, parsed.errors.join('；') || '该行没有可导入数据'));
       else candidatesForMatch.push(parsed.row);
     }
@@ -92,16 +94,15 @@ export async function POST(req: NextRequest) {
     });
     const byId = new Map(drawingItems.map(item => [item.id, item]));
     const byKey = new Map(drawingItems.map(item => [item.libraryKey.toLocaleLowerCase('zh-CN'), item]));
-    const duplicateFingerprints = new Set<string>();
+    const duplicateFingerprints = new Map<string,number>();
     const matchedRows: SamplePlanImportRow[] = [];
 
     for (const row of candidatesForMatch) {
       const fingerprint = samplePlanFingerprint(row);
       if (duplicateFingerprints.has(fingerprint)) {
-        matchedRows.push({ ...row, matchStatus: 'BLOCKED', message: '文件内存在重复计划，本行已阻止导入', matchedItemId: null, candidates: [] });
-        continue;
+        row.duplicateInFile = duplicateFingerprints.get(fingerprint);
       }
-      duplicateFingerprints.add(fingerprint);
+      else duplicateFingerprints.set(fingerprint,row.rowNumber);
       if (row.libraryKey) {
         const precise = byId.get(row.libraryKey) || byKey.get(row.libraryKey.toLocaleLowerCase('zh-CN'));
         matchedRows.push(precise
@@ -128,21 +129,21 @@ export async function POST(req: NextRequest) {
     }
 
     const matchedItemIds = matchedRows.map(row => row.matchedItemId).filter((value): value is string => Boolean(value));
-    const existingTasks = matchedItemIds.length ? await prisma.sampleTask.findMany({
-      where: { drawingLibraryItemId: { in: matchedItemIds }, deletedAt: null, status: { not: 'CANCELLED' } },
-      select: { id: true, code: true, drawingLibraryItemId: true, customerLevelCode: true, sampleQuantity: true, dueDate: true, taskType: true, planWeekStartDate: true },
-    }) : [];
+    const existingTasks = await prisma.sampleTask.findMany({
+      where: { OR:[{drawingLibraryItemId:{in:matchedItemIds}},{code:{in:matchedRows.map(r=>r.planCode||'').filter(Boolean)}}], deletedAt:null },
+      select: { id: true, code: true, version:true, status:true, sourceOrderNo:true, sourceOrderLine:true, drawingLibraryItemId: true, customerLevelCode: true, sampleQuantity: true, dueDate: true, taskType: true, planWeekStartDate: true },
+    });
     const finalRows = [...parsedRows, ...matchedRows.map(row => {
-      if (!row.matchedItemId || row.matchStatus !== 'REUSE') return row;
-      const duplicate = existingTasks.find(task => task.drawingLibraryItemId === row.matchedItemId
-        && (task.customerLevelCode || '').toUpperCase() === row.customerLevelCode
+      if (row.matchStatus === 'BLOCKED') return row;
+      const plans = existingTasks.filter(task => row.planCode ? task.code === row.planCode : task.drawingLibraryItemId === row.matchedItemId && task.status !== 'CANCELLED' && (row.sourceOrderNo
+        ? task.sourceOrderNo === row.sourceOrderNo && (task.sourceOrderLine || '') === (row.sourceOrderLine || '')
+        : !task.sourceOrderNo && (task.customerLevelCode || '').toUpperCase() === row.customerLevelCode
         && task.sampleQuantity === row.sampleQuantity
         && task.taskType === (row.taskType || 'NEW')
         && (task.planWeekStartDate?.toISOString().slice(0, 10) || null) === (row.planWeekStartDate || null)
-        && task.dueDate && chinaDateKey(task.dueDate) === row.dueDate);
-      return duplicate
-        ? { ...row, matchStatus: 'BLOCKED' as const, message: `系统已有相同计划 ${duplicate.code}，已阻止重复导入`, matchedItemId: null }
-        : row;
+        && !!task.dueDate && chinaDateKey(task.dueDate) === row.dueDate));
+      if (row.planCode && !plans.length) return {...row,matchStatus:'BLOCKED' as const,message:'指定的样品计划编号不存在，请核对编号'};
+      return {...row, existingPlans:plans.map(({id,code,version,status,sampleQuantity,sourceOrderNo})=>({id,code,version,status,sampleQuantity,sourceOrderNo}))};
     })].sort((left, right) => left.rowNumber - right.rowNumber);
     const summary = {
       total: finalRows.length,
@@ -154,6 +155,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, fileName: file.name, rows: finalRows, summary });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof SamplePlanError) return NextResponse.json({ok:false,error:error.message},{status:error.status});
     console.error('sample plan import preview failed', error);
     return NextResponse.json({ ok: false, error: '批量导入预览失败，请检查模板后重试' }, { status: 500 });
   }

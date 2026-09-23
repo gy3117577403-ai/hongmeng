@@ -4000,6 +4000,10 @@ model SampleTask {
   qrCode                   String               @unique @map("qr_code")
   drawingLibraryItemId     String               @map("drawing_library_item_id")
   sourceOrderNo            String?              @map("source_order_no")
+  sourceOrderLine          String?              @map("source_order_line")
+  importMutationId         String?              @map("import_mutation_id")
+  importSourceRow          Int?                 @map("import_source_row")
+  importFileName           String?              @map("import_file_name")
   customerNameSnapshot     String               @map("customer_name_snapshot")
   productNameSnapshot      String?              @map("product_name_snapshot")
   specificationSnapshot    String               @map("specification_snapshot")
@@ -4007,6 +4011,9 @@ model SampleTask {
   customerLevelLabel       String?              @map("customer_level_label")
   customerLevelColor       String?              @map("customer_level_color")
   sampleQuantity           Int?                 @map("sample_quantity")
+  unitPlannedMilliseconds  Int?                 @map("unit_planned_milliseconds")
+  planTimeSource           String?              @map("plan_time_source")
+  completedQuantityKnown   Boolean              @default(true) @map("completed_quantity_known")
   taskType                 String               @default("NEW") @map("task_type")
   planWeekStartDate        DateTime?            @map("plan_week_start_date") @db.Date
   plannedCompletionDate    DateTime?            @map("planned_completion_date") @db.Date
@@ -4069,6 +4076,8 @@ model SampleTask {
   @@index([customerLevelCode])
   @@index([dataPurpose, status])
   @@index([deleteBatchId])
+  @@index([importMutationId])
+  @@index([sourceOrderNo, sourceOrderLine])
   @@index([deletedAt])
   @@map("sample_tasks")
 }

@@ -11,9 +11,17 @@ export function samplePlanQuery(params: URLSearchParams, employeeId?: string | n
   if (!SAMPLE_VIEWS.includes(view)) throw new SampleQueryError('样品状态筛选无效');
   const unfinished = Prisma.sql`t.status NOT IN ('COMPLETED', 'CANCELLED')`;
   const pending = Prisma.sql`${unfinished} AND EXISTS (SELECT 1 FROM sample_submissions s WHERE s.id=t.active_submission_id AND s.status='PENDING')`;
+  const documentStatus = Prisma.sql`COALESCE((SELECT p.status FROM "QfPackage" p WHERE p."libraryItemId"=t.drawing_library_item_id ORDER BY p.sequence DESC LIMIT 1), '')`;
+  const hasDocuments = Prisma.sql`COALESCE((SELECT (jsonb_array_length(p."drawingFiles") + jsonb_array_length(p."sopFiles")) > 0 FROM "QfPackage" p WHERE p."libraryItemId"=t.drawing_library_item_id ORDER BY p.sequence DESC LIMIT 1), FALSE)`;
+  const needsDocuments = Prisma.sql`${unfinished} AND t.document_review_required=TRUE`;
   const views: Record<SamplePlanView, Prisma.Sql> = {
-    UNFINISHED: unfinished, ALL: Prisma.sql`TRUE`,
-    DRAWING_REVIEW: Prisma.sql`${unfinished} AND t.document_review_required=TRUE AND COALESCE((SELECT p.status FROM "QfPackage" p WHERE p."libraryItemId"=t.drawing_library_item_id ORDER BY p.sequence DESC LIMIT 1), '')<>'APPROVED'`,
+    UNFINISHED: unfinished, ALL: Prisma.sql`t.status<>'CANCELLED'`,
+    DOCUMENT_PENDING: Prisma.sql`${needsDocuments} AND ${documentStatus}<>'APPROVED'`,
+    DRAWING_MISSING: Prisma.sql`${needsDocuments} AND NOT (${hasDocuments}) AND ${documentStatus} NOT IN ('RETURNED','REVIEWING','SUPERVISOR','QUALITY','APPROVED')`,
+    DRAWING_DRAFT: Prisma.sql`${needsDocuments} AND ${hasDocuments} AND ${documentStatus} IN ('','DRAFT','REVOKED','SUPERSEDED')`,
+    DRAWING_REVIEW: Prisma.sql`${needsDocuments} AND ${documentStatus} IN ('REVIEWING','SUPERVISOR','QUALITY')`,
+    DRAWING_RETURNED: Prisma.sql`${needsDocuments} AND ${documentStatus}='RETURNED'`,
+    DRAWING_APPROVED: Prisma.sql`t.document_review_required=TRUE AND ${documentStatus}='APPROVED'`,
     SHORTAGE: Prisma.sql`${unfinished} AND EXISTS (SELECT 1 FROM warehouse_material_tasks w WHERE w.sample_task_id=t.id AND w.status='exception')`,
     TODAY: Prisma.sql`${unfinished} AND t.due_date=${today}::date`,
     SOON: Prisma.sql`${unfinished} AND t.due_date>${today}::date AND t.due_date<=${today}::date+t.warning_days`,
@@ -22,11 +30,20 @@ export function samplePlanQuery(params: URLSearchParams, employeeId?: string | n
     PENDING_REVIEW: pending, COMPLETED: Prisma.sql`t.status='COMPLETED'`, CANCELLED: Prisma.sql`t.status='CANCELLED'`,
   };
   const filters: Prisma.Sql[] = [Prisma.sql`t.deleted_at IS NULL`];
+  const purpose = params.get('purpose') || 'PRODUCTION';
+  if (!['PRODUCTION','TEST','TRAINING','ALL'].includes(purpose)) throw new SampleQueryError('数据用途无效');
+  if (purpose !== 'ALL') filters.push(Prisma.sql`t.data_purpose=${purpose}`);
+  if (params.get('importBatch')) filters.push(Prisma.sql`EXISTS (
+    SELECT 1 FROM sample_task_import_batches b,
+      jsonb_array_elements(COALESCE(b.result->'rows','[]'::jsonb)) r
+    WHERE b.mutation_id=${params.get('importBatch')} AND r->>'taskId'=t.id
+      AND r->>'status' IN ('CREATED','UPDATED')
+  )`);
   const taskType = params.get('taskType');
   if (taskType && !['NEW','REPEAT'].includes(taskType)) throw new SampleQueryError('样品类型无效');
   if (taskType) filters.push(Prisma.sql`t.task_type=${taskType}`);
   const requestedWeek = params.get('week');
-  if (requestedWeek === 'unplanned') filters.push(Prisma.sql`t.plan_week_start_date IS NULL`);
+  if (requestedWeek === 'unplanned') filters.push(Prisma.sql`t.plan_week_start_date IS NULL AND ${unfinished}`);
   else if (requestedWeek) {
     let week: string | null;
     try { week = sampleWeek(requestedWeek); } catch (e) { throw new SampleQueryError(e instanceof SamplePlanError ? e.message : '计划周无效'); }
@@ -84,14 +101,23 @@ export async function listSamplePlans(params: URLSearchParams, employeeId?: stri
     const countsSql = SAMPLE_VIEWS.map(view => Prisma.sql`COUNT(*) FILTER (WHERE ${query.views[view]})::int AS ${Prisma.raw('"'+view+'"')}`);
     const [counts] = await tx.$queryRaw<Array<Record<SamplePlanView, number>>>(Prisma.sql`SELECT ${Prisma.join(countsSql)} FROM sample_tasks t WHERE ${query.base}`);
     const total = counts[query.view];
-    const globalCompleted = await tx.sampleTask.count({ where: { deletedAt: null, status: 'COMPLETED', ...(params.get('taskType') ? { taskType: params.get('taskType')! } : {}) } });
+    const globalCompleted = await tx.sampleTask.count({ where: { deletedAt: null, status: 'COMPLETED', dataPurpose: params.get('purpose') === 'ALL' ? undefined : params.get('purpose') || 'PRODUCTION', ...(params.get('taskType') ? { taskType: params.get('taskType')! } : {}) } });
     let materialCounts: Record<string,number> | undefined;
     if (params.get('warehouse') === 'true') {
       const allStates = new URLSearchParams(params); allStates.delete('materialStatus');
       const warehouseQuery = samplePlanQuery(allStates, employeeId);
       [materialCounts] = await tx.$queryRaw<Array<Record<string,number>>>(Prisma.sql`SELECT COUNT(*)::int AS "all", COUNT(*) FILTER (WHERE w.status='pending')::int AS pending, COUNT(*) FILTER (WHERE w.status='exception')::int AS exception, COUNT(*) FILTER (WHERE w.status='completed')::int AS completed FROM sample_tasks t JOIN warehouse_material_tasks w ON w.sample_task_id=t.id WHERE ${warehouseQuery.base} AND (${warehouseQuery.views[warehouseQuery.view]})`);
     }
-    const [totals] = await tx.$queryRaw<Array<{ quantity: number; completed: number }>>(Prisma.sql`SELECT COALESCE(SUM(t.sample_quantity),0)::float AS quantity, COALESCE(SUM(t.completed_quantity),0)::float AS completed FROM sample_tasks t WHERE ${query.base} AND (${query.views[query.view]})`);
+    const [totals] = await tx.$queryRaw<Array<{ quantity: number; completed: number; unknownCompletedCount: number; missingTimeCount: number; remainingUnknownCount: number; totalPlannedMilliseconds: string; remainingPlannedMilliseconds: string; remainingQuantity: number }>>(Prisma.sql`
+      SELECT COALESCE(SUM(t.sample_quantity),0)::float AS quantity,
+        COALESCE(SUM(t.completed_quantity) FILTER (WHERE t.completed_quantity_known),0)::float AS completed,
+        COUNT(*) FILTER (WHERE NOT t.completed_quantity_known)::int AS "unknownCompletedCount",
+        COUNT(*) FILTER (WHERE t.unit_planned_milliseconds IS NULL)::int AS "missingTimeCount",
+        COUNT(*) FILTER (WHERE ${query.views.UNFINISHED} AND (NOT t.completed_quantity_known OR t.unit_planned_milliseconds IS NULL OR t.sample_quantity IS NULL))::int AS "remainingUnknownCount",
+        COALESCE(SUM(t.unit_planned_milliseconds::numeric * t.sample_quantity),0)::text AS "totalPlannedMilliseconds",
+        COALESCE(SUM(t.unit_planned_milliseconds::numeric * GREATEST(0,t.sample_quantity-t.completed_quantity)) FILTER (WHERE ${query.views.UNFINISHED} AND t.completed_quantity_known),0)::text AS "remainingPlannedMilliseconds",
+        COALESCE(SUM(GREATEST(0,t.sample_quantity-t.completed_quantity)) FILTER (WHERE ${query.views.UNFINISHED} AND t.completed_quantity_known),0)::float AS "remainingQuantity"
+      FROM sample_tasks t WHERE ${query.base} AND (${query.views[query.view]})`);
     let requestedPage = query.page;
     if (params.get('focusId')) {
       const focused = await tx.$queryRaw<Array<{ position: bigint }>>(Prisma.sql`SELECT position FROM (SELECT t.id, row_number() OVER (ORDER BY ${query.order}) AS position FROM sample_tasks t WHERE ${query.base} AND (${query.views[query.view]})) ranked WHERE id=${params.get('focusId')}`);
@@ -103,7 +129,7 @@ export async function listSamplePlans(params: URLSearchParams, employeeId?: stri
     const customers = await tx.sampleTask.findMany({ where: { deletedAt: null }, distinct: ['customerNameSnapshot'], select: { customerNameSnapshot: true }, orderBy: { customerNameSnapshot: 'asc' } });
     const compact = params.get('compact') === 'true';
     const summaryOnly = params.get('summary') === 'true';
-    const summaryInclude = { ...sampleTaskInclude, entries: { ...sampleTaskInclude.entries, take: 0 }, photos: { ...sampleTaskInclude.photos, take: 0 }, draftSections: { ...sampleTaskInclude.draftSections, take: 0 }, completions: { ...sampleTaskInclude.completions, take: 0 }, _count: { select: { finishedGoods: true, parameterConflicts: { where: { status: 'PENDING' } }, entries: { where: { deletedAt: null } }, photos: { where: { deletedAt: null } } } } } satisfies Prisma.SampleTaskInclude;
+    const summaryInclude = { ...sampleTaskInclude, finishedGoods:{...sampleTaskInclude.finishedGoods,take:0}, entries: { ...sampleTaskInclude.entries, take: 0 }, photos: { ...sampleTaskInclude.photos, take: 0 }, draftSections: { ...sampleTaskInclude.draftSections, take: 0 }, completions: { ...sampleTaskInclude.completions, take: 0 }, _count: { select: { finishedGoods: true, parameterConflicts: { where: { status: 'PENDING' } }, entries: { where: { deletedAt: null } }, photos: { where: { deletedAt: null } } } } } satisfies Prisma.SampleTaskInclude;
     const tasks = compact
       ? await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, select: { id: true, specificationSnapshot: true, customerNameSnapshot: true, code: true, status: true, dueDate: true, warningDays: true } })
       : summaryOnly ? (await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, include: summaryInclude })).map(task => {
@@ -112,6 +138,6 @@ export async function listSamplePlans(params: URLSearchParams, employeeId?: stri
       }) : (await tx.sampleTask.findMany({ where: { id: { in: ids.map(row => row.id) } }, include: sampleTaskInclude })).map(serializeSampleTask);
     const byId = new Map(tasks.map(task => [task.id, task]));
     const published = await tx.$queryRaw<Array<{ count: number }>>(Prisma.sql`SELECT (SELECT count(*) FROM sample_data_entries e JOIN sample_tasks t ON t.id=e.task_id WHERE ${query.base} AND t.status<>'CANCELLED' AND e.deleted_at IS NULL AND e.review_status='PUBLISHED')::int + (SELECT count(*) FROM sample_photos p JOIN sample_tasks t ON t.id=p.task_id WHERE ${query.base} AND t.status<>'CANCELLED' AND p.deleted_at IS NULL AND p.review_status='PUBLISHED')::int AS count`);
-    return { ok: true, globalCompleted, materialCounts, tasks: ids.map(row => byId.get(row.id)), viewCounts: counts, pagination: { page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total/query.pageSize)) }, customers: customers.map(row => row.customerNameSnapshot), summary: { quantity: totals.quantity, completedQuantity: totals.completed, total: counts.ALL-counts.CANCELLED, dueToday: counts.TODAY, overdue: counts.OVERDUE, pendingReview: counts.PENDING_REVIEW, collecting: counts.PLANNED+counts.IN_PROGRESS, completed: counts.COMPLETED, publishedItems: published[0].count } };
+    return { ok: true, globalCompleted, materialCounts, tasks: ids.map(row => byId.get(row.id)), viewCounts: counts, pagination: { page, pageSize: query.pageSize, total, totalPages: Math.max(1, Math.ceil(total/query.pageSize)) }, customers: customers.map(row => row.customerNameSnapshot), summary: { ...totals, completedQuantity: totals.completed, total: counts.ALL, dueToday: counts.TODAY, overdue: counts.OVERDUE, pendingReview: counts.PENDING_REVIEW, collecting: counts.PLANNED+counts.IN_PROGRESS, completed: counts.COMPLETED, publishedItems: published[0].count } };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 20000 });
 }

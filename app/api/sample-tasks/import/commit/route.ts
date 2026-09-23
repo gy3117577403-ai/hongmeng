@@ -14,7 +14,8 @@ import {
 } from '@/lib/sample-plan-import';
 import { sampleActor, sampleQrCode, sampleRequestHash, sampleTaskCode } from '@/lib/sample-team';
 import { sampleWeek, sampleTaskType } from '@/lib/sample-plan-domain';
-import { ensureSampleWarehouse } from '@/lib/sample-plan-operations';
+import { ensureSampleWarehouse, synchronizeSampleWarehouse } from '@/lib/sample-plan-operations';
+import { sampleUnitTime } from '@/lib/sample-plan-time';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,11 @@ export const dynamic = 'force-dynamic';
 type ImportDecision = { mode: 'reuse'; drawingLibraryItemId: string } | { mode: 'create' };
 
 type CommitRow = {
+  unitPlannedMilliseconds: number | null;
+  sourceOrderNo: string;
+  sourceOrderLine: string;
+  planCode: string;
+  planRemark: string;
   taskType: 'NEW' | 'REPEAT';
   planWeekStartDate: string | null;
   rowNumber: number;
@@ -61,6 +67,8 @@ function normalizeRow(value: unknown): { row: CommitRow | null; error: string } 
   const issuedDate = record.issuedDate ? parseSamplePlanDate(record.issuedDate) : null;
   const warningDays = record.warningDays === undefined ? 2 : Number(record.warningDays);
   const errors: string[] = [];
+  let unitPlannedMilliseconds: number | null = null;
+  try { unitPlannedMilliseconds = sampleUnitTime(record.unitPlannedMinutes); } catch(e) { errors.push(e instanceof Error ? e.message : '工时无效'); }
   if (record.plannedCompletionDate && !plannedCompletionDate) errors.push('计划完成日期无效');
   let taskType: 'NEW' | 'REPEAT' = 'NEW', planWeekStartDate: string | null = null;
   try { taskType = sampleTaskType(record.taskType); planWeekStartDate = sampleWeek(record.planWeekStartDate); } catch { errors.push('样品类型或计划周无效'); }
@@ -82,6 +90,11 @@ function normalizeRow(value: unknown): { row: CommitRow | null; error: string } 
   return {
     row: {
       taskType, planWeekStartDate, plannedCompletionDate,
+      unitPlannedMilliseconds,
+      sourceOrderNo: cleanImportText(record.sourceOrderNo,120),
+      sourceOrderLine: cleanImportText(record.sourceOrderLine,80),
+      planCode: cleanImportText(record.planCode,100),
+      planRemark: cleanImportText(record.planRemark,1000),
       rowNumber,
       customerName,
       productName,
@@ -106,12 +119,13 @@ export async function POST(req: NextRequest) {
     const mutationId = cleanImportText(body.clientMutationId, 100);
     const sourceFileName = cleanImportText(body.fileName, 255);
     const rawRows = Array.isArray(body.rows) ? body.rows.slice(0, 500) : [];
+    const planDecisions = body.planDecisions && typeof body.planDecisions === 'object' && !Array.isArray(body.planDecisions) ? body.planDecisions as Record<string,{mode?:string;taskId?:string;expectedVersion?:number;reason?:string}> : {};
     const rawDecisions = body.decisions && typeof body.decisions === 'object' && !Array.isArray(body.decisions)
       ? body.decisions as Record<string, unknown>
       : {};
     if (!mutationId) return NextResponse.json({ ok: false, error: '导入请求编号缺失，请重新打开导入窗口' }, { status: 400 });
     if (!rawRows.length) return NextResponse.json({ ok: false, error: '没有可导入的数据' }, { status: 400 });
-    const requestHash = sampleRequestHash({ rows: rawRows, decisions: rawDecisions, sourceFileName });
+    const requestHash = sampleRequestHash({ rows: rawRows, decisions: rawDecisions, planDecisions, sourceFileName });
 
     const result = await prisma.$transaction(async tx => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-plan-import:${mutationId}`}))`;
@@ -134,12 +148,14 @@ export async function POST(req: NextRequest) {
           continue;
         }
         const row = normalized.row;
+        const planChoice = planDecisions[String(row.rowNumber)];
+        if (planChoice?.mode === 'skip') { results.push({rowNumber:row.rowNumber,status:'SKIPPED',message:'已按选择跳过',existingTaskId:planChoice.taskId}); continue; }
         if (row.matchStatus === 'BLOCKED') {
-          results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: '预览已标记为阻止导入，请修正模板后重新上传' });
+          results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: cleanImportText(raw.message,500) || '请修正模板后重新上传' });
           continue;
         }
         const fingerprint = samplePlanFingerprint(row);
-        if (seen.has(fingerprint)) {
+        if (seen.has(fingerprint) && !(planChoice?.mode === 'new' && !row.sourceOrderNo && !row.planCode)) {
           results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: '本批次存在重复计划，未重复创建' });
           continue;
         }
@@ -179,21 +195,45 @@ export async function POST(req: NextRequest) {
         }
         const level = sampleCustomerLevel(row.customerLevelCode)!;
         const dueDate = new Date(`${row.dueDate}T00:00:00.000Z`);
-        const duplicate = await tx.sampleTask.findFirst({
-          where: {
-            drawingLibraryItemId: item.id,
-            customerLevelCode: level.code,
-            taskType: row.taskType,
-            planWeekStartDate: row.planWeekStartDate ? new Date(row.planWeekStartDate) : null,
-            sampleQuantity: row.sampleQuantity,
-            dueDate,
-            deletedAt: null,
-            status: { not: 'CANCELLED' },
-          },
-          select: { id: true, code: true },
-        });
-        if (duplicate) {
-          results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: `系统已有相同计划 ${duplicate.code}，未重复创建`, existingTaskId: duplicate.id });
+        const duplicateWhere = row.planCode ? {code:row.planCode,deletedAt:null} : {
+          drawingLibraryItemId:item.id,deletedAt:null,status:{not:'CANCELLED'},
+          ...(row.sourceOrderNo ? {sourceOrderNo:row.sourceOrderNo,sourceOrderLine:row.sourceOrderLine || null}
+          : {sourceOrderNo:null,customerLevelCode:level.code,taskType:row.taskType,planWeekStartDate:row.planWeekStartDate?new Date(row.planWeekStartDate):null,sampleQuantity:row.sampleQuantity,dueDate})
+        };
+        const duplicate = await tx.sampleTask.findFirst({where:duplicateWhere});
+        if (planChoice?.mode === 'update') {
+          if (!planChoice.taskId || !Number.isInteger(planChoice.expectedVersion) || !String(planChoice.reason || '').trim()) {
+            results.push({rowNumber:row.rowNumber,status:'BLOCKED',message:'更新计划必须指定现有计划、版本和修改原因'}); continue;
+          }
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${planChoice.taskId}`}))`;
+          const target = await tx.sampleTask.findFirst({where:{id:planChoice.taskId,deletedAt:null}});
+          if (!target || target.version !== planChoice.expectedVersion || target.drawingLibraryItemId !== item.id || target.taskType !== row.taskType || (row.planCode && target.code !== row.planCode)) {
+            results.push({rowNumber:row.rowNumber,status:'BLOCKED',message:'目标计划已变化或产品/类型不一致，请重新预览',existingTaskId:planChoice.taskId}); continue;
+          }
+          if (['COMPLETED','CANCELLED'].includes(target.status) || row.sampleQuantity < target.completedQuantity || (duplicate && duplicate.id !== target.id)) {
+            results.push({rowNumber:row.rowNumber,status:'BLOCKED',message:'已结束计划不能导入覆盖；计划数量不能少于已完成量，也不能覆盖其他批次',existingTaskId:target.id}); continue;
+          }
+          const changes = {
+            sampleQuantity:row.sampleQuantity,dueDate,
+            plannedCompletionDate:row.plannedCompletionDate?new Date(row.plannedCompletionDate):null,
+            issuedDate:row.issuedDate?new Date(row.issuedDate):target.issuedDate,
+            planWeekStartDate:row.planWeekStartDate?new Date(row.planWeekStartDate):null,
+            sourceOrderNo:row.sourceOrderNo || target.sourceOrderNo,sourceOrderLine:row.sourceOrderLine || target.sourceOrderLine,
+            unitPlannedMilliseconds:row.unitPlannedMilliseconds ?? target.unitPlannedMilliseconds,
+            planTimeSource:row.unitPlannedMilliseconds === null ? target.planTimeSource : 'import',
+            planRemark:row.planRemark || target.planRemark,warningDays:row.warningDays,
+            customerLevelCode:level.code,customerLevelLabel:level.label,customerLevelColor:level.color,priority:level.priority,
+            importMutationId:mutationId,importSourceRow:row.rowNumber,importFileName:sourceFileName,
+            updatedById:actor.id,updatedByName:actor.name,version:{increment:1},
+          };
+          await tx.sampleTask.update({where:{id:target.id},data:changes});
+          await synchronizeSampleWarehouse(tx,target.id,actor,false,target.sampleQuantity!==row.sampleQuantity);
+          const before = Object.fromEntries(Object.keys(changes).filter(k=>k!=='version').map(k=>[k,(target as Record<string,unknown>)[k] ?? null]));
+          await tx.operationLog.create({data:{userId:actor.id,action:'import_update_sample_task',targetType:'sample_task',targetId:target.id,detail:JSON.parse(JSON.stringify({actor:actor.name,reason:planChoice.reason,before,after:changes,sourceFileName,rowNumber:row.rowNumber,batch:mutationId}))}});
+          results.push({rowNumber:row.rowNumber,status:'UPDATED',message:target.sampleQuantity!==row.sampleQuantity?'计划已更新；仓库需重新确认配料':'计划已更新',taskId:target.id,taskCode:target.code}); continue;
+        }
+        if (row.planCode || (duplicate && !(planChoice?.mode === 'new' && !row.sourceOrderNo))) {
+          results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: duplicate ? `已有计划 ${duplicate.code}，请选择更新、跳过或新建独立批次` : '指定计划不存在，不能自动新建', existingTaskId: duplicate?.id });
           continue;
         }
         const task = await tx.sampleTask.create({
@@ -208,6 +248,14 @@ export async function POST(req: NextRequest) {
             customerLevelLabel: level.label,
             customerLevelColor: level.color,
             sampleQuantity: row.sampleQuantity,
+            unitPlannedMilliseconds: row.unitPlannedMilliseconds,
+            planTimeSource: row.unitPlannedMilliseconds === null ? null : 'import',
+            sourceOrderNo: row.sourceOrderNo || null,
+            sourceOrderLine: row.sourceOrderLine || null,
+            planRemark: row.planRemark || null,
+            importMutationId: mutationId,
+            importSourceRow: row.rowNumber,
+            importFileName: sourceFileName,
             dueDate,
             plannedCompletionDate: row.plannedCompletionDate ? new Date(row.plannedCompletionDate) : null,
             issuedDate: row.issuedDate ? new Date(`${row.issuedDate}T00:00:00Z`) : null,
@@ -229,6 +277,9 @@ export async function POST(req: NextRequest) {
         results.push({ rowNumber: row.rowNumber, status: 'CREATED', message: '样品计划已创建', taskId: task.id, taskCode: task.code, drawingLibraryItemId: item.id });
       }
       const payload = {
+        batchId: mutationId,
+        updatedTaskCount: results.filter(item=>item.status==='UPDATED').length,
+        skippedCount: results.filter(item=>item.status==='SKIPPED').length,
         createdTaskCount,
         blockedCount: results.filter(item => item.status === 'BLOCKED').length,
         total: results.length,
