@@ -52,7 +52,10 @@ try {
       const initial='/workspace/warehouse?taskId='+encodeURIComponent(f.warehouseTaskId)+'&status=pending';
       await page.goto(origin+initial);
       await page.getByRole('button',{name:'登记缺料 / 异常'}).waitFor();
-      check(await page.locator('.mw-ui-order.active').count()===1,'warehouse selected pending order');
+      // The detail and queue load independently; the detail action can appear
+      // before the week-scoped list and its reconciliation finish.
+      await page.locator('.mw-ui-order.active').waitFor({timeout:30000});
+      check((await page.locator('.mw-ui-order.active').textContent()).includes(f.workOrder.specification),'warehouse selected pending order');
       await page.getByRole('button',{name:'登记缺料 / 异常'}).click();
       const dialog=page.getByRole('dialog',{name:'登记物料异常'});
       await dialog.getByRole('button',{name:'采购物料缺料'}).click();
