@@ -38,18 +38,24 @@ try {
       return {status:response.status,body:await response.json().catch(()=>({}))};
     },{path,method,data});
     const shot=async name=>page.screenshot({path:dir+'/'+name+'.png',fullPage:false});
-    const login=async kind=>{
-      await page.context().clearCookies(); await page.goto(origin+'/login');
+    const login=async(kind,target)=>{
+      await page.context().clearCookies();
+      await page.goto(origin+'/login?next='+encodeURIComponent(target));
       await page.getByLabel('员工编号 / 管理账号').fill(f.users[kind].username);
       await page.getByLabel('密码',{exact:true}).fill(f.password);
       await page.getByRole('button',{name:'登录',exact:true}).click();
-      await page.waitForURL(url=>url.pathname!=='/login',{timeout:30000});
+      // Login navigates with location.href. Wait for that exact destination so a
+      // pending post-login redirect cannot override the next smoke-test action.
+      const expectedPath=target.split('?')[0];
+      const expectedTaskId=target.match(/[?&]taskId=([^&]+)/)?.[1];
+      // The warehouse normalizes its default status with history.replaceState.
+      await page.waitForURL(url=>url.pathname===expectedPath&&(!expectedTaskId||url.searchParams.get('taskId')===expectedTaskId),{timeout:30000});
+      await page.waitForLoadState('domcontentloaded');
     };
     try {
       await page.setViewportSize({width:1366,height:1024});
-      await login('warehouse');
       const initial='/workspace/warehouse?taskId='+encodeURIComponent(f.warehouseTaskId)+'&status=pending';
-      await page.goto(origin+initial);
+      await login('warehouse',initial);
       await page.getByRole('button',{name:'登记缺料 / 异常'}).waitFor();
       // The detail and queue load independently; the detail action can appear
       // before the week-scoped list and its reconciliation finish.
@@ -85,8 +91,13 @@ try {
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'follow-up fits 1366 tablet width');
       await shot('follow-up-linked-1366x1024');
 
-      await login('ordinary');
-      await page.goto(origin+'/workspace/procurement?taskId='+encodeURIComponent(followId)+'&returnTo='+encodeURIComponent(returnTo));
+      const followPath='/workspace/procurement?taskId='+encodeURIComponent(followId)+'&returnTo='+encodeURIComponent(returnTo);
+      const waitFollowSelection=async()=>{
+        await page.locator('.mf-order.active').filter({hasText:material}).waitFor({timeout:30000});
+        await page.getByRole('heading',{name:f.workOrder.specification}).waitFor({timeout:30000});
+      };
+      await login('ordinary',followPath);
+      await waitFollowSelection();
       await page.getByLabel('本次进展',{exact:true}).fill('隔离验收：已确认供方今晚发出五个端子');
       const noteResponse=page.waitForResponse(response=>response.url().includes('/api/material-follow-ups/'+followId)&&response.request().method()==='PATCH');
       await page.getByRole('button',{name:'保存进展',exact:true}).click();
@@ -100,19 +111,19 @@ try {
       await page.locator('.mf-latest p').filter({hasText:'今晚发出'}).waitFor();
       await shot('follow-up-progress-1366x1024');
 
-      await login('warehouse');
+      await login('warehouse',returnTo);
+      await page.locator('.mw-ui-event').filter({hasText:material}).waitFor({timeout:30000});
       const warehouseAfterNote=await api('/api/warehouse/material-tasks/'+f.warehouseTaskId);
       check(warehouseAfterNote.status===200,'warehouse user can read its material task');
       check(warehouseAfterNote.body.task.activities.some(activity=>activity.content?.includes('今晚发出')&&activity.actor?.id===f.users.ordinary.id),'warehouse reads the same authored progress');
-      await page.goto(origin+returnTo);
       await page.getByRole('button',{name:'处理记录'}).click();
       const warehouseProgress=page.locator('.ms-timeline article').filter({hasText:'今晚发出'});
       await warehouseProgress.waitFor();
       check((await warehouseProgress.textContent()).includes(f.users.ordinary.displayName),'warehouse timeline shows ordinary author');
       await shot('warehouse-progress-1366x1024');
 
-      await login('operator');
-      await page.goto(origin+'/workspace/procurement?taskId='+encodeURIComponent(followId)+'&returnTo='+encodeURIComponent(returnTo));
+      await login('operator',followPath);
+      await waitFollowSelection();
       await page.getByRole('button',{name:/调整处理字段/}).click();
       const fields=page.locator('.mf-advanced-fields');
       const eta=new Date(Date.now()+3*86400000).toISOString().slice(0,10);
@@ -128,13 +139,14 @@ try {
       const premature=await api('/api/material-follow-ups/'+followId,'PATCH',{action:'update',version:partial.version,ownerId:f.users.operator.id,status:'WAITING_WAREHOUSE',receivedQuantity:3,expectedAt:eta,note:'错误地要求仓库确认'});
       check(premature.status===400,'partial arrival cannot enter warehouse verification');
 
-      await login('warehouse');
+      await login('warehouse',returnTo);
+      await page.locator('.mw-ui-event').filter({hasText:material}).waitFor({timeout:30000});
       const warehousePartial=(await api('/api/warehouse/material-tasks/'+f.warehouseTaskId)).body.task;
       const prematureClose=await api('/api/warehouse/material-tasks/'+f.warehouseTaskId,'PATCH',{action:'resolve',version:warehousePartial.version,exceptionId:event.id,note:'未到齐不能关闭',resolution:'pending'});
       check(prematureClose.status===409,'warehouse cannot close shortage before full arrival');
 
-      await login('operator');
-      await page.goto(origin+'/workspace/procurement?taskId='+encodeURIComponent(followId)+'&returnTo='+encodeURIComponent(returnTo));
+      await login('operator',followPath);
+      await waitFollowSelection();
       const full=await api('/api/material-follow-ups/'+followId,'PATCH',{action:'update',version:partial.version,ownerId:f.users.operator.id,status:'WAITING_WAREHOUSE',receivedQuantity:5,expectedAt:eta,note:'五件端子全部到齐，交仓库核验'});
       check(full.status===200&&full.body.task.status==='WAITING_WAREHOUSE','full arrival enters warehouse confirmation');
       await page.reload();
@@ -146,8 +158,7 @@ try {
       await page.getByRole('heading',{name:f.workOrder.specification}).waitFor({timeout:30000});
       check(await page.getByRole('heading',{name:f.workOrder.specification}).count()===1,'return opens the same warehouse work order');
 
-      await login('warehouse');
-      await page.goto(origin+returnTo);
+      await login('warehouse',returnTo);
       await page.locator('.mw-ui-event').filter({hasText:material}).getByRole('button',{name:'核对到料'}).click();
       const verify=page.getByRole('dialog',{name:'确认本项异常解决'});
       await verify.locator('textarea').fill('现场已清点五件端子，实物与型号一致');
