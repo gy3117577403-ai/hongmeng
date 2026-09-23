@@ -555,6 +555,19 @@ jobs:
             ACCOUNT_ACCESS_BROWSER_OUTPUT=output/playwright/account-access-release \
             node scripts/smoke-account-access-browser.mjs
 
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public" \
+            S3_ENDPOINT=http://127.0.0.1:19000 \
+            SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3000 \
+            SAMPLE_LIBRARY_QA_OUTPUT=artifacts/sample-library/release-http.json \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-release.json" \
+            node scripts/smoke-sample-library.mjs
+          SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3000 \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-release.json" \
+            SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-release \
+            node scripts/smoke-sample-library-browser.mjs
+
 
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
@@ -834,6 +847,19 @@ jobs:
             ACCOUNT_ACCESS_BROWSER_OUTPUT=output/playwright/account-access-hangzhou \
             node scripts/smoke-account-access-browser.mjs
 
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
+            S3_ENDPOINT=http://127.0.0.1:29000 \
+            SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_LIBRARY_QA_OUTPUT=artifacts/sample-library/hangzhou-http.json \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-hangzhou.json" \
+            node scripts/smoke-sample-library.mjs
+          SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-hangzhou.json" \
+            SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-hangzhou \
+            node scripts/smoke-sample-library-browser.mjs
+
 
           mkdir -p artifacts/quality-data-v1
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
@@ -1108,4 +1134,15 @@ jobs:
             artifacts/account-access
             output/playwright/account-access-release
             output/playwright/account-access-hangzhou
+          if-no-files-found: warn
+
+      - name: Upload mobile sample library acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-library-${{ github.ref_name }}
+          path: |
+            artifacts/sample-library
+            output/playwright/sample-library-release
+            output/playwright/sample-library-hangzhou
           if-no-files-found: warn
