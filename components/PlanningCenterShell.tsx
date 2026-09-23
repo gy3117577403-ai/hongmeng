@@ -674,6 +674,7 @@ export default function PlanningCenterShell({
   user: CurrentUserDTO;
   modeDrawerInitiallyOpen?: boolean;
 }) {
+  const moduleReadOnly = user.access.modulePermissions?.production === 'READ';
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [view, setView] = useState<PlanningView>('schedule');
@@ -1451,6 +1452,7 @@ export default function PlanningCenterShell({
   }
 
   function openCreateOrder(trigger: HTMLElement): void {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     dialogTriggerRef.current = trigger;
     setOrderDraft(emptyOrderForm());
     setProductKeyword('');
@@ -1478,6 +1480,7 @@ export default function PlanningCenterShell({
   }
 
   function openEditOrder(order: ProductionPlanOrderDTO, trigger: HTMLElement): void {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     dialogTriggerRef.current = trigger;
     setOrderDraft(orderForm(order));
     setProductKeyword(order.specification);
@@ -1588,6 +1591,7 @@ export default function PlanningCenterShell({
   }
 
   function openBatch(order: ProductionPlanOrderDTO, trigger: HTMLElement, batch?: ProductionPlanBatchDTO): void {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     dialogTriggerRef.current = trigger;
     const defaultWeek = batch?.weekStartDate || selectedWeek?.weekStartDate || periods?.current.weekStartDate || '';
     const defaultWeekEnd = editableWeeks.find(item => item.weekStartDate === defaultWeek)?.weekEndDate
@@ -1620,6 +1624,7 @@ export default function PlanningCenterShell({
   }
 
   async function saveOrder(confirmImpact = false, restoreDrawingLibraryProduct = false): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!orderDialog) return;
     if (productEntryMode === 'select' && !orderDraft.drawingLibraryItemId) {
       setError('请选择图纸资料库产品，或创建新型号');
@@ -1683,6 +1688,7 @@ export default function PlanningCenterShell({
   }
 
   async function deleteOrder(order: ProductionPlanOrderDTO): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!window.confirm(`确认从计划系统删除 ${order.specification}？\n\n该计划不会回到订单池；图纸资料、产品工序与标准工时会继续保留。`)) return;
     setSaving(true);
     setError('');
@@ -1731,6 +1737,7 @@ export default function PlanningCenterShell({
   }
 
   async function commitHistoricalDelete(): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!historicalDeleteTarget) return;
     if (historicalDeleteCode !== '111') {
       setError('请输入删除确认码 111');
@@ -1770,6 +1777,7 @@ export default function PlanningCenterShell({
   }
 
   async function saveBatch(confirmImpact = false): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!batchDialog) return;
     if (batchDraft.unitSeconds.trim() && !batchDraftUnitMilliseconds) {
       setError('请填写大于 0 且不超过 86400 秒的单根工时');
@@ -1815,6 +1823,7 @@ export default function PlanningCenterShell({
   }
 
   async function deleteBatch(batch: ProductionPlanBatchDTO): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!window.confirm(`确认删除第 ${batch.batchNo} 批排产？\n\n删除数量不会回到订单池；图纸与产品工时资料会继续保留。`)) return;
     const response = await fetch(`/api/planning/batches/${batch.id}`, { method: 'DELETE' });
     const body = await responseBody<Record<string, never>>(response);
@@ -1849,6 +1858,7 @@ export default function PlanningCenterShell({
   }
 
   async function commitRelease(): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!releasePreview) return;
     setSaving(true);
     setError('');
@@ -1899,6 +1909,7 @@ export default function PlanningCenterShell({
   }
 
   async function commitDeletion(): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!deletePreview) return;
     setSaving(true);
     setError('');
@@ -1945,6 +1956,7 @@ export default function PlanningCenterShell({
   }
 
   async function commitActivation(): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!activationPreview) return;
     setSaving(true);
     try {
@@ -1996,6 +2008,7 @@ export default function PlanningCenterShell({
   }
 
   async function commitMove(): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!movePreview || !moveBatchIds.length) return;
     setSaving(true);
     setError('');
@@ -2114,6 +2127,7 @@ export default function PlanningCenterShell({
   }
 
   function openPlanningImport(trigger: HTMLElement): void {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!selectedWeek) {
       setToast('计划周期尚未加载完成');
       return;
@@ -2165,6 +2179,7 @@ export default function PlanningCenterShell({
   }
 
   async function commitPlanningImport(): Promise<void> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出计划'); return; }
     if (!importDialog?.preview) return;
     setSaving(true);
     setError('');
@@ -2372,7 +2387,7 @@ export default function PlanningCenterShell({
             {view === 'schedule' && <>
               <button ref={orderPoolTriggerRef} className="planning-secondary-action pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池 <b>{metadataReady ? globalCounts.orderPool : '—'}</b></button>
               <details className="planning-transfer-menu" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary><Upload size={15} />导入/导出<ChevronDown size={13} /></summary><div>
-                <button type="button" onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); openPlanningImport(menu?.querySelector('summary') || event.currentTarget); }}>导入{editableWeekLabel(selectedWeekKey)}清单</button>
+                <button type="button" disabled={moduleReadOnly} onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); openPlanningImport(menu?.querySelector('summary') || event.currentTarget); }}>导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); void openWeeklyPlanExport(menu?.querySelector('summary') || event.currentTarget); }}>导出计划 Excel</button>
               </div></details>
             </>}
@@ -2382,7 +2397,7 @@ export default function PlanningCenterShell({
               onClick={rememberPlanningState}
               title="维护产品工序与工时"
             ><Clock3 size={16} />产品工时</a>
-            <button className="planning-primary-action" type="button" onClick={event => openCreateOrder(event.currentTarget)}><Plus size={17} />新建订单</button>
+            <button className="planning-primary-action" type="button" disabled={moduleReadOnly} title={moduleReadOnly ? '只读权限' : undefined} onClick={event => openCreateOrder(event.currentTarget)}><Plus size={17} />新建订单</button>
           </div>
         </section>
 

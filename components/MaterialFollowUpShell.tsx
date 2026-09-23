@@ -234,6 +234,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
   useToastBridge(toast, setToast); useToastBridge(error, setError);
   useEffect(() => { if (selected && selected.id === selectedId) drafts.current[selected.id] = form; }, [form, selected, selectedId]);
   const canManage = user.access.capabilities.includes('PROCUREMENT:UPDATE');
+  const moduleReadOnly = user.access.modulePermissions?.materials === 'READ';
   const canUpdatePlan = user.access.capabilities.includes('PLANNING:UPDATE');
 
   useEffect(() => {
@@ -372,7 +373,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
     || !form.ownerId
     || !form.note.trim()
     || (form.status === 'WAITING_ARRIVAL' && !form.expectedAt);
-  const noteDisabled = saving || !selected || ['RESOLVED', 'CANCELLED'].includes(selected.status) || !form.note.trim();
+  const noteDisabled = moduleReadOnly || saving || !selected || ['RESOLVED', 'CANCELLED'].includes(selected.status) || !form.note.trim();
   const saveAction = canManage && advancedOpen
     ? { action: 'update', ...form }
     : { action: 'note', note: form.note };
@@ -381,7 +382,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
   const nextTaskId = selectedIndex >= 0 ? tasks[selectedIndex + 1]?.id : undefined;
 
   async function mutate(body: Record<string, unknown>, next = false): Promise<void> {
-    if (!selected) return;
+    if (!selected || moduleReadOnly) return;
     setSaving(true);
     setFormError('');
     try {
@@ -568,8 +569,8 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
                 </section>
 
                 {!['RESOLVED', 'CANCELLED'].includes(selected.status) ? <section className="mf-compose">
-                  <div className="mf-section-line"><div><h3>更新跟进</h3><span>填写处理内容后，系统记录当前账号与时间</span></div>{canManage && <button type="button" className="mf-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(value => !value)}>{advancedOpen ? '收起处理字段' : '调整处理字段'} <ChevronRight size={15} /></button>}</div>
-                  <label className="mf-note-label">本次进展 <em>*</em><textarea aria-label="本次进展" rows={3} maxLength={600} placeholder={form.supplySource === 'CUSTOMER' ? '填写客户反馈、发货情况、运单或剩余物料安排；保存后记录账号与时间。' : '填写采购进展、供应商反馈、发货情况或运单；保存后记录账号与时间。'} value={form.note} onChange={event => setForm(current => ({ ...current, note: event.target.value }))} /></label>
+                  <div className="mf-section-line"><div><h3>{moduleReadOnly ? '只读查看' : '更新跟进'}</h3><span>{moduleReadOnly ? '可查看处理进展与时间线，协同权限可补充记录' : '填写处理内容后，系统记录当前账号与时间'}</span></div>{canManage && <button type="button" className="mf-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(value => !value)}>{advancedOpen ? '收起处理字段' : '调整处理字段'} <ChevronRight size={15} /></button>}</div>
+                  <label className="mf-note-label">本次进展 <em>*</em><textarea disabled={moduleReadOnly} aria-label="本次进展" rows={3} maxLength={600} placeholder={form.supplySource === 'CUSTOMER' ? '填写客户反馈、发货情况、运单或剩余物料安排；保存后记录账号与时间。' : '填写采购进展、供应商反馈、发货情况或运单；保存后记录账号与时间。'} value={form.note} onChange={event => setForm(current => ({ ...current, note: event.target.value }))} /></label>
                   {canManage && advancedOpen && <div className="mf-advanced-fields"><div className="mf-advanced-heading"><strong>处理字段</strong><small>修改后与本次进展一起保存，仓库会看到同步结果</small></div><div className="ms-form-grid">
                     <label>物料来源<select aria-label="修改物料来源" value={form.supplySource} onChange={event => setForm(current => ({ ...current, supplySource: event.target.value as MaterialSource }))}>{Object.entries(materialSourceText).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                     <label>负责人<select value={form.ownerId} onChange={event => setForm(current => ({ ...current, ownerId: event.target.value }))}><option value="">请选择</option>{users.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName || candidate.username}</option>)}</select></label>

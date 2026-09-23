@@ -25,6 +25,7 @@ function defaultDraft(row: FgRow): Draft { return { quantity: String(row.quantit
 function parseResponse(response: Response): Promise<{ ok: boolean; error?: string; code?: string; data?: unknown }> { return response.json(); }
 
 export default function FinishedGoodsWorkbench({ user, initialData, initialQuery, initialSampleTaskId = '' }: { user: CurrentUserDTO; initialData: FgWorkbench; initialQuery: string; initialSampleTaskId?: string }) {
+  const moduleReadOnly = user.access.modulePermissions?.materials === 'READ';
   const [data, setData] = useState(initialData); const [view, setView] = useState('queue'); const [filter, setFilter] = useState(initialSampleTaskId ? 'all' : 'processing');
   const [query, setQuery] = useState(initialQuery); const [search, setSearch] = useState(initialQuery); const [date, setDate] = useState(initialData.date);
   const [batchId, setBatchId] = useState(''); const [workingBatchId, setWorkingBatchId] = useState(''); const [scope, setScope] = useState(initialSampleTaskId ? 'all' : 'day'); const [dateTo, setDateTo] = useState('');
@@ -41,8 +42,8 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
   const queryKey = useRef('');
   const storageKey = `hm-finished-goods:quantities-v188:${user.id}`;
   const draftFor = (row: FgRow): Draft => drafts[row.id] ? { ...defaultDraft(row), ...drafts[row.id] } : { ...defaultDraft(row), method: row.shipmentId ? row.method : workingMethod, batchId: row.shipmentId ? row.batchId : workingBatchId };
-  const isActionable = (r: FgRow) => ['ready','pending'].includes(r.status) && !r.otherDrafts;
-  const canReceive = (r: FgRow) => r.pending > 0 && !r.openingReview && !r.legacyClosedAt && !r.blockedReason && r.status !== 'shipped' && r.status !== 'received';
+  const isActionable = (r: FgRow) => !moduleReadOnly && ['ready','pending'].includes(r.status) && !r.otherDrafts;
+  const canReceive = (r: FgRow) => !moduleReadOnly && r.pending > 0 && !r.openingReview && !r.legacyClosedAt && !r.blockedReason && r.status !== 'shipped' && r.status !== 'received';
   const canShip = (r: FgRow) => isActionable(r) && r.ownerType === 'CUSTOMER' && r.shipmentLineCount === 1;
   const canSelect = (r: FgRow) => !isRecords && (canShip(r) || canReceive(r));
   const isRecords = ['history','receipts','legacy'].includes(view);
@@ -109,6 +110,7 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
   function applyWorkingBatch() { selectedRows.filter(canSelect).forEach(row => updateDraft(row,'batchId',workingBatchId)); setMessage('所选记录已设置本轮批次，保存或发货时生效'); }
   function clearDrafts(rows: FgRow[]) { setDrafts(prev => { const next = Object.fromEntries(Object.entries(prev).filter(([key]) => !rows.some(row => row.id === key))); try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* Editing still works. */ } return next; }); }
   async function execute(input: FgInput, success: string, affected: FgRow[] = [], keepDialog = false): Promise<boolean> {
+    if (moduleReadOnly) { setError('当前为只读权限，可查看和导出成品仓记录'); return false; }
     if (busyRef.current) return false;
     busyRef.current = true; setBusy(true); setError(''); setMessage(''); setRetryOperation(null);
     const body = JSON.stringify(input);
@@ -137,6 +139,7 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
     if (await execute({ ...input, action: row.status === 'shipped' || row.status === 'reserved' || row.shipmentLineCount > 1 ? 'SAVE_LOGISTICS' : 'SAVE_DRAFT' }, '出货信息已保存', [row])) { setSavedRowId(row.id); }
   }
   function open(kind: string, row?: FgRow, rows?: FgRow[]) {
+    if (moduleReadOnly && kind !== 'detail') { setError('当前为只读权限，可查看和导出成品仓记录'); return; }
     const token = ++detailToken.current;
     setMore(false); setError(''); setChecked(false); setDetail(null); setDetailMore(false); setRetryOperation(null);
     if (row) setActiveId(row.id);
@@ -166,11 +169,12 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
     await execute({ ...form, action: actions[dialog.kind], lotId: row?.lotId, version: row?.version, lineId: row?.lineId, quantity: Number(form.quantity), checked: ['receive','receiveHold'].includes(dialog.kind) || checked }, `${titleFor[dialog.kind]}已完成`, row ? [row] : []);
   }
   async function upload(row: FgRow, file?: File) {
+    if (moduleReadOnly) return;
     if (!file || !row.shipmentId || busyRef.current) return; busyRef.current = true; setBusy(true);
     const formData = new FormData(); formData.set('shipmentId', row.shipmentId); formData.set('file', file);
     try { const response = await fetch('/api/finished-goods/attachments', { method: 'POST', body: formData }); const result = await parseResponse(response); if (!response.ok) throw new Error(result.error); open('detail', row); setMessage('凭证已保存'); } catch (e) { setError(e instanceof Error ? e.message : '上传失败'); } finally { busyRef.current = false; setBusy(false); }
   }
-  async function removeAttachment(id: string, row: FgRow) { const response = await fetch('/api/finished-goods/attachments', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) }); const result = await parseResponse(response); if (!response.ok) setError(result.error || '移除失败'); else open('detail', row); }
+  async function removeAttachment(id: string, row: FgRow) { if (moduleReadOnly) return; const response = await fetch('/api/finished-goods/attachments', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) }); const result = await parseResponse(response); if (!response.ok) setError(result.error || '移除失败'); else open('detail', row); }
   function formField(label: string, key: string, type = 'text', placeholder = '') { return <label>{label}<input type={type} value={form[key] || ''} placeholder={placeholder} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} /></label>; }
   function shipmentFields(row: FgRow) { const d = draftFor(row); return <>
     <label className="fg-span-2">备注（可选）<input value={d.note} onChange={e=>updateDraft(row,'note',e.target.value)}/></label>
@@ -239,7 +243,7 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
       <table className="fg-table"><colgroup>{['select','order','customer','spec','pending','stock','shipped','process','completed','received','dispatched','status','actions'].map(name=><col key={name} className={`fg-col-${name}`}/>)}</colgroup>
         <thead><tr><th><input aria-label="全选本页可处理记录" type="checkbox" disabled={!selectableRows.length || busy || loading} checked={Boolean(selectableRows.length) && selectableRows.every(r => selected.includes(r.id))} onChange={e => setSelected(e.target.checked ? selectableRows.map(r => r.id) : [])}/></th><th>工单</th><th>客户</th><th>规格</th><th>待入库</th><th>在库数量</th><th title="本来源货批累计有效出库，不限查询日期；退货另行记录">已出数量</th><th>{view==='receipts' ? '本次入库' : view==='legacy' ? '历史结清' : view==='history' || filter==='shipped' ? '本次出库' : '本次处理'}</th><th title="生产登记的实际完成日期；点击查看登记及转入时间">现场完成日期</th><th>入库时间</th><th>出库时间</th><th>状态</th><th>操作</th></tr></thead>
         <tbody>{data.rows.map((row,index) => {
-          const d = draftFor(row); const sent = row.status === 'shipped'; const actionable = isActionable(row); const legacy = row.status === 'legacy'; const readOnly = legacy || row.status === 'received';
+          const d = draftFor(row); const sent = row.status === 'shipped'; const actionable = isActionable(row); const legacy = row.status === 'legacy'; const readOnly = moduleReadOnly || legacy || row.status === 'received';
           const groupStart = view === 'batches' && (index === 0 || data.rows[index-1].batchId !== row.batchId);
           const incomingTime = row.status==='received' ? row.receivedAt : row.lastReceivedAt;
           const outgoingTime = sent ? row.shippedAt : row.lastShippedAt;
