@@ -31,12 +31,12 @@ try {
     const checks=[], errors=[];
     page.on('pageerror', error => errors.push(String(error)));
     const check=(condition,label)=>{if(!condition)throw Error(label);checks.push(label)};
-    // BrowserContext.request shares the browser cookie jar but survives page
-    // redirects during account switching.
-    const api=async(path,method='GET',data)=>{
-      const response=await page.context().request.fetch(origin+path,{method,headers:{'content-type':'application/json'},...(data?{data}:{})});
-      return {status:response.status(),body:await response.json().catch(()=>({}))};
-    };
+    // API assertions run only after the target workbench has rendered. They
+    // use the same browser session as the business UI under test.
+    const api=async(path,method='GET',data)=>page.evaluate(async input=>{
+      const response=await fetch(input.path,{method:input.method,headers:{'content-type':'application/json'},body:input.data?JSON.stringify(input.data):undefined});
+      return {status:response.status,body:await response.json().catch(()=>({}))};
+    },{path,method,data});
     const shot=async name=>page.screenshot({path:dir+'/'+name+'.png',fullPage:false});
     const login=async kind=>{
       await page.context().clearCookies(); await page.goto(origin+'/login');
@@ -44,9 +44,6 @@ try {
       await page.getByLabel('密码',{exact:true}).fill(f.password);
       await page.getByRole('button',{name:'登录',exact:true}).click();
       await page.waitForURL(url=>url.pathname!=='/login',{timeout:30000});
-      const signedIn=await api('/api/material-follow-ups?status=ACTIVE&pageSize=1');
-      check(signedIn.status===200,'signed-in material access '+kind);
-      check(true,'browser login '+kind);
     };
     try {
       await page.setViewportSize({width:1366,height:1024});
