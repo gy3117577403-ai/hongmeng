@@ -5,6 +5,7 @@ import {
   type AccessModuleCode,
 } from '@/lib/department-access';
 import { moduleApiDecision, type ModuleAccessCarrier } from '@/lib/module-permissions';
+import { canReadSampleLibrary } from '@/lib/sample-library-access';
 
 type ApiRule = {
   prefix: string;
@@ -741,6 +742,7 @@ export function canAccessApiRoute(
   pathname: string,
   method?: string | null,
 ): boolean | null {
+  if (/^\/api\/sample-library(?:\/|$)/.test(pathOnly(pathname))) return ['GET', 'HEAD'].includes(String(method || 'GET').toUpperCase()) && canReadSampleLibrary(access);
   const newRule = apiRouteAccessRule(pathname);
   const moduleDecision = moduleApiDecision(access, pathname, method, newRule?.anyOf);
   if (moduleDecision !== null) return moduleDecision && (!newRule?.allowedMethods || newRule.allowedMethods.includes(String(method || 'GET').toUpperCase()));

@@ -1,0 +1,51 @@
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { join } from 'node:path';
+if(process.env.SAMPLE_LIBRARY_QA_ALLOW!=='disposable-sample-library')throw Error('Disposable runtime required');
+const origin=process.env.SAMPLE_LIBRARY_QA_BASE||'http://127.0.0.1:3000';if(!['localhost','127.0.0.1'].includes(new URL(origin).hostname))throw Error('Loopback only');
+const fixture=JSON.parse(readFileSync(process.env.SAMPLE_LIBRARY_FIXTURE||'/tmp/sample-library-fixture.json','utf8'));if(!fixture.marker?.startsWith('SL-'))throw Error('Unexpected fixture');
+const dir=process.env.SAMPLE_LIBRARY_BROWSER_OUTPUT||'output/playwright/sample-library';mkdirSync(dir,{recursive:true});const file=join(dir,'browser.generated.cjs');
+function cli(args){const result=spawnSync('npx',['--yes','--package','@playwright/cli@0.1.19','playwright-cli','-s=sample-library',...args],{encoding:'utf8',timeout:240000});const text=((result.stdout||'')+(result.stderr||'')).replace(/### Ran Playwright code\r?\n```[\s\S]*?```(?:\r?\n)?/g,'').replaceAll(fixture.password,'[disposable-password]').replaceAll(fixture.adminPassword,'[disposable-password]');if(result.status||result.error)throw Error(text||result.error.message);return text;}
+try{
+ cli(['open',origin+'/login']);writeFileSync(join(dir,'initial-snapshot.txt'),cli(['snapshot']));
+ writeFileSync(file,`async page=>{
+  const f=${JSON.stringify(fixture)},origin=${JSON.stringify(origin)},dir=${JSON.stringify(dir)},checks=[],errors=[];
+  const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label);};const shot=name=>page.screenshot({path:dir+'/'+name+'.png',animations:'disabled'});
+  page.on('pageerror',error=>errors.push(String(error)));page.on('dialog',dialog=>dialog.accept());page.setDefaultTimeout(20000);
+  const login=async(username,password,next)=>{await page.goto(origin+'/login?next='+encodeURIComponent(next));await page.getByLabel('员工编号 / 管理账号').fill(username);await page.getByLabel('密码',{exact:true}).fill(password);await page.locator('button.primary-button').click();await page.waitForURL(u=>u.pathname===next.split('?')[0]);};
+  const loaded=()=>page.locator('.sl-photo-grid img').first().waitFor();
+  try{
+   await page.setViewportSize({width:390,height:844});
+   await page.goto(origin+'/sample-library?product='+f.productId);await page.waitForURL(u=>u.pathname==='/login');
+   check(new URL(page.url()).searchParams.get('next').includes(f.productId),'QR login preserves product destination');
+   await page.getByLabel('员工编号 / 管理账号').fill(f.username);await page.getByLabel('密码',{exact:true}).fill(f.password);await page.locator('button.primary-button').click();await page.waitForURL(u=>u.pathname==='/sample-library');await loaded();
+   check(new URL(page.url()).searchParams.get('product')===f.productId,'mobile login returns to scanned product');
+   check(await page.locator('.sl-version strong').textContent()==='已审核','older approved sample selected by default');
+   for(const size of [{width:390,height:844},{width:360,height:800},{width:430,height:932}]){await page.setViewportSize(size);check(await page.locator('.sl-app').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'no horizontal overflow at '+size.width);await shot('detail-'+size.width);}
+   await page.setViewportSize({width:390,height:844});await page.getByRole('tab',{name:'参数',exact:true}).click();await page.getByText('3.5',{exact:true}).waitFor();check(await page.getByText('3.5',{exact:true}).isVisible(),'approved parameter snapshot renders 3.5 instead of rejected 99');await shot('parameters-390');
+   await page.getByRole('tab',{name:'工序工时',exact:true}).click();check(await page.getByText('1 分钟 / 套',{exact:true}).isVisible(),'planned unit time has explicit unit');await page.getByText('45',{exact:true}).waitFor();
+   await page.getByRole('tab',{name:'历次记录',exact:true}).click();check(await page.locator('.sl-history-card').count()===2,'withdrawn rejected versions are collapsed');await page.getByRole('button',{name:/查看退回/}).click();check(await page.locator('.sl-history-card').count()===3,'rejected version available explicitly');await shot('history-390');
+   await page.locator('.sl-history-card').filter({hasText:'已退回'}).click();await page.getByText('审核说明：参数需要核对').waitFor();check(await page.locator('.sl-source-note.warning').isVisible(),'rejected source has visible warning');
+   await page.getByRole('tab',{name:'历次记录',exact:true}).click();await page.locator('.sl-history-card').filter({hasText:'已审核'}).click();await loaded();
+   await page.locator('.sl-photo-grid button').first().click();const viewer=page.getByRole('dialog',{name:'样品照片预览'});await viewer.waitFor();await page.waitForFunction(()=>document.querySelector('.sl-photo-transform img')?.naturalWidth>0);
+   const transform=()=>page.locator('.sl-photo-transform').getAttribute('style');const original=await transform();await page.locator('.sl-photo-stage').dblclick();check(await transform()!==original,'double click zooms photo');await page.getByLabel('照片适屏').click();
+   const box=await page.locator('.sl-photo-stage').boundingBox();const cx=box.x+box.width/2,cy=box.y+box.height/2;const cdp=await page.context().newCDPSession(page);
+   await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:cx-30,y:cy,id:1},{x:cx+30,y:cy,id:2}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:cx-85,y:cy,id:1},{x:cx+85,y:cy,id:2}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await page.waitForTimeout(220);check(await transform()!==original,'two finger touch pinch changes zoom');
+   await page.getByLabel('旋转照片').click();check((await transform()).includes('90deg'),'rotate photo remains in reader');await page.getByLabel('照片适屏').click();await page.getByLabel('下一张照片').click();check(await viewer.locator('header>span').textContent()==='2 / 2','next photo updates count');await shot('photo-viewer-390');
+   await page.goBack();await viewer.waitFor({state:'detached'});check(await page.locator('.sl-photo-grid').isVisible(),'browser back closes photo before detail');
+   await page.getByLabel('返回样品列表').click();await page.locator('.sl-product-card').first().waitFor();
+   await page.getByRole('button',{name:'全部客户',exact:true}).click();await page.getByLabel('搜索客户').fill(f.customer);await shot('customer-filter-390');await page.locator('.sl-customer-options button').filter({hasText:f.customer}).click();await page.locator('.sl-product-card').first().waitFor();
+   await page.getByLabel('搜索样品型号').fill('d014503 8305');await page.getByLabel('搜索样品型号').press('Enter');await page.waitForFunction(()=>document.querySelectorAll('.sl-product-card').length===2);await shot('search-list-390');
+   await page.locator('.sl-product-card').filter({has:page.getByRole('heading',{name:f.model,exact:true})}).click();await loaded();await page.getByLabel('返回样品列表').click();check(await page.getByLabel('搜索样品型号').inputValue()==='d014503 8305','return preserves fuzzy search');check(new URL(page.url()).searchParams.get('customer')===f.customer,'return preserves customer');
+   await page.getByLabel('清除型号搜索').click();await page.waitForFunction(()=>document.querySelectorAll('.sl-product-card').length===12);await page.getByRole('button',{name:/加载更多/}).click();await page.waitForFunction(()=>document.querySelectorAll('.sl-product-card').length===16);
+   await page.locator('.sl-product-card').last().scrollIntoViewIfNeeded();const beforeScroll=await page.locator('.sl-list-scroll').evaluate(el=>el.scrollTop);await page.locator('.sl-product-card').last().click();await page.locator('.sl-product-hero').waitFor();await page.goBack();check(await page.locator('.sl-product-card').count()===16,'return keeps loaded pages');check(Math.abs(await page.locator('.sl-list-scroll').evaluate(el=>el.scrollTop)-beforeScroll)<5,'return keeps list scroll position');
+   await page.getByLabel('查看样品库二维码').click();const qr=page.getByRole('dialog',{name:'手机样品库二维码'});await qr.locator('img').waitFor();check(await qr.getByLabel('样品库链接').inputValue()===origin+'/sample-library','global QR uses stable authenticated library URL');await shot('global-qr-390');await page.goBack();await qr.waitFor({state:'detached'});
+   await page.evaluate(()=>fetch('/api/auth/logout',{method:'POST'}));await login(f.adminUsername,f.adminPassword,'/sample-capture/'+f.taskCode);
+   await page.locator('.sample-category-grid button').filter({hasText:'注意事项'}).click();await page.getByLabel('注意事项内容',{exact:true}).fill('验收草稿：参考历史后保留这段内容');
+   await page.getByRole('button',{name:'参考历次样品资料',exact:true}).click();const reference=page.getByRole('dialog',{name:'参考历次样品',exact:true});await reference.waitFor();const frame=page.frameLocator('iframe[title="手机样品参考库"]');await frame.locator('.sl-product-hero').waitFor();check(await frame.locator('.sl-product-hero h1').textContent()===f.model,'capture reference opens same product');await page.getByLabel('返回当前采集').click();check(await page.getByLabel('注意事项内容',{exact:true}).inputValue()==='验收草稿：参考历史后保留这段内容','reference return retains unsubmitted capture text');
+   await page.setViewportSize({width:1366,height:1024});await page.goto(origin+'/weekly-plan-center?branch=samples');await page.getByLabel('样品库二维码',{exact:true}).click();await page.getByRole('dialog',{name:'手机样品库二维码'}).waitFor();await shot('planning-qr-1366');await page.getByLabel('关闭二维码').click();check(new URL(page.url()).pathname==='/weekly-plan-center','closing planning QR retains planning context');
+   check(errors.length===0,'no uncaught browser errors');return {ok:true,checks};
+  }catch(error){await shot('failure').catch(()=>{});throw error;}
+ }`);
+ const result=cli(['run-code','--filename',file]);writeFileSync(join(dir,'browser-result.txt'),result);const section=result.match(/### Result\r?\n([\s\S]*?)(?:\r?\n### |$)/),accepted=section?JSON.parse(section[1].trim()):null;if(accepted?.ok!==true||accepted.checks?.length<20)throw Error(result);console.log(result);
+}finally{try{cli(['close']);}catch{}rmSync(file,{force:true});}

@@ -4,6 +4,7 @@ import type {
   CapabilityCode,
 } from '@/lib/department-access';
 import { modulePageDecision, type ModuleAccessCarrier } from '@/lib/module-permissions';
+import { canReadSampleLibrary } from '@/lib/sample-library-access';
 
 type AppAccess = ModuleAccessCarrier & {
   modules: readonly AccessModuleCode[];
@@ -112,6 +113,7 @@ export function routeAccessRule(pathname: string): RouteAccessRule | null {
 }
 
 export function canAccessAppRoute(access: AppAccess, pathname: string): boolean {
+  if (/^\/sample-library(?:\/|$)/.test(normalizedPath(pathname))) return canReadSampleLibrary(access);
   const moduleDecision = modulePageDecision(access, pathname);
   if (moduleDecision !== null) return moduleDecision;
   // The former production sample workbench now lives inside planning. Preserve its
@@ -139,6 +141,7 @@ export function canAccessAppRoute(access: AppAccess, pathname: string): boolean 
 export function landingRouteForAccess(access: AppAccess): string {
   const modules = new Set(access.modules);
   if (modules.has('BASIC_SUMMARY')) return '/home';
+  if (canReadSampleLibrary(access)) return '/sample-library';
   if (modules.has('ACCOUNT_SELF')) return '/account';
   return '/workspace/finished-goods';
 }

@@ -9,6 +9,7 @@ import '@/app/sample-branches.css';
 import { SampleBranchControls, SampleDialog } from '@/components/sample/SampleBranchControls';
 import SampleDocumentsPanel from '@/components/sample/SampleDocumentsPanel';
 import SamplePlanningTable from '@/components/sample/SamplePlanningTable';
+import SampleLibraryEntry from '@/components/sample-library/SampleLibraryQr';
 import SamplePlanImportDialog from '@/components/sample/SamplePlanImportDialog';
 import SampleCorrectionDialog from '@/components/sample/SampleCorrectionDialog';
 import { sampleHours } from '@/lib/sample-plan-time';
@@ -1035,6 +1036,7 @@ export default function SampleTeamCenter({
           </div>
           {mode === 'planning' && <div className="sb-branch-switch sp-header-branches" role="group" aria-label="样品类型">{(['NEW','REPEAT'] as const).map(kind=><button key={kind} className={taskType===kind?'active':''} aria-pressed={taskType===kind} onClick={()=>{setImportBatch('');setTaskType(kind);setPage(1);setFocusId('');setSelectedId('');setDetailTask(null);}}>{kind==='NEW'?<FlaskConical size={18}/>:<Layers3 size={18}/>}<span>{kind==='NEW'?'新品试制':'老产品制作'}</span></button>)}</div>}
           <div className="sample-team-command-actions">
+            <SampleLibraryEntry returnTo="/weekly-plan-center?branch=samples" />
             <details className="su-command-menu" open={commandMenu} onToggle={e=>setCommandMenu(e.currentTarget.open)}><summary>导入 / 导出</summary><div><a className="hm-workbench-button" href={`/api/sample-tasks/export?${queryString}`} download><Download size={15} />导出清单</a>
             {mode === 'planning' && <a className="hm-workbench-button" href="/api/sample-tasks/import/template" download><Download size={15} />下载导入模板</a>}
             {mode === 'planning' && <button className="hm-workbench-button" type="button" onClick={openImport}><Upload size={15} />批量导入</button>}

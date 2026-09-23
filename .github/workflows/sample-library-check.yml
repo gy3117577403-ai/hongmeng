@@ -1,0 +1,78 @@
+name: Sample Library Preflight
+on:
+  push:
+    branches: ["codex/sample-library-v134236"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sample-library-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hongmeng_sample_library_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_sample_library_ci?schema=public
+      DAILY_PLAN_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate && npx prisma generate && npx prisma migrate deploy
+      - run: npx tsc --noEmit
+      - run: npm run test:unit
+      - run: npm run build
+      - name: Mobile sample library HTTP and browser acceptance
+        env:
+          SESSION_SECRET: account-access-ci-session-key-only-1234567890
+          SEED_ADMIN_USERNAME: accountaccessqa
+          SEED_ADMIN_PASSWORD: Codex-ACL-Seed-QA-2026!Z
+          SAMPLE_LIBRARY_INITIAL_PASSWORD: Codex-ACL-Seed-QA-2026!Z
+          SMOKE_ADMIN_CHANGED_PASSWORD: Codex-ACL-Changed-QA-2026!R
+          S3_ENDPOINT: http://127.0.0.1:19000
+          S3_PUBLIC_ENDPOINT: http://127.0.0.1:19000
+          S3_BUCKET: workorder-resources
+          S3_REGION: auto
+          S3_FORCE_PATH_STYLE: "true"
+          S3_ACCESS_KEY_ID: accountaccessstorage
+          S3_SECRET_ACCESS_KEY: account-access-ci-storage-only-123456
+          APP_BASE_URL: http://127.0.0.1:3000
+          SAMPLE_LIBRARY_QA_ALLOW: disposable-sample-library
+          SAMPLE_LIBRARY_FIXTURE: /tmp/sample-library-fixture.json
+        run: |
+          set -euo pipefail
+          bash scripts/pull-ci-minio.sh
+          docker run -d --name account-access-storage --network host -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" hongmeng-ci-minio:verified-a1a8bd4ac40a server /data --address :19000
+          SMOKE_STORAGE_ALLOW=disposable-ci-storage node scripts/prepare-smoke-storage.mjs
+          npm run prisma:seed
+          npm run start > account-access-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" || true; docker rm -f account-access-storage >/dev/null' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/ready >/dev/null; then break; fi
+            sleep 2
+          done
+          node scripts/smoke-sample-library.mjs
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          node scripts/smoke-sample-library-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sample-library-preflight
+          path: |
+            output/playwright/sample-library
+            artifacts/sample-library
+            account-access-server.log

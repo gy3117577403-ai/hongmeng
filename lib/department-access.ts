@@ -26,6 +26,7 @@ export const DEPARTMENT_CODES = [
 export type DepartmentCode = typeof DEPARTMENT_CODES[number];
 
 export const ACCESS_PROFILE_CODES = [
+  'SAMPLE_LIBRARY_READER',
   'MODULE_ACCESS',
   'ADMIN_GLOBAL',
   'DEPARTMENT_FULL',
@@ -200,6 +201,7 @@ export interface AccessScopeHint {
 export type ProductionScopeLevel = 'NONE' | 'TEAM' | 'WORKSHOP' | 'GLOBAL';
 
 export interface AccessContext {
+  sampleLibraryEnabled?: boolean;
   modulePermissions?: ModulePermissions | null;
   workbenchEnabled?: boolean;
   accountActive: boolean;
@@ -400,7 +402,7 @@ export function resolveAccessContext(
   const currentGrants = effectiveAccessGrants(grants, now);
   const configuration = currentGrants.some(grant => grant.profile === 'ADMIN_GLOBAL') ? null : moduleConfiguration(currentGrants);
   // Explicit module configuration replaces legacy business grants, including scheduled ones.
-  const effectiveGrants = configuration ? currentGrants.filter(grant => grant.profile === 'MODULE_ACCESS' || grant.profile === 'FIELD_REPORTER') : currentGrants;
+  const effectiveGrants = configuration ? currentGrants.filter(grant => ['MODULE_ACCESS', 'FIELD_REPORTER', 'SAMPLE_LIBRARY_READER'].includes(grant.profile)) : currentGrants;
   const capabilities = new Set<CapabilityCode>();
   const scopes = new Map<string, AccessScopeHint>();
   let productionScope: ProductionScopeLevel = 'NONE';
@@ -423,6 +425,10 @@ export function resolveAccessContext(
   }
 
   for (const grant of effectiveGrants) {
+    if (grant.profile === 'SAMPLE_LIBRARY_READER') {
+      addSelfService(capabilities);
+      continue;
+    }
     if (grant.profile === 'ADMIN_GLOBAL') {
       for (const capability of ALL_CAPABILITIES) capabilities.add(capability);
       for (const moduleKey of ACCESS_MODULES) {
@@ -631,6 +637,7 @@ export function resolveAccessContext(
 
   return {
     accountActive: true,
+    sampleLibraryEnabled: currentGrants.some(grant => grant.profile === 'SAMPLE_LIBRARY_READER'),
     ...(configuration ? { modulePermissions: configuration.permissions, workbenchEnabled: configuration.workbenchEnabled } : {}),
     effectiveGrants,
     capabilities: orderedCapabilities,

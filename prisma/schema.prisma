@@ -473,6 +473,7 @@ enum AccountStatus {
 }
 
 enum AccessProfileKey {
+  SAMPLE_LIBRARY_READER
   MODULE_ACCESS
   ADMIN_GLOBAL
   DEPARTMENT_FULL

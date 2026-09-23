@@ -31,6 +31,8 @@ import {
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
+import SampleLibraryReference from '@/components/sample-library/SampleLibraryReference';
+import { canReadSampleLibrary } from '@/lib/sample-library-access';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeCapturedImage, prepareSamplePhotoForUpload } from '@/lib/image-client';
 import { sampleCustomerLevelStyle } from '@/lib/sample-customer-levels';
@@ -929,7 +931,9 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     {tab === 'data' && !activeSectionKind && renderFocusHeader(kindLabels[activeKind], formHasData ? '有未保存内容' : '草稿编辑')}
     {tab === 'photos' && renderFocusHeader('样品照片', `${task.photos.length + photoQueue.length} 张`)}
 
+      {canReadSampleLibrary(_user.access) && <SampleLibraryReference productId={task.drawingLibraryItemId} />}
     {tab === 'overview' && <>
+
       <section className="sample-capture-identity">
         <div><span style={sampleCustomerLevelStyle(task.customerLevelCode)}>{task.customerLevelLabel || task.customerLevelCode || '未分级'}</span><em>{collectedKinds.size ? `已采集 ${collectedKinds.size} 类` : taskStatusText(task)}</em></div>
         <h1>{task.specification}</h1>
