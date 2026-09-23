@@ -14,7 +14,7 @@ try{
  writeFileSync(codeFile,`async page=>{
  const f=${JSON.stringify(fixture)}, origin=${JSON.stringify(origin)},dir=${JSON.stringify(dir)};
  const checks=[],errors=[];page.on('pageerror',e=>errors.push(String(e)));const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label);};
- const shot=async name=>page.screenshot({path:dir+'/'+name+'.png',fullPage:false});
+ const shot=async name=>page.screenshot({path:dir+'/'+name+'.png',fullPage:false,animations:'disabled'});
  const table=page.getByRole('region',{name:'样品计划表'});
  try{
   await page.setViewportSize({width:1366,height:1024});
@@ -35,9 +35,15 @@ try{
   await dialog.getByRole('button',{name:'确认导入',exact:true}).click();const committed=await (await commitResponse).json();
   check(committed.createdTaskCount===24&&committed.blockedCount===0,'UI commits all rows exactly once');
   dialog=page.getByRole('dialog',{name:'导入结果',exact:true});await dialog.waitFor();
+  await dialog.locator('tbody tr').first().getByRole('button').click();
+  const importedDetail=page.getByRole('dialog',{name:'样品试制',exact:true});await importedDetail.waitFor();
+  check(await page.getByRole('dialog',{name:'导入结果',exact:true}).count()===0,'import results yield to the record detail');
+  await importedDetail.getByRole('button',{name:/关闭/}).first().click();await importedDetail.waitFor({state:'detached'});
+  await dialog.waitFor();check(await dialog.locator('tbody tr').count()===24,'closing imported record restores all import results');
   const download=page.waitForEvent('download');await dialog.getByRole('button',{name:'导出逐行结果'}).click();await (await download).saveAs(dir+'/import-results.csv');
   await dialog.getByRole('button',{name:'查看本次导入 24 项'}).click();await page.locator('.spr-batch-banner').waitFor();await page.waitForFunction(()=>document.querySelector('.spr-table')?.getAttribute('aria-busy')==='false');
   check((await table.locator('.sp-table-summary').textContent()).includes('115'),'aggregate known hours includes every page and omits missing hours');
+  check(await table.locator('.sp-table-summary').isVisible(),'quantity and hours summary is visible');
   check((await table.locator('.sp-table-footer').textContent()).includes('共 24 条'),'mixed branch import result includes all 24 plans');
   check(await table.locator('tbody tr').count()===20,'default page contains 20 rows');
   await table.getByRole('button',{name:'下一页计划'}).click();await page.waitForFunction(()=>document.querySelector('.spr-table')?.getAttribute('aria-busy')==='false'&&document.querySelector('.sp-table-footer')?.textContent.includes('第 21–24 条'));
@@ -46,6 +52,7 @@ try{
   check((await table.locator('.sp-table-footer').textContent()).includes('第 21–24 条'),'closing detail keeps page 2');check((await table.locator('tbody tr').first().textContent()).includes(model),'closing detail keeps original row');
   await table.getByLabel('每页条数').selectOption('50');await page.waitForFunction(()=>document.querySelector('.spr-table')?.getAttribute('aria-busy')==='false'&&document.querySelectorAll('.spr-table tbody tr').length===24);
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'no whole page horizontal overflow at 1366');
+  check(await page.getByLabel('选择任意计划周').isVisible(),'arbitrary planning week remains accessible on tablet');
   await shot('planning-1366');await page.setViewportSize({width:2048,height:1100});await shot('planning-2048');
   await page.getByRole('button',{name:/返回导入前视图/}).click();await page.waitForFunction(()=>document.querySelector('.spr-table')?.getAttribute('aria-busy')==='false');
   await page.getByRole('navigation',{name:'计划周',exact:true}).getByRole('button',{name:'全部周',exact:true}).click();
@@ -58,5 +65,5 @@ try{
   return {ok:true,checks};
  }catch(e){await shot('failure').catch(()=>{});throw e;}
 }`);
- const result=cli(['run-code','--filename',codeFile]);writeFileSync(join(dir,'browser-result.txt'),result);if(!result.includes('"ok": true'))throw Error(result);console.log(result);
+ const result=cli(['run-code','--filename',codeFile]);writeFileSync(join(dir,'browser-result.txt'),result);const section=result.match(/### Result\r?\n([\s\S]*?)(?:\r?\n### |$)/);const acceptance=section?JSON.parse(section[1].trim()):null;if(acceptance?.ok!==true||!Array.isArray(acceptance.checks)||acceptance.checks.length<15)throw Error(result);console.log(result);
 }finally{try{cli(['close']);}catch{}rmSync(codeFile,{force:true});}

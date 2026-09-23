@@ -119,6 +119,16 @@ const imported = await req('commit mixed sample branches', '/api/sample-tasks/im
 assert.equal(imported.createdTaskCount,2);
 const importedList = await req('verify imported sample plans', `/api/sample-tasks?view=ALL&week=${week}&summary=true&keyword=${tag}-IMPORT`);
 assert.equal(importedList.tasks.length,2);assert.ok(importedList.tasks.every(t=>t.planWeekStartDate===week && t.documentReviewRequired));
+const updateTarget=importedList.tasks.find(t=>t.taskType==='NEW');
+const updateRow={...preview.rows.find(r=>r.taskType==='NEW'),sampleQuantity:3,unitPlannedMinutes:'3.75',unitPlannedMilliseconds:225000};
+const updateImport={clientMutationId:randomUUID(),fileName:'sample-correction.xlsx',rows:[updateRow],decisions:{[updateRow.rowNumber]:{mode:'reuse',drawingLibraryItemId:updateTarget.drawingLibraryItemId}},planDecisions:{[updateRow.rowNumber]:{mode:'update',taskId:updateTarget.id,expectedVersion:updateTarget.version,reason:'隔离验收：调整数量与单套计划工时'}}};
+const updatedImport=await req('explicit existing-plan import updates one plan','/api/sample-tasks/import/commit',updateImport);
+assert.equal(updatedImport.updatedTaskCount,1);assert.equal(updatedImport.createdTaskCount,0);
+assert.deepEqual(await req('replayed import returns the original batch','/api/sample-tasks/import/commit',updateImport),updatedImport);
+const updatedPlan=await detail(updateTarget);assert.equal(updatedPlan.sampleQuantity,3);assert.equal(updatedPlan.unitPlannedMilliseconds,225000);assert.equal(updatedPlan.totalPlannedMilliseconds,'675000');
+const staleImport=await req('stale import cannot silently overwrite changes','/api/sample-tasks/import/commit',{...updateImport,clientMutationId:randomUUID()});
+assert.equal(staleImport.blockedCount,1);assert.equal(staleImport.updatedTaskCount,0);assert.equal((await detail(updateTarget)).version,updatedPlan.version);
+await req('oversized import is rejected without truncating rows','/api/sample-tasks/import/commit',{clientMutationId:randomUUID(),rows:Array.from({length:501},()=>updateRow)},400);
 // A duplicate in an approved sample must never roll back its completion or warehouse transfer.
 async function parameterSample(values, position='A端', physical=true) {
   let task=(await req('create parameter sample on approved product','/api/sample-tasks',{drawingLibraryItemId:fresh.drawingLibraryItemId,taskType:'NEW',sampleQuantity:2,customerLevelCode:'A'},201)).task;

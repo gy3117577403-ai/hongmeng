@@ -4,8 +4,15 @@ import type {SampleTaskDTO} from '@/types';
 import {chinaDateKey} from '@/lib/china-date';
 import {SampleDialog,sampleRequest,sampleStamp} from './SampleBranchControls';
 type History={source:{importFileName?:string;importSourceRow?:number;createdAt:string;createdByName?:string};logs:Array<{id:string;action:string;createdAt:string;detail:Record<string,unknown>}>};
-const fields:Record<string,string>={sampleQuantity:'计划数量',unitPlannedMilliseconds:'单套工时（毫秒）',sourceOrderNo:'来源订单',sourceOrderLine:'订单行',planRemark:'备注',planWeekStartDate:'计划周',dueDate:'客户交期',issuedDate:'下达日期',plannedCompletionDate:'计划完成',completedQuantity:'累计完成',quantity:'本次完成',workDate:'现场日期',pending:'待入库',available:'可用库存',reserved:'占用',held:'留库',blocked:'异常库存',stock:'库存',stockAction:'库存处理',planTimeSource:'工时来源'};
-function describe(value:unknown):string {if(value==null)return '未记录';if(typeof value==='object')return Object.entries(value as Record<string,unknown>).map(([k,v])=>`${fields[k]||k}：${describe(v)}`).join('；');return String(value);}
+const fields:Record<string,string>={sampleQuantity:'计划数量',unitPlannedMilliseconds:'单套工时（分钟／套）',sourceOrderNo:'来源订单',sourceOrderLine:'订单行',planRemark:'备注',planWeekStartDate:'计划周',dueDate:'客户交期',issuedDate:'下达日期',plannedCompletionDate:'计划完成',completedQuantity:'累计完成',quantity:'本次完成',workDate:'现场日期',pending:'待入库',available:'可用库存',reserved:'占用',held:'留库',blocked:'异常库存',stock:'库存',stockAction:'库存处理',planTimeSource:'工时来源',warningDays:'预警天数',customerLevelCode:'客户等级',importFileName:'导入文件',importSourceRow:'源行号'};
+function describe(value:unknown,key=''):string {
+ if(value==null)return '未记录';
+ if(typeof value==='object')return Object.entries(value as Record<string,unknown>).filter(([name])=>fields[name]).map(([name,item])=>`${fields[name]}：${describe(item,name)}`).join('；')||'无业务字段变化';
+ if(key==='unitPlannedMilliseconds')return String(Number(value)/60000);
+ if(key==='planTimeSource')return ({import:'计划导入',manual:'手动录入',correction:'记录更正'} as Record<string,string>)[String(value)]||'计划记录';
+ if(['planWeekStartDate','dueDate','issuedDate','plannedCompletionDate','workDate'].includes(key))return String(value).slice(0,10);
+ return String(value);
+}
 export default function SampleCorrectionDialog({task:initial,onClose,onSaved}:{task:SampleTaskDTO;onClose:()=>void;onSaved:(task:SampleTaskDTO)=>void}) {
  const [task,setTask]=useState(initial),[tab,setTab]=useState<'metadata'|'completion'|'history'>('metadata'),[busy,setBusy]=useState(false),[loading,setLoading]=useState(true),[error,setError]=useState(''),[reason,setReason]=useState(''),[history,setHistory]=useState<History|null>(null);
  const [form,setForm]=useState({sampleQuantity:String(initial.sampleQuantity??''),unitPlannedMinutes:String(initial.unitPlannedMinutes??''),sourceOrderNo:initial.sourceOrderNo||'',sourceOrderLine:initial.sourceOrderLine||'',planRemark:initial.planRemark||'',planWeekStartDate:initial.planWeekStartDate||'',dueDate:initial.dueDate||'',issuedDate:initial.issuedDate||'',plannedCompletionDate:initial.plannedCompletionDate||''});
