@@ -1,0 +1,157 @@
+name: Material collaboration published image acceptance
+
+on:
+  push:
+    branches: ['codex/material-collaboration-v134225']
+    paths: ['.github/workflows/material-image-acceptance.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: material-collaboration-published-image-acceptance
+  cancel-in-progress: false
+
+jobs:
+  immutable-hangzhou-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_VERSION: v1.34.231
+      RELEASE_REVISION: e61218e9c5f98773a5845283e04baa27774344fd
+      RELEASE_DIGEST: sha256:bfd25872119ac7cd39ddd6e5e4eedd0a8a928e3a0656d1b05e5b960d3272db65
+      RELEASE_REPOSITORY: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:25481/material_image_acceptance_ci?schema=public
+      S3_ACCESS_KEY_ID: materialimageqa
+      S3_SECRET_ACCESS_KEY: DisposableMaterialImageStorage2026
+      SEED_ADMIN_USERNAME: materialimageadmin
+      SEED_ADMIN_PASSWORD: DisposableMaterialImageSeed2026!Z
+      SMOKE_ADMIN_CHANGED_PASSWORD: DisposableMaterialImageChanged2026!R
+      SESSION_SECRET: disposable-material-image-session-secret-20260923-acceptance
+      APP_BASE_URL: http://127.0.0.1:3381
+    steps:
+      # Source and image remain the original v231 release. No rebuild or retag.
+      - uses: actions/checkout@v4
+        with:
+          ref: e61218e9c5f98773a5845283e04baa27774344fd
+      - name: Verify immutable source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_REVISION"
+          mkdir -p artifacts/material-image-acceptance
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install acceptance dependencies
+        run: npm ci && npx prisma generate
+      - name: Prepare pinned object storage image
+        run: bash scripts/pull-ci-minio.sh
+      - name: Pull published Hangzhou tag and immutable digest anonymously
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$(mktemp -d)"
+          image="$RELEASE_REPOSITORY:$RELEASE_VERSION"
+          docker pull --platform linux/amd64 "$image"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image")" = 'linux/amd64'
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$RELEASE_VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$RELEASE_REVISION"
+          docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image" | grep -Fx "$RELEASE_REPOSITORY@$RELEASE_DIGEST"
+          docker pull --platform linux/amd64 "$RELEASE_REPOSITORY@$RELEASE_DIGEST"
+          docker image inspect "$RELEASE_REPOSITORY@$RELEASE_DIGEST" > artifacts/material-image-acceptance/image.json
+          printf '%s\n' "$RELEASE_REPOSITORY@$RELEASE_DIGEST" > artifacts/material-image-acceptance/verified-image.txt
+      - name: Start fresh PostgreSQL and object storage
+        run: |
+          set -euo pipefail
+          docker network create material-image-acceptance
+          docker run -d --name material-image-postgres --network material-image-acceptance --tmpfs /var/lib/postgresql/data \
+            -p 127.0.0.1:25481:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=material_image_acceptance_ci postgres:16-alpine
+          docker run -d --name material-image-minio --network material-image-acceptance --tmpfs /data \
+            -p 127.0.0.1:29081:9000 -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" "$CI_MINIO_IMAGE" server /data
+          for attempt in $(seq 1 40); do
+            if docker exec material-image-postgres pg_isready -U postgres -d material_image_acceptance_ci; then break; fi
+            sleep 2
+          done
+          docker exec material-image-postgres pg_isready -U postgres -d material_image_acceptance_ci
+          SMOKE_STORAGE_ALLOW=disposable-ci-storage S3_ENDPOINT=http://127.0.0.1:29081 S3_BUCKET=workorder-resources \
+            node scripts/prepare-smoke-storage.mjs
+      - name: Run original image entrypoint and migrations
+        run: |
+          set -euo pipefail
+          docker run -d --name material-image-app --network material-image-acceptance -p 127.0.0.1:3381:3000 \
+            -e APP_BASE_URL="$APP_BASE_URL" \
+            -e DATABASE_URL='postgresql://postgres:postgres@material-image-postgres:5432/material_image_acceptance_ci?schema=public' \
+            -e SESSION_SECRET="$SESSION_SECRET" -e SEED_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" -e SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            -e S3_ENDPOINT=http://material-image-minio:9000 -e S3_PUBLIC_ENDPOINT=http://127.0.0.1:29081 \
+            -e S3_REGION=auto -e S3_BUCKET=workorder-resources -e S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" -e S3_FORCE_PATH_STYLE=true \
+            "$RELEASE_REPOSITORY@$RELEASE_DIGEST"
+          for attempt in $(seq 1 90); do
+            if curl -fsS "$APP_BASE_URL/api/ready" > artifacts/material-image-acceptance/ready.json; then break; fi
+            sleep 2
+          done
+          curl -fsS "$APP_BASE_URL/api/health" > artifacts/material-image-acceptance/health.json
+          curl -fsS "$APP_BASE_URL/api/ready" > artifacts/material-image-acceptance/ready.json
+          docker exec material-image-app node node_modules/prisma/build/index.js migrate status > artifacts/material-image-acceptance/migrations.txt
+      - name: Fresh login, forced password change and authenticated storage smoke
+        run: |
+          set -euo pipefail
+          SAMPLE_QA_BASE="$APP_BASE_URL" SAMPLE_QA_ALLOW_DISPOSABLE_MUTATION=clean-ci-runtime EXPECTED_APP_VERSION="$RELEASE_VERSION" \
+            SMOKE_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" SMOKE_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            node scripts/smoke-sample-capture.mjs > artifacts/material-image-acceptance/clean-runtime.json
+      - name: Material cooperation database regression
+        env:
+          RUN_DB_INTEGRATION: '1'
+        run: |
+          set -euo pipefail
+          npm run test:material-follow-up-integration | tee artifacts/material-image-acceptance/database-tests.txt
+      - name: Install browser and Chinese fonts
+        run: |
+          set -euo pipefail
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Browser business closure on the exact Hangzhou image
+        run: |
+          set -euo pipefail
+          MATERIAL_COLLAB_QA_ALLOW=disposable-material-runtime node scripts/seed-material-collaboration-smoke.cjs \
+            > /tmp/material-image-fixture.json
+          MATERIAL_COLLAB_QA_ALLOW=disposable-material-runtime \
+            MATERIAL_COLLAB_QA_BASE="$APP_BASE_URL" \
+            MATERIAL_COLLAB_QA_FIXTURE=/tmp/material-image-fixture.json \
+            MATERIAL_COLLAB_QA_OUTPUT=artifacts/material-image-acceptance/browser \
+            node scripts/smoke-material-collaboration-browser.mjs
+      - name: Record immutable acceptance summary
+        run: |
+          {
+            echo '## v1.34.231 Hangzhou immutable image acceptance'
+            echo "Image: \`$RELEASE_REPOSITORY:$RELEASE_VERSION\`"
+            echo "Digest: \`$RELEASE_DIGEST\`"
+            echo "Original source: \`$RELEASE_REVISION\`"
+            echo '- Anonymous tag and digest pull verified.'
+            echo '- Fresh PostgreSQL, S3 storage, original entrypoint and migrations passed.'
+            echo '- Login and authenticated storage checks passed.'
+            echo '- Material database and browser business closure checks passed.'
+            echo '- No image rebuild, no tag change, no production deployment.'
+            echo '- This acceptance does not change the failed status of the original release run.'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve startup logs
+        if: always()
+        run: docker logs material-image-app > artifacts/material-image-acceptance/startup.log 2>&1 || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: material-v1.34.231-immutable-hangzhou
+          path: |
+            artifacts/material-image-acceptance/*.json
+            artifacts/material-image-acceptance/*.txt
+            artifacts/material-image-acceptance/*.log
+            artifacts/material-image-acceptance/browser/browser-runtime.txt
+            artifacts/material-image-acceptance/browser/browser-failure.txt
+            artifacts/material-image-acceptance/browser/*.png
+          if-no-files-found: error
+      - name: Remove disposable acceptance containers
+        if: always()
+        run: |
+          docker rm -f material-image-app material-image-minio material-image-postgres || true
+          docker network rm material-image-acceptance || true
