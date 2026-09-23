@@ -118,7 +118,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const mutationId = cleanImportText(body.clientMutationId, 100);
     const sourceFileName = cleanImportText(body.fileName, 255);
-    const rawRows = Array.isArray(body.rows) ? body.rows.slice(0, 500) : [];
+    const rawRows = Array.isArray(body.rows) ? body.rows : [];
+    if(rawRows.length>500)return NextResponse.json({ok:false,error:'一次最多导入 500 行，请拆分文件'},{status:400});
     const planDecisions = body.planDecisions && typeof body.planDecisions === 'object' && !Array.isArray(body.planDecisions) ? body.planDecisions as Record<string,{mode?:string;taskId?:string;expectedVersion?:number;reason?:string}> : {};
     const rawDecisions = body.decisions && typeof body.decisions === 'object' && !Array.isArray(body.decisions)
       ? body.decisions as Record<string, unknown>

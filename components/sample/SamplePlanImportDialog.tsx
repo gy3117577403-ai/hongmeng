@@ -10,7 +10,7 @@ type PlanChoice={mode:'new'|'update'|'skip';taskId?:string;expectedVersion?:numb
 type ProductChoice={mode:'create'}|{mode:'reuse';drawingLibraryItemId:string};
 type ResultRow={rowNumber:number;status:string;message:string;taskId?:string;existingTaskId?:string;taskCode?:string};
 type Result={batchId:string;createdTaskCount:number;updatedTaskCount:number;blockedCount:number;skippedCount:number;rows:ResultRow[]};
-export default function SamplePlanImportDialog({week,type,onClose,onCommitted,onViewPlan}:{week:string;type:'NEW'|'REPEAT';onClose:()=>void;onCommitted:(batch:string)=>void;onViewPlan:(id:string)=>void}) {
+export default function SamplePlanImportDialog({week,type,onClose,onCommitted,onViewPlan,suspended=false}:{suspended?:boolean;week:string;type:'NEW'|'REPEAT';onClose:()=>void;onCommitted:(batch:string)=>void;onViewPlan:(id:string)=>void}) {
   const [targetWeek,setTargetWeek]=useState(week || ''),[targetType,setTargetType]=useState(type);
   const [file,setFile]=useState<File|null>(null),[rows,setRows]=useState<SamplePlanImportRow[]|null>(null),[result,setResult]=useState<Result|null>(null);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[reason,setReason]=useState('');
@@ -34,6 +34,7 @@ export default function SamplePlanImportDialog({week,type,onClose,onCommitted,on
     catch(e){setError(e instanceof Error?e.message:'导入失败，同一请求可安全重试');}finally{setBusy(false);}
   }
   function exportResults(){if(!result)return;const cell=(v:unknown)=>`"${String(v??'').replace(/^[\s]*([=+@-])/,'\'$1').replace(/"/g,'""')}"`;const csv='\uFEFF'+[['源文件', 'Excel 行','结果','说明','样品计划编号'],...result.rows.map(row=>[file?.name,row.rowNumber,row.status,row.message,row.taskCode])].map(row=>row.map(cell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='样品计划导入逐行结果.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  if(suspended)return null;
   return <SampleDialog title={result?'导入结果':rows?'核对样品计划':'导入样品计划'} wide busy={busy} onClose={onClose}>
     <div className="spr-import-body">
       <div className="spr-import-steps"><span className={!rows?'active':''}>1 选择去向</span><span className={rows&&!result?'active':''}>2 核对与确认</span><span className={result?'active':''}>3 查看结果</span></div>

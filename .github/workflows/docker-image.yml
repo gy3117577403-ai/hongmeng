@@ -534,7 +534,13 @@ jobs:
           SAMPLE_BRANCH_QA_ALLOW=disposable-sample-branches \
             SAMPLE_BRANCH_QA_BASE=http://127.0.0.1:3000 \
             SAMPLE_BRANCH_QA_OUTPUT=artifacts/sample-branches/release-http.json \
+            SAMPLE_PLAN_BROWSER_FIXTURE="$RUNNER_TEMP/sample-planning-release.json" \
             node scripts/smoke-sample-branches.mjs
+          SAMPLE_BRANCH_QA_ALLOW=disposable-sample-branches \
+            SAMPLE_BRANCH_QA_BASE=http://127.0.0.1:3000 \
+            SAMPLE_PLAN_BROWSER_FIXTURE="$RUNNER_TEMP/sample-planning-release.json" \
+            SAMPLE_PLAN_BROWSER_OUTPUT=output/playwright/sample-planning-release \
+            node scripts/smoke-sample-planning-browser.mjs
 
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
@@ -795,7 +801,13 @@ jobs:
           SAMPLE_BRANCH_QA_ALLOW=disposable-sample-branches \
             SAMPLE_BRANCH_QA_BASE=http://127.0.0.1:3300 \
             SAMPLE_BRANCH_QA_OUTPUT=artifacts/sample-branches/hangzhou-http.json \
+            SAMPLE_PLAN_BROWSER_FIXTURE="$RUNNER_TEMP/sample-planning-hangzhou.json" \
             node scripts/smoke-sample-branches.mjs
+          SAMPLE_BRANCH_QA_ALLOW=disposable-sample-branches \
+            SAMPLE_BRANCH_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_PLAN_BROWSER_FIXTURE="$RUNNER_TEMP/sample-planning-hangzhou.json" \
+            SAMPLE_PLAN_BROWSER_OUTPUT=output/playwright/sample-planning-hangzhou \
+            node scripts/smoke-sample-planning-browser.mjs
 
           mkdir -p artifacts/quality-data-v1
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
@@ -926,6 +938,12 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload sample planning browser acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-planning-browser-${{ github.ref_name }}
+          path: output/playwright/sample-planning-*
       - name: Upload sample branch acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

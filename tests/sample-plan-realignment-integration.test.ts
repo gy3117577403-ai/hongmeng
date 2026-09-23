@@ -52,6 +52,13 @@ test('sample plan scopes, real quantities, corrections and import lineage stay c
    await assert.rejects(async()=>correction(task.id,{...body,expectedVersion:(await fresh()).version,mutationId:randomUUID(),quantity:5}),/发货、占用/);
    assert.equal((await fresh()).completedQuantity,6);
    await prisma.fgLot.update({where:{id:lot.id},data:{pending:6,available:0,reserved:0}});
+   const reverse={...body,expectedVersion:(await fresh()).version,mutationId:randomUUID(),quantity:0,reason:'核对后撤销误录完成量'};
+   await correction(task.id,reverse);await correction(task.id,reverse);
+   assert.equal((await fresh()).completedQuantity,0);
+   assert.equal((await prisma.sampleCompletion.findUniqueOrThrow({where:{id:completion.id}})).quantity,0);
+   assert.equal((await prisma.fgLot.findUniqueOrThrow({where:{id:lot.id}})).pending,0);
+   assert.equal(await prisma.fgLedger.count({where:{lotId:lot.id,kind:'SAMPLE_CORRECTION'}}),2);
+   await correction(task.id,{...body,expectedVersion:(await fresh()).version,mutationId:randomUUID(),quantity:6,reason:'补录核实的实际完成量'});
   });
   await t.test('quantity and time edits re-confirm material readiness and recalculate all scoped totals',async()=>{
    const warehouse=await prisma.$transaction(tx=>ensureSampleWarehouse(tx,task));
