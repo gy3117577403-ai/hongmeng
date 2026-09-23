@@ -12,7 +12,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
   try {
     const user = await requireUser();
     const url = new URL(request.url);
-    const trash = url.searchParams.get('trash') === '1' && (user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:DELETE'));
+    const trash = url.searchParams.get('trash') === '1' && (user.laborRole === 'ADMIN' || (user.access.capabilities.includes('QUALITY:DELETE') || user.access.capabilities.includes('MATERIAL_LIBRARY:DELETE')));
     const photo = await prisma.materialLibraryPhoto.findFirst({
       where: { id: params.id, ...(!trash ? { deletedAt: null } : {}), materialItem: { deletedAt: null } },
     });

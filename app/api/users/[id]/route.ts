@@ -142,7 +142,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       const profile = explicitProfile
         || currentPrimary?.profile
         || inferProfile(compatibilityRole, employee?.departmentRef?.code);
-      const nextRole = legacyLaborRoleForProfile(profile);
+      const nextRole = profile === AccessProfileKey.MODULE_ACCESS ? old.laborRole : legacyLaborRoleForProfile(profile);
       const nextEmployeeId = profile === AccessProfileKey.ADMIN_GLOBAL ? null : requestedEmployeeId;
       if (profile !== AccessProfileKey.ADMIN_GLOBAL && !nextEmployeeId) {
         return NextResponse.json({ ok: false, error: '普通账号必须绑定在职员工档案' }, { status: 400 });

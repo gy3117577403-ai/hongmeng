@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin, requireCapability, requireUser } from '@/lib/auth';
+import { requireCapability, requireUser } from '@/lib/auth';
 import { internalQualityRiskRouteError } from '@/lib/internal-quality-risk-route-response';
 import {
   expectedInternalQualityRiskVersion,
@@ -52,7 +52,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     assertSameOriginMutationRequest(req);
-    const user = await requireAdmin();
+    const user = await requireCapability('QUALITY', 'DELETE');
     const body = await req.json() as Record<string, unknown>;
     const reason = typeof body.reason === 'string' ? body.reason : '';
     await prisma.$transaction(tx => softDeleteInternalQualityRisk(

@@ -347,6 +347,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   }
 
   function openCreate(trigger: HTMLElement, sourceItem?: KnowledgeSearchItemDTO | null): void {
+    if (user.access.modulePermissions?.technology === 'READ') return;
     formTriggerRef.current = trigger;
     setEditing(null);
     const relation = sourceItem ? relationFromItem(sourceItem) : null;
@@ -363,6 +364,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   }
 
   function openEdit(trigger: HTMLElement, article: KnowledgeArticleDTO): void {
+    if (user.access.modulePermissions?.technology === 'READ') return;
     formTriggerRef.current = trigger;
     setEditing(article);
     setForm(articleForm(article));
@@ -511,7 +513,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
           actions={(
             <>
               <button className="icon-only" type="button" aria-label="刷新知识库" title="刷新" onClick={() => { void Promise.all([loadOverview(), loadSearch()]); }}><RefreshCw size={16} /></button>
-              <button className="primary" type="button" onClick={event => openCreate(event.currentTarget)}><Plus size={17} />新增知识</button>
+              <button className="primary" type="button" disabled={user.access.modulePermissions?.technology === 'READ'} title={user.access.modulePermissions?.technology === 'READ' ? '当前为只读权限' : undefined} onClick={event => openCreate(event.currentTarget)}><Plus size={17} />新增知识</button>
             </>
           )}
         />

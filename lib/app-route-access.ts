@@ -3,8 +3,9 @@ import type {
   AccessModuleCode,
   CapabilityCode,
 } from '@/lib/department-access';
+import { modulePageDecision, type ModuleAccessCarrier } from '@/lib/module-permissions';
 
-type AppAccess = {
+type AppAccess = ModuleAccessCarrier & {
   modules: readonly AccessModuleCode[];
   capabilities?: readonly CapabilityCode[];
 };
@@ -111,6 +112,8 @@ export function routeAccessRule(pathname: string): RouteAccessRule | null {
 }
 
 export function canAccessAppRoute(access: AppAccess, pathname: string): boolean {
+  const moduleDecision = modulePageDecision(access, pathname);
+  if (moduleDecision !== null) return moduleDecision;
   // The former production sample workbench now lives inside planning. Preserve its
   // existing audience only for this branch; do not grant bulk-planning access.
   if (normalizedPath(pathname) === '/weekly-plan-center'

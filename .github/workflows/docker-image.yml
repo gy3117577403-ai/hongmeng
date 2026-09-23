@@ -544,6 +544,18 @@ jobs:
             SAMPLE_PLAN_BROWSER_OUTPUT=output/playwright/sample-planning-release \
             node scripts/smoke-sample-planning-browser.mjs
 
+          ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
+            ACCOUNT_ACCESS_QA_BASE=http://127.0.0.1:3000 \
+            ACCOUNT_ACCESS_QA_OUTPUT=artifacts/account-access/release-http.json \
+            ACCOUNT_ACCESS_FIXTURE="$RUNNER_TEMP/account-access-release.json" \
+            node scripts/smoke-account-access.mjs
+          ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
+            ACCOUNT_ACCESS_QA_BASE=http://127.0.0.1:3000 \
+            ACCOUNT_ACCESS_FIXTURE="$RUNNER_TEMP/account-access-release.json" \
+            ACCOUNT_ACCESS_BROWSER_OUTPUT=output/playwright/account-access-release \
+            node scripts/smoke-account-access-browser.mjs
+
+
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Push verified release image
@@ -811,6 +823,18 @@ jobs:
             SAMPLE_PLAN_BROWSER_OUTPUT=output/playwright/sample-planning-hangzhou \
             node scripts/smoke-sample-planning-browser.mjs
 
+          ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
+            ACCOUNT_ACCESS_QA_BASE=http://127.0.0.1:3300 \
+            ACCOUNT_ACCESS_QA_OUTPUT=artifacts/account-access/hangzhou-http.json \
+            ACCOUNT_ACCESS_FIXTURE="$RUNNER_TEMP/account-access-hangzhou.json" \
+            node scripts/smoke-account-access.mjs
+          ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
+            ACCOUNT_ACCESS_QA_BASE=http://127.0.0.1:3300 \
+            ACCOUNT_ACCESS_FIXTURE="$RUNNER_TEMP/account-access-hangzhou.json" \
+            ACCOUNT_ACCESS_BROWSER_OUTPUT=output/playwright/account-access-hangzhou \
+            node scripts/smoke-account-access-browser.mjs
+
+
           mkdir -p artifacts/quality-data-v1
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
             < scripts/seed-quality-data-smoke.cjs > artifacts/quality-data-v1/mirror-fixture.json
@@ -1073,4 +1097,15 @@ jobs:
             artifacts/terminal-tooling/**/*runtime.txt
             artifacts/terminal-tooling/**/*.png
             artifacts/terminal-tooling/**/*.csv
+          if-no-files-found: warn
+
+      - name: Upload account access acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: account-access-${{ github.ref_name }}
+          path: |
+            artifacts/account-access
+            output/playwright/account-access-release
+            output/playwright/account-access-hangzhou
           if-no-files-found: warn

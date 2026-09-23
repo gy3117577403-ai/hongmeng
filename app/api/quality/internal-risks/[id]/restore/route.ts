@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin } from '@/lib/auth';
+import { requireCapability } from '@/lib/auth';
 import { internalQualityRiskRouteError } from '@/lib/internal-quality-risk-route-response';
 import {
   expectedInternalQualityRiskVersion,
@@ -19,7 +19,7 @@ function actor(user: { id: string; displayName: string; username: string }) {
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     assertSameOriginMutationRequest(req);
-    const user = await requireAdmin();
+    const user = await requireCapability('QUALITY', 'DELETE');
     const body = await req.json() as Record<string, unknown>;
     const report = await prisma.$transaction(tx => restoreInternalQualityRisk(
       tx,

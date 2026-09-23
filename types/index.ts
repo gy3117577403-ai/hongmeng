@@ -416,6 +416,7 @@ export type LaborAccessRoleDTO = 'ADMIN' | 'TEAM_LEAD' | 'EMPLOYEE';
 export type DailyPlanningRoleDTO = 'WORKSHOP_SUPERVISOR' | 'TEAM_LEADER' | 'MEMBER';
 export type AccountStatusDTO = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
 export type AccessProfileKeyDTO =
+  | 'MODULE_ACCESS'
   | 'ADMIN_GLOBAL'
   | 'DEPARTMENT_FULL'
   | 'PROCESS_SPECIALIST'
@@ -445,6 +446,8 @@ export type DepartmentRefDTO = {
 };
 
 export type AccessModuleCodeDTO =
+  | 'MATERIAL_LIBRARY'
+  | 'KNOWLEDGE'
   | 'QUALITY_DATA'
   | 'BASIC_SUMMARY'
   | 'ACCOUNT_SELF'
@@ -500,6 +503,8 @@ export type AccessScopeHintDTO = {
 };
 
 export type AccessContextDTO = {
+  modulePermissions?: import('@/lib/module-permissions').ModulePermissions | null;
+  workbenchEnabled?: boolean;
   accountActive: boolean;
   effectiveGrants: readonly ResolvedAccessGrantDTO[];
   capabilities: readonly CapabilityCodeDTO[];
@@ -620,6 +625,7 @@ export type OperationLogDTO = {
 };
 
 export type UserDTO = {
+  moduleAccess?: { permissions: import('@/lib/module-permissions').ModulePermissions; workbenchEnabled: boolean } | null;
   id: string;
   username: string;
   displayName: string;

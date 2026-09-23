@@ -36,6 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           accessGrants: {
             select: {
               profile: true,
+              scopeKey: true,
               isActive: true,
               effectiveFrom: true,
               effectiveTo: true,

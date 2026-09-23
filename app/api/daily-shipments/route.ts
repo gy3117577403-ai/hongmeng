@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
     }
     const data = await loadDailyShipmentWorkbench({
       shipDate,
-      actorUserId: user.id,
+      actorUserId: user.access.modulePermissions?.production === 'READ' ? undefined : user.id,
     });
     return NextResponse.json({ ok: true, data });
   } catch (error) {

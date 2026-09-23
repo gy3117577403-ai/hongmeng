@@ -21,7 +21,7 @@ export function qualityWorkflowAccountReady(account: PasswordSessionAccount, now
   return canIssuePasswordSession(account, now) && !hasPureFieldReporterAccess(account, now);
 }
 const accountSelect = { isActive: true, accountStatus: true, mustChangePassword: true, fieldPasswordOnly: true, lastLoginAt: true,
-  accessGrants: { select: { profile: true, isActive: true, effectiveFrom: true, effectiveTo: true } } } as const;
+  accessGrants: { select: { profile: true, scopeKey: true, isActive: true, effectiveFrom: true, effectiveTo: true } } } as const;
 async function requireWorkflowAssignee(tx: Prisma.TransactionClient, id: string) {
   const person = await requireActiveQualityRiskAssignee(tx, id);
   const account = await tx.user.findUniqueOrThrow({ where: { id }, select: accountSelect });

@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import { requiresAdminPasswordSetup } from '@/lib/login-security';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
+import { moduleConfiguration } from '@/lib/module-permissions';
 
 export { requiresAdminPasswordSetup } from '@/lib/login-security';
 
@@ -138,6 +139,7 @@ export function serializeAdminUser(
     && grant.departmentId
   ));
   const profiles = new Set(activeGrants.map(grant => grant.profile));
+  const moduleAccess = moduleConfiguration(activeGrants);
   const departmentNeedsSync = Boolean(
     user.employee
     && user.employee.isActive
@@ -206,11 +208,12 @@ export function serializeAdminUser(
     fieldPin,
     accessMethods: {
       workbench: !passwordSetupRequired
-        && activeGrants.some(grant => grant.profile !== AccessProfileKey.FIELD_REPORTER),
+        && (moduleAccess ? moduleAccess.workbenchEnabled : activeGrants.some(grant => grant.profile !== AccessProfileKey.FIELD_REPORTER)),
       fieldReport: profiles.has(AccessProfileKey.FIELD_REPORTER),
       pin: fieldPin.configured && fieldPin.isActive && profiles.has(AccessProfileKey.FIELD_REPORTER),
     },
-    permissionSyncPending: departmentNeedsSync || teamNeedsSync,
+    moduleAccess,
+    permissionSyncPending: !moduleAccess && (departmentNeedsSync || teamNeedsSync),
     accessGrants: user.accessGrants.map(serializeAccessGrant),
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString(),
@@ -409,6 +412,7 @@ export async function prepareAccessGrant(
 ) {
   const profile = parseAccessProfileKey(input.profileKey);
   if (!profile) throw new AccessGrantInputError('请选择有效的权限模板');
+  if (profile === 'MODULE_ACCESS') throw new AccessGrantInputError('请通过模块权限面板配置授权');
   const grantType = parseAccessGrantType(input.grantType) || AccessGrantType.PRIMARY;
   if (profile === AccessProfileKey.ADMIN_GLOBAL && grantType !== AccessGrantType.PRIMARY) {
     throw new AccessGrantInputError('管理员权限不能作为兼岗或代班授权');

@@ -261,6 +261,8 @@ export async function requireCapability(
   const user = await currentUser();
   if (!user) throw new UnauthorizedError();
   if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码');
+  const requestPath = headers().get('x-hm-request-path');
+  if (user.access.modulePermissions != null && requestPath && canAccessApiRoute(user.access, requestPath, headers().get('x-hm-request-method')) === false) throw new ForbiddenError();
   if (!hasCapability(user.access, module, action)) throw new ForbiddenError();
   return user;
 }

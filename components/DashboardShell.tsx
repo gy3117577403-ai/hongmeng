@@ -1,4 +1,5 @@
 'use client';
+import AccountAccessDialog from './AccountAccessDialog';
 import QuickWarnings from '@/components/quality-quick/QuickWarnings';
 
 import { AlertTriangle, ArrowLeft, BadgeCheck, BellRing, Building2, CalendarClock, ClipboardList, Download, HelpCircle, History, KeyRound, ListFilter, LogOut, Monitor, MonitorDown, Plus, QrCode, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, Trash2, UserRoundCheck, UserRoundCog, X } from 'lucide-react';
@@ -849,6 +850,7 @@ export default function DashboardShell({
   const [searchOpen, setSearchOpen] = useState(false);
   const [fieldSummary, setFieldSummary] = useState<FieldSummaryDTO | null>(null);
   const [accountsOpen, setAccountsOpen] = useState(false);
+  const [accountInitialEmployeeId, setAccountInitialEmployeeId] = useState<string | undefined>();
   const [users, setUsers] = useState<UserDTO[]>([]);
   const [accountEmployees, setAccountEmployees] = useState<EmployeeDTO[]>([]);
   const [accountDepartments, setAccountDepartments] = useState<DepartmentRefDTO[]>([]);
@@ -1696,13 +1698,8 @@ export default function DashboardShell({
       setMsg('只有管理员可以进入账号管理');
       return;
     }
+    setAccountInitialEmployeeId(prefillEmployeeId);
     setAccountsOpen(true);
-    setAccountError('');
-    const loaded = await loadUsers();
-    if (prefillEmployeeId) {
-      const employee = loaded.employees.find(item => item.id === prefillEmployeeId) || null;
-      if (employee) setUserForm(emptyAccountForm(employee));
-    }
   }, [loadUsers, user.laborRole]);
 
   useEffect(() => {
@@ -3568,31 +3565,7 @@ export default function DashboardShell({
         />
       )}
 
-      {accountsOpen && (
-        <AccountManager
-          users={users}
-          employees={accountEmployees}
-          departments={accountDepartments}
-          productionTeams={accountProductionTeams}
-          userForm={userForm}
-          accountEdit={accountEdit}
-          additionalGrant={additionalGrant}
-          passwordReset={passwordReset}
-          error={accountError}
-          saving={accountSaving}
-          close={() => { setAccountsOpen(false); setAccountEdit(null); setAdditionalGrant(null); setPasswordReset(null); }}
-          setUserForm={setUserForm}
-          setAccountEdit={setAccountEdit}
-          setAdditionalGrant={setAdditionalGrant}
-          setPasswordReset={setPasswordReset}
-          saveNewUser={saveNewUser}
-          saveAccountEdit={saveAccountEdit}
-          saveAdditionalGrant={saveAdditionalGrant}
-          revokeAdditionalGrant={revokeAdditionalGrant}
-          resetUserPassword={resetUserPassword}
-          resetFieldReporterPassword={resetFieldReporterPassword}
-        />
-      )}
+      {accountsOpen && <AccountAccessDialog user={user} initialEmployeeId={accountInitialEmployeeId} onClose={() => setAccountsOpen(false)} />}
 
       {trashOpen && (
         <TrashDialog

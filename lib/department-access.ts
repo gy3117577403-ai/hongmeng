@@ -7,6 +7,8 @@
  * belongs to a leader's team) must still apply the returned scope hints.
  */
 
+import { BUSINESS_ACCESS_MODULES, moduleConfiguration, type ModulePermissions } from '@/lib/module-permissions';
+
 export const DEPARTMENT_CODES = [
   'PRODUCTION',
   'BUSINESS',
@@ -24,6 +26,7 @@ export const DEPARTMENT_CODES = [
 export type DepartmentCode = typeof DEPARTMENT_CODES[number];
 
 export const ACCESS_PROFILE_CODES = [
+  'MODULE_ACCESS',
   'ADMIN_GLOBAL',
   'DEPARTMENT_FULL',
   'PROCESS_SPECIALIST',
@@ -51,6 +54,8 @@ export const ACCESS_GRANT_TYPES = ['PRIMARY', 'CONCURRENT', 'ACTING'] as const;
 export type AccessGrantType = typeof ACCESS_GRANT_TYPES[number];
 
 export const ACCESS_MODULES = [
+  'MATERIAL_LIBRARY',
+  'KNOWLEDGE',
   'BASIC_SUMMARY',
   'ACCOUNT_SELF',
   'NOTIFICATIONS',
@@ -135,6 +140,8 @@ export const DEPARTMENT_MODULE_MAP = {
 } as const satisfies Partial<Record<DepartmentCode, BusinessModuleCode>>;
 
 export const MODULE_ACTION_MATRIX = {
+  MATERIAL_LIBRARY: DEPARTMENT_OPERATION_ACTIONS,
+  KNOWLEDGE: DEPARTMENT_OPERATION_ACTIONS,
   BASIC_SUMMARY: ['READ'],
   ACCOUNT_SELF: ['READ', 'UPDATE'],
   NOTIFICATIONS: ['READ', 'UPDATE'],
@@ -193,6 +200,8 @@ export interface AccessScopeHint {
 export type ProductionScopeLevel = 'NONE' | 'TEAM' | 'WORKSHOP' | 'GLOBAL';
 
 export interface AccessContext {
+  modulePermissions?: ModulePermissions | null;
+  workbenchEnabled?: boolean;
   accountActive: boolean;
   effectiveGrants: readonly AccessGrant[];
   capabilities: readonly CapabilityCode[];
@@ -388,12 +397,30 @@ export function resolveAccessContext(
     };
   }
 
-  const effectiveGrants = effectiveAccessGrants(grants, now);
+  const currentGrants = effectiveAccessGrants(grants, now);
+  const configuration = currentGrants.some(grant => grant.profile === 'ADMIN_GLOBAL') ? null : moduleConfiguration(currentGrants);
+  // Explicit module configuration replaces legacy business grants, including scheduled ones.
+  const effectiveGrants = configuration ? currentGrants.filter(grant => grant.profile === 'MODULE_ACCESS' || grant.profile === 'FIELD_REPORTER') : currentGrants;
   const capabilities = new Set<CapabilityCode>();
   const scopes = new Map<string, AccessScopeHint>();
   let productionScope: ProductionScopeLevel = 'NONE';
 
   const addScope = (scope: AccessScopeHint) => scopes.set(scopeDedupKey(scope), scope);
+
+  if (configuration) {
+    addSelfService(capabilities);
+    if (configuration.workbenchEnabled) addBasicSummary(capabilities);
+    for (const module of BUSINESS_ACCESS_MODULES) {
+      const level = configuration.permissions[module.key];
+      if (!level) continue;
+      const source = effectiveGrants.find(grant => grant.scopeKey === `MODULE:${module.key}:${level}`)!;
+      for (const capability of module.capabilities) {
+        addModuleActions(capabilities, capability, level === 'READ' ? ['READ'] : MODULE_ACTION_MATRIX[capability]);
+        addScope(scopeForGrant(source, capability, 'GLOBAL', level === 'READ'));
+      }
+      if (module.key === 'production') productionScope = 'GLOBAL';
+    }
+  }
 
   for (const grant of effectiveGrants) {
     if (grant.profile === 'ADMIN_GLOBAL') {
@@ -604,6 +631,7 @@ export function resolveAccessContext(
 
   return {
     accountActive: true,
+    ...(configuration ? { modulePermissions: configuration.permissions, workbenchEnabled: configuration.workbenchEnabled } : {}),
     effectiveGrants,
     capabilities: orderedCapabilities,
     modules,

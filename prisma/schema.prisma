@@ -473,6 +473,7 @@ enum AccountStatus {
 }
 
 enum AccessProfileKey {
+  MODULE_ACCESS
   ADMIN_GLOBAL
   DEPARTMENT_FULL
   PROCESS_SPECIALIST

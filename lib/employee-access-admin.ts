@@ -265,6 +265,7 @@ export function employeePermissionSyncPending(
     isEffectiveEmployeeGrant(grant, now),
   );
   if (activeGrants.some(grant => grant.profile === AccessProfileKey.ADMIN_GLOBAL)) return false;
+  if (activeGrants.some(grant => grant.profile === AccessProfileKey.MODULE_ACCESS)) return false;
 
   const primaryDepartmentGrants = activeGrants.filter(grant =>
     grant.grantType === AccessGrantType.PRIMARY && Boolean(grant.departmentId),

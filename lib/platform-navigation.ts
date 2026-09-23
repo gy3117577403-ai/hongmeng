@@ -79,7 +79,7 @@ export function platformNavigationForUser(user: NavigationUser): PlatformNavigat
     .map(group => ({ ...group, items: group.items.filter(item => {
       if (item.href === '/workspace/daily-plans' && !user.canAccessDailyPlans) return false;
       if (item.href === '/workspace/weekly-processes' && !user.canAccessWeeklyProcesses) return false;
-      if (item.href === '/workspace/other-hours/approvals' && !otherWorkScope({ access: user.access, laborRole: user.laborRole || 'EMPLOYEE' }).manage) return false;
+      if (item.href === '/workspace/other-hours/approvals' && !user.access.modulePermissions?.collaboration && !otherWorkScope({ access: user.access, laborRole: user.laborRole || 'EMPLOYEE' }).manage) return false;
       return canAccessAppRoute(user.access, item.href);
     }) }))
     .filter(group => group.items.length > 0);

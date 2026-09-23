@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { processFixtureSyncQueue } from "@/lib/quality-fixture-sync";
 import { fixtureSubmissionIssues } from "@/lib/quality-fixture-documents";
 import { loadDocumentReturns } from "@/lib/quality-document-returns";
+import { moduleFixtureActionAllowed } from "@/lib/module-permissions";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
@@ -35,6 +36,7 @@ export async function POST(req: NextRequest) {
     const actor = await requireUser();
     if (Number(req.headers.get("content-length") || 0) > 4 * 1024 * 1024) throw new FixtureError("资料内容过大");
     const input = pcRecord(await req.json());
+    if (!moduleFixtureActionAllowed(actor.access, String(input.action))) throw new FixtureError('当前模块权限不能执行此操作', 'FIXTURE_FORBIDDEN', 403);
     if (["RESPOND_RETURN", "RESUBMIT_RETURNS"].includes(String(input.action)) && actor.laborRole !== "ADMIN" &&
       !actor.access.capabilities.some(c => ["ENGINEERING:CREATE", "ENGINEERING:UPDATE", "DRAWING_LIBRARY:CREATE", "DRAWING_LIBRARY:UPDATE"].includes(c)))
       throw new FixtureError("请由有图纸资料维护权限的技术人员处理", "FIXTURE_FORBIDDEN", 403);

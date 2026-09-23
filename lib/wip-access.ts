@@ -1,7 +1,8 @@
+import { moduleAllows, type ModuleAccessCarrier } from '@/lib/module-permissions';
 type WipAccessSubject = {
   laborRole: string;
   dailyPlanningRoles: readonly string[];
-  access: {
+  access: ModuleAccessCarrier & {
     effectiveGrants: readonly { profile: string }[];
   };
 };
@@ -19,6 +20,8 @@ const WIP_MANAGER_PROFILES = new Set([
  * identities may make that planning decision.
  */
 export function canManageWipWarehouse(subject: WipAccessSubject): boolean {
+  const decision = moduleAllows(subject.access, ['materials'], true);
+  if (decision !== null) return decision;
   if (subject.laborRole === 'ADMIN' || subject.laborRole === 'TEAM_LEAD') return true;
   if (subject.dailyPlanningRoles.some(role => (
     role === 'WORKSHOP_SUPERVISOR' || role === 'TEAM_LEADER'

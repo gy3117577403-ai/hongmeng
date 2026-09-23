@@ -5,6 +5,7 @@ export type OtherWorkRecordScope = { createdById: string; employeeId: string; te
 
 export function otherWorkScope(actor: Pick<OtherWorkActor, 'laborRole' | 'access'>) {
   if (actor.laborRole === 'ADMIN') return { manage: true, global: true, teams: [] as string[] };
+  if (actor.access.modulePermissions != null) return { manage: actor.access.modulePermissions.collaboration === 'COLLABORATE', global: Boolean(actor.access.modulePermissions.people || actor.access.modulePermissions.collaboration), teams: [] as string[] };
   // Resolve only review profiles: a concurrent global read grant must not widen a team writer.
   const access = resolveAccessContext((actor.access.effectiveGrants || []).filter(g =>
     g.profile === 'WORKSHOP_SUPERVISOR' || g.profile === 'WORKSHOP_TEAM_LEADER').map(g => ({
@@ -22,5 +23,6 @@ export function canReviewOtherWork(actor: OtherWorkActor, row: OtherWorkRecordSc
     && (scope.global || scope.teams.some(key => [row.teamIdSnapshot, row.teamSnapshot].some(v => v?.toLowerCase() === key.toLowerCase())));
 }
 export function canReadOtherWork(actor: OtherWorkActor, row: OtherWorkRecordScope) {
+  if (actor.access.modulePermissions != null) return Boolean(actor.access.modulePermissions.people || actor.access.modulePermissions.collaboration);
   return row.createdById === actor.id || row.employeeId === actor.employeeId || canReviewOtherWork(actor, row) || actor.laborRole === 'ADMIN';
 }

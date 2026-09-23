@@ -57,6 +57,11 @@ export function AppWorkbenchHeader({
   moduleModeSwitcher,
 }: AppWorkbenchHeaderProps) {
   const router = useRouter();
+  const [returnTo, setReturnTo] = useState('');
+  useEffect(() => {
+    const value = new URLSearchParams(window.location.search).get('returnTo');
+    if (value && /^\/workspace\/employees(?:\?|$)/.test(value)) setReturnTo(value);
+  }, []);
   const [menuOpen, setMenuOpen] = useState(false);
   const [internalSidebarExpanded, setInternalSidebarExpanded] = useState(false);
   const [sidebarTriggerTarget, setSidebarTriggerTarget] = useState<HTMLElement | null>(null);
@@ -154,6 +159,7 @@ export function AppWorkbenchHeader({
   return (
     <>
       <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={() => closeSidebar()} />
+      {returnTo && <button type="button" className="hm-origin-return" onClick={() => void navigateWithGuard(returnTo)}>← 返回人事管理</button>}
       <PlatformNavigation user={user} activeHref={activeHref} brandTitle={brandTitle} landingHref={landingHref}
         expanded={sidebarExpanded} navigationRef={sidebarRef} onExpandedChange={updateSidebarExpanded}
         onNavigate={handleNavigation} moduleModeSwitcher={moduleModeSwitcher} />

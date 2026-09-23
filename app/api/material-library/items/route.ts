@@ -84,10 +84,10 @@ export async function GET(request: NextRequest) {
       pagination: { page, pageSize: compact ? pageSize : limitedNumber(search.get('limit')), total },
       summary: { active, incomplete, warnings, recycled },
       permissions: {
-        create: user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:CREATE'),
-        update: user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:UPDATE'),
-        delete: user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:DELETE'),
-        execute: user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW'),
+        create: user.laborRole === 'ADMIN' || (user.access.capabilities.includes('QUALITY:CREATE') || user.access.capabilities.includes('MATERIAL_LIBRARY:CREATE')),
+        update: user.laborRole === 'ADMIN' || (user.access.capabilities.includes('QUALITY:UPDATE') || user.access.capabilities.includes('MATERIAL_LIBRARY:UPDATE')),
+        delete: user.laborRole === 'ADMIN' || (user.access.capabilities.includes('QUALITY:DELETE') || user.access.capabilities.includes('MATERIAL_LIBRARY:DELETE')),
+        execute: user.laborRole === 'ADMIN' || (user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW') || user.access.capabilities.includes('MATERIAL_LIBRARY:EXECUTE_WORKFLOW')),
       },
     });
   } catch (error) {

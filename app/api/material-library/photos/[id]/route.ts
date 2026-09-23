@@ -92,7 +92,7 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
     const user = await requireUser();
     const photo = await prisma.materialLibraryPhoto.findUnique({ where: { id: params.id }, select: { materialItemId: true, sessionId: true } });
     if (!photo) return NextResponse.json({ ok: false, error: '物料照片不存在' }, { status: 404 });
-    await manageMaterialPhotos({ materialItemId: photo.materialItemId, ids: [params.id], action: 'DELETE', reason: '上传错误', actor: materialLibraryActor(user), canDeleteArchived: user.laborRole === 'ADMIN' || user.access.capabilities.includes('QUALITY:DELETE') });
+    await manageMaterialPhotos({ materialItemId: photo.materialItemId, ids: [params.id], action: 'DELETE', reason: '上传错误', actor: materialLibraryActor(user), canDeleteArchived: user.laborRole === 'ADMIN' || (user.access.capabilities.includes('QUALITY:DELETE') || user.access.capabilities.includes('MATERIAL_LIBRARY:DELETE')) });
     return NextResponse.json({ ok: true, session: await serializedSession(photo.sessionId) });
   } catch (error) { return materialLibraryRouteError(error, '物料照片删除失败'); }
 }

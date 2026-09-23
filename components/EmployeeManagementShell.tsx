@@ -1,5 +1,6 @@
 'use client';
 
+import AccountAccessDialog from './AccountAccessDialog';
 import EmployeeAttainmentChangeReview, { type AttainmentChangeConfirmation } from './EmployeeAttainmentChangeReview';
 import { sameEmployeeAttainmentPolicy } from '@/lib/employee-attainment-policy';
 
@@ -64,7 +65,7 @@ import { ResponsibilityMatrixWorkspace } from '@/components/ResponsibilityMatrix
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import SkillPerformanceWorkbench from '@/components/SkillPerformanceWorkbench';
 import TrainingDevelopmentWorkbench from '@/components/TrainingDevelopmentWorkbench';
-import { canManageEmployeeAccounts, isGlobalAccountManager } from '@/lib/employee-account-access';
+import { canManageEmployeeAccounts } from '@/lib/employee-account-access';
 import { ATTENDANCE_GROUP_OPTIONS } from '@/lib/attendance-groups';
 import {
   responsibilityPeople,
@@ -471,6 +472,7 @@ function formatDate(value: string): string {
 }
 
 function employeeAccessProfileLabel(value?: string | null): string {
+  if (value === 'MODULE_ACCESS') return '按模块授权';
   if (value === 'ADMIN_GLOBAL') return '管理员全权限';
   if (value === 'DEPARTMENT_FULL') return '部门工作台';
   if (value === 'PROCESS_SPECIALIST') return '工艺专员';
@@ -689,14 +691,17 @@ function EmptyPanel({
 }
 
 export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO }) {
+  const moduleReadOnly = user.access.modulePermissions?.people === 'READ';
   const canManageAccounts = canManageEmployeeAccounts(user);
-  const accountSettingsBase = isGlobalAccountManager(user) ? '/dashboard?settings=accounts&' : '/workspace/employees/accounts?';
+  const [accountDialog, setAccountDialog] = useState<{ employeeId?: string; restoreRole: boolean } | null>(null);
+  function openEmployeeAccount(employeeId?: string) { setAccountDialog({ employeeId, restoreRole: rolePanelOpen }); setRolePanelOpen(false); }
   const trainingOnly = user.access.modules.includes('TRAINING') && !user.access.modules.includes('HR');
   const availableNavigation = useMemo(
     () => trainingOnly ? hrNavigation.filter(item => item.id === 'training') : hrNavigation,
     [trainingOnly],
   );
   const [view, setView] = useState<HrView>(trainingOnly ? 'training' : 'overview');
+  useEffect(() => { const url = new URL(window.location.href); if (url.searchParams.get('accountAccess') === '1') { setAccountDialog({ employeeId: url.searchParams.get('accountEmployee') || undefined, restoreRole: false }); url.searchParams.delete('accountAccess'); url.searchParams.delete('accountEmployee'); window.history.replaceState(window.history.state, '', url); } }, []);
   const [employees, setEmployees] = useState<EmployeeDTO[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecordDTO[]>([]);
   const [attendanceSummary, setAttendanceSummary] = useState(emptyAttendanceSummary);
@@ -772,9 +777,17 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     const params = new URLSearchParams(window.location.search);
     const requested = params.get('view') as HrView | null;
     if (requested && availableNavigation.some(item => item.id === requested)) setView(requested);
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('hm-hr-return') || 'null');
+      if (saved?.source === window.location.pathname + window.location.search) {
+        setKeyword(saved.keyword || ''); setFilter(saved.filter || 'all'); setSelectedDepartment(saved.selectedDepartment || ''); setSelectedTeam(saved.selectedTeam || '');
+        if (saved.selectedEmployeeId) setSelectedEmployeeId(saved.selectedEmployeeId);
+        requestAnimationFrame(() => { const content = workbenchRef.current?.querySelector('.hr-content'); if (content) content.scrollTop = saved.scroll || 0; });
+      }
+    } catch { /* A stale local view preference never prevents opening HR. */ }
     const directoryMode = params.get('mode');
-    if (directoryMode === 'edit') setDirectoryEditing(true);
-    if (directoryMode === 'create') {
+    if (!moduleReadOnly && directoryMode === 'edit') setDirectoryEditing(true);
+    if (!moduleReadOnly && directoryMode === 'create') {
       setCreating(true);
       setDirectoryEditing(true);
       setSelectedEmployeeId('');
@@ -797,7 +810,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     [recruitmentDemands, selectedRecruitmentDemandId],
   );
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
-  const editorUnlocked = creating || directoryEditing;
+  const editorUnlocked = !moduleReadOnly && (creating || directoryEditing);
 
   const loadHumanResources = useCallback(async (): Promise<void> => {
     if (trainingOnly) {
@@ -1189,6 +1202,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function openRecruitmentDemandDialog(demand?: RecruitmentDemandDTO): void {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     setEditingRecruitmentDemand(Boolean(demand));
     setRecruitmentDemandDraft(demand ? {
       department: demand.department,
@@ -1278,6 +1292,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function openRecruitmentCandidateDialog(): void {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     setRecruitmentCandidateDraft(emptyRecruitmentCandidateDraft);
     setRecruitmentDialogError('');
     setRecruitmentDialog('candidate');
@@ -1344,6 +1359,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function openRecruitmentInterviewDialog(candidate: RecruitmentCandidateDTO): void {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     setSelectedRecruitmentCandidateId(candidate.id);
     setSelectedRecruitmentInterviewId('');
     setRecruitmentInterviewDraft({
@@ -1355,6 +1371,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function openRecruitmentInterviewResultDialog(candidate: RecruitmentCandidateDTO): void {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     const interview = [...candidate.interviews]
       .reverse()
       .find(item => item.status === 'SCHEDULED');
@@ -1417,6 +1434,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function openRecruitmentHireDialog(candidate: RecruitmentCandidateDTO): void {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     if (!selectedRecruitmentDemand) return;
     setSelectedRecruitmentCandidateId(candidate.id);
     setRecruitmentHireDraft({
@@ -1508,6 +1526,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   async function beginCreate(): Promise<void> {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     if (!await confirmDiscard()) return;
     const baseUrl = new URL(window.location.href);
     baseUrl.searchParams.set('view', 'directory');
@@ -1530,6 +1549,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function beginDirectoryEdit(): void {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     if (!selectedEmployee || creating || directoryEditing) return;
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'directory');
@@ -1578,6 +1598,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   async function beginNumberReorder(): Promise<void> {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     if (!await confirmDiscard()) return;
     if (dirty) setDraft(baseline);
     setNumberReorderOpen(true);
@@ -1667,6 +1688,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function openEmploymentAction(mode: Exclude<EmploymentDialogMode, null>): void {
+    if (moduleReadOnly) { setToast('当前为只读权限，可以查看资料，不能修改'); return; }
     if (!selectedEmployee) return;
     if (dirty) {
       setFormError('请先保存或放弃当前档案修改，再办理员工状态变更');
@@ -2073,7 +2095,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               </button>
             )}
             <button type="button" className="hr-icon-button" title="刷新员工档案" aria-label="刷新员工档案" disabled={saving || loading} onClick={refreshDirectory}><RefreshCw size={17} /></button>
-            {canManageAccounts && <a className="hr-secondary-button hr-directory-accounts" href="/workspace/employees/accounts"><UserRoundCog size={17} />账号管理</a>}
+            {canManageAccounts && <button type="button" className="hr-secondary-button hr-directory-accounts" onClick={() => openEmployeeAccount()}><UserRoundCog size={17} />账号管理</button>}
             <div className="hr-directory-more">
               <button type="button" id="hr-directory-more-trigger" className="hr-icon-button" aria-label="更多操作" aria-expanded={directoryMenuOpen} aria-controls="hr-directory-more-actions" disabled={saving} onClick={() => setDirectoryMenuOpen(current => !current)}><MoreHorizontal size={18} /></button>
               {directoryMenuOpen && <div className="hr-directory-more-actions" id="hr-directory-more-actions"><button type="button" onClick={() => { setDirectoryMenuOpen(false); beginNumberReorder(); }}><ListOrdered size={17} />员工编号重排</button></div>}
@@ -2274,7 +2296,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                       <header>
                         <span><ShieldCheck /></span>
                         <div><strong>账号与权限</strong><small>人员主档联动部门权限，兼岗与代班按授权期限生效</small></div>
-                        {canManageAccounts && <a href={`${accountSettingsBase}employeeId=${encodeURIComponent(profileEmployee.id)}`}><UserRoundCog />打开账号设置</a>}
+                        {canManageAccounts && <button type="button" onClick={() => openEmployeeAccount(profileEmployee.id)}><UserRoundCog />打开账号设置</button>}
                       </header>
                       <div className="hr-account-state-grid">
                         <article><small>账号状态</small><strong className={`tone-${profileAccountStatus.tone}`}>{profileAccountStatus.label}</strong><span>{profileAccount?.username || '由管理员开通'}</span></article>
@@ -2446,7 +2468,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               </div>
             </section>
             <section>
-              <h3>账号与访问 {canManageAccounts && profileEmployee && <a href={`${accountSettingsBase}employeeId=${encodeURIComponent(profileEmployee.id)}`}>设置</a>}</h3>
+              <h3>账号与访问 {canManageAccounts && profileEmployee && <button type="button" onClick={() => openEmployeeAccount(profileEmployee.id)}>设置</button>}</h3>
               <div className="hr-role-account-state">
                 <header><span className={`tone-${profileAccountStatus.tone}`}><KeyRound />{profileAccountStatus.label}</span><small>{profileAccount?.username || '未分配账号'}</small></header>
                 <div>{profileAccessMethods.map(method => <span key={method}>{method.includes('扫码') ? <QrCode /> : <Monitor />}{method}</span>)}{!profileAccessMethods.length && <span className="muted"><KeyRound />未开通访问方式</span>}</div>
@@ -3100,7 +3122,15 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   return (<>
-    <main ref={workbenchRef} className="hr-workbench hr-workbench-v5 hm-workbench-root">
+    <main ref={workbenchRef} className="hr-workbench hr-workbench-v5 hm-workbench-root" onClickCapture={event => {
+      const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
+      if (!link || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const destination = new URL(link.href, window.location.href);
+      if (destination.origin !== window.location.origin || !destination.pathname.startsWith('/workspace/') || destination.pathname === '/workspace/employees') return;
+      const source = window.location.pathname + window.location.search;
+      sessionStorage.setItem('hm-hr-return', JSON.stringify({ source, keyword, filter, selectedDepartment, selectedTeam, selectedEmployeeId, scroll: workbenchRef.current?.querySelector('.hr-content')?.scrollTop || 0 }));
+      destination.searchParams.set('returnTo', source); link.href = destination.toString();
+    }}>
       <AppWorkbenchHeader user={user} activeHref="/workspace/employees" subtitle="人事管理" menuItems={[]} hideHeader sidebarTriggerTargetId="hr-platform-navigation-trigger" onBeforeNavigate={confirmDiscard} />
       <div className="hr-shell">
         <nav className="hr-module-tabs" aria-label="人事管理功能导航">
@@ -3129,10 +3159,11 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               {availableNavigation.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}
             </select>
           </label>
-          {canManageAccounts && view !== 'directory' && <a className="hr-module-accounts hr-secondary-button" href="/workspace/employees/accounts"><UserRoundCog size={17} /><span>账号管理</span></a>}
+          {canManageAccounts && view !== 'directory' && <button type="button" className="hr-module-accounts hr-secondary-button" onClick={() => openEmployeeAccount()}><UserRoundCog size={17} /><span>账号管理</span></button>}
         </nav>
 
         <section className="hr-content">
+          {moduleReadOnly && <div className="aa-readonly-banner">人事与工时 · 只读访问，可查询与导出资料</div>}
           {error && <div className="hr-page-error" role="alert"><AlertTriangle size={17} />{error}<button type="button" onClick={() => void loadHumanResources()}>重新加载</button></div>}
           {auxiliaryWarning && !error && <div className="hr-auxiliary-warning" title={auxiliaryWarning}><AlertTriangle size={14} /><span>部分辅助数据暂不可用，员工档案仍可正常使用</span></div>}
           {renderActiveView()}
@@ -3265,6 +3296,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
         </section>
       </div>
     )}
+    {accountDialog && <AccountAccessDialog user={user} initialEmployeeId={accountDialog.employeeId} onClose={() => { const restore = accountDialog.restoreRole; setAccountDialog(null); if (restore) setRolePanelOpen(true); }} />}
     {policyReviewBody && <EmployeeAttainmentChangeReview employeeId={selectedEmployeeId} payload={policyReviewBody} busy={saving} error={formError} onClose={() => { setPolicyReviewBody(null); setFormError(''); }} onConfirm={saveEmployee} />}
     {numberReorderOpen && <EmployeeNumberReorderDialog
       employees={employees}

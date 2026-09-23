@@ -11,6 +11,6 @@ export default async function Page({ searchParams }: { searchParams: Record<stri
   }
   const path = '/workspace/other-hours/approvals';
   const user = await requirePageAccess(path, path + (query.size ? '?' + query : ''));
-  if (!otherWorkScope(user).manage) redirect('/field-report/other-hours');
+  if (!otherWorkScope(user).manage && !user.access.modulePermissions?.collaboration) redirect('/field-report/other-hours');
   return <OtherWorkHours user={user} approval />;
 }

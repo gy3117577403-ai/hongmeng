@@ -8,6 +8,7 @@ export type LoginLockState = {
 };
 
 export type PasswordSessionAccessGrant = {
+  scopeKey?: string;
   profile: string;
   isActive: boolean;
   effectiveFrom: Date;
@@ -35,6 +36,7 @@ function effectivePasswordGrants(
   if (!Number.isFinite(nowValue)) return [];
   return account.accessGrants.filter(grant => (
     grant.isActive
+    && !(grant.profile === 'MODULE_ACCESS' && grant.scopeKey === 'MODULES:OFF')
     && grant.effectiveFrom.getTime() <= nowValue
     && (!grant.effectiveTo || grant.effectiveTo.getTime() > nowValue)
   ));
@@ -48,6 +50,7 @@ function hasCurrentOrFutureNonFieldAccess(
   if (!Number.isFinite(nowValue)) return false;
   return account.accessGrants.some(grant => (
     grant.profile !== 'FIELD_REPORTER'
+    && !(grant.profile === 'MODULE_ACCESS' && grant.scopeKey === 'MODULES:OFF')
     && grant.isActive
     && (!grant.effectiveTo || grant.effectiveTo.getTime() > nowValue)
   ));

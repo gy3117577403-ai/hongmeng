@@ -4,6 +4,7 @@ import {
   type AccessContext,
   type AccessModuleCode,
 } from '@/lib/department-access';
+import { moduleApiDecision, type ModuleAccessCarrier } from '@/lib/module-permissions';
 
 type ApiRule = {
   prefix: string;
@@ -736,10 +737,13 @@ export function apiActionForMethod(method: string | null | undefined): AccessAct
 }
 
 export function canAccessApiRoute(
-  access: Pick<AccessContext, 'capabilities' | 'productionScope'>,
+  access: Pick<AccessContext, 'capabilities' | 'productionScope'> & ModuleAccessCarrier,
   pathname: string,
   method?: string | null,
 ): boolean | null {
+  const newRule = apiRouteAccessRule(pathname);
+  const moduleDecision = moduleApiDecision(access, pathname, method, newRule?.anyOf);
+  if (moduleDecision !== null) return moduleDecision && (!newRule?.allowedMethods || newRule.allowedMethods.includes(String(method || 'GET').toUpperCase()));
   // Authentication and forced password changes are enforced by requireUser.
   // Material follow-up is shared for reading and text-only progress. The detail
   // handler checks PATCH action:'note' and retains procurement permission for

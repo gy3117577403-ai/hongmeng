@@ -23,7 +23,7 @@ type RecordScope = { createdById: string; employeeId: string; teamIdSnapshot: st
 
 function scopeWhere(actor: Actor): Prisma.OtherWorkTimeRequestWhereInput {
   const scope = otherWorkScope(actor);
-  if (!scope.manage) throw new OtherWorkError('当前账号没有其他工时管理权限', 403);
+  if (!scope.manage && !(actor.access.modulePermissions?.people || actor.access.modulePermissions?.collaboration)) throw new OtherWorkError('当前账号没有其他工时管理权限', 403);
   if (scope.global) return {};
   return { OR: [{ teamIdSnapshot: { in: scope.teams } }, { teamSnapshot: { in: scope.teams } }] };
 }

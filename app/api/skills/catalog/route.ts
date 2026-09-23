@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   forbidden,
   ForbiddenError,
-  requireAdmin,
+  requireCapability,
   unauthorized,
   UnauthorizedError,
 } from '@/lib/auth';
@@ -49,7 +49,7 @@ async function assertUniqueActiveName(name: string, excludedId?: string): Promis
 export async function POST(req: NextRequest) {
   try {
     assertSameOriginMutationRequest(req);
-    const user = await requireAdmin();
+    const user = await requireCapability('HR', 'UPDATE');
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const action = cleanSkillText(body.action, 40) || 'create';
 
