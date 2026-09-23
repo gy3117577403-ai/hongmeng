@@ -17,7 +17,7 @@ const cte = Prisma.sql`WITH task_counts AS (
  sum(t.photos)::int AS photos,sum(t.parameters)::int AS parameters,count(*)::int AS tasks,max(t.updated_at) AS "updatedAt",
  lower(regexp_replace(d.specification, '[[:space:]_‐‑–—-]+', '', 'g')) AS search_model,
  lower(regexp_replace(d.specification || ' ' || d.customer_name || ' ' || coalesce(d.product_name,''), '[[:space:]_‐‑–—-]+', '', 'g')) AS search_text
- FROM drawing_library_items d JOIN task_counts t ON t.product_id=d.id WHERE d.deleted_at IS NULL
+ FROM drawing_library_items d JOIN task_counts t ON t.product_id=d.id WHERE d.deleted_at IS NULL AND t.photos+t.parameters>0
  GROUP BY d.id HAVING sum(t.photos)+sum(t.parameters)>0
 )`;
 export async function listLibrary(search: URLSearchParams) {
@@ -86,8 +86,8 @@ export async function librarySource(productId: string, key: string): Promise<Lib
     draftSections: history.revision===null,
   } });
   if (!task) return null;
-  const entries = task.entries.map(entry => { const frozen = entrySnapshots.find(row=>row.id===entry.id); return { id: entry.id, kind: String(frozen?.kind||entry.kind), label: String(frozen?.label||entry.label||'')||null, payload: record(frozen?.payload||entry.payload), status: history.status, conflict: entry.parameterConflict?.status==='PENDING' && !entry.parameterConflict.deletedAt, date: entry.updatedAt.toISOString() }; });
+  const entries = task.entries.map(entry => { const frozen = entrySnapshots.find(row=>row.id===entry.id); return { id: entry.id, kind: String(frozen?.kind||entry.kind), label: String((frozen?frozen.label:entry.label)??'')||null, payload: record(frozen?frozen.payload:entry.payload), status: history.status, conflict: entry.parameterConflict?.status==='PENDING' && !entry.parameterConflict.deletedAt, date: entry.updatedAt.toISOString() }; });
   for (const section of task.draftSections.filter(row=>row.revision>row.lastSubmittedRevision)) rows(record(section.payload).rows).filter(meaningfulDraft).forEach((row,index)=>entries.push({ id: `draft:${section.id}:${index}`, kind: section.kind, label: null, payload: row, status: 'DRAFT', conflict: false, date: section.updatedAt.toISOString() }));
-  const photos = task.photos.map(photo=>{const frozen=photoSnapshots.find(row=>row.id===photo.id);return { id: photo.id, category: String(frozen?.category||photo.category), caption: String(frozen?.caption||photo.caption||'')||null, name: String(frozen?.originalName||photo.originalName), date: photo.createdAt.toISOString(), status: history.status };});
+  const photos = task.photos.map(photo=>{const frozen=photoSnapshots.find(row=>row.id===photo.id);return { id: photo.id, category: String(frozen?.category||photo.category), caption: String((frozen?frozen.caption:photo.caption)??'')||null, name: String(frozen?.originalName||photo.originalName), date: photo.createdAt.toISOString(), status: history.status };});
   return { history, entries, photos, comment: submission?.decisionComment || null };
 }
