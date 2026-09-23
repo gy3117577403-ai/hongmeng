@@ -799,7 +799,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     if (recruitmentStage && recruitmentStageOptions.some(item => item.value === recruitmentStage)) {
       setRecruitingStageFilter(recruitmentStage);
     }
-  }, [availableNavigation]);
+  }, [availableNavigation, moduleReadOnly]);
 
   const selectedEmployee = useMemo(
     () => employees.find(employee => employee.id === selectedEmployeeId) || null,

@@ -410,15 +410,15 @@ export function resolveAccessContext(
   if (configuration) {
     addSelfService(capabilities);
     if (configuration.workbenchEnabled) addBasicSummary(capabilities);
-    for (const module of BUSINESS_ACCESS_MODULES) {
-      const level = configuration.permissions[module.key];
+    for (const businessModule of BUSINESS_ACCESS_MODULES) {
+      const level = configuration.permissions[businessModule.key];
       if (!level) continue;
-      const source = effectiveGrants.find(grant => grant.scopeKey === `MODULE:${module.key}:${level}`)!;
-      for (const capability of module.capabilities) {
+      const source = effectiveGrants.find(grant => grant.scopeKey === `MODULE:${businessModule.key}:${level}`)!;
+      for (const capability of businessModule.capabilities) {
         addModuleActions(capabilities, capability, level === 'READ' ? ['READ'] : MODULE_ACTION_MATRIX[capability]);
         addScope(scopeForGrant(source, capability, 'GLOBAL', level === 'READ'));
       }
-      if (module.key === 'production') productionScope = 'GLOBAL';
+      if (businessModule.key === 'production') productionScope = 'GLOBAL';
     }
   }
 

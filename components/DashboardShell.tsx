@@ -1700,7 +1700,7 @@ export default function DashboardShell({
     }
     setAccountInitialEmployeeId(prefillEmployeeId);
     setAccountsOpen(true);
-  }, [loadUsers, user.laborRole]);
+  }, [user.laborRole]);
 
   useEffect(() => {
     if (accountDeepLinkHandledRef.current || user.laborRole !== 'ADMIN') return;

@@ -42,7 +42,7 @@ export default function AccountAccessDialog({ user, initialEmployeeId, onClose }
   const selected = accounts.find(account => account.id === draft?.id);
   const protectedAccount = Boolean(selected && (selected.id === user.id || selected.laborRole === 'ADMIN' || selected.accessGrants?.some(grant => grant.profileKey === 'ADMIN_GLOBAL')));
   const effectiveEdit = canAuthorize && !protectedAccount;
-  const selectDraft = (next: Draft, nextTab: typeof tab = 'modules') => { setDraft(next); setBaseline(JSON.stringify(next)); setTab(nextTab); setError(''); setMessage(''); };
+  const selectDraft = useCallback((next: Draft, nextTab: typeof tab = 'modules') => { setDraft(next); setBaseline(JSON.stringify(next)); setTab(nextTab); setError(''); setMessage(''); }, []);
   const requestExit = (action: () => void) => { if (busy) return; if (dirty) setDiscard(() => action); else action(); };
   const closeEditor = () => requestExit(() => { setDraft(null); setBaseline(''); setError(''); });
   const closeAll = () => requestExit(() => { closingRef.current = true; if (window.history.state?.accountAccessLayer) window.history.back(); else onClose(); });
@@ -76,7 +76,7 @@ export default function AccountAccessDialog({ user, initialEmployeeId, onClose }
       loadOnceRef.current = true;
     } catch (caught) { setError(caught instanceof Error ? caught.message : '加载失败'); }
     finally { setLoading(false); }
-  }, [initialEmployeeId]);
+  }, [initialEmployeeId, selectDraft]);
   useEffect(() => { void load(); }, [load]);
   const patch = (change: Partial<Draft>) => setDraft(current => current ? { ...current, ...change } : current);
   const updatePermission = (key: BusinessAccessModule, level?: 'READ' | 'COLLABORATE') => { if (!draft) return; const permissions = { ...draft.permissions }; if (level) permissions[key] = level; else delete permissions[key]; patch({ permissions, adopt: true, workbench: true }); };
