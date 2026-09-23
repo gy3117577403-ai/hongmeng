@@ -124,7 +124,7 @@ const updateRow={...preview.rows.find(r=>r.taskType==='NEW'),sampleQuantity:3,un
 const updateImport={clientMutationId:randomUUID(),fileName:'sample-correction.xlsx',rows:[updateRow],decisions:{[updateRow.rowNumber]:{mode:'reuse',drawingLibraryItemId:updateTarget.drawingLibraryItemId}},planDecisions:{[updateRow.rowNumber]:{mode:'update',taskId:updateTarget.id,expectedVersion:updateTarget.version,reason:'隔离验收：调整数量与单套计划工时'}}};
 const updatedImport=await req('explicit existing-plan import updates one plan','/api/sample-tasks/import/commit',updateImport);
 assert.equal(updatedImport.updatedTaskCount,1);assert.equal(updatedImport.createdTaskCount,0);
-assert.deepEqual(await req('replayed import returns the original batch','/api/sample-tasks/import/commit',updateImport),updatedImport);
+assert.deepEqual(await req('replayed import returns the original batch','/api/sample-tasks/import/commit',updateImport),{...updatedImport,replayed:true});
 const updatedPlan=await detail(updateTarget);assert.equal(updatedPlan.sampleQuantity,3);assert.equal(updatedPlan.unitPlannedMilliseconds,225000);assert.equal(updatedPlan.totalPlannedMilliseconds,'675000');
 const staleImport=await req('stale import cannot silently overwrite changes','/api/sample-tasks/import/commit',{...updateImport,clientMutationId:randomUUID()});
 assert.equal(staleImport.blockedCount,1);assert.equal(staleImport.updatedTaskCount,0);assert.equal((await detail(updateTarget)).version,updatedPlan.version);
