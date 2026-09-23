@@ -51,7 +51,7 @@ try {
       check((await page.evaluate(() => location.pathname))==='/workspace/employees','closing outer dialog returns to HR');
       check(await page.getByLabel('搜索员工',{exact:true}).inputValue()===f.marker,'HR search is retained');
       await page.getByRole('button',{name:'账号管理',exact:true}).click();await dialog.waitFor();await dialog.getByLabel('搜索员工账号').fill(f.reader.name);await dialog.locator('.aa-account').filter({hasText:f.reader.name}).click();
-      await page.goBack();await dialog.waitFor();check(await dialog.locator('.aa-welcome').isVisible(),'browser back closes inner editor first');
+      await page.goBack();await dialog.locator('.aa-welcome').waitFor();check(await dialog.locator('.aa-welcome').isVisible(),'browser back closes inner editor first');
       await page.goBack();await dialog.waitFor({state:'detached'});check((await page.evaluate(() => location.pathname))==='/workspace/employees','second back closes account layer without switching workbench');
       await page.goto(origin+'/workspace/employees/accounts?employeeId='+f.mixed.employeeId);await dialog.waitFor();check((await page.evaluate(() => location.pathname))==='/workspace/employees','old account link redirects to HR modal');
       await dialog.getByRole('button',{name:'关闭账号管理',exact:true}).click();await dialog.waitFor({state:'detached'});
@@ -60,7 +60,7 @@ try {
       await page.locator('.aa-readonly-banner').waitFor();check(await page.getByRole('button',{name:'账号管理',exact:true}).count()===0,'read-only HR cannot open account administration');
       await page.goto(origin+'/workspace/knowledge');await page.getByRole('button',{name:'新增知识',exact:true}).waitFor();check(await page.getByRole('button',{name:'新增知识',exact:true}).isDisabled(),'read-only technology disables new knowledge action');await shot('readonly-knowledge-2048');
       for(const route of ['/weekly-plan-center','/workspace/quality/data','/workspace/procurement','/drawing-library','/workspace/workflows','/workspace/reports']) {
-        await page.goto(origin+route);await page.waitForLoadState('domcontentloaded');if(route==='/weekly-plan-center')check(await page.getByRole('button',{name:'新建订单',exact:true}).isDisabled(),'read-only planning disables new order');check((await page.evaluate(() => location.pathname))===route,'read-only can open '+route);
+        await page.goto(origin+route);await page.waitForLoadState('domcontentloaded');if(route==='/weekly-plan-center')check(await page.getByRole('button',{name:'新建订单',exact:true}).isDisabled(),'read-only planning disables new order');const expectedRoute=route==='/workspace/reports'?'/workspace/reports/production/weekly-plan-attainment':route;check((await page.evaluate(() => location.pathname))===expectedRoute,'read-only can open '+route);
       }
       check(errors.length===0,'no uncaught browser errors');return {ok:true,checks};
     } catch(e) {await shot('failure').catch(()=>{});throw e;}
