@@ -79,6 +79,7 @@ try {
       await page.waitForURL(url=>url.pathname==='/workspace/procurement'&&url.searchParams.get('taskId')===followId);
       const returnTo=await page.evaluate(()=>new URL(location.href).searchParams.get('returnTo')||'');
       check(returnTo.includes('taskId='+encodeURIComponent(f.warehouseTaskId))&&returnTo.includes('status=exception'),'follow-up preserves exact warehouse context');
+      await page.getByRole('heading',{name:f.workOrder.specification}).waitFor({timeout:30000});
       check(await page.getByRole('heading',{name:f.workOrder.specification}).count()===1,'linked issue opens in follow-up detail');
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'follow-up fits 1366 tablet width');
       await shot('follow-up-linked-1366x1024');
@@ -141,6 +142,7 @@ try {
       check((await back.getAttribute('href')).includes('taskId='+encodeURIComponent(f.warehouseTaskId)),'return action targets original warehouse work order');
       await back.click();
       await page.waitForURL(url=>url.pathname==='/workspace/warehouse'&&url.searchParams.get('taskId')===f.warehouseTaskId);
+      await page.getByRole('heading',{name:f.workOrder.specification}).waitFor({timeout:30000});
       check(await page.getByRole('heading',{name:f.workOrder.specification}).count()===1,'return opens the same warehouse work order');
 
       await login('warehouse');
