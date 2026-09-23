@@ -50,12 +50,12 @@ export function moduleAllows(access: ModuleAccessCarrier, owners: readonly Busin
 }
 const PAGE_OWNERS: Array<[string, BusinessAccessModule[]]> = [
   ['/workspace/other-hours/approvals', ['collaboration']], ['/workspace/employees/accounts', ['people']],
-  ['/workspace/quality', ['quality']], ['/workspace/quality-', ['quality']], ['/quality-capture', ['quality']], ['/quality-quick-capture', ['quality']],
-  ['/workspace/material-library', ['materials']], ['/workspace/finished-goods', ['materials']], ['/workspace/wip', ['materials']], ['/workspace/warehouse', ['materials']], ['/workspace/procurement', ['materials']], ['/workspace/purchases', ['materials']],
+  ['/workspace/reviews', ['quality', 'technology']], ['/workspace/quality', ['quality']], ['/workspace/quality-', ['quality']], ['/quality-capture', ['quality']], ['/quality-quick-capture', ['quality']],
+  ['/material-upload', ['materials']], ['/workspace/material-library', ['materials']], ['/workspace/finished-goods', ['materials']], ['/workspace/wip', ['materials']], ['/workspace/warehouse', ['materials']], ['/workspace/procurement', ['materials']], ['/workspace/purchases', ['materials']],
   ['/drawing-library', ['technology']], ['/connector-', ['technology']], ['/workspace/terminal-tooling', ['technology']], ['/workspace/product-times', ['technology']], ['/workspace/time-standards', ['technology']], ['/workspace/processes', ['technology']], ['/workspace/knowledge', ['technology']], ['/workspace/capability-showcase', ['technology']],
   ['/workspace/employees', ['people']], ['/workspace/attendance', ['people']], ['/workspace/abnormal-times', ['people']], ['/workspace/other-hours', ['people']], ['/workspace/responsibilities', ['people']],
   ['/workspace/reports', ['reports']], ['/workspace/issues', ['collaboration']], ['/workspace/changes', ['collaboration']], ['/workspace/approvals', ['collaboration']], ['/workspace/workflows', ['collaboration']],
-  ['/production', ['production']], ['/weekly-plan-center', ['production']], ['/workspace/daily-plans', ['production']], ['/workspace/weekly-processes', ['production']], ['/sample-capture', ['production']],
+  ['/workspace/reporting-recovery', ['production']], ['/production', ['production']], ['/weekly-plan-center', ['production']], ['/workspace/daily-plans', ['production']], ['/workspace/weekly-processes', ['production']], ['/sample-capture', ['production']],
 ];
 function prefixMatch(path: string, prefix: string): boolean { return path === prefix || path.startsWith(prefix + '/') || (prefix.endsWith('-') && path.startsWith(prefix)); }
 export function modulePageDecision(access: ModuleAccessCarrier, pathname: string): boolean | null {
@@ -64,7 +64,7 @@ export function modulePageDecision(access: ModuleAccessCarrier, pathname: string
   const owners = PAGE_OWNERS.find(([prefix]) => prefixMatch(path, prefix))?.[1];
   if (owners) return moduleAllows(access, owners);
   // Personal account and independently enabled field reporting use their existing checks.
-  if (['/account', '/field-report', '/workspace/messages', '/workspace/help'].some(prefix => prefixMatch(path, prefix))) return null;
+  if (['/account', '/field-report', '/workspace/messages', '/workspace/help', '/workspace/initiated', '/workspace/involved', '/workspace/copied', '/workspace/following', '/workspace/more'].some(prefix => prefixMatch(path, prefix))) return null;
   if (path === '/home') return access.workbenchEnabled !== false;
   return false;
 }

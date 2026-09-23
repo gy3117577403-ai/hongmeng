@@ -615,7 +615,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
 
                   {selected.parameter && <section className="hm-knowledge-parameter-card"><h3>连接器参数</h3><div><span>外剥皮</span><strong>{selected.parameter.outerPeelMm || '未设置'}</strong></div><div><span>内剥皮</span><strong>{selected.parameter.innerPeelMm || '未设置'}</strong></div><div><span>入长</span><strong>{selected.parameter.insertionLengthMm || '未设置'}</strong></div>{selected.parameter.remark && <p>{selected.parameter.remark}</p>}</section>}
 
-                  {selected.article && <ArticleDetail article={selected.article} onUpload={() => fileInputRef.current?.click()} uploading={uploading} onEdit={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} onDelete={setDeleteArticle} onDeleteAttachment={setDeleteAttachment} />}
+                  {selected.article && <ArticleDetail readOnly={user.access.modulePermissions?.technology === 'READ'} article={selected.article} onUpload={() => fileInputRef.current?.click()} uploading={uploading} onEdit={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} onDelete={setDeleteArticle} onDeleteAttachment={setDeleteAttachment} />}
 
                   {!selected.article && <section className="hm-knowledge-source-summary"><h3>内容摘要</h3><p>{selected.summary || '该资料暂无摘要，可进入来源模块查看完整内容。'}</p><a className="hm-workbench-button primary" href={selected.sourceHref}><ExternalLink size={16} />进入来源模块</a></section>}
                 </div>
@@ -657,7 +657,8 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   );
 }
 
-function ArticleDetail({ article, onUpload, uploading, onEdit, onDelete, onDeleteAttachment }: {
+function ArticleDetail({ readOnly = false, article, onUpload, uploading, onEdit, onDelete, onDeleteAttachment }: {
+  readOnly?: boolean;
   article: KnowledgeArticleDTO;
   onUpload: () => void;
   uploading: boolean;
@@ -679,11 +680,11 @@ function ArticleDetail({ article, onUpload, uploading, onEdit, onDelete, onDelet
         {!article.relations.length && <p>暂未关联图纸、说明书或业务记录。</p>}
       </section>
       <section className="hm-knowledge-attachments">
-        <header><h3>知识附件 <small>{article.attachmentCount}</small></h3><button className="hm-workbench-button" type="button" disabled={uploading} onClick={onUpload}>{uploading ? <Loader2 className="spin" /> : <Upload size={15} />}上传附件</button></header>
-        {article.attachments.map(attachment => <div key={attachment.id}><Paperclip size={16} /><span><strong title={attachment.displayName || attachment.originalName}>{attachment.displayName || attachment.originalName}</strong><small>{formatBytes(attachment.size)} · {formatDate(attachment.createdAt)}</small></span><a href={attachment.downloadUrl} title="下载附件" aria-label={`下载 ${attachment.displayName || attachment.originalName}`}><Download size={16} /></a><button type="button" title="移除附件" aria-label={`移除 ${attachment.displayName || attachment.originalName}`} onClick={() => onDeleteAttachment(attachment)}><Trash2 size={15} /></button></div>)}
+        <header><h3>知识附件 <small>{article.attachmentCount}</small></h3><button className="hm-workbench-button" type="button" disabled={readOnly || uploading} onClick={onUpload}>{uploading ? <Loader2 className="spin" /> : <Upload size={15} />}上传附件</button></header>
+        {article.attachments.map(attachment => <div key={attachment.id}><Paperclip size={16} /><span><strong title={attachment.displayName || attachment.originalName}>{attachment.displayName || attachment.originalName}</strong><small>{formatBytes(attachment.size)} · {formatDate(attachment.createdAt)}</small></span><a href={attachment.downloadUrl} title="下载附件" aria-label={`下载 ${attachment.displayName || attachment.originalName}`}><Download size={16} /></a><button type="button" title="移除附件" aria-label={`移除 ${attachment.displayName || attachment.originalName}`} disabled={readOnly} onClick={() => onDeleteAttachment(attachment)}><Trash2 size={15} /></button></div>)}
         {!article.attachments.length && <p>可上传 PDF、JPG、PNG 或 WEBP，文件保存到对象存储。</p>}
       </section>
-      <footer className="hm-knowledge-article-actions"><button className="hm-workbench-button" type="button" onClick={onEdit}><Pencil size={15} />编辑知识</button><button className="hm-workbench-button danger" type="button" onClick={() => onDelete(article)}><Trash2 size={15} />删除</button></footer>
+      <footer className="hm-knowledge-article-actions"><button className="hm-workbench-button" type="button" disabled={readOnly} onClick={onEdit}><Pencil size={15} />编辑知识</button><button className="hm-workbench-button danger" type="button" disabled={readOnly} onClick={() => onDelete(article)}><Trash2 size={15} />删除</button></footer>
     </>
   );
 }

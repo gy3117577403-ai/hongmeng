@@ -1,3 +1,4 @@
+import { moduleFixtureActionAllowed, type ModuleAccessCarrier } from '@/lib/module-permissions';
 import { PurchasingError, pcInt, pcText } from "@/lib/purchasing-domain";
 
 export class FixtureError extends PurchasingError {
@@ -14,9 +15,10 @@ type ReviewSignatures = {
   supervisorId?: string | null; supervisorAt?: Date | string | null; supervisorAsAdmin?: boolean;
   qualityId?: string | null; qualityAt?: Date | string | null; qualityAsAdmin?: boolean;
 };
-export function fixtureReviewRoles(p: ReviewSignatures | null, actor: { id: string; laborRole?: string },
+export function fixtureReviewRoles(p: ReviewSignatures | null, actor: { id: string; laborRole?: string; access?: ModuleAccessCarrier },
   settings: { supervisorIds: string[]; qualityIds: string[] } | null, ownsEvidence = false): QfReviewRole[] {
   if (!p || !QF_REVIEW_STATUSES.includes(p.status)) return [];
+  if (actor.access && !moduleFixtureActionAllowed(actor.access, 'APPROVE')) return [];
   const admin = actor.laborRole === "ADMIN";
   if (!admin && (ownsEvidence || p.submittedById === actor.id)) return [];
   return (["SUPERVISOR", "QUALITY"] as const).filter(role => role === "SUPERVISOR"

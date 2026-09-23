@@ -88,7 +88,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
       onHand: f.item.balances.reduce((n, b) => n + b.onHand, 0), held: f.item.balances.reduce((n, b) => n + b.held, 0),
       reserved: f.item.balances.reduce((n, b) => n + b.reserved, 0), issued: f.item.balances.reduce((n, b) => n + b.issued, 0) })),
     fixtureTotal, eventRows, product, chosen, approved, newerReviewed, readiness, packageEvents, workOrders, bom, preparation, preparationEvents, documentReturns,
-    canConfigure: !settings || settings.ownerId === actor.id || actor.laborRole === "ADMIN",
+    canConfigure: actor.access?.modulePermissions == null && (!settings || settings.ownerId === actor.id || actor.laborRole === "ADMIN"),
     canReview: fixtureReviewRoles(chosen, actor, settings, ownsEvidence).length > 0,
     reviewRoles: fixtureReviewRoles(chosen, actor, settings, ownsEvidence),
     isAdmin: actor.laborRole === "ADMIN",

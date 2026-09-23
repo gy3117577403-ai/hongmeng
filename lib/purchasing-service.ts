@@ -26,6 +26,7 @@ import {
 } from "@/lib/purchasing-domain";
 type Tx = Prisma.TransactionClient;
 export type PcActor = {
+  access?: import('@/lib/module-permissions').ModuleAccessCarrier;
   id: string;
   username: string;
   displayName?: string | null;
