@@ -59,6 +59,9 @@ try {
       await login(f.reader.username,f.reader.password,'/workspace/employees?view=directory');
       await page.locator('.aa-readonly-banner').waitFor();check(await page.getByRole('button',{name:'账号管理',exact:true}).count()===0,'read-only HR cannot open account administration');
       await page.goto(origin+'/workspace/knowledge');await page.getByRole('button',{name:'新增知识',exact:true}).waitFor();check(await page.getByRole('button',{name:'新增知识',exact:true}).isDisabled(),'read-only technology disables new knowledge action');await shot('readonly-knowledge-2048');
+      for(const route of ['/weekly-plan-center','/workspace/quality/data','/workspace/procurement','/drawing-library','/workspace/workflows','/workspace/reports']) {
+        await page.goto(origin+route);await page.waitForLoadState('domcontentloaded');check(new URL(page.url()).pathname===route,'read-only can open '+route);
+      }
       check(errors.length===0,'no uncaught browser errors');return {ok:true,checks};
     } catch(e) {await shot('failure').catch(()=>{});throw e;}
   }`);
