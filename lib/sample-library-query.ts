@@ -87,7 +87,7 @@ export async function librarySource(productId: string, key: string): Promise<Lib
   } });
   if (!task) return null;
   const entries = task.entries.map(entry => { const frozen = entrySnapshots.find(row=>row.id===entry.id); return { id: entry.id, kind: String(frozen?.kind||entry.kind), label: String((frozen?frozen.label:entry.label)??'')||null, payload: record(frozen?frozen.payload:entry.payload), status: history.status, conflict: entry.parameterConflict?.status==='PENDING' && !entry.parameterConflict.deletedAt, date: entry.updatedAt.toISOString() }; });
-  for (const section of task.draftSections.filter(row=>row.revision>row.lastSubmittedRevision)) rows(record(section.payload).rows).filter(meaningfulDraft).forEach((row,index)=>entries.push({ id: `draft:${section.id}:${index}`, kind: section.kind, label: null, payload: row, status: 'DRAFT', conflict: false, date: section.updatedAt.toISOString() }));
+  for (const section of (task.draftSections || []).filter(row=>row.revision>row.lastSubmittedRevision)) rows(record(section.payload).rows).filter(meaningfulDraft).forEach((row,index)=>entries.push({ id: `draft:${section.id}:${index}`, kind: section.kind, label: null, payload: row, status: 'DRAFT', conflict: false, date: section.updatedAt.toISOString() }));
   const photos = task.photos.map(photo=>{const frozen=photoSnapshots.find(row=>row.id===photo.id);return { id: photo.id, category: String(frozen?.category||photo.category), caption: String((frozen?frozen.caption:photo.caption)??'')||null, name: String(frozen?.originalName||photo.originalName), date: photo.createdAt.toISOString(), status: history.status };});
   return { history, entries, photos, comment: submission?.decisionComment || null };
 }

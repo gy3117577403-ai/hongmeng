@@ -36,7 +36,7 @@ export default function HomeSampleTasks({ user, state, onChange, onCounts, onNav
   }, [state.view, state.page, keyword, onCounts, retry, refreshKey]);
   useEffect(() => { if (!loading && scroll.current && restoreScroll.current !== null) { scroll.current.scrollTop = restoreScroll.current; restoreScroll.current = null; } }, [loading]);
   return <div className="hm-hcc-message-pane sample-home-pane">
-    {canReadSampleLibrary(user.access) && <div className="sample-home-library-entry"><SampleLibraryEntry returnTo="/home" /></div>}
+    {canReadSampleLibrary(user.access) && <div className="sample-home-library-entry"><SampleLibraryEntry returnTo="/home?sampleReturn=1" onNavigate={() => onNavigate(scroll.current?.scrollTop || 0)} /></div>}
     <div className="hm-hcc-message-toolbar"><label><Search aria-hidden="true"/><input aria-label="搜索样品产品型号" placeholder="搜索产品型号" value={state.keyword} onChange={event => onChange({ ...state, keyword: event.target.value, page: 1, scrollTop: 0 })}/></label></div>
     {error && <div className="hm-hcc-message-error" role="alert">{error}<button type="button" onClick={() => setRetry(value => value+1)}>重试</button></div>}
     <div ref={scroll} className="hm-hcc-message-list hm-scroll-region sample-home-models" aria-busy={loading}>
