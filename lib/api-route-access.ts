@@ -741,6 +741,15 @@ export function canAccessApiRoute(
   method?: string | null,
 ): boolean | null {
   // Authentication and forced password changes are enforced by requireUser.
+  // Material follow-up is shared for reading and text-only progress. The detail
+  // handler checks PATCH action:'note' and retains procurement permission for
+  // classification, status, owner and arrival edits. Keep this exception exact
+  // so /classify and /:id/reschedule never inherit the shared access.
+  const materialPath = pathOnly(pathname);
+  const materialMethod = String(method || 'GET').toUpperCase();
+  if (materialPath === '/api/material-follow-ups' && materialMethod === 'GET') return true;
+  if (/^\/api\/material-follow-ups\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(materialPath)
+    && (materialMethod === 'GET' || materialMethod === 'PATCH')) return true;
   if (/^\/api\/finished-goods(?:\/|$)/.test(String(pathname).split('?')[0])) return true;
   if (/^\/api\/purchases(?:\/|$)/.test(String(pathname).split('?')[0])) return true;
   const rule = apiRouteAccessRule(pathname);

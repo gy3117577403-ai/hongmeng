@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './material/MaterialWorkbench.css';
+import './material/MaterialFollowUp.css';
 import { useToastBridge } from '@/components/ToastProvider';
 import { materialSourceText, type MaterialSource } from '@/lib/material-source';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -179,6 +180,19 @@ function rescheduleFormFor(task: MaterialFollowUpTaskDTO): RescheduleForm {
   };
 }
 
+function warehouseReturnHref(task: MaterialFollowUpTaskDTO | null, returnTo: string): string {
+  // A warehouse deep link may remain in the address bar while the user browses
+  // other follow-up tasks. Preserve its filters only for the originating task.
+  if (/^\/workspace\/warehouse(?:[/?#]|$)/.test(returnTo)) {
+    const linkedTaskId = new URL(returnTo, 'http://localhost').searchParams.get('taskId');
+    if (!task || linkedTaskId === (task.sampleTaskId || task.warehouseTaskId)) return returnTo;
+  }
+  if (!task) return '/workspace/warehouse';
+  const params = new URLSearchParams({ taskId: task.sampleTaskId || task.warehouseTaskId });
+  if (task.sampleTaskId) params.set('branch', 'samples');
+  return `/workspace/warehouse?${params.toString()}`;
+}
+
 export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }) {
   const [source, setSource] = useState('ALL');
   const [sourceSummary, setSourceSummary] = useState<Record<string, number>>({});
@@ -187,6 +201,8 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
   const [overdue, setOverdue] = useState(false);
   const [batchIds, setBatchIds] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [returnTo, setReturnTo] = useState('');
   const drafts = useRef<Record<string, UpdateForm>>({});
   const [status, setStatus] = useState<StatusFilter>('ACTIVE');
   const [scope, setScope] = useState<WeekScope>('current');
@@ -214,6 +230,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
   const [toast, setToast] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
   const pendingDeepLinkRef = useRef('');
+  const deepLinkedIdRef = useRef('');
   useToastBridge(toast, setToast); useToastBridge(error, setError);
   useEffect(() => { if (selected && selected.id === selectedId) drafts.current[selected.id] = form; }, [form, selected, selectedId]);
   const canManage = user.access.capabilities.includes('PROCUREMENT:UPDATE');
@@ -224,6 +241,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
     const requested = params.get('taskId');
     if (requested) {
       pendingDeepLinkRef.current = requested;
+      deepLinkedIdRef.current = requested;
       setSelectedId(requested);
     }
     const requestedScope = params.get('scope');
@@ -232,6 +250,8 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
     if (requestedScope === 'history' || requestedScope === 'preparation') setScope(requestedScope);
     const weekStart = params.get('weekStart');
     if (weekStart) setSelectedWeek(weekStart);
+    const requestedReturnTo = params.get('returnTo') || '';
+    if (/^\/workspace\/warehouse(?:[/?#]|$)/.test(requestedReturnTo)) setReturnTo(requestedReturnTo);
   }, []);
 
   useEffect(() => {
@@ -273,6 +293,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
             pendingDeepLinkRef.current = '';
             return deepLink;
           }
+          if (current && current === deepLinkedIdRef.current) return current;
           return current && nextTasks.some(task => task.id === current)
             ? current
             : nextTasks[0]?.id || '';
@@ -308,6 +329,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
         setSelected(task);
         setForm(drafts.current[task.id] || formFor(task, user.id));
         setRescheduleOpen(false);
+        setAdvancedOpen(false);
         setReschedulePreview(null);
         setRescheduleError('');
       })
@@ -330,6 +352,13 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
 
   const activeStage = selected ? stageIndex(selected.status) : 0;
   const visibleActivities = useMemo(() => selected?.activities || [], [selected?.activities]);
+  const latestActivity = visibleActivities.find(activity => activity.content === selected?.latestProgress) || visibleActivities[0];
+  const preferredOwner = users.find(candidate => (candidate.displayName || candidate.username).trim() === '贾改真');
+  const warehouseHref = warehouseReturnHref(selected, returnTo);
+  useEffect(() => {
+    if (!selected || selected.owner || !preferredOwner?.id) return;
+    setForm(current => current.ownerId === user.id ? { ...current, ownerId: preferredOwner.id } : current);
+  }, [preferredOwner?.id, selected, user.id]);
   const canReschedule = Boolean(
     canUpdatePlan
     && selected?.exceptionCase.actualArrivalAt
@@ -343,6 +372,13 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
     || !form.ownerId
     || !form.note.trim()
     || (form.status === 'WAITING_ARRIVAL' && !form.expectedAt);
+  const noteDisabled = saving || !selected || ['RESOLVED', 'CANCELLED'].includes(selected.status) || !form.note.trim();
+  const saveAction = canManage && advancedOpen
+    ? { action: 'update', ...form }
+    : { action: 'note', note: form.note };
+  const saveDisabled = canManage && advancedOpen ? updateDisabled : noteDisabled;
+  const selectedIndex = tasks.findIndex(task => task.id === selected?.id);
+  const nextTaskId = selectedIndex >= 0 ? tasks[selectedIndex + 1]?.id : undefined;
 
   async function mutate(body: Record<string, unknown>, next = false): Promise<void> {
     if (!selected) return;
@@ -359,7 +395,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
       setSelected(result.task);
       drafts.current[result.task.id] = formFor(result.task, user.id);
       setForm(formFor(result.task, user.id));
-      if (next) setSelectedId(tasks[tasks.findIndex(t => t.id === selected.id) + 1]?.id || tasks.find(t => t.id !== selected.id)?.id || selected.id);
+      if (next && nextTaskId) setSelectedId(nextTaskId);
       setTasks(current => current.map(task => task.id === result.task?.id ? result.task : task));
       setToast(body.action === 'claim' ? '已接收物料异常' : '跟进进度已保存');
       setReloadToken(value => value + 1);
@@ -432,41 +468,127 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
   }
 
   return (
-    <main className="ms-workbench hm-workbench-root">
+    <main className="ms-workbench mf-workbench hm-workbench-root">
       <AppWorkbenchHeader subtitle="物料协同" menuItems={[]} user={user} activeHref="/workspace/procurement" hideHeader sidebarTriggerTargetId="mf-sidebar" />
-      <div className="ms-frame">
-        <header className="ms-top"><div id="mf-sidebar"/><Layers3 size={21}/><h1>物料跟进</h1><span className="ms-muted ms-desktop-note">采购与客供分开跟进</span><div className="ms-spacer"/><select aria-label="跟进计划周" value={scope} onChange={e => { setScope(e.target.value as WeekScope); setSelectedWeek(''); setPage(1); }}><option value="current">本周与历史未结</option><option value="preparation">下周预备</option><option value="history">历史周</option></select>{scope !== 'current' && <select aria-label="选择生产周" value={selectedWeek} onChange={e => { setSelectedWeek(e.target.value); setPage(1); }}><option value="">{scope === 'history' ? '全部历史周' : '默认下周'}</option>{weeks.map(w => <option key={w.weekStartDate} value={w.weekStartDate}>{rangeText(w)}</option>)}</select>}<a href="/workspace/warehouse"><Warehouse size={15}/>仓库配料</a><button disabled={loading} onClick={() => setReloadToken(n => n + 1)}><RefreshCw size={16}/>刷新</button></header>
-        <nav className="ms-sources" aria-label="物料来源">{[['ALL','全部'],['PURCHASED','采购物料跟进'],['CUSTOMER','客供物料跟进'],['UNKNOWN','来源待确认']].map(([v,l]) => <button className={source === v ? 'active' : ''} key={v} onClick={() => { setSource(v); setPage(1); setBatchIds([]); }}>{l}<b>{v === 'ALL' ? Object.values(sourceSummary).reduce((a,b) => a + b,0) : sourceSummary[v] || 0}</b></button>)}<span className="ms-muted">未结事项</span></nav>
-        <div className="ms-filterbar"><nav className="ms-tabs" aria-label="跟进状态">{[['ACTIVE','待处理',summary.total],['PENDING','待接收',summary.pending],['IN_PROGRESS','跟进中',summary.inProgress],['WAITING_ARRIVAL','等待到料',summary.waitingArrival],['WAITING_WAREHOUSE','待仓库确认',summary.waitingWarehouse],['RESOLVED','已解决',summary.resolved],['ALL','全部记录',null]].map(([v,l,n]) => <button className={status === v ? 'active' : ''} key={String(v)} onClick={() => { setStatus(v as StatusFilter); setPage(1); }}>{l}{n !== null && <b>{n}</b>}</button>)}</nav></div>
-        <div className="ms-filterbar"><label className="ms-search"><Search size={16}/><input aria-label="搜索物料跟进" value={keyword} onChange={e => setKeyword(e.target.value)} placeholder="产品型号、物料、工单、客户或跟进内容"/></label><select aria-label="跟进负责人" value={owner} onChange={e => { setOwner(e.target.value); setPage(1); }}><option value="">全部负责人</option><option value="unassigned">待认领</option>{users.map(u => <option key={u.id} value={u.id}>{u.displayName || u.username}</option>)}</select><label className="ms-check"><input type="checkbox" checked={owner === user.id} onChange={e => { setOwner(e.target.checked ? user.id : ''); setPage(1); }}/>我负责的</label><label className="ms-check"><input type="checkbox" checked={overdue} onChange={e => { setOverdue(e.target.checked); setPage(1); }}/>到料逾期</label><button onClick={() => { setOwner(''); setKeyword(''); setStatus('ACTIVE'); setOverdue(false); setPage(1); }}>清除</button></div>
-        <div className={`ms-workspace ${historyOpen ? 'ms-with-history' : ''}`}>
-          <aside className="ms-panel ms-queue"><header><strong>异常事项</strong><span>{pagination.total} 项</span></header>
-            {source === 'UNKNOWN' && canManage && <div className="ms-batchbar"><label className="ms-check"><input type="checkbox" aria-label="选择本页待分类" checked={tasks.filter(t => !['RESOLVED','CANCELLED'].includes(t.status)).length > 0 && tasks.filter(t => !['RESOLVED','CANCELLED'].includes(t.status)).every(t => batchIds.includes(t.id))} onChange={e => setBatchIds(e.target.checked ? tasks.filter(t => !['RESOLVED','CANCELLED'].includes(t.status)).map(t => t.id) : [])}/>本页</label><button disabled={!batchIds.length || saving} onClick={() => void classifyBatch('PURCHASED')}>归采购</button><button disabled={!batchIds.length || saving} onClick={() => void classifyBatch('CUSTOMER')}>归客供</button></div>}
-            <div className="ms-scroll ms-list" aria-busy={loading}>{tasks.map(t => <div className="ms-task-row" key={t.id}>{source === 'UNKNOWN' && canManage && !['RESOLVED','CANCELLED'].includes(t.status) && <input aria-label={`选择 ${t.workOrder.specification || t.workOrder.code}`} type="checkbox" checked={batchIds.includes(t.id)} onChange={e => setBatchIds(ids => e.target.checked ? [...ids,t.id] : ids.filter(id => id !== t.id))}/>}<button className={`ms-order ${selectedId === t.id ? 'active' : ''}`} disabled={saving} onClick={() => setSelectedId(t.id)}><span className="ms-eyebrow">{t.workOrder.customerName || '客户待补充'}{t.carryover && ` · ${t.carryover.label}`}</span><strong>{t.workOrder.specification || t.workOrder.code}</strong><span className="ms-clamp">{t.exceptionCase.exceptionNote}</span><div className="ms-badges"><em className={`ms-source-${t.exceptionCase.supplySource || 'UNKNOWN'}`}>{materialSourceText[t.exceptionCase.supplySource || 'UNKNOWN']}</em><em className={t.status === 'RESOLVED' ? 'ms-success' : ''}>{t.statusText}</em>{t.risk === 'overdue' && <em className="ms-warning">到料逾期</em>}</div><small>{t.owner?.displayName || t.owner?.username || '待认领'} · {t.status === 'RESOLVED' ? `解决 ${dateTimeText(t.resolvedAt)}` : `预计 ${dateText(t.expectedAt)}`}</small></button></div>)}{!loading && !tasks.length && <div className="ms-empty"><PackageCheck/><strong>当前筛选没有事项</strong><span>切换来源或状态查看其他记录。</span></div>}</div>
-            <footer className="ms-pagination"><button aria-label="上一页" disabled={page <= 1 || loading} onClick={() => setPage(p => p - 1)}>上一页</button><span>{page} / {pagination.totalPages}</span><button aria-label="下一页" disabled={page >= pagination.totalPages || loading} onClick={() => setPage(p => p + 1)}>下一页</button></footer>
-          </aside>
-          <section className="ms-panel ms-detail" aria-busy={detailLoading}>{selected && !detailLoading ? <>
-            <header className="ms-detail-head"><div><span className={`ms-source-${selected.exceptionCase.supplySource || 'UNKNOWN'}`}>{selected.exceptionCase.exceptionTypeText} · 事项 #{selected.exceptionCase.sequence}</span><h2>{selected.workOrder.specification || selected.workOrder.code}</h2><small>{selected.workOrder.customerName} · {selected.workOrder.productName}</small></div><button onClick={() => setHistoryOpen(!historyOpen)}><Clock3 size={15}/>{historyOpen ? '收起记录' : '跟进记录'}</button></header>
-            <nav className="ms-progress" aria-label="跟进进度">{['待接收','跟进中','等待到料','待仓库确认','已解决'].map((label,i) => <span className={i <= activeStage ? 'active' : ''} key={label}><i>{i < activeStage ? '✓' : i + 1}</i>{label}</span>)}</nav>
-            <div className="ms-scroll ms-detail-body">
-              <section className="ms-feedback"><span className="ms-eyebrow">仓库反馈 · {dateTimeText(selected.exceptionCase.reportedAt)}</span><h3>{selected.exceptionCase.exceptionNote}</h3><div className="mw-event-facts"><span>物料 <b>{selected.exceptionCase.materialModel || '见缺料说明'}</b></span><span>本次缺料 <b>{selected.exceptionCase.shortageQuantity == null ? '数量待确认' : `${selected.exceptionCase.shortageQuantity} ${selected.exceptionCase.unit}`}</b></span><span>累计到料 <b>{selected.exceptionCase.receivedQuantity || 0} {selected.exceptionCase.unit || '个'}</b></span><span>工单 <b>{selected.workOrder.code}</b></span></div></section>
-              {selected.latestProgress && <div className="ms-latest"><span>最近进展 · {dateTimeText(selected.lastFollowedAt || selected.updatedAt)}</span><p>{selected.latestProgress}</p></div>}
-              {!['RESOLVED','CANCELLED'].includes(selected.status) && canManage ? <section className="ms-edit-console"><header><h3>更新跟进</h3>{!selected.owner && <button disabled={saving} onClick={() => void mutate({ action: 'claim' })}><UserRoundCheck size={15}/>接收任务</button>}</header><div className="ms-form-grid">
-                <label>物料来源<select aria-label="修改物料来源" value={form.supplySource} onChange={e => setForm(f => ({ ...f, supplySource: e.target.value as MaterialSource }))}>{Object.entries(materialSourceText).map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-                <label>负责人<select value={form.ownerId} onChange={e => setForm(f => ({ ...f, ownerId: e.target.value }))}><option value="">请选择</option>{users.map(u => <option key={u.id} value={u.id}>{u.displayName || u.username}</option>)}</select></label>
-                <label>跟进状态<select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value as UpdateForm['status'] }))}>{statusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
-                <label>{form.status === 'WAITING_ARRIVAL' ? '预计到料日期 *' : '预计到料日期'}<input aria-label="预计到料日期" type="date" value={form.expectedAt} onChange={e => setForm(f => ({ ...f, expectedAt: e.target.value }))}/></label>
-                <label>累计已到数量（{selected.exceptionCase.unit || '个'}）<input aria-label="累计已到数量" type="number" min="0" step="0.001" value={form.receivedQuantity} onChange={e => setForm(f => ({ ...f, receivedQuantity: e.target.value }))}/></label>
-                <div className="ms-field-hint">交期未确认时，选择“跟进中”即可保存。部分到料后继续记录剩余物料的进展。</div>
-                <label className="ms-wide">本次进展 *<textarea aria-label="本次进展" rows={3} maxLength={600} placeholder={form.supplySource === 'CUSTOMER' ? '填写客户反馈、发货情况、运单或剩余物料安排' : '填写采购进展、供应商反馈、发货情况或运单'} value={form.note} onChange={e => setForm(f => ({ ...f, note: e.target.value }))}/></label>
-              </div>{formError && <p className="ms-form-error" role="alert">{formError}</p>}</section> : <div className="ms-closed"><CheckCircle2 size={23}/><div><strong>{selected.status === 'RESOLVED' ? `已解决 · ${dateTimeText(selected.resolvedAt)}` : '查看物料跟进'}</strong><p>{selected.exceptionCase.resolutionNote || '物料实际到仓后由仓库核验并确认。'}</p></div></div>}
+      <div className="ms-frame mf-frame">
+        <header className="ms-top mf-top">
+          <div id="mf-sidebar" />
+          <div className="mf-heading-mark"><Layers3 size={22} /></div>
+          <div className="mf-heading"><h1>物料跟进</h1><span>采购与客供分层 · 处理记录同步仓库</span></div>
+          <div className="ms-spacer" />
+          <select aria-label="跟进计划周" value={scope} onChange={event => { deepLinkedIdRef.current = ''; setScope(event.target.value as WeekScope); setSelectedWeek(''); setPage(1); }}>
+            <option value="current">本周与历史未结</option><option value="preparation">下周预备</option><option value="history">历史周</option>
+          </select>
+          {scope !== 'current' && <select aria-label="选择生产周" value={selectedWeek} onChange={event => { deepLinkedIdRef.current = ''; setSelectedWeek(event.target.value); setPage(1); }}>
+            <option value="">{scope === 'history' ? '全部历史周' : '默认下周'}</option>
+            {weeks.map(week => <option key={week.weekStartDate} value={week.weekStartDate}>{rangeText(week)}</option>)}
+          </select>}
+          <a className="mf-warehouse-link" href={warehouseHref}><Warehouse size={16} />仓库配料</a>
+          <button type="button" aria-label="刷新物料跟进" disabled={loading} onClick={() => setReloadToken(value => value + 1)}><RefreshCw size={16} /></button>
+        </header>
+
+        <nav className="ms-sources mf-sources" aria-label="物料来源">
+          {([['ALL', '全部'], ['PURCHASED', '采购物料跟进'], ['CUSTOMER', '客供物料跟进'], ['UNKNOWN', '来源待确认']] as const).map(([value, label]) =>
+            <button type="button" className={source === value ? 'active' : ''} key={value} aria-current={source === value ? 'page' : undefined} onClick={() => { deepLinkedIdRef.current = ''; setSource(value); setPage(1); setBatchIds([]); }}>
+              {label}<b>{value === 'ALL' ? Object.values(sourceSummary).reduce((sum, count) => sum + count, 0) : sourceSummary[value] || 0}</b>
+            </button>)}
+          <span className="ms-muted mf-unclosed">{summary.total} 项未结</span>
+        </nav>
+
+        <nav className="ms-filterbar mf-statusbar" aria-label="跟进状态">
+          <div className="ms-tabs">
+            {([['ACTIVE', '待处理', summary.total], ['PENDING', '待接收', summary.pending], ['IN_PROGRESS', '跟进中', summary.inProgress], ['WAITING_ARRIVAL', '等待到料', summary.waitingArrival], ['WAITING_WAREHOUSE', '待仓库确认', summary.waitingWarehouse], ['RESOLVED', '已解决', summary.resolved], ['ALL', '全部记录', null]] as const).map(([value, label, count]) =>
+              <button type="button" className={status === value ? 'active' : ''} key={value} aria-current={status === value ? 'page' : undefined} onClick={() => { deepLinkedIdRef.current = ''; setStatus(value as StatusFilter); setPage(1); }}>
+                {label}{count !== null && <b>{count}</b>}
+              </button>)}
+          </div>
+        </nav>
+
+        <div className="ms-filterbar mf-filters">
+          <label className="ms-search"><Search size={17} /><input aria-label="搜索物料跟进" value={keyword} onChange={event => { deepLinkedIdRef.current = ''; setKeyword(event.target.value); }} placeholder="搜索产品型号、物料、工单、客户或跟进内容" /></label>
+          <select aria-label="跟进负责人" value={owner} onChange={event => { setOwner(event.target.value); setPage(1); }}>
+            <option value="">全部负责人</option><option value="unassigned">待认领</option>
+            {users.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName || candidate.username}</option>)}
+          </select>
+          <label className="ms-check"><input type="checkbox" checked={owner === user.id} onChange={event => { setOwner(event.target.checked ? user.id : ''); setPage(1); }} />我负责的</label>
+          <label className="ms-check"><input type="checkbox" checked={overdue} onChange={event => { setOverdue(event.target.checked); setPage(1); }} />到料逾期</label>
+          <button type="button" className="mf-clear" onClick={() => { setOwner(''); setKeyword(''); setStatus('ACTIVE'); setOverdue(false); setPage(1); }}>清除</button>
+        </div>
+
+        <div className={`ms-workspace mf-workspace ${historyOpen ? 'ms-with-history' : ''}`}>
+          <aside className="ms-panel ms-queue mf-queue">
+            <header><div><strong>异常事项</strong><small>按事项记录，不按周清空</small></div><span>{pagination.total} 项</span></header>
+            {source === 'UNKNOWN' && canManage && <div className="ms-batchbar">
+              <label className="ms-check"><input type="checkbox" aria-label="选择本页待分类" checked={tasks.filter(task => !['RESOLVED', 'CANCELLED'].includes(task.status)).length > 0 && tasks.filter(task => !['RESOLVED', 'CANCELLED'].includes(task.status)).every(task => batchIds.includes(task.id))} onChange={event => setBatchIds(event.target.checked ? tasks.filter(task => !['RESOLVED', 'CANCELLED'].includes(task.status)).map(task => task.id) : [])} />本页</label>
+              <button type="button" disabled={!batchIds.length || saving} onClick={() => void classifyBatch('PURCHASED')}>归采购</button>
+              <button type="button" disabled={!batchIds.length || saving} onClick={() => void classifyBatch('CUSTOMER')}>归客供</button>
+            </div>}
+            <div className="ms-scroll ms-list mf-list" aria-busy={loading}>
+              {tasks.map(task => <div className="ms-task-row" key={task.id}>
+                {source === 'UNKNOWN' && canManage && !['RESOLVED', 'CANCELLED'].includes(task.status) && <input aria-label={`选择 ${task.workOrder.specification || task.workOrder.code}`} type="checkbox" checked={batchIds.includes(task.id)} onChange={event => setBatchIds(ids => event.target.checked ? [...ids, task.id] : ids.filter(id => id !== task.id))} />}
+                <button type="button" className={`ms-order mf-order ${selectedId === task.id ? 'active' : ''} ${task.risk === 'overdue' ? 'overdue' : ''}`} disabled={saving} onClick={() => { deepLinkedIdRef.current = ''; setSelectedId(task.id); }}>
+                  <span className="mf-order-top"><span>{task.workOrder.customerName || '客户待补充'}{task.carryover && ` · ${task.carryover.label}`}</span>{task.risk === 'overdue' && <em>到料逾期</em>}</span>
+                  <strong>{task.workOrder.specification || task.workOrder.code}</strong>
+                  <span className="mf-order-material">{task.exceptionCase.materialModel || task.exceptionCase.exceptionNote} · {materialSourceText[task.exceptionCase.supplySource || 'UNKNOWN']}</span>
+                  <span className="mf-order-bottom"><em className={`mf-status-chip ${task.status === 'RESOLVED' ? 'resolved' : task.status === 'WAITING_WAREHOUSE' ? 'warehouse' : ''}`}>{task.statusText}</em><small>预计 {dateText(task.expectedAt)}</small></span>
+                </button>
+              </div>)}
+              {!loading && !tasks.length && <div className="ms-empty"><PackageCheck /><strong>当前筛选没有事项</strong><span>切换来源、状态或周次查看其他记录。</span></div>}
             </div>
-            <footer className="ms-bottom"><a href={selected.sampleTaskId ? `/workspace/warehouse?branch=samples&taskId=${selected.sampleTaskId}` : `/workspace/warehouse?taskId=${selected.warehouseTaskId}`}>仓库异常 <ChevronRight size={14}/></a>{canReschedule && <button onClick={openReschedule}>到料后改期</button>}<div className="ms-spacer"/>{!['RESOLVED','CANCELLED'].includes(selected.status) && canManage && <><button disabled={updateDisabled} onClick={() => void mutate({ action: 'update', ...form }, true)}>保存并下一项</button><button className="ms-primary" disabled={updateDisabled} onClick={() => void mutate({ action: 'update', ...form })}><Send size={15}/>{saving ? '保存中…' : '保存进展'}</button></>}</footer>
-          </> : <div className="ms-empty"><Layers3 size={38}/><strong>{detailLoading ? '正在加载事项…' : '请选择物料异常'}</strong></div>}</section>
-          {historyOpen && <aside className="ms-panel ms-history"><header><strong>跟进记录</strong><button aria-label="关闭跟进记录" onClick={() => setHistoryOpen(false)}><X size={16}/></button></header><div className="ms-scroll ms-timeline">{visibleActivities.map(a => <article key={a.id}><i/><div><strong>{a.content || '更新跟进'}</strong><small>{a.actor?.displayName || a.actor?.username || '系统'} · {dateTimeText(a.createdAt)}</small></div></article>)}{!visibleActivities.length && <div className="ms-empty">暂无跟进记录</div>}</div></aside>}
+            <footer className="ms-pagination"><button type="button" aria-label="上一页" disabled={page <= 1 || loading} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page} / {pagination.totalPages}</span><button type="button" aria-label="下一页" disabled={page >= pagination.totalPages || loading} onClick={() => setPage(value => value + 1)}>下一页</button></footer>
+          </aside>
+
+          <section className="ms-panel ms-detail mf-detail" aria-busy={detailLoading}>
+            {selected && !detailLoading ? <>
+              <header className="ms-detail-head mf-detail-head">
+                <div className="mf-detail-title"><span className="mf-eyebrow">{materialSourceText[selected.exceptionCase.supplySource || 'UNKNOWN']} · 事项 #{selected.exceptionCase.sequence} · {selected.workOrder.customerName || '客户待补充'}</span><h2>{selected.workOrder.specification || selected.workOrder.code}</h2><small>{selected.workOrder.productName} · {selected.workOrder.weekStartDate ? `计划周 ${dateText(selected.workOrder.weekStartDate)} - ${dateText(selected.workOrder.weekEndDate)}` : '计划周待确认'}</small></div>
+                <div className="mf-detail-head-actions"><span className={`mf-status-chip ${selected.status === 'RESOLVED' ? 'resolved' : selected.status === 'WAITING_WAREHOUSE' ? 'warehouse' : ''}`}>{selected.statusText}</span><button type="button" onClick={() => setHistoryOpen(!historyOpen)}><Clock3 size={15} />{historyOpen ? '收起记录' : '跟进记录'}</button></div>
+              </header>
+
+              <div className="mf-stage" aria-label={`当前进度：${selected.statusText}`}>
+                <strong>当前处理 <span>{selected.statusText}</span></strong>
+                <div className="mf-stage-track" aria-hidden="true">{stageNodes.map((node, index) => <i key={node.key} className={index < activeStage ? 'passed' : index === activeStage ? 'current' : ''} />)}</div>
+                <small>{selected.status === 'WAITING_WAREHOUSE' ? '已报到料，等待仓库核验实物' : selected.status === 'RESOLVED' ? '仓库已核验，事项闭环' : selected.status === 'WAITING_ARRIVAL' ? '持续记录到料进度' : selected.status === 'CANCELLED' ? '事项已取消' : '及时补充采购或客供处理进展'}</small>
+              </div>
+
+              <div className="ms-scroll ms-detail-body mf-detail-scroll">
+                {selected.risk === 'overdue' && <div className="mf-risk"><AlertTriangle size={17} /><span><strong>到料已逾期</strong> · 原预计 {dateText(selected.expectedAt)}。请补充进展或调整预计到料时间，历史事项继续保留。</span></div>}
+                <section className="mf-material-facts" aria-label="缺料信息">
+                  <div className="mf-material-primary"><small>缺料型号</small><strong>{selected.exceptionCase.materialModel || '见缺料说明'}</strong><span>{selected.exceptionCase.exceptionNote}</span></div>
+                  <div><small>物料来源</small><strong>{materialSourceText[selected.exceptionCase.supplySource || 'UNKNOWN']}</strong></div>
+                  <div><small>本次缺料</small><strong>{selected.exceptionCase.shortageQuantity == null ? '待确认' : `${selected.exceptionCase.shortageQuantity} ${selected.exceptionCase.unit || '个'}`}</strong></div>
+                  <div><small>已报到料</small><strong>{selected.exceptionCase.receivedQuantity || 0} {selected.exceptionCase.unit || '个'}</strong></div>
+                  <div><small>预计到料</small><strong>{dateText(selected.expectedAt)}</strong></div>
+                </section>
+                <div className="mf-original"><span>仓库反馈 · {dateTimeText(selected.exceptionCase.reportedAt)}</span><p>{selected.exceptionCase.exceptionNote}</p><small>工单 {selected.workOrder.code} · 计划数量 {quantityText(selected)} · 当前负责人 {selected.owner?.displayName || selected.owner?.username || '待分配'}</small></div>
+                <section className="mf-latest">
+                  <div className="mf-section-line"><div><h3>最近进展</h3><span>所有协同人员都可补充记录</span></div><button type="button" onClick={() => setHistoryOpen(true)}>完整时间线 <ArrowRight size={15} /></button></div>
+                  <p>{selected.latestProgress || '暂无处理进展，填写第一条记录后会同步显示在仓库。'}</p>
+                  <small>{selected.latestProgress ? `${dateTimeText(latestActivity?.createdAt || selected.lastFollowedAt || selected.updatedAt)} · ${latestActivity?.actor?.displayName || latestActivity?.actor?.username || '系统'}` : '等待协同处理'}</small>
+                </section>
+
+                {!['RESOLVED', 'CANCELLED'].includes(selected.status) ? <section className="mf-compose">
+                  <div className="mf-section-line"><div><h3>更新跟进</h3><span>填写处理内容后，系统记录当前账号与时间</span></div>{canManage && <button type="button" className="mf-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(value => !value)}>{advancedOpen ? '收起处理字段' : '调整处理字段'} <ChevronRight size={15} /></button>}</div>
+                  <label className="mf-note-label">本次进展 <em>*</em><textarea aria-label="本次进展" rows={3} maxLength={600} placeholder={form.supplySource === 'CUSTOMER' ? '填写客户反馈、发货情况、运单或剩余物料安排；保存后记录账号与时间。' : '填写采购进展、供应商反馈、发货情况或运单；保存后记录账号与时间。'} value={form.note} onChange={event => setForm(current => ({ ...current, note: event.target.value }))} /></label>
+                  {canManage && advancedOpen && <div className="mf-advanced-fields"><div className="mf-advanced-heading"><strong>处理字段</strong><small>修改后与本次进展一起保存，仓库会看到同步结果</small></div><div className="ms-form-grid">
+                    <label>物料来源<select aria-label="修改物料来源" value={form.supplySource} onChange={event => setForm(current => ({ ...current, supplySource: event.target.value as MaterialSource }))}>{Object.entries(materialSourceText).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                    <label>负责人<select value={form.ownerId} onChange={event => setForm(current => ({ ...current, ownerId: event.target.value }))}><option value="">请选择</option>{users.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName || candidate.username}</option>)}</select></label>
+                    <label>跟进状态<select value={form.status} onChange={event => setForm(current => ({ ...current, status: event.target.value as UpdateForm['status'] }))}>{statusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                    <label>{form.status === 'WAITING_ARRIVAL' ? '预计到料日期 *' : '预计到料日期'}<input aria-label="预计到料日期" type="date" value={form.expectedAt} onChange={event => setForm(current => ({ ...current, expectedAt: event.target.value }))} /></label>
+                    <label>累计已到数量（{selected.exceptionCase.unit || '个'}）<input aria-label="累计已到数量" type="number" min="0" step="0.001" value={form.receivedQuantity} onChange={event => setForm(current => ({ ...current, receivedQuantity: event.target.value }))} /></label>
+                    <div className="ms-field-hint">部分到料后继续记录剩余物料。全部到齐并由仓库核验后闭环。</div>
+                  </div></div>}
+                  {formError && <p className="ms-form-error" role="alert">{formError}</p>}
+                </section> : <div className="mf-closed"><CheckCircle2 size={21} /><div><strong>{selected.status === 'RESOLVED' ? `仓库已核验 · ${dateTimeText(selected.resolvedAt)}` : '事项已取消'}</strong><p>{selected.exceptionCase.resolutionNote || '完整处理经过保留在时间线中。'}</p></div></div>}
+              </div>
+
+              <footer className="ms-bottom mf-bottom"><a href={warehouseHref}><ArrowRight size={15} className="mf-back-arrow" />返回对应仓库工单</a><span>事项创建 {dateTimeText(selected.createdAt)}</span>{canReschedule && <button type="button" onClick={openReschedule}>到料后改期</button>}<div className="ms-spacer" />{!['RESOLVED', 'CANCELLED'].includes(selected.status) && <>{nextTaskId && <button type="button" disabled={saveDisabled} onClick={() => void mutate(saveAction, true)}>保存并下一项</button>}<button type="button" className="ms-primary" disabled={saveDisabled} onClick={() => void mutate(saveAction)}><Send size={15} />{saving ? '保存中…' : advancedOpen && canManage ? '保存进展与处理' : '保存进展'}</button></>}</footer>
+            </> : <div className="ms-empty"><Layers3 size={38} /><strong>{detailLoading ? '正在加载事项…' : '请选择物料异常'}</strong></div>}
+          </section>
+
+          {historyOpen && <aside className="ms-panel ms-history"><header><strong>完整处理时间线</strong><button type="button" aria-label="关闭跟进记录" onClick={() => setHistoryOpen(false)}><X size={16} /></button></header><div className="ms-scroll ms-timeline">{visibleActivities.map(activity => <article key={activity.id}><i /><div><strong>{activity.content || '更新跟进'}</strong><small>{activity.actor?.displayName || activity.actor?.username || '系统'} · {dateTimeText(activity.createdAt)}</small></div></article>)}{!visibleActivities.length && <div className="ms-empty">暂无跟进记录</div>}</div></aside>}
         </div>
       </div>
-
       {rescheduleOpen && selected?.workOrder.planning && <div className="mf-reschedule-backdrop" role="presentation" onMouseDown={event => {
         if (event.target === event.currentTarget && !rescheduleSaving) setRescheduleOpen(false);
       }}>

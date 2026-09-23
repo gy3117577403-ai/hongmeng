@@ -71,6 +71,26 @@ test('department permission authorizes its own API reads and writes only', () =>
   assert.equal(canAccessApiRoute(procurement, '/api/warehouse/tasks', 'GET'), false);
 });
 
+test('ordinary field reporter can read material follow-up and append a note without opening procurement commands', () => {
+  const field = context({ profile: 'FIELD_REPORTER', grantType: 'PRIMARY', scopeKey: 'EMPLOYEE:operator' });
+  const id = '11111111-2222-4333-8444-555555555555';
+  assert.equal(canAccessApiRoute(field, '/api/material-follow-ups?source=CUSTOMER', 'GET'), true);
+  assert.equal(canAccessApiRoute(field, `/api/material-follow-ups/${id}`, 'GET'), true);
+  assert.equal(canAccessApiRoute(field, `/api/material-follow-ups/${id}`, 'PATCH'), true);
+  for (const [path, method] of [
+    ['/api/material-follow-ups', 'POST'],
+    ['/api/material-follow-ups', 'DELETE'],
+    [`/api/material-follow-ups/${id}`, 'POST'],
+    [`/api/material-follow-ups/${id}`, 'DELETE'],
+    ['/api/material-follow-ups/classify', 'POST'],
+    [`/api/material-follow-ups/${id}/reschedule`, 'POST'],
+    ['/api/material-follow-ups/not-a-uuid', 'PATCH'],
+    ['/api/warehouse/material-tasks', 'GET'],
+  ] as const) {
+    assert.equal(canAccessApiRoute(field, path, method), false, `${method} ${path}`);
+  }
+});
+
 test('finance account cannot call summary, search or business APIs', () => {
   const finance = context({
     profile: 'FINANCE_ACCOUNT_ONLY',

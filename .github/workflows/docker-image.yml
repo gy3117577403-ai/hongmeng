@@ -410,6 +410,14 @@ jobs:
             node scripts/smoke-production-board-browser.mjs
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk
+          mkdir -p artifacts/material-collaboration
+          docker exec -i -e MATERIAL_COLLAB_QA_ALLOW=disposable-material-runtime hongmeng-release-smoke node \
+            < scripts/seed-material-collaboration-smoke.cjs > artifacts/material-collaboration/release-fixture.json
+          MATERIAL_COLLAB_QA_ALLOW=disposable-material-runtime \
+            MATERIAL_COLLAB_QA_BASE=http://127.0.0.1:3000 \
+            MATERIAL_COLLAB_QA_FIXTURE=artifacts/material-collaboration/release-fixture.json \
+            MATERIAL_COLLAB_QA_OUTPUT=artifacts/material-collaboration/browser \
+            node scripts/smoke-material-collaboration-browser.mjs
           mkdir -p artifacts/process-quality
           docker exec -i -e PROCESS_QUALITY_QA_ALLOW=disposable-quality-reporting-runtime hongmeng-release-smoke node \
             < scripts/seed-process-quality-smoke.cjs > artifacts/process-quality/fixture.json
@@ -999,6 +1007,16 @@ jobs:
             artifacts/production-collaboration/browser-runtime.txt
             artifacts/production-collaboration/initial-browser-snapshot.txt
             artifacts/production-collaboration/production-76-rows.png
+          if-no-files-found: warn
+      - name: Upload material collaboration acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: material-collaboration-${{ github.ref_name }}
+          path: |
+            artifacts/material-collaboration/browser/browser-runtime.txt
+            artifacts/material-collaboration/browser/browser-failure.txt
+            artifacts/material-collaboration/browser/*.png
           if-no-files-found: warn
       - name: Upload planning and progress acceptance evidence
         if: always()

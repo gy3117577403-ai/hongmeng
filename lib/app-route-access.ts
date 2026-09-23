@@ -119,6 +119,9 @@ export function canAccessAppRoute(access: AppAccess, pathname: string): boolean 
   }
   // Finished goods is shared by every authenticated user; page access still requires login.
   if (/^\/workspace\/finished-goods(?:\/|$)/.test(normalizedPath(pathname))) return true;
+  // Everyone signed in can read material follow-up and append their own progress.
+  // Keep child routes and privileged mutations under their existing permissions.
+  if (normalizedPath(pathname) === '/workspace/procurement') return true;
   if (/^\/workspace\/purchases(?:\/|$)/.test(normalizedPath(pathname))) return true;
   const rule = routeAccessRule(pathname);
   if (!rule) return false;

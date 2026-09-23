@@ -15,6 +15,14 @@ export const MATERIAL_FOLLOW_UP_ACTIVE_STATUSES: MaterialFollowUpStatus[] = [
   MaterialFollowUpStatus.WAITING_WAREHOUSE,
 ];
 
+// ETA measures the arrival of material. Once arrival has been reported, the
+// remaining action belongs to the warehouse and must not be shown as late ETA.
+export const MATERIAL_FOLLOW_UP_ARRIVAL_PENDING_STATUSES: MaterialFollowUpStatus[] = [
+  MaterialFollowUpStatus.PENDING,
+  MaterialFollowUpStatus.IN_PROGRESS,
+  MaterialFollowUpStatus.WAITING_ARRIVAL,
+];
+
 export const materialFollowUpStatusText: Record<MaterialFollowUpStatusDTO, string> = {
   PENDING: '待接收',
   IN_PROGRESS: '跟进中',
@@ -226,6 +234,7 @@ export function materialFollowUpRisk(
   now = new Date(),
 ): { risk: MaterialFollowUpRiskDTO; riskText: string } {
   if (status === 'RESOLVED' || status === 'CANCELLED') return { risk: 'closed', riskText: '已结束' };
+  if (status === 'WAITING_WAREHOUSE') return { risk: 'normal', riskText: '待仓库确认' };
   const start = chinaDayStart(now);
   if (expectedAt && expectedAt < start) return { risk: 'overdue', riskText: '已逾期' };
   if (!ownerId) return { risk: 'unassigned', riskText: '待认领' };

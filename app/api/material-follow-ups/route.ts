@@ -4,6 +4,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   chinaDayStart,
   MATERIAL_FOLLOW_UP_ACTIVE_STATUSES,
+  MATERIAL_FOLLOW_UP_ARRIVAL_PENDING_STATUSES,
   materialFollowUpListInclude,
   serializeMaterialFollowUpTask,
 } from '@/lib/material-follow-up';
@@ -116,7 +117,7 @@ export async function GET(req: NextRequest) {
         ],
       });
     }
-    if (params.get('risk') === 'overdue') filters.push({ status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES }, expectedAt: { lt: chinaDayStart() } });
+    if (params.get('risk') === 'overdue') filters.push({ status: { in: MATERIAL_FOLLOW_UP_ARRIVAL_PENDING_STATUSES }, expectedAt: { lt: chinaDayStart() } });
     const where: Prisma.MaterialFollowUpTaskWhereInput = { AND: filters };
     const page = integer(params.get('page'), 1, 100000);
     const pageSize = integer(params.get('pageSize'), 100, 300);
@@ -155,7 +156,7 @@ export async function GET(req: NextRequest) {
       prisma.materialFollowUpTask.count({
         where: {
           ...scopeWhere,
-          status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES },
+          status: { in: MATERIAL_FOLLOW_UP_ARRIVAL_PENDING_STATUSES },
           expectedAt: { lt: chinaDayStart() },
         },
       }),

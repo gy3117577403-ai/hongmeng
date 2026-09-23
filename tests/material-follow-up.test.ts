@@ -71,6 +71,7 @@ test('resolved feedback can only be reopened from a new warehouse exception', ()
 test('risk prioritizes overdue and unassigned tasks', () => {
   const now = new Date('2026-07-25T02:00:00.000Z');
   assert.equal(materialFollowUpRisk('WAITING_ARRIVAL', 'user-1', new Date('2026-07-24T04:00:00.000Z'), now).risk, 'overdue');
+  assert.equal(materialFollowUpRisk('WAITING_WAREHOUSE', 'user-1', new Date('2026-07-24T04:00:00.000Z'), now).risk, 'normal');
   assert.equal(materialFollowUpRisk('PENDING', null, null, now).risk, 'unassigned');
   assert.equal(materialFollowUpRisk('RESOLVED', null, null, now).risk, 'closed');
 });

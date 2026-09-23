@@ -17,8 +17,12 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    if (!user.access.capabilities.includes('PROCUREMENT:UPDATE')) return forbidden();
-    const task = await mutateMaterialFollowUp(params.id, await req.json(), user.id);
+    const body = await req.json();
+    // Anyone signed in may append a traceable progress note. Changes to the
+    // material source, owner, ETA, arrival quantity or workflow state still
+    // require procurement access and are validated by the service layer.
+    if (body?.action !== 'note' && !user.access.capabilities.includes('PROCUREMENT:UPDATE')) return forbidden();
+    const task = await mutateMaterialFollowUp(params.id, body, user.id);
     return NextResponse.json({ ok: true, task: serializeMaterialFollowUpTask(task) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

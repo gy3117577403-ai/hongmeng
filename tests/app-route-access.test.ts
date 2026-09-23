@@ -72,6 +72,15 @@ test('procurement can collaborate on warehouse exceptions without gaining system
   assert.equal(canAccessAppRoute(procurement, '/workspace/permissions'), false);
 });
 
+test('signed-in users can open material follow-up without gaining procurement or warehouse management', () => {
+  const ordinary = access('ACCOUNT_SELF');
+  assert.equal(canAccessAppRoute(ordinary, '/workspace/procurement'), true);
+  assert.equal(canAccessAppRoute(ordinary, '/workspace/procurement?taskId=issue-1'), true);
+  assert.equal(canAccessAppRoute(ordinary, '/workspace/procurement/admin'), false);
+  assert.equal(canAccessAppRoute(ordinary, '/workspace/warehouse'), false);
+  assert.equal(canAccessAppRoute(ordinary, '/workspace/permissions'), false);
+});
+
 test('production supervisor can use production and planning collaboration pages', () => {
   const supervisor = accessWithCapabilities(
     ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'PRODUCTION'],

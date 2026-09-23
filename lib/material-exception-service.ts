@@ -76,20 +76,65 @@ async function updateWarehouseException(tx: Tx, id: string, input: Input, actorI
       const source = materialSource(input.supplySource ?? target?.supplySource);
       const required = input.shortageQuantity === undefined ? target?.shortageQuantity ?? null : materialQuantity(input.shortageQuantity, true);
       validateMaterialAmounts(required, target?.receivedQuantity || 0);
+      const expectedArrivalAt = Object.prototype.hasOwnProperty.call(input, 'expectedAt')
+        ? transition.next.expectedAt
+        : target?.expectedArrivalAt || null;
+      const etaChanged = target?.expectedArrivalAt?.getTime() !== expectedArrivalAt?.getTime();
       const details = { supplySource: source, materialModel: text(input.materialModel ?? target?.materialModel, 160), shortageQuantity: required, unit: text(input.unit ?? target?.unit, 12) || '个' };
+      if (['shortage', 'insufficient_quantity'].includes(transition.next.exceptionType!)) {
+        if (source === 'UNKNOWN') throw new MaterialInputError('请选择采购物料或客供物料');
+        if (!details.materialModel) throw new MaterialInputError('请填写缺料型号');
+      }
       content = `${materialExceptionLabel(transition.next.exceptionType!, source)}：${transition.next.exceptionNote}`;
+      if (action === 'update_exception' && etaChanged) {
+        content += `；预计到料：${target?.expectedArrivalAt?.toISOString() || '未设置'} → ${expectedArrivalAt?.toISOString() || '未设置'}`;
+      }
       if (action === 'report_exception') {
         const sequence = await tx.warehouseMaterialExceptionCase.aggregate({ where: { warehouseTaskId: id }, _max: { sequence: true } });
-        target = await tx.warehouseMaterialExceptionCase.create({ data: { warehouseTaskId: id, sequence: (sequence._max.sequence || 0) + 1, exceptionType: transition.next.exceptionType!, exceptionNote: transition.next.exceptionNote!, ...details, reportedById: actorId, weekStartDate: current.workOrder.weekStartDate, weekEndDate: current.workOrder.weekEndDate }, include: { followUpTask: true } });
+        target = await tx.warehouseMaterialExceptionCase.create({ data: { warehouseTaskId: id, sequence: (sequence._max.sequence || 0) + 1, exceptionType: transition.next.exceptionType!, exceptionNote: transition.next.exceptionNote!, ...details, expectedArrivalAt, expectedArrivalById: expectedArrivalAt ? actorId : null, expectedArrivalUpdatedAt: expectedArrivalAt ? now : null, reportedById: actorId, weekStartDate: current.workOrder.weekStartDate, weekEndDate: current.workOrder.weekEndDate }, include: { followUpTask: true } });
         eventId = target.id;
       } else {
-        target = await tx.warehouseMaterialExceptionCase.update({ where: { id: target!.id }, data: { exceptionType: transition.next.exceptionType!, exceptionNote: transition.next.exceptionNote!, ...details }, include: { followUpTask: true } });
+        target = await tx.warehouseMaterialExceptionCase.update({ where: { id: target!.id }, data: { exceptionType: transition.next.exceptionType!, exceptionNote: transition.next.exceptionNote!, ...details, ...(etaChanged ? { expectedArrivalAt, expectedArrivalById: actorId, expectedArrivalUpdatedAt: now } : {}) }, include: { followUpTask: true } });
       }
-      const ownerId = text(input.ownerId, 80);
+      let ownerId = text(input.ownerId, 80);
       if (ownerId && !await tx.user.count({ where: { id: ownerId, isActive: true } })) throw new MaterialInputError('请选择有效的负责人');
-      const follow = await tx.materialFollowUpTask.upsert({ where: { warehouseExceptionId: target.id }, create: { warehouseTaskId: id, warehouseExceptionId: target.id, createdById: actorId, latestProgress: content, ownerId: ownerId || null }, update: { version: { increment: 1 } } });
-      await tx.materialFollowUpActivity.create({ data: { taskId: follow.id, action, content, actorId, fromStatus: follow.status, toStatus: follow.status } });
+      // Warehouse-only users can register an exception without the procurement
+      // people list. Assign the agreed default only when it resolves uniquely.
+      if (action === 'report_exception' && !ownerId) {
+        const defaults = await tx.user.findMany({
+          where: { isActive: true, OR: [{ displayName: '贾改真' }, { username: '贾改真' }] },
+          select: { id: true },
+          take: 2,
+        });
+        if (defaults.length === 1) ownerId = defaults[0].id;
+      }
+      const arrivalNoLongerComplete = action === 'update_exception'
+        && target.followUpTask?.status === 'WAITING_WAREHOUSE'
+        && required !== null
+        && target.receivedQuantity < required;
+      const etaNoLongerKnown = action === 'update_exception'
+        && target.followUpTask?.status === 'WAITING_ARRIVAL'
+        && !expectedArrivalAt;
+      const mustResumeProgress = arrivalNoLongerComplete || etaNoLongerKnown;
+      const follow = await tx.materialFollowUpTask.upsert({
+        where: { warehouseExceptionId: target.id },
+        create: { warehouseTaskId: id, warehouseExceptionId: target.id, createdById: actorId, latestProgress: content, ownerId: ownerId || null, expectedAt: expectedArrivalAt },
+        update: { ...(mustResumeProgress ? { status: 'IN_PROGRESS' as const } : {}), ...(etaChanged ? { expectedAt: expectedArrivalAt } : {}), version: { increment: 1 } },
+      });
+      if (arrivalNoLongerComplete) {
+        await tx.warehouseMaterialExceptionCase.update({ where: { id: target.id }, data: { actualArrivalAt: null, actualArrivalById: null } });
+      }
+      await tx.materialFollowUpActivity.create({ data: {
+        taskId: follow.id, action,
+        content: arrivalNoLongerComplete ? `${content}；缺料数量上调，累计到料不足，退回跟进中` : etaNoLongerKnown ? `${content}；预计到料时间已清除，退回跟进中` : content,
+        actorId,
+        fromStatus: target.followUpTask?.status || follow.status,
+        toStatus: follow.status,
+      } });
     } else if (action === 'resolve') {
+      if (target!.shortageQuantity !== null && target!.receivedQuantity < target!.shortageQuantity) {
+        throw new MaterialInputError('累计到料未达到缺料数量，请继续跟进并由仓库核对', 409);
+      }
       await tx.warehouseMaterialExceptionCase.update({ where: { id: target!.id }, data: { status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, resolutionNote: content, actualArrivalAt: target!.actualArrivalAt || now, actualArrivalById: target!.actualArrivalById || actorId } });
       const follow = await tx.materialFollowUpTask.upsert({ where: { warehouseExceptionId: target!.id }, create: { warehouseTaskId: id, warehouseExceptionId: target!.id, status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, latestProgress: content }, update: { status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, latestProgress: content, lastFollowedAt: now, version: { increment: 1 } } });
       await tx.materialFollowUpActivity.create({ data: { taskId: follow.id, action: 'warehouse_confirmed_resolved', fromStatus: target!.followUpTask?.status, toStatus: 'RESOLVED', content, actorId } });
@@ -127,6 +172,21 @@ async function updateFollowUp(tx: Tx, id: string, input: Input, actorId: string)
   const action = text(input.action, 20);
   const changes: string[] = [];
   let source = event.supplySource;
+  if (action === 'note') {
+    const extra = Object.keys(input).filter(key => !['action', 'version', 'note'].includes(key));
+    if (extra.length) throw new MaterialInputError('普通进展只能填写文字；状态、来源与到料数量请使用授权操作');
+    if (current.status === 'RESOLVED' || current.status === 'CANCELLED') throw new MaterialInputError('事项已结束，不能继续填写进展', 409);
+    const note = text(input.note, 600);
+    if (!note) throw new MaterialInputError('请填写本次跟进进展');
+    const now = new Date();
+    await tx.materialFollowUpTask.update({
+      where: { id },
+      data: { latestProgress: note, lastFollowedAt: now, version: { increment: 1 } },
+    });
+    await tx.materialFollowUpActivity.create({ data: { taskId: id, action, fromStatus: current.status, toStatus: current.status, content: note, actorId } });
+    await tx.warehouseMaterialActivity.create({ data: { taskId: current.warehouseTaskId, action: 'material_follow_up_note', content: note, actorId, detail: { exceptionCaseId: event.id } } });
+    return tx.materialFollowUpTask.findUniqueOrThrow({ where: { id }, include: materialFollowUpDetailInclude });
+  }
   if (input.supplySource !== undefined) {
     if (!MATERIAL_SOURCES.includes(input.supplySource as never)) throw new MaterialInputError('物料来源不正确');
     source = String(input.supplySource);

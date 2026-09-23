@@ -45,6 +45,31 @@ function ymd(value: Date | null): string | null {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
+function overdueTaskWhere(): Prisma.WarehouseMaterialTaskWhereInput {
+  const beforeToday = { lt: chinaDayStart() };
+  return {
+    status: 'exception',
+    OR: [
+      {
+        exceptionCases: {
+          some: {
+            status: 'OPEN',
+            expectedArrivalAt: beforeToday,
+            OR: [
+              { followUpTask: { is: null } },
+              { followUpTask: { is: { status: { not: 'WAITING_WAREHOUSE' } } } },
+            ],
+          },
+        },
+      },
+      {
+        exceptionCases: { none: { status: 'OPEN' } },
+        expectedAt: beforeToday,
+      },
+    ],
+  };
+}
+
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
@@ -100,8 +125,7 @@ export async function GET(req: NextRequest) {
     }
     if (source !== 'ALL' || (exceptionType && exceptionType !== 'all')) where.exceptionCases = { some: eventFilter };
     if (params.get('expected') === 'overdue') {
-      where.status = 'exception';
-      where.expectedAt = { lt: chinaDayStart() };
+      where.AND = [overdueTaskWhere()];
     }
     if (keyword) {
       where.OR = [
@@ -150,7 +174,7 @@ export async function GET(req: NextRequest) {
       prisma.warehouseMaterialTask.count({ where }),
       prisma.warehouseMaterialTask.groupBy({ by: ['status'], where: summaryWhere, _count: { _all: true } }),
       prisma.warehouseMaterialTask.count({
-        where: { ...summaryWhere, status: 'exception', expectedAt: { lt: chinaDayStart() } },
+        where: { ...summaryWhere, AND: [overdueTaskWhere()] },
       }),
       prisma.workOrder.groupBy({
         by: ['weekStartDate', 'weekEndDate', 'planActive'],

@@ -392,6 +392,10 @@ export function serializeWarehouseMaterialTask(
   const activeFollowUp = task.followUpTasks[0] || null;
   const lastResolvedException = task.exceptionCases.find(e => e.status === 'RESOLVED') || null;
   const synchronizedExpectedAt = task.expectedAt || activeFollowUp?.expectedAt;
+  const openExceptions = task.exceptionCases.filter(e => e.status === 'OPEN');
+  const hasOverdueArrival = openExceptions.length
+    ? openExceptions.some(e => e.followUpTask?.status !== 'WAITING_WAREHOUSE' && isExpectedOverdue(status, e.expectedArrivalAt, now))
+    : isExpectedOverdue(status, synchronizedExpectedAt, now);
   const source = task.workOrder || sampleMaterialSource(task.sampleTask);
   return {
     id: task.id,
@@ -412,7 +416,7 @@ export function serializeWarehouseMaterialTask(
     version: task.version,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
-    isExpectedOverdue: isExpectedOverdue(status, synchronizedExpectedAt, now),
+    isExpectedOverdue: hasOverdueArrival,
     followUpTask: activeFollowUp ? {
       id: activeFollowUp.id,
       status: activeFollowUp.status as MaterialFollowUpStatusDTO,
