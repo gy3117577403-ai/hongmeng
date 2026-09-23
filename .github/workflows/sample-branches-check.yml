@@ -30,6 +30,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npx tsx --test tests/release-version.test.ts
       - run: npx prisma generate
       - run: npx prisma migrate deploy
       - run: npx tsc --noEmit
