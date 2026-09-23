@@ -63,8 +63,8 @@ try {
       await dialog.getByRole('button',{name:'保存',exact:true}).click();
       await dialog.waitFor({state:'detached'});
       await page.waitForFunction(id=>new URL(location.href).searchParams.get('taskId')===id&&new URL(location.href).searchParams.get('status')==='exception',f.warehouseTaskId);
-      await page.locator('.mw-ui-order.active').waitFor();
-      check(locationPath(await page.url())==='/workspace/warehouse','register stays in warehouse page');
+      await page.locator('.mw-ui-order.active.mw-ui-order-exception').waitFor();
+      check(await page.evaluate(()=>location.pathname)==='/workspace/warehouse','register stays in warehouse page');
       check(await page.locator('.mw-ui-order.active').count()===1,'same warehouse order remains selected');
       const warehouse=await api('/api/warehouse/material-tasks/'+f.warehouseTaskId);
       check(warehouse.status===200&&warehouse.body.task.status==='exception','registered exception persists on same task');
@@ -74,7 +74,7 @@ try {
       await shot('warehouse-registered-1366x1024');
       await page.locator('.mw-ui-event').filter({hasText:material}).getByRole('link',{name:/查看跟进/}).click();
       await page.waitForURL(url=>url.pathname==='/workspace/procurement'&&url.searchParams.get('taskId')===followId);
-      const returnTo=new URL(await page.url()).searchParams.get('returnTo')||'';
+      const returnTo=await page.evaluate(()=>new URL(location.href).searchParams.get('returnTo')||'');
       check(returnTo.includes('taskId='+encodeURIComponent(f.warehouseTaskId))&&returnTo.includes('status=exception'),'follow-up preserves exact warehouse context');
       check(await page.getByRole('heading',{name:f.workOrder.specification}).count()===1,'linked issue opens in follow-up detail');
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'follow-up fits 1366 tablet width');
@@ -157,7 +157,6 @@ try {
       check(errors.length===0,'no uncaught browser errors: '+errors.join('; '));
       return {passed:true,warehouseTaskId:f.warehouseTaskId,followUpId:followId,checks};
     } catch(error) {await shot('failure-1366x1024');throw error;}
-    function locationPath(url){return new URL(url).pathname;}
   }`;
   // Parse the generated browser program before invoking the CLI.
   new Function(`return (${code})`);
