@@ -165,7 +165,7 @@ try {
       const claimResponse=page.waitForResponse(response=>response.url().includes('/api/material-follow-ups/'+followId)&&response.request().method()==='PATCH');
       await page.getByRole('button',{name:'接收任务',exact:true}).click();
       check((await claimResponse).status()===200,'assigned colleague accepts directly from the fixed action panel');
-      await page.locator('.mf-task-state').filter({hasText:'正在跟进'}).waitFor();
+      await page.locator('.mf-task-state').filter({hasText:'已接收'}).waitFor();
       check(await page.getByLabel('本次进展',{exact:true}).inputValue()==='接收前正在记录的进展','acceptance preserves an unsaved progress draft');
       const accepted=(await api('/api/material-follow-ups/'+followId)).body.task;
       check(accepted.acceptedAt&&accepted.status==='IN_PROGRESS'&&accepted.activities.some(item=>item.action==='claim'&&item.actor.id===f.users.operator.id),'acceptance records recipient and timestamp');
@@ -290,6 +290,14 @@ try {
       const visualSheet=page.getByRole('dialog',{name:'物料协同处理'});
       await visualSheet.getByRole('heading',{name:f.visual.materialModel,exact:true}).waitFor();
       await shot('material-glass-sheet-1366x1024');
+      await visualSheet.getByRole('button',{name:'展开进展编辑'}).click();
+      const nestedEditor=page.getByRole('dialog',{name:'填写进展'});
+      await nestedEditor.getByLabel('完整进展').fill('弹窗内保留的进展');
+      await page.keyboard.press('Tab');
+      check(await page.evaluate(()=>document.activeElement.closest('dialog')?.getAttribute('aria-label'))==='填写进展','keyboard stays inside the nested editor');
+      await page.keyboard.press('Escape');
+      await nestedEditor.waitFor({state:'detached'});
+      check(await visualSheet.isVisible()&&await visualSheet.getByLabel('本次进展',{exact:true}).inputValue()==='弹窗内保留的进展','Escape closes only the inner editor and preserves warehouse context');
       await visualSheet.getByLabel('本次进展',{exact:true}).fill('未保存的跟进草稿');
       await visualSheet.getByRole('button',{name:'关闭物料跟进'}).click();
       const discard=page.getByRole('alertdialog',{name:'保留这次未保存的进展？'});
@@ -327,6 +335,11 @@ try {
         check(await page.locator('.mg-process,.mg-compose-scroll').count()===0,'no permanent process strip or second compose scroller');
         await shot('compact-followup-'+size.width+'x'+size.height);
       }
+      // 1093x614 is the CSS viewport equivalent of 125% zoom on 1366x768.
+      await page.setViewportSize({width:1093,height:614});
+      check(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+2&&document.documentElement.scrollWidth<=innerWidth+2),'125-percent equivalent reflow keeps scrolling inside the panels');
+      check((await page.locator('.mf-detail-scroll').boundingBox()).height>=180,'compact reflow retains a usable reading area');
+      await shot('compact-reflow-1093x614');
       await page.setViewportSize({width:1366,height:768});
       await page.getByLabel('本次进展',{exact:true}).fill('交期冲突时仍应保留这条草稿');
       await page.getByRole('button',{name:'改交期',exact:true}).click();
@@ -354,7 +367,7 @@ try {
       await shot('compact-unassigned-1366x768');
       await page.getByRole('button',{name:'确认来源'}).click();
       const sourceDialog=page.getByRole('dialog',{name:'修改物料来源'});
-      await sourceDialog.getByLabel('修改物料来源').selectOption('CUSTOMER');
+      await sourceDialog.getByLabel('修改物料来源',{exact:true}).selectOption('CUSTOMER');
       await sourceDialog.getByRole('button',{name:'确认保存'}).click();
       await sourceDialog.waitFor({state:'detached'});
       const classified=(await api('/api/material-follow-ups/'+f.visual.pendingId)).body.task;

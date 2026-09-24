@@ -221,6 +221,19 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
   const deepLinkedIdRef = useRef('');
   const loadedTaskId = useRef('');
   const detailScroll = useRef<HTMLDivElement>(null);
+  const queueScroll = useRef<HTMLDivElement>(null);
+  const revealedTask = useRef('');
+  useEffect(() => {
+    if (!selectedId || revealedTask.current === selectedId) return;
+    const queue = queueScroll.current;
+    const row = queue?.querySelector<HTMLElement>('.mf-order.active');
+    if (!queue || !row) return;
+    const bounds = queue.getBoundingClientRect();
+    const selectedBounds = row.getBoundingClientRect();
+    if (selectedBounds.top < bounds.top) queue.scrollTop += selectedBounds.top - bounds.top - 8;
+    else if (selectedBounds.bottom > bounds.bottom) queue.scrollTop += selectedBounds.bottom - bounds.bottom + 8;
+    revealedTask.current = selectedId;
+  }, [selectedId, tasks]);
   useEffect(() => { detailScroll.current?.scrollTo({ top: 0 }); setHistoryOpen(false); }, [selected?.id]);
   useToastBridge(toast, setToast); useToastBridge(error, setError);
   const progressDirty = Boolean(selected && JSON.stringify(form) !== JSON.stringify(formFor(selected, user.id)));
@@ -495,7 +508,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
               <button type="button" disabled={!batchIds.length || saving} onClick={() => void classifyBatch('PURCHASED')}>归采购</button>
               <button type="button" disabled={!batchIds.length || saving} onClick={() => void classifyBatch('CUSTOMER')}>归客供</button>
             </div>}
-            <div className="ms-scroll ms-list mf-list" aria-busy={loading}>
+            <div ref={queueScroll} className="ms-scroll ms-list mf-list" aria-busy={loading}>
               {tasks.map(task => <div className="ms-task-row" key={task.id}>
                 {source === 'UNKNOWN' && canManage && !['RESOLVED', 'CANCELLED'].includes(task.status) && <input aria-label={`选择 ${task.workOrder.specification || task.workOrder.code}`} type="checkbox" checked={batchIds.includes(task.id)} onChange={event => setBatchIds(ids => event.target.checked ? [...ids, task.id] : ids.filter(id => id !== task.id))} />}
                 <button type="button" className={`ms-order mf-order mg-order ${selectedId === task.id ? 'active' : ''} ${task.risk === 'overdue' ? 'overdue' : ''}`} disabled={saving} onClick={() => { deepLinkedIdRef.current = ''; setSelectedId(task.id); }}>

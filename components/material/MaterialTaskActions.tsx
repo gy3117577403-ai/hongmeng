@@ -37,8 +37,7 @@ export default function MaterialTaskActions({ task, user, users, busy, error, on
   return <section className={`mf-task-actions ${pending ? 'is-pending' : 'is-accepted'}`} aria-label="任务分配与接收" aria-busy={busy}>
     <div className="mf-task-identity"><CircleUserRound size={18}/><span>负责人</span><strong>{ownerName || '待分配'}</strong>
       {pending && task.owner && <span className="mf-task-state">待本人接收</span>}
-      {!pending && task.acceptedAt && <span className="mf-task-state" title={time(task.acceptedAt)}>正在跟进</span>}
-      {!pending && !task.acceptedAt && !closed && <span className="mf-task-state">正在跟进</span>}
+      {!pending && task.acceptedAt && <span className="mf-task-state" title={time(task.acceptedAt)}>已接收</span>}
     </div>
     <div className="mf-task-buttons">
       {!closed && canAssign && <button type="button" disabled={busy} aria-haspopup="dialog" onClick={() => setOpen(true)}><UserRoundPlus size={16}/>{task.owner ? pending ? '重新分配' : '转交负责人' : '分配负责人'}</button>}
