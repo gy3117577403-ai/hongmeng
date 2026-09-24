@@ -54,6 +54,11 @@ jobs:
         run: npx prisma generate
       - name: Apply Prisma migrations
         run: npx prisma migrate deploy
+      - name: Verify named HR delegation migration
+        env:
+          ACCOUNT_ACCESS_QA_ALLOW: disposable-account-access
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public
+        run: node scripts/check-hr-delegation-migration.mjs
       - name: Verify Prisma migration status
         run: npx prisma migrate status
       - name: Process inspection reporting PostgreSQL integration
@@ -836,7 +841,8 @@ jobs:
             SAMPLE_PLAN_BROWSER_OUTPUT=output/playwright/sample-planning-hangzhou \
             node scripts/smoke-sample-planning-browser.mjs
 
-          ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
+            ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
             ACCOUNT_ACCESS_QA_BASE=http://127.0.0.1:3300 \
             ACCOUNT_ACCESS_QA_OUTPUT=artifacts/account-access/hangzhou-http.json \
             ACCOUNT_ACCESS_FIXTURE="$RUNNER_TEMP/account-access-hangzhou.json" \

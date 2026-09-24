@@ -54,6 +54,7 @@ test('stable department, profile and grant-type codes match the persistence cont
   ]);
   assert.deepEqual(ACCESS_PROFILE_CODES, [
     'SAMPLE_LIBRARY_READER',
+    'EMPLOYEE_ACCESS_MANAGER',
     'MODULE_ACCESS',
     'ADMIN_GLOBAL',
     'DEPARTMENT_FULL',
