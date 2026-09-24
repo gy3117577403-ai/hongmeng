@@ -119,6 +119,18 @@ export function extractManualPageTitleCandidates(lines: string[]): string[] {
   return candidates.slice(0, 6);
 }
 
+function hasTrailingLeader(value: string): boolean {
+  // Walk the suffix once. Nested repetitions of dots/spaces can backtrack
+  // exponentially when a PDF line contains a long leader followed by text.
+  let dots = 0;
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const character = value[index];
+    if ('.．·…'.includes(character)) dots += 1;
+    else if (!/\s/u.test(character)) break;
+  }
+  return dots >= 3;
+}
+
 export function extractManualTocSuggestions(lines: string[], pageCount: number): ConnectorManualTocSuggestion[] {
   const suggestions: ConnectorManualTocSuggestion[] = [];
   for (const line of lines) {
@@ -126,7 +138,7 @@ export function extractManualTocSuggestions(lines: string[], pageCount: number):
     const pageMatch = normalized.match(/(\d{1,3})\s*$/u);
     if (!pageMatch || pageMatch.index === undefined) continue;
     const rawTitle = normalized.slice(0, pageMatch.index).trim();
-    const hasLeader = /[.．·…](?:[\s.．·…]*[.．·…]){2,}\s*$/u.test(rawTitle);
+    const hasLeader = hasTrailingLeader(rawTitle);
     const hasChapterNumber = /^(?:第\s*)?\d+(?:\s*[.．]\s*\d+){1,3}\s*[、.．)）:-]?/u.test(rawTitle);
     if (!hasLeader && !hasChapterNumber) continue;
     const title = cleanTitle(rawTitle);

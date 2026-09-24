@@ -572,6 +572,11 @@ jobs:
             SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-release.json" \
             SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-release \
             node scripts/smoke-sample-library-browser.mjs
+          SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3000 \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-release.json" \
+            MANUAL_BROWSER_OUTPUT=output/playwright/assembly-manual-release \
+            node scripts/smoke-assembly-manual-browser.mjs
 
 
           docker stop --time 20 hongmeng-release-smoke >/dev/null
@@ -990,6 +995,11 @@ jobs:
             SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-hangzhou.json" \
             SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-hangzhou \
             node scripts/smoke-sample-library-browser.mjs
+          SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-hangzhou.json" \
+            MANUAL_BROWSER_OUTPUT=output/playwright/assembly-manual-hangzhou \
+            node scripts/smoke-assembly-manual-browser.mjs
 
           docker stop --time 20 "$app_name" >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
@@ -1152,5 +1162,7 @@ jobs:
           path: |
             artifacts/sample-library
             output/playwright/sample-library-release
+            output/playwright/assembly-manual-release
             output/playwright/sample-library-hangzhou
+            output/playwright/assembly-manual-hangzhou
           if-no-files-found: warn

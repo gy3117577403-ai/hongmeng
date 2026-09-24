@@ -73,6 +73,7 @@ jobs:
           npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
           node scripts/smoke-sample-library-browser.mjs
           node scripts/smoke-account-access-browser.mjs
+          node scripts/smoke-assembly-manual-browser.mjs
           npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser webkit --with-deps
           SAMPLE_LIBRARY_BROWSER=webkit SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-webkit node scripts/smoke-sample-library-browser.mjs
       - uses: actions/upload-artifact@v4
@@ -84,5 +85,6 @@ jobs:
             artifacts/sample-library
             output/playwright/sample-library-webkit
             output/playwright/account-access
+            output/playwright/assembly-manual
             artifacts/account-access
             account-access-server.log
