@@ -16,6 +16,7 @@ import type { WarehouseWorkbenchNavigation } from '@/lib/warehouse-navigation';
 
 type Payload = { tasks: WarehouseMaterialTaskDTO[]; summary: { total: number; pending: number; completed: number; exception: number; expectedOverdue: number; waiting: number; unassigned: number }; weeks: WarehouseWeekOptionDTO[]; pagination: { total: number; totalPages: number }; error?: string };
 type Edit = { kind: 'edit' | 'resolve' | 'reopen' | 'complete'; event?: WarehouseMaterialExceptionCaseDTO };
+type CaseExitAction = 'close' | 'verify';
 type Form = { exceptionType: WarehouseExceptionType; supplySource: MaterialSource; exceptionNote: string; materialModel: string; shortageQuantity: string; unit: string; ownerId: string; note: string; resolution: string };
 const blank = (event?: WarehouseMaterialExceptionCaseDTO): Form => ({ exceptionType: event?.exceptionType || 'shortage', supplySource: event?.supplySource || 'UNKNOWN', exceptionNote: event?.exceptionNote || '', materialModel: event?.materialModel || '', shortageQuantity: event?.shortageQuantity == null ? '' : String(event.shortageQuantity), unit: event?.unit || '个', ownerId: event?.owner?.id || '', note: '', resolution: 'pending' });
 const time = (value?: string | null) => value ? new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '待确认';
@@ -29,9 +30,21 @@ export default function WarehouseManagementShell({ user, modeDrawerInitiallyOpen
   const [verified, setVerified] = useState(false);
   const [caseDirty, setCaseDirty] = useState(false);
   const [caseBusy, setCaseBusy] = useState(false);
+  const [caseExitAction, setCaseExitAction] = useState<CaseExitAction | null>(null);
   const onCaseDraft = useCallback((dirty: boolean, saving: boolean) => { setCaseDirty(dirty); setCaseBusy(saving); }, []);
-  function closeCase() { if (!caseBusy && (!caseDirty || window.confirm('本次进展尚未保存，确定关闭？'))) { setFollowUpId(''); setCaseDirty(false); } }
+  function finishCaseExit(action: CaseExitAction) {
+    const event = selectedEvents.find(item => item.followUpId === followUpId);
+    setCaseExitAction(null); setFollowUpId(''); setCaseDirty(false);
+    if (action === 'verify' && event) open('resolve', event);
+  }
+  function requestCaseExit(action: CaseExitAction) {
+    if (caseBusy) return;
+    if (caseDirty) setCaseExitAction(action);
+    else finishCaseExit(action);
+  }
+  function closeCase() { requestCaseExit('close'); }
   const sheetRef = useRef<HTMLElement>(null);
+  const discardRef = useRef<HTMLElement>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [scope, setScope] = useState<WarehouseWorkbenchNavigation['scope']>('open'); const [week, setWeek] = useState('');
   const [status, setStatus] = useState<WarehouseWorkbenchNavigation['status']>('active'); const [source, setSource] = useState('ALL'); const [overdue, setOverdue] = useState(false);
@@ -42,7 +55,8 @@ export default function WarehouseManagementShell({ user, modeDrawerInitiallyOpen
   const [edit, setEdit] = useState<Edit | null>(null); const [form, setForm] = useState<Form>(() => blank()); const [users, setUsers] = useState<IssueUserDTO[]>([]);
   const [history, setHistory] = useState(false); const [urlReady, setUrlReady] = useState(false); const deepLink = useRef(''); const loadedTaskId = useRef(''); const mainRef = useRef<HTMLElement>(null); const dialogRef = useRef<HTMLElement>(null); const triggerRef = useRef<HTMLElement | null>(null);
   const canConfirm = user.access.capabilities.includes('WAREHOUSE:UPDATE'); const canReport = canConfirm || user.access.capabilities.includes('PROCUREMENT:UPDATE');
-  useModalLayer({ open: !!followUpId, layerRef: sheetRef, backgroundRef: mainRef, onClose: closeCase });
+  useModalLayer({ open: !!followUpId, layerRef: sheetRef, backgroundRef: mainRef, interactionEnabled: !caseExitAction, onClose: closeCase });
+  useModalLayer({ open: !!caseExitAction, layerRef: discardRef, onClose: () => setCaseExitAction(null) });
   useToastBridge(toast, setToast); useToastBridge(error, setError);
   useModalLayer({ open: !!edit, layerRef: dialogRef, backgroundRef: mainRef, triggerRef, onClose: () => { if (!busy) setEdit(null); } });
   useEffect(() => {
@@ -141,7 +155,7 @@ export default function WarehouseManagementShell({ user, modeDrawerInitiallyOpen
         </div>
       </div>
     </main>
-    {!!followUpId&&<div className="mg-sheet-overlay" onMouseDown={e=>{if(e.currentTarget===e.target)closeCase();}}><section ref={sheetRef} className="mg-case-sheet" role="dialog" aria-modal="true" aria-label="物料协同处理"><MaterialFollowUpShell user={user} embeddedTaskId={followUpId} onClose={closeCase} onDraftState={onCaseDraft} onVerify={canConfirm ? ()=>{ if(caseBusy || (caseDirty && !window.confirm('本次进展尚未保存，确定进入仓库核实？'))) return; const event=selectedEvents.find(e=>e.followUpId===followUpId); if(event){setFollowUpId('');open('resolve',event);} } : undefined} onChanged={()=>{deepLink.current=selectedId;setRefresh(n=>n+1);}}/></section></div>}
+    {!!followUpId&&<div className="mg-sheet-overlay" onMouseDown={e=>{if(e.currentTarget===e.target)closeCase();}}><section ref={sheetRef} className="mg-case-sheet" role="dialog" aria-modal="true" aria-label="物料协同处理"><MaterialFollowUpShell user={user} embeddedTaskId={followUpId} onClose={closeCase} onDraftState={onCaseDraft} onVerify={canConfirm ? ()=>requestCaseExit('verify') : undefined} onChanged={()=>{deepLink.current=selectedId;setRefresh(n=>n+1);}}/>{caseExitAction&&<div className="mg-discard-overlay"><section ref={discardRef} className="mg-discard-dialog" role="alertdialog" aria-modal="true" aria-labelledby="mg-discard-title" aria-describedby="mg-discard-description"><span className="mg-discard-icon"><AlertTriangle size={24}/></span><h2 id="mg-discard-title">保留这次未保存的进展？</h2><p id="mg-discard-description">你填写的内容还未提交，可以继续编辑并保存。放弃后不会修改已保存的跟进记录。</p><footer><button onClick={()=>setCaseExitAction(null)}>继续编辑</button><button className="mg-discard-confirm" onClick={()=>finishCaseExit(caseExitAction)}>放弃未保存内容</button></footer></section></div>}</section></div>}
     {edit && task && <div className="ms-overlay mg-sheet-overlay" onMouseDown={e => { if (e.target === e.currentTarget && !busy) setEdit(null); }}><section ref={dialogRef} className="ms-dialog mg-edit-sheet" role="dialog" aria-modal="true" aria-labelledby="mw-edit-title"><header><div><small>{task.workOrder.specification || task.workOrder.code}</small><h2 id="mw-edit-title">{edit.kind === 'edit' ? edit.event ? '更新本项异常' : '登记物料异常' : edit.kind === 'resolve' ? '确认本项异常解决' : edit.kind === 'complete' ? '确认工单物料已配齐' : '取消配料完成'}</h2></div><button aria-label="关闭弹窗" onClick={() => setEdit(null)} disabled={busy}><X size={19}/></button></header><div className="ms-dialog-body">{edit.kind === 'edit' ? <>
       <div className="ms-field"><span>异常类型</span><div className="ms-type-picker">{(['PURCHASED','CUSTOMER'] as MaterialSource[]).map(s => <button key={s} className={form.exceptionType === 'shortage' && form.supplySource === s ? 'active' : ''} onClick={() => setForm(f => ({ ...f, exceptionType: 'shortage', supplySource: s }))}>{materialSourceText[s]}缺料</button>)}{types.map(t => <button key={t} className={form.exceptionType === t ? 'active' : ''} onClick={() => setForm(f => ({ ...f, exceptionType: t }))}>{materialExceptionLabel(t)}</button>)}</div></div>
       {form.exceptionType !== 'shortage' && <label className="ms-field">物料来源{needsMaterialIdentity(form.exceptionType) ? ' *' : ''}<select value={form.supplySource} onChange={e => setForm(f => ({ ...f, supplySource: e.target.value as MaterialSource }))}>{Object.entries(materialSourceText).map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select></label>}

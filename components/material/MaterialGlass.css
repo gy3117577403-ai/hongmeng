@@ -160,7 +160,12 @@ main.mg-workbench.ms-workbench{--mg-ink:#293c50;--mg-muted:#74869a;--mg-line:rgb
 .mg-workbench .ms-timeline small{font-size:10px;line-height:1.8}
 .mg-sheet-overlay{position:fixed!important;inset:0;z-index:1400!important;display:flex!important;justify-content:flex-end!important;align-items:stretch!important;padding:12px!important;background:#31455c40!important;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .mg-case-sheet,.ms-dialog.mg-edit-sheet{width:min(670px,100%);height:100%;max-height:100%;min-width:0;min-height:0;border-radius:20px;border:1px solid #fffffff0;background:#f8fbfff2;box-shadow:-12px 5px 45px #21384c30;overflow:hidden;animation:mg-slide .2s ease-out}
-.mg-case-sheet{display:flex;flex-direction:column}
+.mg-case-sheet{display:flex;flex-direction:column;position:relative}
+.mg-discard-overlay{position:absolute;inset:0;z-index:5;display:grid;place-items:center;padding:24px;background:#253b534d;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+.mg-discard-dialog{width:min(420px,100%);padding:26px;border:1px solid #fff;border-radius:22px;background:#fffffff5;box-shadow:0 18px 60px #20385133;color:#314b65}
+.mg-discard-icon{display:grid;place-items:center;width:46px;height:46px;border-radius:15px;background:#fff0e3;color:#f07824}
+.mg-discard-dialog h2{margin:17px 0 10px;font-size:20px;line-height:1.5}.mg-discard-dialog p{margin:0;color:#697e93;font-size:13px;line-height:1.9}
+.mg-discard-dialog footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:10px;margin-top:25px}.mg-discard-dialog button{min-height:42px;padding:10px 14px;border:1px solid #dce6ef;border-radius:11px;background:#fff;font:inherit;font-size:12px;cursor:pointer}.mg-discard-dialog button:focus-visible{outline:3px solid #f7b784;outline-offset:3px}.mg-discard-dialog .mg-discard-confirm{background:#fff2e7;color:#b85a1a;border-color:#f3d2b7}
 main.mg-embedded.ms-workbench{height:100%;min-height:0;overflow:hidden;margin:0;padding:0;background:transparent!important}
 .mg-embedded .mg-frame{padding:0!important;gap:0}
 .mg-sheet-head{display:flex;align-items:center;gap:11px;padding:20px 23px;border-bottom:1px solid #dde6ef;flex:none}
