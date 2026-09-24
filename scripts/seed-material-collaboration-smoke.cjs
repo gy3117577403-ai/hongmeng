@@ -94,6 +94,7 @@ async function main() {
         activities: { create: { action: 'note', content: note, actorId: users.operator.id } },
       } });
       if(index === 0 && item === 0) Object.assign(visual, {
+        marker: visualPrefix,
         warehouseTaskId: visualTask.id, specification: visualOrder.specification,
         followUpId: follow.id, materialModel: model,
       });
