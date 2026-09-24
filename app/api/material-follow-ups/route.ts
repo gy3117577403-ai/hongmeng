@@ -96,10 +96,11 @@ export async function GET(req: NextRequest) {
     const periodWhere: Prisma.MaterialFollowUpTaskWhereInput = { OR: [productionPeriod, { warehouseTask: { sampleTask: { is: sampleMaterialScope(scope, naturalWeek.start, activeWeek || naturalWeek.start) } } }] };
     const scopeWhere: Prisma.MaterialFollowUpTaskWhereInput = { AND: [periodWhere, ...(source === 'ALL' ? [] : [{ warehouseException: { supplySource: source } }])] };
     const filters: Prisma.MaterialFollowUpTaskWhereInput[] = [scopeWhere];
+    const statusFilters: Prisma.MaterialFollowUpTaskWhereInput[] = [];
     if (status === 'ACTIVE') {
-      filters.push({ status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES } });
+      statusFilters.push({ status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES } });
     } else if (status !== 'ALL') {
-      filters.push({ status: status as MaterialFollowUpStatus });
+      statusFilters.push({ status: status as MaterialFollowUpStatus });
     }
     if (owner === 'unassigned') filters.push({ ownerId: null });
     else if (owner) filters.push({ ownerId: owner });
@@ -118,7 +119,8 @@ export async function GET(req: NextRequest) {
       });
     }
     if (params.get('risk') === 'overdue') filters.push({ status: { in: MATERIAL_FOLLOW_UP_ARRIVAL_PENDING_STATUSES }, expectedAt: { lt: chinaDayStart() } });
-    const where: Prisma.MaterialFollowUpTaskWhereInput = { AND: filters };
+    const summaryWhere: Prisma.MaterialFollowUpTaskWhereInput = { AND: filters };
+    const where: Prisma.MaterialFollowUpTaskWhereInput = { AND: [...filters, ...statusFilters] };
     const page = integer(params.get('page'), 1, 100000);
     const pageSize = integer(params.get('pageSize'), 100, 300);
     const weekOptionsWhere: Prisma.WorkOrderWhereInput = {
@@ -149,20 +151,20 @@ export async function GET(req: NextRequest) {
       prisma.materialFollowUpTask.count({ where }),
       prisma.materialFollowUpTask.groupBy({
         by: ['status'],
-        where: scopeWhere,
+        where: summaryWhere,
         _count: { _all: true },
         orderBy: { status: 'asc' },
       }),
       prisma.materialFollowUpTask.count({
         where: {
-          ...scopeWhere,
+          ...summaryWhere,
           status: { in: MATERIAL_FOLLOW_UP_ARRIVAL_PENDING_STATUSES },
           expectedAt: { lt: chinaDayStart() },
         },
       }),
       prisma.materialFollowUpTask.count({
         where: {
-          ...scopeWhere,
+          ...summaryWhere,
           status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES },
           ownerId: null,
         },
@@ -180,7 +182,7 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-    const sourceGroups = await prisma.warehouseMaterialExceptionCase.groupBy({ by: ['supplySource'], where: { followUpTask: { is: { AND: [periodWhere, { status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES } }] } } }, _count: { _all: true } });
+    const sourceGroups = await prisma.warehouseMaterialExceptionCase.groupBy({ by: ['supplySource'], where: { followUpTask: { is: { AND: [periodWhere, ...filters.slice(1), { status: { in: MATERIAL_FOLLOW_UP_ACTIVE_STATUSES } }] } } }, _count: { _all: true } });
     const sourceSummary = Object.fromEntries(sourceGroups.map(group => [group.supplySource, group._count._all]));
     const counts = new Map<MaterialFollowUpStatusDTO, number>();
     grouped.forEach(item => counts.set(item.status as MaterialFollowUpStatusDTO, item._count._all));

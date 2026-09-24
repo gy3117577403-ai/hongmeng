@@ -25,7 +25,6 @@ function cli(args) {
 }
 
 try {
-  cli(['open', origin + '/login']);
   const code = `async page => {
     const origin=${JSON.stringify(origin)}, f=${JSON.stringify(fixture)}, dir=${JSON.stringify(dir)};
     const checks=[], errors=[];
@@ -79,6 +78,12 @@ try {
       const event=warehouse.body.task.activeExceptions?.find(item=>item.materialModel===material);
       check(Boolean(event?.followUpId&&event.supplySource==='PURCHASED'&&event.shortageQuantity===5),'one purchased shortage creates linked follow-up');
       const followId=event.followUpId;
+      const openQueue=(await api('/api/warehouse/material-tasks?scope=open&status=active&keyword='+encodeURIComponent(f.marker))).body;
+      check(openQueue.tasks.some(task=>task.id===f.warehouseTaskId),'default incomplete queue includes shortage orders');
+      check(openQueue.summary.exception===1&&openQueue.pagination.total===1,'server counters respect the same keyword scope');
+      const unassigned=(await api('/api/warehouse/material-tasks?scope=open&status=unassigned&keyword='+encodeURIComponent(f.marker))).body;
+      check(unassigned.pagination.total===(event.owner?0:1),'unassigned queue reflects real ownership');
+
       await shot('warehouse-registered-1366x1024');
       await page.locator('.mg-material-row').filter({hasText:material}).getByRole('button',{name:'查看 / 跟进'}).click();
       const sheet=page.getByRole('dialog',{name:'物料协同处理'});
@@ -104,7 +109,7 @@ try {
       const followed=await api('/api/material-follow-ups/'+followId);
       check(followed.body.task.latestProgress.includes('今晚发出'),'ordinary progress persists');
       check(followed.body.task.activities.some(activity=>activity.actor?.id===f.users.ordinary.id&&activity.createdAt),'progress keeps author and timestamp');
-      check(await page.getByRole('button',{name:/更新交期 \/ 到料/}).count()===0,'ordinary user cannot edit controlled fields');
+      check(await page.getByRole('button',{name:'更新交期 / 到料',exact:true}).count()===0,'ordinary user cannot edit controlled fields');
       const forged=await api('/api/material-follow-ups/'+followId,'PATCH',{action:'note',version:followed.body.task.version,note:'夹带字段',receivedQuantity:5});
       check(forged.status===400,'ordinary note rejects controlled-field smuggling');
       await page.locator('.mf-latest p').filter({hasText:'今晚发出'}).waitFor();
@@ -123,7 +128,7 @@ try {
 
       await login('operator',followPath);
       await waitFollowSelection();
-      await page.getByRole('button',{name:/更新交期 \/ 到料/}).click();
+      await page.getByRole('button',{name:'更新交期 / 到料',exact:true}).click();
       const fields=page.locator('.mf-advanced-fields');
       const eta=new Date(Date.now()+3*86400000).toISOString().slice(0,10);
       await fields.locator('label').filter({hasText:'跟进状态'}).locator('select').selectOption('WAITING_ARRIVAL');
@@ -148,6 +153,9 @@ try {
       await waitFollowSelection();
       const full=await api('/api/material-follow-ups/'+followId,'PATCH',{action:'update',version:partial.version,ownerId:f.users.operator.id,status:'WAITING_WAREHOUSE',receivedQuantity:5,expectedAt:eta,note:'五件端子全部到齐，交仓库核验'});
       check(full.status===200&&full.body.task.status==='WAITING_WAREHOUSE','full arrival enters warehouse confirmation');
+      const waiting=(await api('/api/warehouse/material-tasks?scope=open&status=waiting&keyword='+encodeURIComponent(f.marker))).body;
+      check(waiting.pagination.total===1&&waiting.summary.waiting===1,'reported arrival appears in warehouse verification queue');
+
       await page.reload();
       const back=page.getByRole('link',{name:/返回对应仓库工单/});
       await back.waitFor();
@@ -182,13 +190,46 @@ try {
       await shot('warehouse-desktop-1920x1080');
       await page.setViewportSize({width:1366,height:1024});
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'1366 tablet has no page-level horizontal overflow');
+      // Separate visual fixtures keep the closure scenario and its count assertions isolated.
+      await login('warehouse','/workspace/warehouse?taskId='+encodeURIComponent(f.visual.warehouseTaskId));
+      await page.getByRole('heading',{name:f.visual.specification,exact:true}).waitFor();
+      await page.locator('.mg-material-row').nth(2).waitFor();
+      await page.locator('.mw-ui-order').nth(8).waitFor();
+      await shot('warehouse-glass-1366x1024');
+      const queueScroll=await page.locator('.mg-queue .ms-list').evaluate(el=>{el.scrollTop=240;return el.scrollTop});
+      check(queueScroll>0&&await page.evaluate(()=>scrollY===0),'queue scroll is independent from the document');
+      await page.locator('.mg-queue .ms-list').evaluate(el=>{el.scrollTop=0});
+      await page.locator('.mg-material-row').filter({hasText:f.visual.materialModel}).getByRole('button',{name:'查看 / 跟进'}).click();
+      const visualSheet=page.getByRole('dialog',{name:'物料协同处理'});
+      await visualSheet.getByRole('heading',{name:f.visual.materialModel,exact:true}).waitFor();
+      await shot('material-glass-sheet-1366x1024');
+      await visualSheet.getByLabel('本次进展',{exact:true}).fill('未保存的跟进草稿');
+      page.once('dialog',dialog=>dialog.dismiss());
+      await visualSheet.getByRole('button',{name:'关闭物料跟进'}).click();
+      check(await visualSheet.isVisible(),'unsaved note is retained when cancelling close');
+      await visualSheet.getByLabel('本次进展',{exact:true}).fill('');
+      await visualSheet.getByRole('button',{name:'关闭物料跟进'}).click();
+      await visualSheet.waitFor({state:'detached'});
+      await page.setViewportSize({width:1920,height:1080});
+      await shot('warehouse-glass-1920x1080');
+      await page.setViewportSize({width:1366,height:1024});
+      await login('operator','/workspace/procurement?taskId='+encodeURIComponent(f.visual.followUpId));
+      await page.getByRole('heading',{name:f.visual.materialModel,exact:true}).waitFor();
+      await page.locator('.mf-order').nth(8).waitFor();
+      await shot('followup-glass-1366x1024');
+      check(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+2),'follow-up fits tablet viewport');
+      const compose=page.getByLabel('本次进展',{exact:true});
+      const composeBox=await compose.boundingBox();
+      check(composeBox&&composeBox.y+composeBox.height<=1024,'progress input is visible without document scrolling');
       check(errors.length===0,'no uncaught browser errors: '+errors.join('; '));
       return {passed:true,warehouseTaskId:f.warehouseTaskId,followUpId:followId,checks};
     } catch(error) {await shot('failure-1366x1024');throw error;}
   }`;
   // Parse the generated browser program before invoking the CLI.
   new Function(`return (${code})`);
+  if(process.argv.includes('--parse-only')) { console.log('Generated browser program parses'); process.exit(0); }
   writeFileSync(codeFile, code);
+  cli(['open', origin + '/login']);
   const result = cli(['run-code', '--filename', codeFile]);
   writeFileSync(join(dir, 'browser-runtime.txt'), result);
   if (!/"passed":\s*true/.test(result)) throw Error(result);

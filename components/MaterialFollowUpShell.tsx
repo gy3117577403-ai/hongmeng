@@ -360,7 +360,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
 
   const activeStage = selected ? stageIndex(selected.status) : 0;
   const visibleActivities = useMemo(() => selected?.activities || [], [selected?.activities]);
-  const latestActivity = visibleActivities.find(activity => activity.content === selected?.latestProgress) || visibleActivities[0];
+  const latestActivity = visibleActivities[0];
   const preferredOwners = users.filter(candidate => (candidate.displayName || candidate.username).trim() === '贾改真');
   const preferredOwner = preferredOwners.length === 1 ? preferredOwners[0] : undefined;
   const warehouseHref = warehouseReturnHref(selected, returnTo);
@@ -570,7 +570,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
                 <div className="mg-origin"><span>仓库反馈 · {selected.exceptionCase.reportedBy?.displayName||selected.exceptionCase.reportedBy?.username||'仓库'} · {dateTimeText(selected.exceptionCase.reportedAt)}</span><p>{selected.exceptionCase.exceptionNote}</p></div>
                 <section className="mf-latest">
                   <div className="mf-section-line"><div><h3>最近进展</h3><span>所有协同人员都可补充记录</span></div><button type="button" onClick={() => setHistoryOpen(true)}>完整时间线 <ArrowRight size={15} /></button></div>
-                  <p>{selected.latestProgress || '暂无处理进展，填写第一条记录后会同步显示在仓库。'}</p>
+                  <p>{latestActivity?.content || selected.latestProgress || '暂无处理进展，填写第一条记录后会同步显示在仓库。'}</p>
                   <small>{selected.latestProgress ? `${dateTimeText(latestActivity?.createdAt || selected.lastFollowedAt || selected.updatedAt)} · ${latestActivity?.actor?.displayName || latestActivity?.actor?.username || '系统'}` : '等待协同处理'}</small>
                 </section>
 

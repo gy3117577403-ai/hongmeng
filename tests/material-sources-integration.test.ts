@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { prisma } from '../lib/prisma';
 import { mutateWarehouseException, mutateMaterialFollowUp, classifyMaterialFollowUps } from '../lib/material-exception-service';
-import { serializeWarehouseMaterialTask } from '../lib/warehouse-material';
+import { serializeWarehouseMaterialTask, warehouseMaterialTaskListInclude } from '../lib/warehouse-material';
 const skip = process.env.RUN_DB_INTEGRATION !== '1';
 
 test('purchased and customer shortages remain independent through partial arrivals, conflicts and individual closure', {skip}, async()=>{
@@ -53,6 +53,14 @@ test('purchased and customer shortages remain independent through partial arriva
     assert.equal(afterNote.status,beforeNote.status);
     assert.equal(afterNote.ownerId,beforeNote.ownerId);
     assert.equal(afterNote.latestProgress,'供应商确认正在发货');
+    const projected = serializeWarehouseMaterialTask(await prisma.warehouseMaterialTask.findUniqueOrThrow({ where: { id: task.id }, include: warehouseMaterialTaskListInclude }));
+    const firstProjection = projected.activeExceptions?.find(item => item.id === a.id);
+    const secondProjection = projected.activeExceptions?.find(item => item.id === b.id);
+    assert.equal(firstProjection?.latestProgress, '供应商确认正在发货', 'warehouse shows the current progress for this specific shortage');
+    assert.equal(firstProjection?.latestActor?.id, owner.id, 'progress author is distinct from task owner');
+    assert.ok(firstProjection?.lastFollowedAt, 'warehouse carries a real progress timestamp');
+    assert.notEqual(secondProjection?.latestProgress, firstProjection?.latestProgress, 'another shortage never inherits this progress');
+
     assert.equal((await prisma.warehouseMaterialExceptionCase.findUniqueOrThrow({where:{id:a.id}})).receivedQuantity,3);
     assert.ok(await prisma.materialFollowUpActivity.count({where:{taskId:beforeNote.id,action:'note',actorId:owner.id,content:'供应商确认正在发货'}}));
     await assert.rejects(mutateMaterialFollowUp(afterNote.id,{action:'note',version:afterNote.version,note:'夹带状态',status:'RESOLVED'},owner.id),/普通进展只能填写文字/);

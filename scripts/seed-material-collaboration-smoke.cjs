@@ -59,10 +59,51 @@ async function main() {
     weekStartDate: week.start, weekEndDate: week.end,
   } });
   const warehouseTask = await db.warehouseMaterialTask.create({ data: { workOrderId: workOrder.id } });
+  const visual = {};
+  const visualPrefix = 'material-visual-' + randomUUID().slice(0, 8);
+  for (let index = 0; index < 12; index++) {
+    const oldWeek = index === 1 ? new Date(week.start.getTime() - 14 * 86400000) : week.start;
+    const visualOrder = await db.workOrder.create({ data: {
+      code: visualPrefix + '-' + index, productName: index === 0 ? 'KTP4503 控制箱航插线 · 单弯头' : '线束物料协同验收',
+      specification: index === 0 ? 'D014503-8301-V02' : 'D011601-' + (8412 + index) + '-V01',
+      customerName: index % 2 ? '上海易矩' : '杭州昆泰', productionTargetQty: 20 + index * 5,
+      stage: 'not_issued', planType: 'weekly_plan', planActive: true,
+      weekStartDate: oldWeek, weekEndDate: new Date(oldWeek.getTime() + 6 * 86400000),
+    } });
+    const visualTask = await db.warehouseMaterialTask.create({ data: {
+      workOrderId: visualOrder.id, status: 'exception', exceptionType: 'shortage',
+      exceptionNote: '物料未齐，逐项跟进并核实',
+    } });
+    for (let item = 0; item < (index === 0 ? 3 : 1); item++) {
+      const state = item === 1 ? 'WAITING_WAREHOUSE' : (index === 2 ? 'PENDING' : 'WAITING_ARRIVAL');
+      const model = item === 0 ? 'DJ7061Y-89直扣' : item === 1 ? '132036-111国产尾夹' : 'LM-12-J12SX-03-401';
+      const note = item === 1 ? '已报到料十件，等待仓库清点型号与数量。' : '供方确认今日发出，剩余物料继续跟进。';
+      const expectedAt = new Date(Date.now() + (index === 1 ? -2 : 2) * 86400000);
+      const exception = await db.warehouseMaterialExceptionCase.create({ data: {
+        warehouseTaskId: visualTask.id, sequence: item + 1, exceptionType: 'shortage',
+        exceptionNote: item === 0 ? '连接器外壳尚未配齐' : '本次配料发现缺少附件',
+        materialModel: model, supplySource: item === 1 || index % 2 ? 'CUSTOMER' : 'PURCHASED',
+        shortageQuantity: 10, receivedQuantity: state === 'WAITING_WAREHOUSE' ? 10 : 3,
+        unit: '个', expectedArrivalAt: expectedAt, reportedById: users.warehouse.id,
+        weekStartDate: oldWeek, weekEndDate: new Date(oldWeek.getTime() + 6 * 86400000),
+      } });
+      const follow = await db.materialFollowUpTask.create({ data: {
+        warehouseTaskId: visualTask.id, warehouseExceptionId: exception.id,
+        status: state, ownerId: index === 2 ? null : users.operator.id,
+        latestProgress: note, lastFollowedAt: new Date(), expectedAt,
+        activities: { create: { action: 'note', content: note, actorId: users.operator.id } },
+      } });
+      if(index === 0 && item === 0) Object.assign(visual, {
+        warehouseTaskId: visualTask.id, specification: visualOrder.specification,
+        followUpId: follow.id, materialModel: model,
+      });
+    }
+  }
   return {
     marker, password, users,
     workOrder: { id: workOrder.id, code: workOrder.code, specification },
     warehouseTaskId: warehouseTask.id,
+    visual,
   };
 }
 
