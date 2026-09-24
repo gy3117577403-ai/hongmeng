@@ -83,7 +83,7 @@ async function main() {
       const exception = await db.warehouseMaterialExceptionCase.create({ data: {
         warehouseTaskId: visualTask.id, sequence: item + 1, exceptionType: 'shortage',
         exceptionNote: index === 2 ? '航插 客供缺' : item === 0 ? '连接器外壳尚未配齐' : '本次配料发现缺少附件',
-        materialModel: index === 2 ? null : model, supplySource: index === 2 ? 'UNKNOWN' : item === 1 || index % 2 ? 'CUSTOMER' : 'PURCHASED',
+        materialModel: index === 2 ? '' : model, supplySource: index === 2 ? 'UNKNOWN' : item === 1 || index % 2 ? 'CUSTOMER' : 'PURCHASED',
         shortageQuantity: index === 2 ? null : 10, receivedQuantity: state === 'WAITING_WAREHOUSE' ? 10 : 3,
         unit: '个', expectedArrivalAt: expectedAt, reportedById: users.warehouse.id,
         weekStartDate: oldWeek, weekEndDate: new Date(oldWeek.getTime() + 6 * 86400000),

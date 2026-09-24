@@ -56,7 +56,7 @@
 .mc-workbench .mf-task-state{font-size:11px;white-space:nowrap;padding:2px 5px;font-weight:400}
 .mc-workbench .mf-task-buttons{flex:none;flex-wrap:nowrap;gap:6px}
 .mc-workbench .mf-task-buttons button{min-height:36px;font-size:12px;padding:6px 9px;border-radius:8px}
-.mc-workbench.mg-workbench .mf-detail-scroll{padding:16px 18px;min-height:0;flex:1;overflow:auto;scrollbar-gutter:stable}
+.mc-workbench.mg-workbench .mf-detail-scroll{display:block;padding:16px 18px;min-height:0;flex:1;overflow:auto;scrollbar-gutter:stable}
 .mc-facts{display:grid;grid-template-columns:1fr 1fr 1.3fr .85fr;gap:14px;margin-bottom:18px;padding-bottom:15px;border-bottom:1px solid #e5ebf2}
 .mc-facts>div{min-width:0;border-right:1px solid #e5ebf2;padding-right:10px}
 .mc-facts>div:last-child{border:0;padding-right:0}
