@@ -19,7 +19,7 @@ export const WAREHOUSE_EXCEPTION_TYPES: WarehouseExceptionType[] = [
   'other',
 ];
 
-export type WarehouseMaterialScope = 'current' | 'preparation' | 'history';
+export type WarehouseMaterialScope = 'current' | 'open' | 'preparation' | 'history';
 
 function addWarehouseDays(value: Date, days: number): Date {
   const next = new Date(value.getTime());
@@ -36,7 +36,7 @@ export function warehouseMaterialScopeWeekStart(
   currentWeekStart: Date,
   requestedWeekStart: Date | null = null,
 ): Date | null {
-  if (scope === 'current') return currentWeekStart;
+  if (scope === 'current' || scope === 'open') return currentWeekStart;
   if (scope === 'preparation') return requestedWeekStart || addWarehouseDays(currentWeekStart, 7);
   return requestedWeekStart;
 }
@@ -77,7 +77,7 @@ export function warehouseMaterialWorkOrderWhere(input: {
     input.requestedWeekStart || null,
   );
 
-  if (input.scope === 'current') {
+  if (input.scope === 'current' || input.scope === 'open') {
     return {
       AND: [
         { deletedAt: null },
@@ -89,6 +89,10 @@ export function warehouseMaterialWorkOrderWhere(input: {
               weekStartDate: sameWarehouseDay(input.currentWeekStart),
             },
             activeProductionCarryoverWorkOrderWhere(input.currentWeekStart),
+            ...(input.scope === 'open' ? [{
+              weekStartDate: { lt: input.currentWeekStart },
+              materialTask: { is: { status: { in: ['pending', 'exception'] } } },
+            }] : []),
           ],
         },
       ],
@@ -173,7 +177,13 @@ export const warehouseMaterialTaskListInclude = Prisma.validator<Prisma.Warehous
     where: { status: { in: ['OPEN', 'RESOLVED'] } },
     orderBy: { sequence: 'desc' },
     include: {
-      followUpTask: { select: { id: true, status: true, owner: { select: { id: true, username: true, displayName: true } } } },
+      followUpTask: { select: {
+        id: true, status: true, latestProgress: true, lastFollowedAt: true,
+        owner: { select: { id: true, username: true, displayName: true } },
+        activities: { take: 1, orderBy: { createdAt: 'desc' }, select: {
+          createdAt: true, actor: { select: { id: true, username: true, displayName: true } },
+        } },
+      } },
       reportedBy: { select: { id: true, username: true, displayName: true } },
       expectedArrivalBy: { select: { id: true, username: true, displayName: true } },
       actualArrivalBy: { select: { id: true, username: true, displayName: true } },
@@ -433,7 +443,13 @@ export function serializeWarehouseMaterialTask(
       latestProgress: activeFollowUp.latestProgress,
       updatedAt: activeFollowUp.updatedAt.toISOString(),
     } : null,
-    activeExceptions: task.exceptionCases.filter(e => e.status === 'OPEN').map(e => ({ ...serializeWarehouseExceptionCase(e), followUpId: e.followUpTask?.id || null, followUpStatus: e.followUpTask?.status || null, owner: e.followUpTask?.owner || null })),
+    activeExceptions: task.exceptionCases.filter(e => e.status === 'OPEN').map(e => ({
+      ...serializeWarehouseExceptionCase(e), followUpId: e.followUpTask?.id || null,
+      followUpStatus: e.followUpTask?.status || null, owner: e.followUpTask?.owner || null,
+      latestProgress: e.followUpTask?.latestProgress || null,
+      lastFollowedAt: e.followUpTask?.lastFollowedAt?.toISOString() || null,
+      latestActor: e.followUpTask?.activities?.[0]?.actor || null,
+    })),
     lastResolvedException: lastResolvedException ? serializeWarehouseExceptionCase(lastResolvedException) : null,
     workOrder: {
       ...source,

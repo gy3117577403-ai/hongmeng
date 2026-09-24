@@ -78,13 +78,13 @@ export async function GET(req: NextRequest) {
       ? 'history'
       : params.get('scope') === 'preparation'
         ? 'preparation'
-        : 'current';
+        : params.get('scope') === 'open' ? 'open' : 'current';
     const requestedWeek = parseWeek(params.get('weekStart'));
     if (params.get('weekStart') && !requestedWeek) {
       return NextResponse.json({ ok: false, error: '周开始日期格式不正确' }, { status: 400 });
     }
     const naturalWeek = naturalProductionWeek();
-    if (scope === 'current' && canRunGetReconciliation(user.access, ['WAREHOUSE'])) {
+    if ((scope === 'current' || scope === 'open') && canRunGetReconciliation(user.access, ['WAREHOUSE'])) {
       await reconcileCurrentProductionCarryovers({ targetWeekStart: naturalWeek.start, actorId: user.id });
     }
     const nextWeekStart = addDays(naturalWeek.start, 7);
@@ -111,7 +111,13 @@ export async function GET(req: NextRequest) {
     const status = params.get('status');
     const exceptionType = params.get('exceptionType');
     const keyword = String(params.get('keyword') || '').trim().slice(0, 160);
-    if (status && status !== 'all') {
+    const waitingWhere: Prisma.WarehouseMaterialTaskWhereInput = { exceptionCases: { some: { status: 'OPEN', followUpTask: { is: { status: 'WAITING_WAREHOUSE' } } } } };
+    const unassignedWhere: Prisma.WarehouseMaterialTaskWhereInput = { exceptionCases: { some: { status: 'OPEN', OR: [{ followUpTask: { is: null } }, { followUpTask: { is: { ownerId: null } } }] } } };
+    if (status === 'active') {
+      where.status = { in: ['pending', 'exception'] };
+    } else if (status === 'waiting' || status === 'unassigned') {
+      where.AND = [status === 'waiting' ? waitingWhere : unassignedWhere];
+    } else if (status && status !== 'all') {
       if (!WAREHOUSE_MATERIAL_STATUSES.includes(status as WarehouseMaterialStatus)) {
         return NextResponse.json({ ok: false, error: '配料状态筛选不正确' }, { status: 400 });
       }
@@ -125,7 +131,7 @@ export async function GET(req: NextRequest) {
     }
     if (source !== 'ALL' || (exceptionType && exceptionType !== 'all')) where.exceptionCases = { some: eventFilter };
     if (params.get('expected') === 'overdue') {
-      where.AND = [overdueTaskWhere()];
+      where.AND = [...(Array.isArray(where.AND) ? where.AND : []), overdueTaskWhere()];
     }
     if (keyword) {
       where.OR = [
@@ -137,6 +143,10 @@ export async function GET(req: NextRequest) {
         { workOrder: { productName: { contains: keyword, mode: 'insensitive' } } },
       ];
     }
+    // Counters use the same search/source scope as the queue, never just its current page.
+    if (where.OR) summaryWhere.OR = where.OR;
+    if (where.exceptionCases) summaryWhere.exceptionCases = where.exceptionCases;
+    if (params.get('expected') === 'overdue') summaryWhere.AND = [overdueTaskWhere()];
 
     const page = integer(params.get('page'), 1, 100000);
     const pageSize = integer(params.get('pageSize'), 100, 300);
@@ -146,8 +156,8 @@ export async function GET(req: NextRequest) {
         { productionPlanBatch: { is: { deletedAt: null, planOrder: { deletedAt: null } } } },
       ],
     };
-    const weekScope: Prisma.WorkOrderWhereInput = scope === 'current'
-      ? warehouseMaterialWorkOrderWhere({ scope: 'current', currentWeekStart: naturalWeek.start })
+    const weekScope: Prisma.WorkOrderWhereInput = scope === 'current' || scope === 'open'
+      ? warehouseMaterialWorkOrderWhere({ scope, currentWeekStart: naturalWeek.start })
       : scope === 'preparation'
         ? {
             planActive: false,
@@ -163,7 +173,7 @@ export async function GET(req: NextRequest) {
         weekScope,
       ],
     };
-    const [records, total, grouped, expectedOverdue, weekGroups] = await Promise.all([
+    const [records, total, grouped, expectedOverdue, weekGroups, waiting, unassigned] = await Promise.all([
       prisma.warehouseMaterialTask.findMany({
         where,
         include: warehouseMaterialTaskListInclude,
@@ -182,6 +192,8 @@ export async function GET(req: NextRequest) {
         _count: { _all: true },
         orderBy: { weekStartDate: 'desc' },
       }),
+      prisma.warehouseMaterialTask.count({ where: { ...summaryWhere, AND: [waitingWhere] } }),
+      prisma.warehouseMaterialTask.count({ where: { ...summaryWhere, AND: [unassignedWhere] } }),
     ]);
     const counts = new Map(grouped.map(item => [item.status, item._count._all]));
     const summary = {
@@ -190,6 +202,8 @@ export async function GET(req: NextRequest) {
       completed: counts.get('completed') || 0,
       exception: counts.get('exception') || 0,
       expectedOverdue,
+      waiting,
+      unassigned,
     };
 
     const weeksByStart = new Map<string, {
@@ -220,7 +234,7 @@ export async function GET(req: NextRequest) {
         ? first.weekStartDate.localeCompare(second.weekStartDate)
         : second.weekStartDate.localeCompare(first.weekStartDate)
     ));
-    const carryoverByWorkOrder = scope === 'current'
+    const carryoverByWorkOrder = scope === 'current' || scope === 'open'
       ? await loadProductionCarryoverMetadata(naturalWeek.start, records.flatMap(record => record.workOrder ? [record.workOrder.id] : []))
       : new Map();
 

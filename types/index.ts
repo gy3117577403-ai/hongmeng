@@ -1528,6 +1528,9 @@ export type WarehouseMaterialExceptionCaseDTO = {
   unit?: string;
   followUpId?: string | null;
   followUpStatus?: MaterialFollowUpStatusDTO | null;
+  latestProgress?: string | null;
+  lastFollowedAt?: string | null;
+  latestActor?: IssueUserDTO | null;
   owner?: IssueUserDTO | null;
   id: string;
   sequence: number;

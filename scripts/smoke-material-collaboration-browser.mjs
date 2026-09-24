@@ -70,31 +70,30 @@ try {
       await dialog.getByPlaceholder('数量待确认').fill('5');
       await dialog.getByRole('button',{name:'保存',exact:true}).click();
       await dialog.waitFor({state:'detached'});
-      await page.waitForFunction(id=>new URL(location.href).searchParams.get('taskId')===id&&new URL(location.href).searchParams.get('status')==='exception',f.warehouseTaskId);
-      await page.locator('.mw-ui-order.active.mw-ui-order-exception').waitFor();
+      await page.waitForFunction(id=>new URL(location.href).searchParams.get('taskId')===id&&new URL(location.href).searchParams.get('status')==='pending',f.warehouseTaskId);
+      await page.locator('.mg-material-row').filter({hasText:material}).waitFor();
       check(await page.evaluate(()=>location.pathname)==='/workspace/warehouse','register stays in warehouse page');
-      check(await page.locator('.mw-ui-order.active').count()===1,'same warehouse order remains selected');
+      check(await page.getByRole('heading',{name:f.workOrder.specification}).count()===1,'same warehouse order remains selected after leaving pending filter');
       const warehouse=await api('/api/warehouse/material-tasks/'+f.warehouseTaskId);
       check(warehouse.status===200&&warehouse.body.task.status==='exception','registered exception persists on same task');
       const event=warehouse.body.task.activeExceptions?.find(item=>item.materialModel===material);
       check(Boolean(event?.followUpId&&event.supplySource==='PURCHASED'&&event.shortageQuantity===5),'one purchased shortage creates linked follow-up');
       const followId=event.followUpId;
       await shot('warehouse-registered-1366x1024');
-      await page.locator('.mw-ui-event').filter({hasText:material}).getByRole('link',{name:/查看跟进/}).click();
-      await page.waitForURL(url=>url.pathname==='/workspace/procurement'&&url.searchParams.get('taskId')===followId);
-      await page.getByRole('heading',{name:f.workOrder.specification}).waitFor({timeout:30000});
-      await page.locator('.mf-order.active').waitFor({timeout:30000});
-      const returnTo=await page.evaluate(()=>new URL(location.href).searchParams.get('returnTo')||'');
-      check(returnTo.includes('taskId='+encodeURIComponent(f.warehouseTaskId))&&returnTo.includes('status=exception'),'follow-up preserves exact warehouse context');
-      check(await page.getByRole('heading',{name:f.workOrder.specification}).count()===1,'linked issue opens in follow-up detail');
-      check((await page.locator('.mf-order.active').textContent()).includes(material),'linked issue remains selected in follow-up list');
-      check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'follow-up fits 1366 tablet width');
-      await shot('follow-up-linked-1366x1024');
-
+      await page.locator('.mg-material-row').filter({hasText:material}).getByRole('button',{name:'查看 / 跟进'}).click();
+      const sheet=page.getByRole('dialog',{name:'物料协同处理'});
+      await sheet.getByRole('heading',{name:material,exact:true}).waitFor({timeout:30000});
+      check(await page.evaluate(()=>location.pathname)==='/workspace/warehouse','case processing opens in place without navigation');
+      await shot('follow-up-in-warehouse-sheet');
+      await sheet.getByRole('button',{name:'关闭物料跟进'}).click();
+      await sheet.waitFor({state:'detached'});
+      const returnTo=await page.evaluate(()=>location.pathname+location.search);
+      check(returnTo.includes('taskId='+encodeURIComponent(f.warehouseTaskId))&&returnTo.includes('status=pending'),'close sheet preserves original warehouse filters');
+      check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2&&document.documentElement.scrollHeight<=innerHeight+2),'warehouse panels fit one viewport');
       const followPath='/workspace/procurement?taskId='+encodeURIComponent(followId)+'&returnTo='+encodeURIComponent(returnTo);
       const waitFollowSelection=async()=>{
         await page.locator('.mf-order.active').filter({hasText:material}).waitFor({timeout:30000});
-        await page.getByRole('heading',{name:f.workOrder.specification}).waitFor({timeout:30000});
+        await page.getByRole('heading',{name:material,exact:true}).waitFor({timeout:30000});
       };
       await login('ordinary',followPath);
       await waitFollowSelection();
@@ -105,14 +104,14 @@ try {
       const followed=await api('/api/material-follow-ups/'+followId);
       check(followed.body.task.latestProgress.includes('今晚发出'),'ordinary progress persists');
       check(followed.body.task.activities.some(activity=>activity.actor?.id===f.users.ordinary.id&&activity.createdAt),'progress keeps author and timestamp');
-      check(await page.getByRole('button',{name:/调整处理字段/}).count()===0,'ordinary user cannot edit controlled fields');
+      check(await page.getByRole('button',{name:/更新交期 \/ 到料/}).count()===0,'ordinary user cannot edit controlled fields');
       const forged=await api('/api/material-follow-ups/'+followId,'PATCH',{action:'note',version:followed.body.task.version,note:'夹带字段',receivedQuantity:5});
       check(forged.status===400,'ordinary note rejects controlled-field smuggling');
       await page.locator('.mf-latest p').filter({hasText:'今晚发出'}).waitFor();
       await shot('follow-up-progress-1366x1024');
 
       await login('warehouse',returnTo);
-      await page.locator('.mw-ui-event').filter({hasText:material}).waitFor({timeout:30000});
+      await page.locator('.mg-material-row').filter({hasText:material}).waitFor({timeout:30000});
       const warehouseAfterNote=await api('/api/warehouse/material-tasks/'+f.warehouseTaskId);
       check(warehouseAfterNote.status===200,'warehouse user can read its material task');
       check(warehouseAfterNote.body.task.activities.some(activity=>activity.content?.includes('今晚发出')&&activity.actor?.id===f.users.ordinary.id),'warehouse reads the same authored progress');
@@ -124,7 +123,7 @@ try {
 
       await login('operator',followPath);
       await waitFollowSelection();
-      await page.getByRole('button',{name:/调整处理字段/}).click();
+      await page.getByRole('button',{name:/更新交期 \/ 到料/}).click();
       const fields=page.locator('.mf-advanced-fields');
       const eta=new Date(Date.now()+3*86400000).toISOString().slice(0,10);
       await fields.locator('label').filter({hasText:'跟进状态'}).locator('select').selectOption('WAITING_ARRIVAL');
@@ -140,7 +139,7 @@ try {
       check(premature.status===400,'partial arrival cannot enter warehouse verification');
 
       await login('warehouse',returnTo);
-      await page.locator('.mw-ui-event').filter({hasText:material}).waitFor({timeout:30000});
+      await page.locator('.mg-material-row').filter({hasText:material}).waitFor({timeout:30000});
       const warehousePartial=(await api('/api/warehouse/material-tasks/'+f.warehouseTaskId)).body.task;
       const prematureClose=await api('/api/warehouse/material-tasks/'+f.warehouseTaskId,'PATCH',{action:'resolve',version:warehousePartial.version,exceptionId:event.id,note:'未到齐不能关闭',resolution:'pending'});
       check(prematureClose.status===409,'warehouse cannot close shortage before full arrival');
@@ -159,18 +158,29 @@ try {
       check(await page.getByRole('heading',{name:f.workOrder.specification}).count()===1,'return opens the same warehouse work order');
 
       await login('warehouse',returnTo);
-      await page.locator('.mw-ui-event').filter({hasText:material}).getByRole('button',{name:'核对到料'}).click();
+      await page.locator('.mg-material-row').filter({hasText:material}).getByRole('button',{name:'核对到料'}).click();
       const verify=page.getByRole('dialog',{name:'确认本项异常解决'});
       await verify.locator('textarea').fill('现场已清点五件端子，实物与型号一致');
+      check(await verify.getByRole('button',{name:'核对完成，确认解决'}).isDisabled(),'physical verification needs explicit check');
+      await verify.getByRole('checkbox').check();
       await verify.getByRole('button',{name:'核对完成，确认解决'}).click();
       await verify.waitFor({state:'detached'});
       const resolved=(await api('/api/material-follow-ups/'+followId)).body.task;
       check(resolved.status==='RESOLVED'&&resolved.exceptionCase.status==='RESOLVED','warehouse physical verification closes same issue');
       await page.getByRole('button',{name:'完成配料'}).click();
-      await page.waitForFunction(id=>new URL(location.href).searchParams.get('taskId')===id&&new URL(location.href).searchParams.get('status')==='completed',f.warehouseTaskId);
-      await page.locator('.mw-ui-order.active.mw-ui-order-completed').waitFor({timeout:30000});
+      const complete=page.getByRole('dialog',{name:'确认工单物料已配齐'});
+      await complete.getByRole('checkbox').check();
+      await complete.getByRole('button',{name:'确认配齐',exact:true}).click();
+      await complete.waitFor({state:'detached'});
+      await page.getByText('该工单已确认配齐',{exact:true}).waitFor();
+      check((await page.evaluate(()=>location.pathname+location.search))===returnTo,'completion preserves the selected work order and original queue');
       check((await api('/api/warehouse/material-tasks/'+f.warehouseTaskId)).body.task.status==='completed','warehouse task is completed');
       await shot('warehouse-closed-1366x1024');
+      check(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+2),'no document scrolling at tablet size');
+      await page.setViewportSize({width:1920,height:1080});
+      check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2&&document.documentElement.scrollHeight<=innerHeight+2),'one-page desktop layout');
+      await shot('warehouse-desktop-1920x1080');
+      await page.setViewportSize({width:1366,height:1024});
       check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'1366 tablet has no page-level horizontal overflow');
       check(errors.length===0,'no uncaught browser errors: '+errors.join('; '));
       return {passed:true,warehouseTaskId:f.warehouseTaskId,followUpId:followId,checks};

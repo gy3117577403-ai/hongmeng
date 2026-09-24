@@ -1,0 +1,69 @@
+name: Material Glass Preflight
+on:
+  push:
+    branches: ["codex/material-glass-v134238"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: material-glass-preflight
+  cancel-in-progress: true
+jobs:
+  material-check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hongmeng_material_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_material_ci?schema=public
+      DAILY_PLAN_ENABLED: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate && npx prisma migrate deploy
+      - run: npm run test:unit
+      - name: Material database consistency
+        run: RUN_DB_INTEGRATION=1 npm run test:material-follow-up-integration
+      - run: npm run build
+      - name: Real material collaboration browser acceptance
+        env:
+          SESSION_SECRET: material-glass-test-session-12345678901234567890
+          APP_BASE_URL: http://127.0.0.1:3000
+          MATERIAL_COLLAB_QA_ALLOW: disposable-material-runtime
+          MATERIAL_COLLAB_QA_FIXTURE: /tmp/material-fixture.json
+          MATERIAL_COLLAB_QA_OUTPUT: artifacts/material-glass
+        run: |
+          set -euo pipefail
+          node scripts/seed-material-collaboration-smoke.cjs > "$MATERIAL_COLLAB_QA_FIXTURE"
+          npm run start > material-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/health >/dev/null; then break; fi
+            sleep 2
+          done
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          node scripts/smoke-material-collaboration-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: material-glass-preflight
+          path: |
+            artifacts/material-glass/*.png
+            artifacts/material-glass/browser-runtime.txt
+            artifacts/material-glass/browser-failure.txt
+            material-server.log
