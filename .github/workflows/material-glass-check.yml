@@ -1,7 +1,7 @@
 name: Material Glass Preflight
 on:
   push:
-    branches: ["codex/material-glass-v134238", "codex/material-assignment-v134240"]
+    branches: ["codex/material-glass-v134238", "codex/material-assignment-v134240", "codex/material-compact-v134241"]
   workflow_dispatch:
 permissions:
   contents: read

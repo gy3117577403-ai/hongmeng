@@ -82,9 +82,9 @@ async function main() {
       const expectedAt = new Date(Date.now() + (index === 1 ? -2 : 2) * 86400000);
       const exception = await db.warehouseMaterialExceptionCase.create({ data: {
         warehouseTaskId: visualTask.id, sequence: item + 1, exceptionType: 'shortage',
-        exceptionNote: item === 0 ? '连接器外壳尚未配齐' : '本次配料发现缺少附件',
-        materialModel: model, supplySource: item === 1 || index % 2 ? 'CUSTOMER' : 'PURCHASED',
-        shortageQuantity: 10, receivedQuantity: state === 'WAITING_WAREHOUSE' ? 10 : 3,
+        exceptionNote: index === 2 ? '航插 客供缺' : item === 0 ? '连接器外壳尚未配齐' : '本次配料发现缺少附件',
+        materialModel: index === 2 ? null : model, supplySource: index === 2 ? 'UNKNOWN' : item === 1 || index % 2 ? 'CUSTOMER' : 'PURCHASED',
+        shortageQuantity: index === 2 ? null : 10, receivedQuantity: state === 'WAITING_WAREHOUSE' ? 10 : 3,
         unit: '个', expectedArrivalAt: expectedAt, reportedById: users.warehouse.id,
         weekStartDate: oldWeek, weekEndDate: new Date(oldWeek.getTime() + 6 * 86400000),
       } });
@@ -94,6 +94,7 @@ async function main() {
         latestProgress: note, lastFollowedAt: new Date(), expectedAt,
         activities: { create: { action: 'note', content: note, actorId: users.operator.id } },
       } });
+      if(index === 2) visual.pendingId = follow.id;
       if(index === 0 && item === 0) Object.assign(visual, {
         marker: visualPrefix,
         warehouseTaskId: visualTask.id, specification: visualOrder.specification,

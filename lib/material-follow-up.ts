@@ -33,6 +33,10 @@ export const materialFollowUpStatusText: Record<MaterialFollowUpStatusDTO, strin
 };
 
 export const materialFollowUpListInclude = Prisma.validator<Prisma.MaterialFollowUpTaskInclude>()({
+  activities: {
+    orderBy: { createdAt: 'desc' }, take: 1,
+    include: { actor: { select: { id: true, username: true, displayName: true } } },
+  },
   owner: { select: { id: true, username: true, displayName: true } },
   createdBy: { select: { id: true, username: true, displayName: true } },
   resolvedBy: { select: { id: true, username: true, displayName: true } },
