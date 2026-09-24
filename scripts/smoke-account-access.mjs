@@ -138,7 +138,7 @@ await req('delegation revocation invalidates current session','/api/users',undef
 await login(delegate.username,password);
 await req('revoked HR retains lifecycle but cannot grant modules','/api/users/module-access',saveBody(byHr,{quality:'COLLABORATE'}),403);
 cookie=adminCookie;
-await enableManager(disabledDelegate);
+await enableManager((await req('reload delegate after login before restoring UI fixture','/api/users')).users.find(u=>u.id===delegate.id));
 
 const output = process.env.ACCOUNT_ACCESS_QA_OUTPUT || 'artifacts/account-access/http.json';
 await fs.mkdir(path.dirname(output), { recursive: true });
