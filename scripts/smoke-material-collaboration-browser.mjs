@@ -195,6 +195,8 @@ try {
       await page.getByRole('heading',{name:f.visual.specification,exact:true}).waitFor();
       await page.locator('.mg-material-row').nth(2).waitFor();
       await page.locator('.mw-ui-order').nth(8).waitFor();
+      const overdueQueue=(await api('/api/warehouse/material-tasks?scope=open&status=active&expected=overdue')).body;
+      check(overdueQueue.pagination.total>0&&overdueQueue.summary.waiting===0&&overdueQueue.summary.unassigned===0,'overdue counters retain the same queue filters');
       await shot('warehouse-glass-1366x1024');
       const queueScroll=await page.locator('.mg-queue .ms-list').evaluate(el=>{el.scrollTop=240;return el.scrollTop});
       check(queueScroll>0&&await page.evaluate(()=>scrollY===0),'queue scroll is independent from the document');

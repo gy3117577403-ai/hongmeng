@@ -1,6 +1,6 @@
 /* The surfaces carry the glass effect; text and controls stay opaque and readable. */
 main.mg-workbench.ms-workbench{--mg-ink:#293c50;--mg-muted:#74869a;--mg-line:rgba(134,157,180,.17);--mg-shadow:0 12px 36px -26px #344d6c66,inset 0 1px 0 #fff;background:radial-gradient(ellipse at 85% 0%,#f7e8dc99,transparent 47%),radial-gradient(ellipse at 7% 90%,#cfe6ef88,transparent 49%),#edf1f5!important;color:var(--mg-ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
-.mg-workbench .mg-frame{padding:15px 19px 12px;gap:10px;overflow:hidden;min-height:0}
+.mg-workbench .mg-frame{padding:15px 19px 12px;gap:10px;overflow:hidden;min-height:0;background:transparent}
 .mg-workbench .ms-top,.mg-workbench .ms-panel,.mg-workbench .mg-command,.mg-workbench .mf-statusbar{background:rgba(255,255,255,.77);border:1px solid #ffffffeb;box-shadow:var(--mg-shadow);border-radius:18px;backdrop-filter:blur(18px) saturate(125%);-webkit-backdrop-filter:blur(18px) saturate(125%)}
 .mg-workbench button,.mg-workbench a,.mg-edit-sheet button{transition:background .16s,border-color .16s,box-shadow .16s,transform .16s}
 .mg-workbench button:hover:not(:disabled){box-shadow:0 4px 11px -8px #617383aa}

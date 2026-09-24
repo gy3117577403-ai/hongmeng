@@ -192,8 +192,8 @@ export async function GET(req: NextRequest) {
         _count: { _all: true },
         orderBy: { weekStartDate: 'desc' },
       }),
-      prisma.warehouseMaterialTask.count({ where: { ...summaryWhere, AND: [waitingWhere] } }),
-      prisma.warehouseMaterialTask.count({ where: { ...summaryWhere, AND: [unassignedWhere] } }),
+      prisma.warehouseMaterialTask.count({ where: { AND: [summaryWhere, waitingWhere] } }),
+      prisma.warehouseMaterialTask.count({ where: { AND: [summaryWhere, unassignedWhere] } }),
     ]);
     const counts = new Map(grouped.map(item => [item.status, item._count._all]));
     const summary = {
