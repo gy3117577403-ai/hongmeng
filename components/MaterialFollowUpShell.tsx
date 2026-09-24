@@ -220,6 +220,8 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
   const pendingDeepLinkRef = useRef('');
   const deepLinkedIdRef = useRef('');
   const loadedTaskId = useRef('');
+  const detailScroll = useRef<HTMLDivElement>(null);
+  useEffect(() => { detailScroll.current?.scrollTo({ top: 0 }); setHistoryOpen(false); }, [selected?.id]);
   useToastBridge(toast, setToast); useToastBridge(error, setError);
   const progressDirty = Boolean(selected && JSON.stringify(form) !== JSON.stringify(formFor(selected, user.id)));
   useEffect(() => { onDraftState?.(progressDirty || assignmentDirty || Boolean(editMode), saving); }, [progressDirty, assignmentDirty, editMode, saving, onDraftState]);
@@ -477,8 +479,8 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
           <div className="mc-filterrow">
             <nav className="mc-stages" aria-label="跟进状态">{([['ACTIVE','未结',summary.total],['PENDING','待接收',summary.pending],['IN_PROGRESS','跟进中',summary.inProgress],['WAITING_ARRIVAL','等待到料',summary.waitingArrival],['WAITING_WAREHOUSE','待仓库核实',summary.waitingWarehouse],['RESOLVED','已解决',summary.resolved],['ALL','全部记录',null]] as const).map(([value,label,count]) => <button type="button" key={value} className={status === value ? 'active' : ''} aria-current={status === value ? 'page' : undefined} onClick={() => {deepLinkedIdRef.current=''; setStatus(value as StatusFilter); setPage(1);}}>{label}{count !== null && <b>{count}</b>}</button>)}</nav>
             <div className="mc-filter-actions">
-              <button className={owner === user.id ? 'active' : ''} aria-pressed={owner === user.id} onClick={() => {setOwner(owner === user.id ? '' : user.id);setPage(1);}}>我负责的</button>
-              <button className={overdue ? 'active risk' : ''} aria-pressed={overdue} onClick={() => {setOverdue(value => !value);setPage(1);}}>到料逾期</button>
+              <button className={owner === user.id ? 'active' : ''} aria-pressed={owner === user.id} onClick={() => {deepLinkedIdRef.current='';setOwner(owner === user.id ? '' : user.id);setPage(1);}}>我负责的</button>
+              <button className={overdue ? 'active risk' : ''} aria-pressed={overdue} onClick={() => {deepLinkedIdRef.current='';setOverdue(value => !value);setPage(1);}}>到料逾期</button>
               <button aria-haspopup="dialog" className={owner && owner !== user.id || scope !== 'current' ? 'active' : ''} onClick={() => setFiltersOpen(true)}><SlidersHorizontal size={16}/>{owner && owner !== user.id ? users.find(item=>item.id===owner)?.displayName || '待分配' : '筛选'}{scope !== 'current' && <i/>}</button>
               {(keyword || owner || overdue || source !== 'ALL' || status !== 'ACTIVE' || scope !== 'current') && <button aria-label="清除筛选" onClick={() => {setOwner('');setKeyword('');setSource('ALL');setStatus('ACTIVE');setScope('current');setSelectedWeek('');setOverdue(false);setPage(1);deepLinkedIdRef.current='';}}><X size={16}/></button>}
             </div>
@@ -500,7 +502,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
                   <span className="mc-card-title"><strong>{task.exceptionCase.materialModel || task.exceptionCase.exceptionNote}</strong>{task.risk === 'overdue' && <em className="mc-risk-tag">逾期</em>}</span>
                   <span className="mf-order-material" title={`${task.workOrder.specification || task.workOrder.code} · ${task.workOrder.customerName || ''}`}>{task.workOrder.specification || task.workOrder.code} · {task.workOrder.customerName || '客户待补充'}</span>
                   <span className="mc-card-meta"><MaterialOwner event={{...task.exceptionCase,owner:task.owner}}/><em className={`mf-status-chip ${task.status === 'RESOLVED' ? 'resolved' : task.status === 'WAITING_WAREHOUSE' ? 'warehouse' : ''}`}>{task.statusText}</em><time className={task.risk === 'overdue' ? 'mc-danger' : ''}>{dateText(task.expectedAt)}</time></span>
-                  <span className="mc-card-progress" title={task.latestProgress || ''}>{task.activities?.[0]?.actor?.displayName && <b>{task.activities[0].actor.displayName} · </b>}{task.latestProgress || '暂无跟进记录'}</span>
+                  <span className="mc-card-progress" title={task.latestProgress || ''}>{task.activities?.[0]?.actor?.displayName && <b>{task.activities[0].actor.displayName} · </b>}{task.activities?.[0]?.content || task.latestProgress || '暂无跟进记录'}</span>
                   <span className="mc-card-week">{task.workOrder.weekStartDate ? `计划周 ${dateText(task.workOrder.weekStartDate)} — ${dateText(task.workOrder.weekEndDate)}` : '未排期'}<span>{materialSourceText[task.exceptionCase.supplySource || 'UNKNOWN']}</span></span>
                 </button>
               </div>)}
@@ -516,7 +518,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
                 <div className="mc-subline"><span>{selected.workOrder.specification || selected.workOrder.code} · {selected.workOrder.customerName || '客户待补充'}</span>{!selected.exceptionCase.materialModel && <em>型号待补充</em>}<span>{selected.workOrder.weekStartDate ? `计划周 ${dateText(selected.workOrder.weekStartDate)} — ${dateText(selected.workOrder.weekEndDate)}` : '计划周待确认'}</span></div>
                 <MaterialTaskActions key={selected.id} task={selected} user={user} users={users} busy={saving} error={actionError} onAction={mutate} onDirty={setAssignmentDirty}/>
               </header>
-              <div className="ms-scroll ms-detail-body mf-detail-scroll">
+              <div ref={detailScroll} className="ms-scroll ms-detail-body mf-detail-scroll">
                 <section className="mc-facts" aria-label="缺料信息">
                   <div><span>物料来源</span><strong>{materialSourceText[selected.exceptionCase.supplySource || 'UNKNOWN']}</strong>{canEditFields && <button disabled={saving} onClick={()=>openEditor('source')}>{selected.exceptionCase.supplySource === 'UNKNOWN' ? '确认来源' : '修改来源'}</button>}</div>
                   <div><span>预计到料</span><strong className={selected.risk === 'overdue' ? 'mc-danger' : ''}>{dateText(selected.expectedAt)}{selected.risk === 'overdue' && <em className="mc-risk-tag">逾期</em>}</strong>{canEditArrival && <button disabled={saving} onClick={()=>openEditor('eta')}>改交期</button>}</div>
