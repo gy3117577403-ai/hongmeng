@@ -215,7 +215,7 @@ try {
       await visualSheet.getByRole('button',{name:'关闭物料跟进'}).click();
       await discard.getByRole('button',{name:'放弃未保存内容'}).click();
       await visualSheet.waitFor({state:'detached'});
-      check(new URL(page.url()).searchParams.get('taskId')===f.visual.warehouseTaskId,'discarding an unsaved note retains the warehouse work order');
+      check(await page.evaluate(()=>new URL(location.href).searchParams.get('taskId'))===f.visual.warehouseTaskId,'discarding an unsaved note retains the warehouse work order');
       await page.setViewportSize({width:1920,height:1080});
       await shot('warehouse-glass-1920x1080');
       await page.setViewportSize({width:1366,height:1024});
