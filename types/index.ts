@@ -416,6 +416,7 @@ export type LaborAccessRoleDTO = 'ADMIN' | 'TEAM_LEAD' | 'EMPLOYEE';
 export type DailyPlanningRoleDTO = 'WORKSHOP_SUPERVISOR' | 'TEAM_LEADER' | 'MEMBER';
 export type AccountStatusDTO = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
 export type AccessProfileKeyDTO =
+  | 'EMPLOYEE_ACCESS_MANAGER'
   | 'SAMPLE_LIBRARY_READER'
   | 'MODULE_ACCESS'
   | 'ADMIN_GLOBAL'
@@ -505,6 +506,7 @@ export type AccessScopeHintDTO = {
 
 export type AccessContextDTO = {
   sampleLibraryEnabled?: boolean;
+  employeeAccountManager?: boolean;
   modulePermissions?: import('@/lib/module-permissions').ModulePermissions | null;
   workbenchEnabled?: boolean;
   accountActive: boolean;
@@ -652,6 +654,7 @@ export type UserDTO = {
   } | null;
   accessMethods?: {
     sampleLibrary?: boolean;
+    employeeAccountManager?: boolean;
     workbench: boolean;
     fieldReport: boolean;
     pin: boolean;

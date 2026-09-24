@@ -16,7 +16,7 @@ import {
 } from '@/lib/department-access';
 import { legacyFallbackGrants } from '@/lib/legacy-access-policy';
 import { canRetainPasswordSession } from '@/lib/login-security';
-import { canManageEmployeeAccounts } from '@/lib/employee-account-access';
+import { canManageEmployeeAccounts, canAuthorizeEmployeeAccounts } from '@/lib/employee-account-access';
 import { prisma } from '@/lib/prisma';
 import { productionPlanningDateBoundary } from '@/lib/production-planning-date';
 import {
@@ -275,6 +275,14 @@ export async function requireAdmin() {
     user.laborRole !== 'ADMIN'
     && !hasCapability(user.access, 'ACCOUNT_ADMIN', 'MANAGE')
   ) throw new ForbiddenError();
+  return user;
+}
+
+export async function requireEmployeeAccountAuthorizer() {
+  const user = await currentUser();
+  if (!user) throw new UnauthorizedError();
+  if (user.mustChangePassword) throw new UnauthorizedError('请先修改初始密码');
+  if (!canAuthorizeEmployeeAccounts(user)) throw new ForbiddenError();
   return user;
 }
 

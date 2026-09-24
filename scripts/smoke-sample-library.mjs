@@ -39,11 +39,11 @@ try {
  const customer=tag+' · 杭州样品客户',otherCustomer=tag+' · 其他客户';
  async function product(specification,customerName=customer){return db.drawingLibraryItem.create({data:{customerName,productName:'控制线束 · 样品参考',specification,libraryKey:tag+'-'+randomUUID()}});}
  async function task(p,extra={}){return db.sampleTask.create({data:{code:tag+'-'+randomUUID().slice(0,6),qrCode:randomUUID(),drawingLibraryItemId:p.id,customerNameSnapshot:p.customerName,specificationSnapshot:p.specification,productNameSnapshot:p.productName,dataPurpose:'PRODUCTION',...extra}});}
- async function photo(t,extra={}){const nonce=randomUUID(),key=objectKey+'-'+nonce;const bytes=await sharp(Buffer.from(svg.replace('</svg>',`<text x="95" y="825" font-size="12" fill="#8093a1">${nonce}</text></svg>`))).jpeg({quality:90}).toBuffer();await storage.send(new PutObjectCommand({Bucket:process.env.S3_BUCKET||'workorder-resources',Key:key,Body:bytes,ContentType:'image/jpeg'}));return db.samplePhoto.create({data:{taskId:t.id,category:'FINISHED',caption:'连接器与线束装配照片',originalName:'sample-reference.jpg',mimeType:'image/jpeg',size:bytes.length,objectKey:key,sha256:createHash('sha256').update(bytes).digest('hex'),...extra}});}
+ async function photo(t,extra={},large=false){const nonce=randomUUID(),key=objectKey+'-'+nonce;const bytes=await sharp(Buffer.from(svg.replace('</svg>',`<text x="95" y="825" font-size="12" fill="#8093a1">${nonce}</text></svg>`))).resize(large?6000:1200,large?4500:900).jpeg({quality:90}).withMetadata({orientation:large?6:1}).toBuffer();await storage.send(new PutObjectCommand({Bucket:process.env.S3_BUCKET||'workorder-resources',Key:key,Body:bytes,ContentType:'image/jpeg'}));return db.samplePhoto.create({data:{taskId:t.id,category:'FINISHED',caption:'连接器与线束装配照片',originalName:'sample-reference.jpg',mimeType:'image/jpeg',size:bytes.length,objectKey:key,sha256:createHash('sha256').update(bytes).digest('hex'),...extra}});}
  const p=await product('D014503-8305-V01'),old=await task(p,{status:'COMPLETED',archivedAt:new Date(),unitPlannedMilliseconds:60000,updatedAt:new Date('2025-03-01')});
  const entry=await db.sampleDataEntry.create({data:{taskId:old.id,kind:'STRIPPING',label:'X21 连接器参数',payload:{model:'X21',outerPeelMm:99,innerPeelMm:5},submissionRevision:2,reviewStatus:'CHANGES_REQUESTED'}});
  const processEntry=await db.sampleDataEntry.create({data:{taskId:old.id,kind:'PROCESS_TIME',payload:{processName:'连接器装配',recommendedSeconds:45,timeBasis:'per_unit'},submissionRevision:1,reviewStatus:'PUBLISHED'}});
- const first=await photo(old,{submissionRevision:2,reviewStatus:'PUBLISHED'}),second=await photo(old,{submissionRevision:1,reviewStatus:'PUBLISHED',caption:'连接器局部细节',category:'DETAIL'});
+ const first=await photo(old,{submissionRevision:2,reviewStatus:'PUBLISHED'},true),second=await photo(old,{submissionRevision:1,reviewStatus:'PUBLISHED',caption:'连接器局部细节',category:'DETAIL'});
  const snapshot={entries:[{id:entry.id,kind:entry.kind,label:entry.label,payload:{model:'X21',outerPeelMm:3.5,innerPeelMm:5}},{id:processEntry.id,kind:processEntry.kind,payload:processEntry.payload}],photos:[{id:first.id,category:'FINISHED',caption:'连接器与线束装配照片'},{id:second.id,category:'DETAIL',caption:'连接器局部细节'}]};
  await db.sampleSubmission.create({data:{taskId:old.id,revision:1,mutationId:randomUUID(),requestHash:'qa',status:'CONFIRMED',snapshot,reviewedSnapshot:snapshot,submittedAt:new Date('2025-03-01')}});
  await db.sampleSubmission.create({data:{taskId:old.id,revision:2,mutationId:randomUUID(),requestHash:'qa2',status:'REJECTED',snapshot:{entries:[{id:entry.id,kind:entry.kind,payload:{model:'X21',outerPeelMm:99}}],photos:[{id:first.id,category:'FINISHED'}]},decisionComment:'参数需要核对',submittedAt:new Date('2026-09-20')}});
@@ -66,6 +66,18 @@ try {
  const rejected=await req('explicit rejected history','/api/sample-library/'+p.id+'?source='+encodeURIComponent(old.id+':2'));check(rejected.comment==='参数需要核对'&&rejected.entries[0].payload.outerPeelMm===99,'rejected history is separate and labelled');
  const draftDetail=await req('unsubmitted section data discoverable','/api/sample-library/'+sectionProduct.id);const draft=await req('load meaningful unsubmitted rows','/api/sample-library/'+sectionProduct.id+'?source='+encodeURIComponent(draftDetail.defaultKey));check(draft.entries.length===1&&draft.entries[0].payload.model==='X11','blank placeholders removed without losing saved draft');
  const pixels=await fetch(base+'/api/sample-library/photos/'+first.id+'?size=thumb',{headers:{Cookie:cookie}});assert.equal(pixels.status,200);const thumbnail=Buffer.from(await pixels.arrayBuffer()),metadata=await sharp(thumbnail).metadata();check(metadata.width<=440&&metadata.height<=440&&thumbnail.length<image.length,'authorized thumbnail is resized');
+
+ for(const size of ['screen','hd']) {
+  const response=await fetch(base+'/api/sample-library/photos/'+first.id+'?size='+size,{headers:{Cookie:cookie}});
+  assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'image/jpeg');
+  const metadata=await sharp(Buffer.from(await response.arrayBuffer())).metadata();
+  assert.equal(metadata.height,size==='hd'?2560:1600);assert.equal(metadata.width,size==='hd'?1920:1200);
+  check(!metadata.orientation||metadata.orientation===1,'EXIF corrected '+size+' image fits bounded mobile preview');
+ }
+ const cached=await photo(current);
+ await fetch(base+'/api/sample-library/photos/'+cached.id+'?size=screen',{headers:{Cookie:cookie}});
+ await db.samplePhoto.update({where:{id:cached.id},data:{deletedAt:new Date()}});
+ await req('cached derivative cannot bypass deletion','/api/sample-library/photos/'+cached.id+'?size=screen',undefined,404);
  for(const item of excluded){await req('excluded media is not readable','/api/sample-library/photos/'+item.photo,undefined,404);const value=await req('excluded source not listed in detail','/api/sample-library/'+item.product);check(value.histories.length===0,'test training deleted task history absent');}
  await req('deleted photo cannot be read','/api/sample-library/photos/'+removed.id,undefined,404);
  for(const url of ['/api/sample-tasks','/api/drawing-library/missing/files/upload','/api/employees','/api/users/sample-library-access'])await req('mobile reader cannot mutate '+url,url,{},403);
@@ -76,7 +88,7 @@ try {
  const revoked=(await req('revoke mobile entitlement','/api/users/sample-library-access',{id:reader.id,enabled:false,expectedUpdatedAt:fresh.updatedAt})).user;
  cookie=mobileCookie;await req('revocation invalidates old cookie','/api/sample-library',undefined,403);
  cookie=adminCookie;await req('restore mobile fixture for browser','/api/users/sample-library-access',{id:reader.id,enabled:true,expectedUpdatedAt:revoked.updatedAt});
- const fixture={marker:tag,username:reader.username,password,adminUsername:process.env.SEED_ADMIN_USERNAME,adminPassword:process.env.SMOKE_ADMIN_CHANGED_PASSWORD,productId:p.id,model:p.specification,customer,otherCustomer,taskCode:current.qrCode,oldKey:old.id+':1',rejectedKey:old.id+':2'};
+ const fixture={marker:tag,username:reader.username,password,adminUsername:process.env.SEED_ADMIN_USERNAME,adminPassword:process.env.SMOKE_ADMIN_CHANGED_PASSWORD,photoId:first.id,productId:p.id,model:p.specification,customer,otherCustomer,taskCode:current.qrCode,oldKey:old.id+':1',rejectedKey:old.id+':2'};
  const fixturePath=process.env.SAMPLE_LIBRARY_FIXTURE||'/tmp/sample-library-fixture.json';await fs.mkdir(path.dirname(fixturePath),{recursive:true});await fs.writeFile(fixturePath,JSON.stringify(fixture));
  const output=process.env.SAMPLE_LIBRARY_QA_OUTPUT||'artifacts/sample-library/http.json';await fs.mkdir(path.dirname(output),{recursive:true});await fs.writeFile(output,JSON.stringify({ok:true,marker:tag,checks},null,2));console.log(`Sample library HTTP acceptance: ${checks.length} checks passed`);
 } finally {await db.$disconnect();}

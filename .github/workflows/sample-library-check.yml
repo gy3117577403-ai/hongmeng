@@ -1,7 +1,7 @@
 name: Sample Library Preflight
 on:
   push:
-    branches: ["codex/sample-library-v134236"]
+    branches: ["codex/mobile-photo-hr-v134237"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -50,6 +50,8 @@ jobs:
           APP_BASE_URL: http://127.0.0.1:3000
           SAMPLE_LIBRARY_QA_ALLOW: disposable-sample-library
           SAMPLE_LIBRARY_FIXTURE: /tmp/sample-library-fixture.json
+          ACCOUNT_ACCESS_QA_ALLOW: disposable-account-access
+          ACCOUNT_ACCESS_FIXTURE: /tmp/account-access-fixture.json
         run: |
           set -euo pipefail
           bash scripts/pull-ci-minio.sh
@@ -63,11 +65,16 @@ jobs:
             if curl --fail --silent http://127.0.0.1:3000/api/ready >/dev/null; then break; fi
             sleep 2
           done
+          node scripts/check-hr-delegation-migration.mjs
           node scripts/smoke-sample-library.mjs
+          node scripts/smoke-account-access.mjs
           sudo apt-get update -qq
           sudo apt-get install -y fonts-noto-cjk
           npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
           node scripts/smoke-sample-library-browser.mjs
+          node scripts/smoke-account-access-browser.mjs
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser webkit --with-deps
+          SAMPLE_LIBRARY_BROWSER=webkit SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-webkit node scripts/smoke-sample-library-browser.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -75,4 +82,7 @@ jobs:
           path: |
             output/playwright/sample-library
             artifacts/sample-library
+            output/playwright/sample-library-webkit
+            output/playwright/account-access
+            artifacts/account-access
             account-access-server.log

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin, ForbiddenError, UnauthorizedError, forbidden, unauthorized } from '@/lib/auth';
+import { requireEmployeeAccountAuthorizer, ForbiddenError, UnauthorizedError, forbidden, unauthorized } from '@/lib/auth';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { saveModuleAccount } from '@/lib/module-account-admin';
 import { AccessGrantInputError } from '@/lib/user-access-admin';
@@ -8,9 +8,9 @@ export const runtime = 'nodejs';
 export async function POST(request: NextRequest) {
   try {
     assertSameOriginMutationRequest(request);
-    const actor = await requireAdmin();
+    const actor = await requireEmployeeAccountAuthorizer();
     const body = await request.json();
-    const user = await saveModuleAccount(actor.id, body);
+    const user = await saveModuleAccount(actor, body);
     return NextResponse.json({ ok: true, user });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

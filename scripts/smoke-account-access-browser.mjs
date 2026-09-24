@@ -62,6 +62,22 @@ try {
       for(const route of ['/weekly-plan-center','/workspace/quality/data','/workspace/procurement','/drawing-library','/workspace/workflows','/workspace/reports']) {
         await page.goto(origin+route);await page.waitForLoadState('domcontentloaded');if(route==='/weekly-plan-center')check(await page.getByRole('button',{name:'新建订单',exact:true}).isDisabled(),'read-only planning disables new order');const expectedRoute=route==='/workspace/reports'?'/workspace/reports/production/weekly-plan-attainment':route;check((await page.evaluate(() => location.pathname))===expectedRoute,'read-only can open '+route);
       }
+      await page.evaluate(()=>fetch('/api/auth/logout',{method:'POST'}));
+      await page.setViewportSize({width:1366,height:1024});await login(f.delegate.username,f.delegate.password,'/workspace/employees?view=directory');
+      await page.getByLabel('搜索员工',{exact:true}).fill(f.marker);
+      await page.getByRole('button',{name:'账号管理',exact:true}).click();await dialog.waitFor();
+      await dialog.getByLabel('搜索员工账号').fill(f.ordinary.name);await dialog.locator('.aa-account').filter({hasText:f.ordinary.name}).click();
+      check(await dialog.locator('.aa-module').count()===7,'delegated HR can configure seven business modules');
+      check(await dialog.getByLabel('员工账号与业务授权管理',{exact:true}).count()===0,'delegated HR cannot see delegation switch');
+      const quality=dialog.locator('.aa-module').filter({hasText:'质量中心'});await quality.getByRole('button',{name:'协同',exact:true}).click();
+      await dialog.getByLabel('开通物料与仓储',{exact:true}).check();
+      const hrSave=page.waitForResponse(r=>r.url().endsWith('/api/users/module-access')&&r.request().method()==='POST');
+      await dialog.getByRole('button',{name:'保存配置',exact:true}).click();const hrResponse=await hrSave;check(hrResponse.status()===200,'delegated HR saves module permissions in UI');
+      const hrData=await hrResponse.json();check(hrData.user.moduleAccess.permissions.quality==='COLLABORATE'&&hrData.user.moduleAccess.permissions.materials==='READ','delegated UI persists mixed permission levels');
+      check(hrData.user.accessMethods.sampleLibrary===true,'delegated edit preserves mobile library permission');
+      await dialog.getByRole('status').waitFor();await shot('delegated-hr-permissions-1366');
+      await dialog.getByRole('button',{name:'关闭账号管理',exact:true}).click();await dialog.waitFor({state:'detached'});
+      check(await page.getByLabel('搜索员工',{exact:true}).inputValue()===f.marker,'delegated manager returns to original HR search');
       check(errors.length===0,'no uncaught browser errors');return {ok:true,checks};
     } catch(e) {await shot('failure').catch(()=>{});throw e;}
   }`);

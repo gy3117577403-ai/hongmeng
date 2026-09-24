@@ -1,18 +1,19 @@
 import bcrypt from 'bcryptjs';
+import { canManageEmployeeAccountTarget } from '@/lib/employee-account-access';
 import { NextRequest, NextResponse } from 'next/server';
-import { requireAdmin, UnauthorizedError, ForbiddenError, unauthorized, forbidden } from '@/lib/auth';
+import { requireEmployeeAccountAuthorizer, UnauthorizedError, ForbiddenError, unauthorized, forbidden } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { validateNewPassword } from '@/lib/password-policy';
 import { AccessGrantInputError, adminUserInclude, serializeAdminUser } from '@/lib/user-access-admin';
 export async function POST(request: NextRequest) {
   try {
-    assertSameOriginMutationRequest(request); const actor = await requireAdmin(); const input = await request.json();
+    assertSameOriginMutationRequest(request); const actor = await requireEmployeeAccountAuthorizer(); const input = await request.json();
     if (typeof input.id !== 'string' || typeof input.enabled !== 'boolean') throw new AccessGrantInputError('请选择账号和手机样品库访问方式');
     const user = await prisma.$transaction(async tx => {
       const previous = await tx.user.findUnique({ where: { id: input.id }, include: adminUserInclude });
       if (!previous) throw new AccessGrantInputError('账号不存在', 404);
-      if (previous.id===actor.id || previous.laborRole==='ADMIN' || previous.accessGrants.some(grant=>grant.profile==='ADMIN_GLOBAL')) throw new AccessGrantInputError('管理员身份或本人权限请通过既有管理流程维护',403);
+      if (!canManageEmployeeAccountTarget(actor, previous) || previous.id===actor.id || previous.laborRole==='ADMIN' || previous.accessGrants.some(grant=>grant.profile==='ADMIN_GLOBAL')) throw new AccessGrantInputError('管理员身份或本人权限请通过既有管理流程维护',403);
       const password = typeof input.password==='string'?input.password:'';
       if (input.enabled && previous.fieldPasswordOnly) { const error=validateNewPassword(password,previous.username); if(error) throw new AccessGrantInputError(`开通手机样品库需设置独立密码：${error}`); }
       const expected = new Date(String(input.expectedUpdatedAt || ''));

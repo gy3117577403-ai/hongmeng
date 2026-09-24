@@ -743,6 +743,10 @@ export function canAccessApiRoute(
   method?: string | null,
 ): boolean | null {
   if (/^\/api\/sample-library(?:\/|$)/.test(pathOnly(pathname))) return ['GET', 'HEAD'].includes(String(method || 'GET').toUpperCase()) && canReadSampleLibrary(access);
+  if (['/api/users/module-access', '/api/users/sample-library-access'].includes(pathOnly(pathname))) {
+    return String(method || 'GET').toUpperCase() === 'POST' && (hasCapability(access, 'ACCOUNT_ADMIN', 'MANAGE')
+      || Boolean(access.employeeAccountManager) && hasCapability(access, 'HR', 'READ') && hasCapability(access, 'HR', 'UPDATE'));
+  }
   const newRule = apiRouteAccessRule(pathname);
   const moduleDecision = moduleApiDecision(access, pathname, method, newRule?.anyOf);
   if (moduleDecision !== null) return moduleDecision && (!newRule?.allowedMethods || newRule.allowedMethods.includes(String(method || 'GET').toUpperCase()));

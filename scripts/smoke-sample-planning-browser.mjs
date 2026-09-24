@@ -41,7 +41,7 @@ try{
   await importedDetail.getByRole('button',{name:/关闭/}).first().click();await importedDetail.waitFor({state:'detached'});
   await dialog.waitFor();check(await dialog.locator('tbody tr').count()===24,'closing imported record restores all import results');
   const download=page.waitForEvent('download');await dialog.getByRole('button',{name:'导出逐行结果'}).click();await (await download).saveAs(dir+'/import-results.csv');
-  await dialog.getByRole('button',{name:'查看本次导入 24 项'}).click();await page.locator('.spr-batch-banner').waitFor();await page.waitForFunction(()=>document.querySelector('.spr-table')?.getAttribute('aria-busy')==='false');
+  await dialog.getByRole('button',{name:'查看本次导入 24 项'}).click();await page.locator('.spr-batch-banner').waitFor();await page.waitForFunction(()=>document.querySelector('.spr-table')?.getAttribute('aria-busy')==='false'&&document.querySelector('.sp-table-footer')?.textContent.includes('共 24 条')&&document.querySelectorAll('.spr-table tbody tr').length===20);
   check((await table.locator('.sp-table-summary').textContent()).includes('115'),'aggregate known hours includes every page and omits missing hours');
   check(await table.locator('.sp-table-summary').isVisible(),'quantity and hours summary is visible');
   check((await table.locator('.sp-table-footer').textContent()).includes('共 24 条'),'mixed branch import result includes all 24 plans');

@@ -4,12 +4,13 @@ import { join } from 'node:path';
 if(process.env.SAMPLE_LIBRARY_QA_ALLOW!=='disposable-sample-library')throw Error('Disposable runtime required');
 const origin=process.env.SAMPLE_LIBRARY_QA_BASE||'http://127.0.0.1:3000';if(!['localhost','127.0.0.1'].includes(new URL(origin).hostname))throw Error('Loopback only');
 const fixture=JSON.parse(readFileSync(process.env.SAMPLE_LIBRARY_FIXTURE||'/tmp/sample-library-fixture.json','utf8'));if(!fixture.marker?.startsWith('SL-'))throw Error('Unexpected fixture');
+const engine=process.env.SAMPLE_LIBRARY_BROWSER||'chrome';
 const dir=process.env.SAMPLE_LIBRARY_BROWSER_OUTPUT||'output/playwright/sample-library';mkdirSync(dir,{recursive:true});const file=join(dir,'browser.generated.cjs');
 function cli(args){const result=spawnSync('npx',['--yes','--package','@playwright/cli@0.1.19','playwright-cli','-s=sample-library',...args],{encoding:'utf8',timeout:240000});const text=((result.stdout||'')+(result.stderr||'')).replace(/### Ran Playwright code\r?\n```[\s\S]*?```(?:\r?\n)?/g,'').replaceAll(fixture.password,'[disposable-password]').replaceAll(fixture.adminPassword,'[disposable-password]');if(result.status||result.error)throw Error(text||result.error.message);return text;}
 try{
- cli(['open',origin+'/login']);writeFileSync(join(dir,'initial-snapshot.txt'),cli(['snapshot']));
+ cli(['open',origin+'/login','--browser',engine,...(engine==='webkit'?['--device','iPhone 13']:[])]);writeFileSync(join(dir,'initial-snapshot.txt'),cli(['snapshot']));
  writeFileSync(file,`async page=>{
-  const f=${JSON.stringify(fixture)},origin=${JSON.stringify(origin)},dir=${JSON.stringify(dir)},checks=[],errors=[];
+  const engine=${JSON.stringify(engine)},f=${JSON.stringify(fixture)},origin=${JSON.stringify(origin)},dir=${JSON.stringify(dir)},checks=[],errors=[];
   const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label);};const shot=name=>page.screenshot({path:dir+'/'+name+'.png',animations:'disabled'});
   page.on('pageerror',error=>errors.push(String(error)));page.on('dialog',dialog=>dialog.accept());page.setDefaultTimeout(20000);
   const login=async(username,password,next)=>{await page.goto(origin+'/login?next='+encodeURIComponent(next));await page.getByLabel('员工编号 / 管理账号').fill(username);await page.getByLabel('密码',{exact:true}).fill(password);await page.locator('button.primary-button').click();await page.waitForURL(u=>u.pathname===next.split('?')[0]);};
@@ -27,11 +28,37 @@ try{
    await page.getByRole('tab',{name:'历次记录',exact:true}).click();check(await page.locator('.sl-history-card').count()===2,'withdrawn rejected versions are collapsed');await page.getByRole('button',{name:/查看退回/}).click();check(await page.locator('.sl-history-card').count()===3,'rejected version available explicitly');await shot('history-390');
    await page.locator('.sl-history-card').filter({hasText:'已退回'}).click();await page.getByText('审核说明：参数需要核对').waitFor();check(await page.locator('.sl-source-note.warning').isVisible(),'rejected source has visible warning');
    await page.getByRole('tab',{name:'历次记录',exact:true}).click();await page.locator('.sl-history-card').filter({hasText:'已审核'}).click();await loaded();
-   await page.locator('.sl-photo-grid button').first().click();const viewer=page.getByRole('dialog',{name:'样品照片预览'});await viewer.waitFor();await page.waitForFunction(()=>document.querySelector('.sl-photo-transform img')?.naturalWidth>0);
+   await page.locator('.sl-photo-grid button').first().click();const viewer=page.getByRole('dialog',{name:'样品照片预览'});await viewer.waitFor();await page.waitForFunction(()=>document.querySelector('.sl-photo-view')?.getAttribute('data-photo-state')==='ready'&&document.querySelector('.sl-photo-transform img')?.src.startsWith('blob:'));
+   const initialImage=await page.locator('.sl-photo-transform img').evaluate(img=>({width:img.naturalWidth,height:img.naturalHeight,src:img.src}));
+   check(initialImage.width===1200&&initialImage.height===1600,'large EXIF phone photo is decoded with correct orientation at screen size');
+   check(await page.locator('.sl-photo-transform').evaluate(el=>el.clientWidth<=el.parentElement.clientWidth&&el.clientHeight<=el.parentElement.clientHeight),'photo canvas uses fitted viewport dimensions');
+   await shot('photo-screen-ready-'+engine);
+   let heldHd;await page.route('**/api/sample-library/photos/**?size=hd*',route=>{heldHd=route;});
+   await page.getByRole('button',{name:'查看高清',exact:true}).click();
+   await page.waitForFunction(()=>document.querySelector('.sl-photo-view')?.getAttribute('data-photo-state')==='loading');
+   check(await page.locator('.sl-photo-transform img').getAttribute('src')===initialImage.src,'visible preview stays during high resolution request');
+   // The route has now been issued; wait for it without a fixed delay.
+   for(let i=0;!heldHd&&i<100;i++)await new Promise(resolve=>setTimeout(resolve,50));check(Boolean(heldHd),'HD request intercepted');
+   await heldHd.fulfill({status:503,contentType:'application/json',body:'{"error":"test storage unavailable"}'});
+   await page.getByRole('button',{name:'重新加载',exact:true}).waitFor();
+   check(await page.locator('.sl-photo-transform img').getAttribute('src')===initialImage.src,'failed HD request keeps visible image and actionable error');
+   await shot('photo-retry-error-'+engine);await page.unroute('**/api/sample-library/photos/**?size=hd*');
+   await page.getByRole('button',{name:'重新加载',exact:true}).click();
+   await page.waitForFunction(()=>document.querySelector('.sl-photo-view')?.getAttribute('data-photo-state')==='ready'&&document.querySelector('.sl-photo-transform img')?.naturalHeight===2560);
+   check(await page.locator('.sl-photo-transform img').evaluate(img=>img.naturalWidth)===1920,'HD retry decodes normalized high resolution image');
+   await page.getByRole('button',{name:'兼容查看',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.sl-photo-plain')?.naturalHeight===1600);
+   check(await page.locator('.sl-photo-transform').count()===0,'compatibility mode removes transformed image layer');
+   await shot('photo-compatible-'+engine);await page.getByRole('button',{name:'手势查看',exact:true}).click();
+
    const transform=()=>page.locator('.sl-photo-transform').getAttribute('style');const original=await transform();await page.locator('.sl-photo-stage').dblclick();check(await transform()!==original,'double click zooms photo');await page.getByLabel('照片适屏').click();
-   const box=await page.locator('.sl-photo-stage').boundingBox();const cx=box.x+box.width/2,cy=box.y+box.height/2;const cdp=await page.context().newCDPSession(page);
-   await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:cx-30,y:cy,id:1},{x:cx+30,y:cy,id:2}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:cx-85,y:cy,id:1},{x:cx+85,y:cy,id:2}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await page.waitForTimeout(220);check(await transform()!==original,'two finger touch pinch changes zoom');
-   await page.getByLabel('旋转照片').click();check((await transform()).includes('90deg'),'rotate photo remains in reader');await page.getByLabel('照片适屏').click();await page.getByLabel('下一张照片').click();check(await viewer.locator('header>span').textContent()==='2 / 2','next photo updates count');await shot('photo-viewer-390');
+   const box=await page.locator('.sl-photo-stage').boundingBox();const cx=box.x+box.width/2,cy=box.y+box.height/2;if(engine!=='webkit'){const cdp=await page.context().newCDPSession(page);
+   await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:cx-30,y:cy,id:1},{x:cx+30,y:cy,id:2}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:cx-85,y:cy,id:1},{x:cx+85,y:cy,id:2}]});await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});await page.waitForTimeout(220);check(await transform()!==original,'two finger touch pinch changes zoom');}
+   await page.getByLabel('旋转照片').click();check((await transform()).includes('90deg'),'rotate photo remains in reader');await page.getByLabel('照片适屏').click();await page.getByLabel('下一张照片').click();check(await viewer.locator('header>span').textContent()==='2 / 2','next photo updates count');await page.waitForFunction(()=>document.querySelector('.sl-photo-view')?.getAttribute('data-photo-state')==='ready');await shot('photo-viewer-390');
+   await page.setViewportSize({width:844,height:390});
+   check(await page.locator('.sl-photo-stage').evaluate(el=>el.clientHeight)>80,'landscape retains usable photo viewport');
+   check(await page.getByLabel('关闭照片').isVisible()&&await page.getByLabel('下一张照片').isVisible(),'landscape controls remain reachable');
+   await shot('photo-landscape-'+engine);await page.setViewportSize({width:390,height:844});
+
    await page.goBack();await viewer.waitFor({state:'detached'});check(await page.locator('.sl-photo-grid').isVisible(),'browser back closes photo before detail');
    await page.getByLabel('返回样品列表').click();await page.locator('.sl-product-card').first().waitFor();
    await page.getByRole('button',{name:'全部客户',exact:true}).click();await page.getByLabel('搜索客户').fill(f.customer);await shot('customer-filter-390');await page.locator('.sl-customer-options button').filter({hasText:f.customer}).click();await page.locator('.sl-product-card').first().waitFor();

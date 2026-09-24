@@ -3,11 +3,16 @@ import { hasCapability, type AccessContext } from '@/lib/department-access';
 export type EmployeeAccountActor = {
   id: string;
   laborRole: string;
-  access: Pick<AccessContext, 'capabilities'>;
+  access: Pick<AccessContext, 'capabilities' | 'employeeAccountManager'>;
 };
 
 export function isGlobalAccountManager(actor: EmployeeAccountActor): boolean {
   return actor.laborRole === 'ADMIN' || hasCapability(actor.access, 'ACCOUNT_ADMIN', 'MANAGE');
+}
+
+export function canAuthorizeEmployeeAccounts(actor: EmployeeAccountActor): boolean {
+  return isGlobalAccountManager(actor) || Boolean(actor.access.employeeAccountManager)
+    && hasCapability(actor.access, 'HR', 'READ') && hasCapability(actor.access, 'HR', 'UPDATE');
 }
 
 export function canManageEmployeeAccounts(actor: EmployeeAccountActor): boolean {
@@ -27,7 +32,7 @@ export function canManageEmployeeAccountTarget(actor: EmployeeAccountActor, targ
     && Boolean(target.employeeId)
     && target.laborRole !== 'ADMIN'
     // Protect administrator accounts even when a grant is inactive or scheduled.
-    && !target.accessGrants.some(grant => grant.profile === 'ADMIN_GLOBAL');
+    && !target.accessGrants.some(grant => ['ADMIN_GLOBAL', 'EMPLOYEE_ACCESS_MANAGER'].includes(grant.profile));
 }
 
 /** HR changes account lifecycle, not bindings, roles, or authorization grants. */

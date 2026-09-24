@@ -9,7 +9,7 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
-import { canManageEmployeeAccountTarget, isGlobalAccountManager } from '@/lib/employee-account-access';
+import { canManageEmployeeAccountTarget, isGlobalAccountManager, canAuthorizeEmployeeAccounts } from '@/lib/employee-account-access';
 import { FIELD_REPORT_DEFAULT_PASSWORD } from '@/lib/login-security';
 import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
@@ -82,7 +82,7 @@ export async function GET() {
       ok: true,
       users: users.filter(user => canManageEmployeeAccountTarget(current, user))
         .map(user => serializeAdminUser(user, { productionTeams })),
-      canManagePermissions: isGlobalAccountManager(current),
+      canManagePermissions: canAuthorizeEmployeeAccounts(current),
       departments,
       productionTeams,
     });

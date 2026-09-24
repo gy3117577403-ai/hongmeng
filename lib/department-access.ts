@@ -27,6 +27,7 @@ export type DepartmentCode = typeof DEPARTMENT_CODES[number];
 
 export const ACCESS_PROFILE_CODES = [
   'SAMPLE_LIBRARY_READER',
+  'EMPLOYEE_ACCESS_MANAGER',
   'MODULE_ACCESS',
   'ADMIN_GLOBAL',
   'DEPARTMENT_FULL',
@@ -202,6 +203,7 @@ export type ProductionScopeLevel = 'NONE' | 'TEAM' | 'WORKSHOP' | 'GLOBAL';
 
 export interface AccessContext {
   sampleLibraryEnabled?: boolean;
+  employeeAccountManager?: boolean;
   modulePermissions?: ModulePermissions | null;
   workbenchEnabled?: boolean;
   accountActive: boolean;
@@ -402,7 +404,7 @@ export function resolveAccessContext(
   const currentGrants = effectiveAccessGrants(grants, now);
   const configuration = currentGrants.some(grant => grant.profile === 'ADMIN_GLOBAL') ? null : moduleConfiguration(currentGrants);
   // Explicit module configuration replaces legacy business grants, including scheduled ones.
-  const effectiveGrants = configuration ? currentGrants.filter(grant => ['MODULE_ACCESS', 'FIELD_REPORTER', 'SAMPLE_LIBRARY_READER'].includes(grant.profile)) : currentGrants;
+  const effectiveGrants = configuration ? currentGrants.filter(grant => ['MODULE_ACCESS', 'FIELD_REPORTER', 'SAMPLE_LIBRARY_READER', 'EMPLOYEE_ACCESS_MANAGER'].includes(grant.profile)) : currentGrants;
   const capabilities = new Set<CapabilityCode>();
   const scopes = new Map<string, AccessScopeHint>();
   let productionScope: ProductionScopeLevel = 'NONE';
@@ -425,7 +427,7 @@ export function resolveAccessContext(
   }
 
   for (const grant of effectiveGrants) {
-    if (grant.profile === 'SAMPLE_LIBRARY_READER') {
+    if (grant.profile === 'SAMPLE_LIBRARY_READER' || grant.profile === 'EMPLOYEE_ACCESS_MANAGER') {
       addSelfService(capabilities);
       continue;
     }
@@ -638,6 +640,7 @@ export function resolveAccessContext(
   return {
     accountActive: true,
     sampleLibraryEnabled: currentGrants.some(grant => grant.profile === 'SAMPLE_LIBRARY_READER'),
+    employeeAccountManager: currentGrants.some(grant => grant.profile === 'EMPLOYEE_ACCESS_MANAGER') && capabilities.has('HR:READ') && capabilities.has('HR:UPDATE'),
     ...(configuration ? { modulePermissions: configuration.permissions, workbenchEnabled: configuration.workbenchEnabled } : {}),
     effectiveGrants,
     capabilities: orderedCapabilities,
