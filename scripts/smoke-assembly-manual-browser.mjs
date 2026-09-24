@@ -77,7 +77,7 @@ try {
       await page.waitForFunction(() => Number(document.querySelector('.pdf-stage canvas')?.getAttribute('data-rendered-page')) > 0 && !document.querySelector('.pdf-stage .viewer-state'));
       check(true, 'switching manuals remains responsive');
       await page.screenshot({ path: dir + '/manual-ready-1366.png', animations: 'disabled' });
-      const search = page.locator('.hm-manual-search-field input');
+      const search = page.getByRole('textbox', { name: '搜索说明书库', exact: true });
       await search.fill(titles[0]);
       await page.waitForFunction(title => document.querySelectorAll('.manual-card').length === 1 && document.querySelector('.manual-card')?.textContent.includes(title), titles[0]);
       check(true, 'search remains responsive after preview load');

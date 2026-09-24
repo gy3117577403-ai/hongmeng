@@ -60,7 +60,8 @@ jobs:
           npm run prisma:seed
           npm run start > account-access-server.log 2>&1 &
           server_pid=$!
-          trap 'kill "$server_pid" || true; docker rm -f account-access-storage >/dev/null' EXIT
+          proxy_pid=''
+          trap 'kill "$server_pid" ${proxy_pid:-} 2>/dev/null || true; docker rm -f account-access-storage >/dev/null' EXIT
           for attempt in $(seq 1 60); do
             if curl --fail --silent http://127.0.0.1:3000/api/ready >/dev/null; then break; fi
             sleep 2
@@ -75,7 +76,14 @@ jobs:
           node scripts/smoke-account-access-browser.mjs
           node scripts/smoke-assembly-manual-browser.mjs
           npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser webkit --with-deps
-          SAMPLE_LIBRARY_BROWSER=webkit SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-webkit node scripts/smoke-sample-library-browser.mjs
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout "$RUNNER_TEMP/sample-https.key" -out "$RUNNER_TEMP/sample-https.crt" -days 1 -subj '/CN=localhost' -addext 'subjectAltName=IP:127.0.0.1,DNS:localhost' 2>/dev/null
+          SMOKE_HTTPS_KEY="$RUNNER_TEMP/sample-https.key" SMOKE_HTTPS_CERT="$RUNNER_TEMP/sample-https.crt" node scripts/smoke-https-proxy.mjs > sample-https.log 2>&1 &
+          proxy_pid=$!
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --insecure https://127.0.0.1:3443/api/ready >/dev/null; then break; fi
+            sleep 1
+          done
+          SAMPLE_LIBRARY_QA_BASE=https://127.0.0.1:3443 SAMPLE_LIBRARY_BROWSER=webkit SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-webkit node scripts/smoke-sample-library-browser.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -88,3 +96,4 @@ jobs:
             output/playwright/assembly-manual
             artifacts/account-access
             account-access-server.log
+            sample-https.log

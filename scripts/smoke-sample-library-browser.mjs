@@ -6,9 +6,12 @@ const origin=process.env.SAMPLE_LIBRARY_QA_BASE||'http://127.0.0.1:3000';if(!['l
 const fixture=JSON.parse(readFileSync(process.env.SAMPLE_LIBRARY_FIXTURE||'/tmp/sample-library-fixture.json','utf8'));if(!fixture.marker?.startsWith('SL-'))throw Error('Unexpected fixture');
 const engine=process.env.SAMPLE_LIBRARY_BROWSER||'chrome';
 const dir=process.env.SAMPLE_LIBRARY_BROWSER_OUTPUT||'output/playwright/sample-library';mkdirSync(dir,{recursive:true});const file=join(dir,'browser.generated.cjs');
+// Only this disposable loopback test may trust its temporary self-signed certificate.
+const config=join(dir,'browser.config.json');
+writeFileSync(config,JSON.stringify({browser:{contextOptions:{ignoreHTTPSErrors:new URL(origin).protocol==='https:'}}}));
 function cli(args){const result=spawnSync('npx',['--yes','--package','@playwright/cli@0.1.19','playwright-cli','-s=sample-library',...args],{encoding:'utf8',timeout:240000});const text=((result.stdout||'')+(result.stderr||'')).replace(/### Ran Playwright code\r?\n```[\s\S]*?```(?:\r?\n)?/g,'').replaceAll(fixture.password,'[disposable-password]').replaceAll(fixture.adminPassword,'[disposable-password]');if(result.status||result.error)throw Error(text||result.error.message);return text;}
 try{
- cli(['open',origin+'/login','--browser',engine,...(engine==='webkit'?['--device','iPhone 13']:[])]);writeFileSync(join(dir,'initial-snapshot.txt'),cli(['snapshot']));
+ cli(['open',origin+'/login','--config',config,'--browser',engine,...(engine==='webkit'?['--device','iPhone 13']:[])]);writeFileSync(join(dir,'initial-snapshot.txt'),cli(['snapshot']));
  writeFileSync(file,`async page=>{
   const engine=${JSON.stringify(engine)},f=${JSON.stringify(fixture)},origin=${JSON.stringify(origin)},dir=${JSON.stringify(dir)},checks=[],errors=[];
   const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label);};const shot=name=>page.screenshot({path:dir+'/'+name+'.png',animations:'disabled'});
