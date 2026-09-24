@@ -179,6 +179,7 @@ export const warehouseMaterialTaskListInclude = Prisma.validator<Prisma.Warehous
     include: {
       followUpTask: { select: {
         id: true, status: true, latestProgress: true, lastFollowedAt: true,
+        assignedAt: true, acceptedAt: true,
         owner: { select: { id: true, username: true, displayName: true } },
         activities: { take: 1, orderBy: { createdAt: 'desc' }, select: {
           createdAt: true, content: true, actor: { select: { id: true, username: true, displayName: true } },
@@ -446,6 +447,8 @@ export function serializeWarehouseMaterialTask(
     activeExceptions: task.exceptionCases.filter(e => e.status === 'OPEN').map(e => ({
       ...serializeWarehouseExceptionCase(e), followUpId: e.followUpTask?.id || null,
       followUpStatus: e.followUpTask?.status || null, owner: e.followUpTask?.owner || null,
+      assignedAt: e.followUpTask?.assignedAt?.toISOString() || null,
+      acceptedAt: e.followUpTask?.acceptedAt?.toISOString() || null,
       latestProgress: e.followUpTask?.activities?.[0]?.content || e.followUpTask?.latestProgress || null,
       lastFollowedAt: e.followUpTask?.activities?.[0]?.createdAt.toISOString() || e.followUpTask?.lastFollowedAt?.toISOString() || null,
       latestActor: e.followUpTask?.activities?.[0]?.actor || null,

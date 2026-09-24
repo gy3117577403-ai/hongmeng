@@ -44,7 +44,7 @@ test('waiting for material requires an expected date and a traceable note', () =
 });
 
 test('progress update keeps only feedback fields and no purchase document fields', () => {
-  const result = prepareMaterialFollowUpTransition(state('IN_PROGRESS'), {
+  const result = prepareMaterialFollowUpTransition({ ...state('IN_PROGRESS'), ownerId: 'user-2' }, {
     action: 'update',
     status: 'WAITING_ARRIVAL',
     ownerId: 'user-2',
@@ -58,6 +58,49 @@ test('progress update keeps only feedback fields and no purchase document fields
   assert.equal(result.next.latestProgress, '物料正在调拨，预计周二到仓');
   assert.equal('purchaseOrderNo' in result.next, false);
   assert.equal('supplier' in result.next, false);
+});
+
+test('assignment waits for the named colleague and retains the existing ETA', () => {
+  const now = new Date('2026-09-25T01:00:00Z');
+  const expectedAt = new Date('2026-09-30T04:00:00Z');
+  const result = prepareMaterialFollowUpTransition({ ...state('WAITING_ARRIVAL'), ownerId: 'old-owner', expectedAt }, { action: 'assign', ownerId: 'new-owner', note: '交接采购进展' }, 'manager', now);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.next.status, 'PENDING');
+  assert.equal(result.next.ownerId, 'new-owner');
+  assert.equal(result.next.expectedAt, expectedAt);
+  assert.equal(result.next.assignedAt, now);
+  assert.equal(result.next.acceptedAt, null);
+  assert.match(result.content, /交接采购进展/);
+});
+
+test('only the assigned colleague can accept; acceptance needs no made-up ETA or note', () => {
+  const current = { ...state(), ownerId: 'recipient' };
+  const denied = prepareMaterialFollowUpTransition(current, { action: 'claim' }, 'manager');
+  assert.equal(denied.ok, false);
+  if (!denied.ok) assert.equal(denied.statusCode, 403);
+  const accepted = prepareMaterialFollowUpTransition(current, { action: 'claim' }, 'recipient');
+  assert.equal(accepted.ok, true);
+  if (!accepted.ok) return;
+  assert.equal(accepted.next.status, 'IN_PROGRESS');
+  assert.ok(accepted.next.acceptedAt instanceof Date);
+  assert.equal(accepted.next.expectedAt, null);
+});
+
+test('progress cannot substitute for acceptance or quietly change ownership', () => {
+  for (const current of [state(), { ...state('IN_PROGRESS'), ownerId: 'existing-owner' }]) {
+    const result = prepareMaterialFollowUpTransition(current, { action: 'update', status: 'IN_PROGRESS', ownerId: 'other-owner', note: '绕过分配' }, 'manager');
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.statusCode, 409);
+  }
+});
+
+test('repeat acceptance, unchanged assignment and closed assignment do not reset progress', () => {
+  assert.equal(prepareMaterialFollowUpTransition({ ...state('IN_PROGRESS'), ownerId: 'user' }, { action: 'claim' }, 'user').ok, false);
+  assert.equal(prepareMaterialFollowUpTransition({ ...state(), ownerId: 'user' }, { action: 'assign', ownerId: 'user' }, 'manager').ok, false);
+  for (const status of ['RESOLVED', 'CANCELLED', 'WAITING_WAREHOUSE'] as const) {
+    assert.equal(prepareMaterialFollowUpTransition(state(status), { action: 'assign', ownerId: 'user' }, 'manager').ok, false);
+  }
 });
 
 test('resolved feedback can only be reopened from a new warehouse exception', () => {

@@ -18,10 +18,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const user = await requireUser();
     const body = await req.json();
+    if (user.access.modulePermissions?.materials === 'READ') return forbidden();
     // Anyone signed in may append a traceable progress note. Changes to the
     // material source, owner, ETA, arrival quantity or workflow state still
     // require procurement access and are validated by the service layer.
-    if (body?.action !== 'note' && !user.access.capabilities.includes('PROCUREMENT:UPDATE')) return forbidden();
+    if (body?.action !== 'note' && !user.access.capabilities.includes('PROCUREMENT:UPDATE')) {
+      // An assigned colleague can acknowledge their own task. This does not
+      // grant assignment, ETA or arrival-editing permissions.
+      if (body?.action !== 'claim') return forbidden();
+      const assigned = await prisma.materialFollowUpTask.findUnique({ where: { id: params.id }, select: { ownerId: true } });
+      if (assigned?.ownerId !== user.id) return forbidden();
+    }
     const task = await mutateMaterialFollowUp(params.id, body, user.id);
     return NextResponse.json({ ok: true, task: serializeMaterialFollowUpTask(task) });
   } catch (error) {

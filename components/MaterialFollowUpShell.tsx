@@ -25,7 +25,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './material/MaterialWorkbench.css';
 import './material/MaterialFollowUp.css';
 import './material/MaterialGlass.css';
-import { MaterialProgress, MaterialOwner, nextMaterialAction } from './material/MaterialSignal';
+import './material/MaterialTaskActions.css';
+import MaterialTaskActions from './material/MaterialTaskActions';
+import { MaterialProgress, MaterialOwner } from './material/MaterialSignal';
 import { useToastBridge } from '@/components/ToastProvider';
 import { materialSourceText, type MaterialSource } from '@/lib/material-source';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -167,7 +169,7 @@ function formFor(task: MaterialFollowUpTaskDTO | null, currentUserId: string): U
   return {
     supplySource: task?.exceptionCase.supplySource || 'UNKNOWN',
     receivedQuantity: String(task?.exceptionCase.receivedQuantity || 0),
-    ownerId: task?.owner?.id || currentUserId,
+    ownerId: task?.owner?.id || '',
     status,
     expectedAt: task?.expectedAt?.slice(0, 10) || '',
     note: '',
@@ -204,6 +206,8 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
   const [batchIds, setBatchIds] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [assignmentDirty, setAssignmentDirty] = useState(false);
+  const [actionError, setActionError] = useState('');
   const [returnTo, setReturnTo] = useState('');
   const drafts = useRef<Record<string, UpdateForm>>({});
   const [status, setStatus] = useState<StatusFilter>('ACTIVE');
@@ -235,8 +239,9 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
   const deepLinkedIdRef = useRef('');
   const loadedTaskId = useRef('');
   useToastBridge(toast, setToast); useToastBridge(error, setError);
-  useEffect(() => { onDraftState?.(!!form.note.trim(), saving); }, [form.note, saving, onDraftState]);
-  useEffect(() => { if (selected && selected.id === selectedId) { if(form.note.trim()) drafts.current[selected.id] = form; else delete drafts.current[selected.id]; } }, [form, selected, selectedId]);
+  const progressDirty = Boolean(selected && JSON.stringify(form) !== JSON.stringify(formFor(selected, user.id)));
+  useEffect(() => { onDraftState?.(progressDirty || assignmentDirty, saving); }, [progressDirty, assignmentDirty, saving, onDraftState]);
+  useEffect(() => { if (selected && selected.id === selectedId) { if(progressDirty) drafts.current[selected.id] = form; else delete drafts.current[selected.id]; } }, [form, selected, selectedId, progressDirty]);
   const canManage = user.access.capabilities.includes('PROCUREMENT:UPDATE');
   const moduleReadOnly = user.access.modulePermissions?.materials === 'READ';
   const canUpdatePlan = user.access.capabilities.includes('PLANNING:UPDATE');
@@ -323,8 +328,10 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
       return;
     }
     const controller = new AbortController();
-    setDetailLoading(loadedTaskId.current !== selectedId);
+    const changingTask = loadedTaskId.current !== selectedId;
+    setDetailLoading(changingTask);
     setFormError('');
+    setActionError('');
     fetch(`/api/material-follow-ups/${selectedId}`, { cache: 'no-store', signal: controller.signal })
       .then(async response => {
         const body = await response.json().catch(() => ({})) as { ok?: boolean; task?: MaterialFollowUpTaskDTO; error?: string };
@@ -337,7 +344,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
         setSelected(task);
         setForm(drafts.current[task.id] || formFor(task, user.id));
         setRescheduleOpen(false);
-        setAdvancedOpen(false);
+        if (changingTask) setAdvancedOpen(false);
         setReschedulePreview(null);
         setRescheduleError('');
       })
@@ -361,13 +368,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
   const activeStage = selected ? stageIndex(selected.status) : 0;
   const visibleActivities = useMemo(() => selected?.activities || [], [selected?.activities]);
   const latestActivity = visibleActivities[0];
-  const preferredOwners = users.filter(candidate => (candidate.displayName || candidate.username).trim() === '贾改真');
-  const preferredOwner = preferredOwners.length === 1 ? preferredOwners[0] : undefined;
   const warehouseHref = warehouseReturnHref(selected, returnTo);
-  useEffect(() => {
-    if (!selected || selected.owner || !preferredOwner?.id) return;
-    setForm(current => current.ownerId === user.id ? { ...current, ownerId: preferredOwner.id } : current);
-  }, [preferredOwner?.id, selected, user.id]);
   const canReschedule = Boolean(
     canUpdatePlan
     && selected?.exceptionCase.actualArrivalAt
@@ -378,6 +379,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
     || !selected
     || selected.status === 'RESOLVED'
     || selected.status === 'CANCELLED'
+    || selected.status === 'PENDING'
     || !form.ownerId
     || !form.note.trim()
     || (form.status === 'WAITING_ARRIVAL' && !form.expectedAt);
@@ -389,10 +391,12 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
   const selectedIndex = tasks.findIndex(task => task.id === selected?.id);
   const nextTaskId = selectedIndex >= 0 ? tasks[selectedIndex + 1]?.id : undefined;
 
-  async function mutate(body: Record<string, unknown>, next = false): Promise<void> {
-    if (!selected || moduleReadOnly) return;
+  async function mutate(body: Record<string, unknown>, next = false): Promise<boolean> {
+    if (!selected || moduleReadOnly || saving) return false;
+    const ownershipAction = body.action === 'assign' || body.action === 'claim';
     setSaving(true);
     setFormError('');
+    setActionError('');
     try {
       const response = await fetch(`/api/material-follow-ups/${selected.id}`, {
         method: 'PATCH',
@@ -402,16 +406,21 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
       const result = await response.json().catch(() => ({})) as { ok?: boolean; task?: MaterialFollowUpTaskDTO; error?: string };
       if (!response.ok || !result.task) throw new Error(result.error || '物料异常跟进更新失败');
       setSelected(result.task);
-      drafts.current[result.task.id] = formFor(result.task, user.id);
-      setForm(formFor(result.task, user.id));
+      const nextForm = ownershipAction ? { ...form, ownerId: result.task.owner?.id || '', status: formFor(result.task, user.id).status } : formFor(result.task, user.id);
+      drafts.current[result.task.id] = nextForm;
+      setForm(nextForm);
+      if (!ownershipAction) setAdvancedOpen(false);
       if (next && nextTaskId) { deepLinkedIdRef.current = ''; setSelectedId(nextTaskId); }
       else deepLinkedIdRef.current = result.task.id;
       onChanged?.();
       setTasks(current => current.map(task => task.id === result.task?.id ? result.task : task));
-      setToast(body.action === 'claim' ? '已接收物料异常' : '跟进进度已保存');
+      setToast(body.action === 'claim' ? '已接收任务，开始跟进' : body.action === 'assign' ? `已分配给 ${result.task.owner?.displayName || result.task.owner?.username}，等待本人接收` : '跟进进度已保存');
       setReloadToken(value => value + 1);
+      return true;
     } catch (reason) {
-      setFormError(reason instanceof Error ? reason.message : '物料异常跟进更新失败');
+      const message = reason instanceof Error ? reason.message : '物料异常跟进更新失败';
+      if (ownershipAction) setActionError(message); else setFormError(message);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -562,10 +571,11 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
               </header>
 
               <MaterialProgress status={selected.status}/>
+              <MaterialTaskActions key={selected.id} task={selected} user={user} users={users} busy={saving} error={actionError} onAction={mutate} onDirty={setAssignmentDirty} />
 
               <div className="ms-scroll ms-detail-body mf-detail-scroll">
                 {selected.risk === 'overdue' && <div className="mf-risk"><AlertTriangle size={17} /><span><strong>到料已逾期</strong> · 原预计 {dateText(selected.expectedAt)}。请补充进展或调整预计到料时间，历史事项继续保留。</span></div>}
-                <div className={`mg-focus ${nextMaterialAction({ ...selected.exceptionCase, owner: selected.owner, followUpStatus: selected.status }).tone}`}><CircleDot size={19}/><div><small>{nextMaterialAction({ ...selected.exceptionCase, owner: selected.owner, followUpStatus: selected.status }).who}</small><strong>{nextMaterialAction({ ...selected.exceptionCase, owner: selected.owner, followUpStatus: selected.status }).action}</strong></div>{selected.status==='WAITING_WAREHOUSE'&&(onVerify?<button className="mg-blue-action" onClick={onVerify}>核对到料 <ChevronRight size={14}/></button>:<a href={warehouseHref}>前往仓库核实 <ChevronRight size={14}/></a>)}</div>
+                {selected.status==='WAITING_WAREHOUSE' && <div className="mg-focus blue"><CircleDot size={19}/><div><small>下一步 · 仓库</small><strong>核对到料实物</strong></div>{onVerify?<button className="mg-blue-action" onClick={onVerify}>核对到料 <ChevronRight size={14}/></button>:<a href={warehouseHref}>前往仓库核实 <ChevronRight size={14}/></a>}</div>}
                 <section className="mg-responsibility" aria-label="缺料信息"><div><small><UsersRound size={13}/>本项负责人</small><strong>{selected.owner?.displayName||selected.owner?.username||'待分配'}</strong><span>{materialSourceText[selected.exceptionCase.supplySource||'UNKNOWN']}</span></div><div><small><CalendarClock size={13}/>预计到料</small><strong>{dateText(selected.expectedAt)}</strong><span>{selected.risk==='overdue'?'到料已逾期':selected.status==='WAITING_WAREHOUSE'?'已报到料，待核实':'由跟进人维护'}</span></div><div><small><PackageOpen size={13}/>已报到料 / 缺料数量</small><strong>{selected.exceptionCase.receivedQuantity||0} <em>/ {selected.exceptionCase.shortageQuantity??'待确认'}</em></strong><span>{selected.exceptionCase.unit||'个'} · 到料须由仓库核实</span></div></section>
                 <div className="mg-origin"><span>仓库反馈 · {selected.exceptionCase.reportedBy?.displayName||selected.exceptionCase.reportedBy?.username||'仓库'} · {dateTimeText(selected.exceptionCase.reportedAt)}</span><p>{selected.exceptionCase.exceptionNote}</p></div>
                 <section className="mf-latest">
@@ -577,11 +587,12 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
               </div>
               <div className="mg-compose-scroll">
                 {!['RESOLVED', 'CANCELLED'].includes(selected.status) ? <section className="mf-compose">
-                  <div className="mf-section-line"><div><h3>{moduleReadOnly ? '只读查看' : '更新跟进'}</h3><span>{moduleReadOnly ? '可查看处理进展与时间线，协同权限可补充记录' : '填写处理内容后，系统记录当前账号与时间'}</span></div>{canManage && <button type="button" className="mf-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(value => !value)}>{advancedOpen ? '只写进展' : '更新交期 / 到料'} <ChevronRight size={15} /></button>}</div>
+                  <div className="mf-section-line"><div><h3>{moduleReadOnly ? '只读查看' : '更新跟进'}</h3><span>{moduleReadOnly ? '可查看处理进展与时间线，协同权限可补充记录' : '填写处理内容后，系统记录当前账号与时间'}</span></div>{canManage && selected.status !== 'PENDING' && <button type="button" className="mf-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(value => !value)}>{advancedOpen ? '只写进展' : '更新交期 / 到料'} <ChevronRight size={15} /></button>}</div>
+                  {selected.status === 'PENDING' && !moduleReadOnly && <p className="mf-action-hint">可先补充文字进展；负责人接收后再更新交期和到料。</p>}
                   <label className="mf-note-label">本次进展 <em>*</em><textarea disabled={moduleReadOnly} aria-label="本次进展" rows={3} maxLength={600} placeholder={form.supplySource === 'CUSTOMER' ? '填写客户反馈、发货情况、运单或剩余物料安排；保存后记录账号与时间。' : '填写采购进展、供应商反馈、发货情况或运单；保存后记录账号与时间。'} value={form.note} onChange={event => setForm(current => ({ ...current, note: event.target.value }))} /></label>
                   {canManage && advancedOpen && <div className="mf-advanced-fields"><div className="mf-advanced-heading"><strong>处理字段</strong><small>修改后与本次进展一起保存，仓库会看到同步结果</small></div><div className="ms-form-grid">
                     <label>物料来源<select aria-label="修改物料来源" value={form.supplySource} onChange={event => setForm(current => ({ ...current, supplySource: event.target.value as MaterialSource }))}>{Object.entries(materialSourceText).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                    <label>负责人<select value={form.ownerId} onChange={event => setForm(current => ({ ...current, ownerId: event.target.value }))}><option value="">请选择</option>{users.map(candidate => <option key={candidate.id} value={candidate.id}>{candidate.displayName || candidate.username}</option>)}</select></label>
+                    <label>负责人<span className="mf-current-owner">{selected.owner?.displayName || selected.owner?.username || '待分配'}</span></label>
                     <label>跟进状态<select value={form.status} onChange={event => setForm(current => ({ ...current, status: event.target.value as UpdateForm['status'] }))}>{statusOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
                     <label>{form.status === 'WAITING_ARRIVAL' ? '预计到料日期 *' : '预计到料日期'}<input aria-label="预计到料日期" type="date" value={form.expectedAt} onChange={event => setForm(current => ({ ...current, expectedAt: event.target.value }))} /></label>
                     <label>累计已到数量（{selected.exceptionCase.unit || '个'}）<input aria-label="累计已到数量" type="number" min="0" step="0.001" value={form.receivedQuantity} onChange={event => setForm(current => ({ ...current, receivedQuantity: event.target.value }))} /></label>

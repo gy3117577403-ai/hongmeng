@@ -36,6 +36,7 @@ async function main() {
   for (const [key, displayName, profile, department] of [
     ['warehouse', '仓库验收员', 'DEPARTMENT_FULL', departments.WAREHOUSE],
     ['operator', '采购跟进员', 'MATERIAL_FOLLOW_UP_OPERATOR', departments.PROCUREMENT],
+    ['dispatcher', '物料协调员', 'MATERIAL_FOLLOW_UP_OPERATOR', departments.PROCUREMENT],
     ['ordinary', '普通协同员', 'FIELD_REPORTER', null],
   ]) {
     const employee = key === 'ordinary' ? await db.employee.create({ data: {

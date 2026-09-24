@@ -119,13 +119,15 @@ export type MaterialFollowUpTransitionResult =
   | { ok: false; statusCode: number; error: string }
   | {
       ok: true;
-      action: 'claim' | 'update';
+      action: 'assign' | 'claim' | 'update';
       next: {
         status: MaterialFollowUpStatus;
         ownerId: string;
         expectedAt: Date | null;
         latestProgress: string;
         lastFollowedAt: Date;
+        assignedAt?: Date | null;
+        acceptedAt?: Date | null;
       };
       content: string;
     };
@@ -172,13 +174,29 @@ export function prepareMaterialFollowUpTransition(
     return { ok: false, statusCode: 409, error: '该缺料反馈已经结束，请从仓库重新登记异常' };
   }
   const action = cleanText(input.action, 20);
+  if (action === 'assign') {
+    const ownerId = cleanText(input.ownerId, 80);
+    if (!ownerId) return { ok: false, statusCode: 400, error: '请选择负责人' };
+    if (ownerId === current.ownerId) return { ok: false, statusCode: 409, error: '负责人未变化，无需重复分配' };
+    if (current.status === 'WAITING_WAREHOUSE') return { ok: false, statusCode: 409, error: '物料已报齐，请先由仓库核实' };
+    const note = cleanText(input.note, 600);
+    const content = `分配负责人，等待本人接收${note ? `；交接说明：${note}` : ''}`;
+    return { ok: true, action: 'assign', next: {
+      status: MaterialFollowUpStatus.PENDING, ownerId, assignedAt: now, acceptedAt: null,
+      expectedAt: current.expectedAt, latestProgress: content, lastFollowedAt: now,
+    }, content };
+  }
   if (action === 'claim') {
+    if (current.status !== 'PENDING') return { ok: false, statusCode: 409, error: '任务已接收，请刷新查看最新进展' };
+    if (current.ownerId && current.ownerId !== actorId) return { ok: false, statusCode: 403, error: '请由当前负责人本人接收；更换负责人请先分配或转交' };
     return {
       ok: true,
       action: 'claim',
       next: {
         status: MaterialFollowUpStatus.IN_PROGRESS,
         ownerId: actorId,
+        ...(!current.ownerId ? { assignedAt: now } : {}),
+        acceptedAt: now,
         expectedAt: current.expectedAt,
         latestProgress: '已接收缺料反馈，开始跟进',
         lastFollowedAt: now,
@@ -189,6 +207,8 @@ export function prepareMaterialFollowUpTransition(
   if (action !== 'update') {
     return { ok: false, statusCode: 400, error: '不支持的物料跟进操作' };
   }
+
+  if (current.status === 'PENDING') return { ok: false, statusCode: 409, error: '请由负责人先接收任务，再更新交期或到料；可先保存文字进展' };
 
   const status = cleanText(input.status, 40) as MaterialFollowUpStatus;
   const updateStatuses = new Set<MaterialFollowUpStatus>([
@@ -201,6 +221,7 @@ export function prepareMaterialFollowUpTransition(
   }
   const ownerId = cleanText(input.ownerId, 80);
   if (!ownerId) return { ok: false, statusCode: 400, error: '请选择跟进负责人' };
+  if (ownerId !== current.ownerId) return { ok: false, statusCode: 409, error: '请使用分配负责人或转交操作，不可在进展中更换负责人' };
   const latestProgress = cleanText(input.note, 600);
   if (!latestProgress) return { ok: false, statusCode: 400, error: '请填写本次跟进进展' };
   const expectedAt = parseExpectedAt(input.expectedAt);
@@ -261,6 +282,8 @@ export function serializeMaterialFollowUpTask(
     statusText: materialFollowUpStatusText[status],
     ...risk,
     owner: task.owner,
+    assignedAt: task.assignedAt?.toISOString() || null,
+    acceptedAt: task.acceptedAt?.toISOString() || null,
     createdBy: task.createdBy,
     resolvedBy: task.resolvedBy,
     latestProgress: task.latestProgress,

@@ -9,8 +9,8 @@ export const materialPhases = [
 export function nextMaterialAction(event: WarehouseMaterialExceptionCaseDTO) {
   if (event.status === 'RESOLVED') return { who: '仓库已确认', action: '本项已闭环', tone: 'green' };
   if (event.followUpStatus === 'WAITING_WAREHOUSE') return { who: '下一步 · 仓库', action: '核对到料实物', tone: 'blue' };
-  if (!event.owner) return { who: '需要安排负责人', action: '分配并接收任务', tone: 'red' };
-  if (event.followUpStatus === 'PENDING') return { who: '下一步 · 跟进人', action: '接收并确认交期', tone: 'orange' };
+  if (!event.owner) return { who: '尚未分配', action: '分配负责人 / 自己接收', tone: 'red' };
+  if (event.followUpStatus === 'PENDING') return { who: '等待本人接收', action: `等待 ${event.owner.displayName || event.owner.username} 接收`, tone: 'orange' };
   if (event.followUpStatus === 'WAITING_ARRIVAL') return { who: '下一步 · 跟进人', action: '跟踪到料并反馈', tone: 'orange' };
   return { who: '下一步 · 跟进人', action: '更新进展与交期', tone: 'orange' };
 }

@@ -1521,6 +1521,8 @@ export type WarehouseMaterialActivityDTO = {
 };
 
 export type WarehouseMaterialExceptionCaseDTO = {
+  assignedAt?: string | null;
+  acceptedAt?: string | null;
   supplySource?: MaterialSupplySource;
   materialModel?: string;
   shortageQuantity?: number | null;
@@ -1635,6 +1637,8 @@ export type MaterialFollowUpActivityDTO = {
 };
 
 export type MaterialFollowUpTaskDTO = {
+  assignedAt?: string | null;
+  acceptedAt?: string | null;
   sampleTaskId?: string | null;
   id: string;
   warehouseTaskId: string;

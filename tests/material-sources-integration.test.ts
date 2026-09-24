@@ -6,6 +6,56 @@ import { mutateWarehouseException, mutateMaterialFollowUp, classifyMaterialFollo
 import { serializeWarehouseMaterialTask, warehouseMaterialTaskListInclude } from '../lib/warehouse-material';
 const skip = process.env.RUN_DB_INTEGRATION !== '1';
 
+test('assignment, personal acceptance and handover stay consistent with warehouse under concurrent edits', { skip }, async () => {
+  const key = 'assignment-it-' + randomUUID().slice(0,8);
+  const manager = await prisma.user.create({ data: { username: key, passwordHash: 'test-only', displayName: '协调员' } });
+  const recipient = await prisma.user.create({ data: { username: key+'-recipient', passwordHash: 'test-only', displayName: '接收人' } });
+  const work = await prisma.workOrder.create({ data: { code:key, productName:'接收协同验收', stage:'not_issued' } });
+  const warehouse = await prisma.warehouseMaterialTask.create({ data: { workOrderId:work.id, status:'exception' } });
+  const eta = new Date(Date.now()+5*86400000);
+  const event = await prisma.warehouseMaterialExceptionCase.create({ data: { warehouseTaskId:warehouse.id, sequence:1, exceptionType:'shortage', exceptionNote:'端子尚缺', supplySource:'PURCHASED', shortageQuantity:5, receivedQuantity:2, expectedArrivalAt:eta } });
+  let task = await prisma.materialFollowUpTask.create({ data: { warehouseTaskId:warehouse.id, warehouseExceptionId:event.id, expectedAt:eta } });
+  const current = () => prisma.materialFollowUpTask.findUniqueOrThrow({where:{id:task.id}});
+  try {
+    const competing = await Promise.allSettled([recipient.id, manager.id].map(ownerId => mutateMaterialFollowUp(task.id, {action:'assign', version:task.version, ownerId}, manager.id)));
+    assert.equal(competing.filter(item=>item.status==='fulfilled').length,1,'one assignment wins the same version');
+    task = await current();
+    if (task.ownerId !== recipient.id) task = await mutateMaterialFollowUp(task.id,{action:'assign',version:task.version,ownerId:recipient.id},manager.id);
+    assert.equal(task.status,'PENDING');
+    assert.ok(task.assignedAt);
+    assert.equal(task.acceptedAt,null);
+    await assert.rejects(mutateMaterialFollowUp(task.id,{action:'claim',version:task.version},manager.id),/本人接收/);
+    await assert.rejects(mutateMaterialFollowUp(task.id,{action:'update',version:task.version,status:'IN_PROGRESS',ownerId:recipient.id,note:'代理接收'},manager.id),/先接收/);
+    await assert.rejects(mutateMaterialFollowUp(task.id,{action:'claim',version:task.version,receivedQuantity:5},recipient.id),/不能同时修改/);
+    const accepted = await mutateMaterialFollowUp(task.id,{action:'claim',version:task.version},recipient.id);
+    assert.equal(accepted.status,'IN_PROGRESS');
+    assert.ok(accepted.acceptedAt);
+    assert.equal(accepted.warehouseException.receivedQuantity,2);
+    assert.equal(accepted.expectedAt?.toISOString(),eta.toISOString());
+    assert.ok(accepted.activities.some(item=>item.action==='claim'&&item.actorId===recipient.id));
+    task = await mutateMaterialFollowUp(task.id,{action:'note',version:accepted.version,note:'协同人补充了进展'},manager.id);
+    assert.deepEqual(task.acceptedAt,accepted.acceptedAt,'later notes do not erase acceptance');
+    const transfer = await mutateMaterialFollowUp(task.id,{action:'assign',version:task.version,ownerId:manager.id,note:'后续由协调员接手'},manager.id);
+    assert.equal(transfer.status,'PENDING');
+    assert.equal(transfer.acceptedAt,null);
+    assert.match(transfer.latestProgress||'',/接收人.*协调员/);
+    assert.equal(transfer.warehouseException.receivedQuantity,2);
+    assert.deepEqual(transfer.expectedAt,eta);
+    const projected=serializeWarehouseMaterialTask(await prisma.warehouseMaterialTask.findUniqueOrThrow({where:{id:warehouse.id},include:warehouseMaterialTaskListInclude}));
+    assert.equal(projected.activeExceptions?.[0].owner?.id,manager.id);
+    assert.equal(projected.activeExceptions?.[0].followUpStatus,'PENDING');
+    assert.equal(projected.activeExceptions?.[0].acceptedAt,null);
+    assert.ok(projected.activeExceptions?.[0].assignedAt);
+    const warehouseLogs=await prisma.warehouseMaterialActivity.findMany({where:{taskId:warehouse.id}});
+    assert.ok(warehouseLogs.some(item=>item.action==='material_follow_up_claim'&&item.actorId===recipient.id));
+    assert.ok(warehouseLogs.some(item=>item.content?.includes('后续由协调员接手')));
+    assert.equal((await prisma.warehouseMaterialTask.findUniqueOrThrow({where:{id:warehouse.id}})).status,'exception','assignment never marks materials complete');
+  } finally {
+    await prisma.workOrder.delete({where:{id:work.id}});
+    await prisma.user.deleteMany({where:{id:{in:[manager.id,recipient.id]}}});
+  }
+});
+
 test('purchased and customer shortages remain independent through partial arrivals, conflicts and individual closure', {skip}, async()=>{
   const key='source-it-'+randomUUID().slice(0,8);
   const actor=await prisma.user.create({data:{username:key,passwordHash:'test-only',displayName:key,laborRole:'ADMIN'}});
@@ -33,6 +83,7 @@ test('purchased and customer shortages remain independent through partial arriva
     await assert.rejects(warehouse('resolve',{exceptionId:a.id,note:'协同不能代仓库确认',resolution:'completed'},false),/仓库/);
     const readFollow=()=>prisma.materialFollowUpTask.findUniqueOrThrow({where:{warehouseExceptionId:a.id}});
     const follow=await readFollow();
+    await mutateMaterialFollowUp(follow.id,{action:'claim',version:follow.version},owner.id);
     assert.equal((await prisma.warehouseMaterialExceptionCase.findUniqueOrThrow({where:{id:a.id}})).expectedArrivalAt?.toISOString(),follow.expectedAt?.toISOString());
     const update=async(body:Record<string,unknown>)=>{const f=await readFollow();return mutateMaterialFollowUp(f.id,{action:'update',version:f.version,ownerId:owner.id,status:'WAITING_ARRIVAL',expectedAt:future,note:'分批补料',...body},actor.id);};
     await update({receivedQuantity:3});
@@ -81,7 +132,9 @@ test('purchased and customer shortages remain independent through partial arriva
     assert.equal((await readFollow()).status,'RESOLVED');
     assert.ok((await prisma.workOrder.findUniqueOrThrow({where:{id:work.id}})).materialStatus?.includes('客供'));
     await assert.rejects(warehouse('resolve',{exceptionId:b.id,note:'客供尚未登记到料',resolution:'completed'}),/累计到料未达到/);
-    const bFollow=await prisma.materialFollowUpTask.findUniqueOrThrow({where:{warehouseExceptionId:b.id}});
+    let bFollow=await prisma.materialFollowUpTask.findUniqueOrThrow({where:{warehouseExceptionId:b.id}});
+    if (bFollow.ownerId !== actor.id) bFollow=await mutateMaterialFollowUp(bFollow.id,{action:'assign',version:bFollow.version,ownerId:actor.id},actor.id);
+    bFollow=await mutateMaterialFollowUp(bFollow.id,{action:'claim',version:bFollow.version},actor.id);
     await mutateMaterialFollowUp(bFollow.id,{action:'update',version:bFollow.version,ownerId:actor.id,status:'WAITING_WAREHOUSE',expectedAt:future,note:'客供壳体 4 个已到',receivedQuantity:4},actor.id);
     const done=await warehouse('resolve',{exceptionId:b.id,note:'客供齐料',resolution:'completed'});
     assert.equal(done.status,'completed');assert.ok(done.completedAt);

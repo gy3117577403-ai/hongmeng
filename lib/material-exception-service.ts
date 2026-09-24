@@ -118,7 +118,7 @@ async function updateWarehouseException(tx: Tx, id: string, input: Input, actorI
       const mustResumeProgress = arrivalNoLongerComplete || etaNoLongerKnown;
       const follow = await tx.materialFollowUpTask.upsert({
         where: { warehouseExceptionId: target.id },
-        create: { warehouseTaskId: id, warehouseExceptionId: target.id, createdById: actorId, latestProgress: content, ownerId: ownerId || null, expectedAt: expectedArrivalAt },
+        create: { warehouseTaskId: id, warehouseExceptionId: target.id, createdById: actorId, latestProgress: content, ownerId: ownerId || null, assignedAt: ownerId ? new Date() : null, expectedAt: expectedArrivalAt },
         update: { ...(mustResumeProgress ? { status: 'IN_PROGRESS' as const } : {}), ...(etaChanged ? { expectedAt: expectedArrivalAt } : {}), version: { increment: 1 } },
       });
       if (arrivalNoLongerComplete) {
@@ -172,6 +172,10 @@ async function updateFollowUp(tx: Tx, id: string, input: Input, actorId: string)
   const action = text(input.action, 20);
   const changes: string[] = [];
   let source = event.supplySource;
+  if (action === 'assign' || action === 'claim') {
+    const allowed = action === 'assign' ? ['action', 'version', 'ownerId', 'note'] : ['action', 'version'];
+    if (Object.keys(input).some(key => !allowed.includes(key))) throw new MaterialInputError('分配和接收不能同时修改物料、交期或到料数量');
+  }
   if (action === 'note') {
     const extra = Object.keys(input).filter(key => !['action', 'version', 'note'].includes(key));
     if (extra.length) throw new MaterialInputError('普通进展只能填写文字；状态、来源与到料数量请使用授权操作');
@@ -199,7 +203,17 @@ async function updateFollowUp(tx: Tx, id: string, input: Input, actorId: string)
   } else {
     const transition = prepareMaterialFollowUpTransition(current, input, actorId);
     if (!transition.ok) throw new MaterialInputError(transition.error, transition.statusCode);
-    if (!await tx.user.count({ where: { id: transition.next.ownerId, isActive: true } })) throw new MaterialInputError('请选择有效的负责人');
+    const nextOwner = await tx.user.findFirst({ where: { id: transition.next.ownerId, isActive: true }, select: { displayName: true, username: true } });
+    if (!nextOwner) throw new MaterialInputError('请选择有效的负责人');
+    if (action === 'assign') {
+      const previous = current.ownerId ? await tx.user.findUnique({ where: { id: current.ownerId }, select: { displayName: true, username: true } }) : null;
+      const note = text(input.note, 600);
+      transition.content = `${previous ? `负责人由 ${previous.displayName || previous.username} 转交给` : '分配负责人：'} ${nextOwner.displayName || nextOwner.username}，等待本人接收${note ? `；交接说明：${note}` : ''}`;
+      transition.next.latestProgress = transition.content;
+    } else if (action === 'claim') {
+      transition.content = `${nextOwner.displayName || nextOwner.username} 已接收任务，开始跟进`;
+      transition.next.latestProgress = transition.content;
+    }
     const received = input.receivedQuantity === undefined ? event.receivedQuantity : materialQuantity(input.receivedQuantity)!;
     validateMaterialAmounts(event.shortageQuantity, received);
     if (event.shortageQuantity !== null && received < event.shortageQuantity && transition.next.status === 'WAITING_WAREHOUSE') throw new MaterialInputError('当前仅部分到料，请保留跟进状态，全部到料后再提交仓库确认');

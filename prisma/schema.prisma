@@ -3119,6 +3119,8 @@ model MaterialFollowUpTask {
   warehouseExceptionId String                         @unique @map("warehouse_exception_id")
   status               MaterialFollowUpStatus         @default(PENDING)
   ownerId              String?                        @map("owner_id")
+  assignedAt           DateTime?                      @map("assigned_at")
+  acceptedAt           DateTime?                      @map("accepted_at")
   createdById          String?                        @map("created_by_id")
   resolvedById         String?                        @map("resolved_by_id")
   latestProgress       String?                        @map("latest_progress")
