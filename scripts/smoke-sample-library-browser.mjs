@@ -36,16 +36,20 @@ try{
    check(initialImage.width===1200&&initialImage.height===1600,'large EXIF phone photo is decoded with correct orientation at screen size');
    check(await page.locator('.sl-photo-transform').evaluate(el=>el.clientWidth<=el.parentElement.clientWidth&&el.clientHeight<=el.parentElement.clientHeight),'photo canvas uses fitted viewport dimensions');
    await shot('photo-screen-ready-'+engine);
-   let heldHd;await page.route('**/api/sample-library/photos/**?size=hd*',route=>{heldHd=route;});
+   let heldHd;
+   if(engine==='webkit'){
+    const armed=await page.request.post(origin+'/_qa/fail-next-photo-hd');check(armed.ok(),'HTTPS test proxy arms one HD failure with service worker enabled');
+   }else await page.route('**/api/sample-library/photos/**?size=hd*',route=>{heldHd=route;});
    await page.getByRole('button',{name:'查看高清',exact:true}).click();
    await page.waitForFunction(()=>document.querySelector('.sl-photo-view')?.getAttribute('data-photo-state')==='loading');
    check(await page.locator('.sl-photo-transform img').getAttribute('src')===initialImage.src,'visible preview stays during high resolution request');
-   // The route has now been issued; wait for it without a fixed delay.
-   for(let i=0;!heldHd&&i<100;i++)await page.waitForTimeout(50);check(Boolean(heldHd),'HD request intercepted');
-   await heldHd.fulfill({status:503,contentType:'application/json',body:'{"error":"test storage unavailable"}'});
+   if(engine!=='webkit'){
+    for(let i=0;!heldHd&&i<100;i++)await page.waitForTimeout(50);check(Boolean(heldHd),'HD request intercepted');
+    await heldHd.fulfill({status:503,contentType:'application/json',body:'{"error":"test storage unavailable"}'});
+   }
    await page.getByRole('button',{name:'重新加载',exact:true}).waitFor();
    check(await page.locator('.sl-photo-transform img').getAttribute('src')===initialImage.src,'failed HD request keeps visible image and actionable error');
-   await shot('photo-retry-error-'+engine);await page.unroute('**/api/sample-library/photos/**?size=hd*');
+   await shot('photo-retry-error-'+engine);if(engine!=='webkit')await page.unroute('**/api/sample-library/photos/**?size=hd*');
    await page.getByRole('button',{name:'重新加载',exact:true}).click();
    await page.waitForFunction(()=>document.querySelector('.sl-photo-view')?.getAttribute('data-photo-state')==='ready'&&document.querySelector('.sl-photo-transform img')?.naturalHeight===2560);
    check(await page.locator('.sl-photo-transform img').evaluate(img=>img.naturalWidth)===1920,'HD retry decodes normalized high resolution image');

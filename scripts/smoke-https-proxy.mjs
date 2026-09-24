@@ -7,8 +7,26 @@ const upstream = new URL(process.env.SMOKE_HTTPS_UPSTREAM || 'http://127.0.0.1:3
 if (upstream.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(upstream.hostname)) throw Error('Loopback HTTP upstream required');
 const port = Number(process.env.SMOKE_HTTPS_PORT || 3443);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Error('Invalid test port');
+let failNextHd = false;
 const server = createServer({ key: readFileSync(process.env.SMOKE_HTTPS_KEY), cert: readFileSync(process.env.SMOKE_HTTPS_CERT) }, (incoming, outgoing) => {
   const host = '127.0.0.1:' + port;
+  const url = new URL(incoming.url, 'https://' + host);
+  // Inject a real network response below the browser's service worker. WebKit
+  // page routing is unreliable for a service-worker-controlled page.
+  if (incoming.method === 'POST' && url.pathname === '/_qa/fail-next-photo-hd') {
+    failNextHd = true;
+    outgoing.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    outgoing.end('{"ok":true}');
+    return;
+  }
+  if (failNextHd && url.pathname.startsWith('/api/sample-library/photos/') && url.searchParams.get('size') === 'hd') {
+    failNextHd = false;
+    setTimeout(() => {
+      outgoing.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+      outgoing.end('{"error":"disposable storage unavailable"}');
+    }, 750);
+    return;
+  }
   const forwarded = request({
     hostname: upstream.hostname, port: upstream.port || 80, path: incoming.url, method: incoming.method,
     headers: { ...incoming.headers, host, 'x-forwarded-host': host, 'x-forwarded-proto': 'https' },
