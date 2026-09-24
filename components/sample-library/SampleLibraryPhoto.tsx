@@ -88,7 +88,8 @@ function PhotoViewer({ photos, index, onIndex, onClose }: Props) {
             onLoad={e => { if (!ready) setThumbnail({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight }); }}
             onError={() => { if (ready) setError('图片显示失败，请使用兼容查看'); }} />
         </div>}
-      <div className="sl-photo-load-status" role="status" aria-live="polite">
+      <div className="sl-photo-load-status" role="status" aria-live="polite"
+        onPointerDown={event => event.stopPropagation()} onPointerUp={event => event.stopPropagation()} onPointerMove={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
         {loading && !compatible && <span>正在加载{quality === 'hd' ? '高清图' : '清晰图'}…</span>}
         {error && <div className="sl-photo-error"><strong>{error}</strong><button onClick={() => setRetry(value => value + 1)}>重新加载</button><details><summary>问题信息</summary>照片 {photo.id}<br />预览 {quality} · {Math.round(box.width)} × {Math.round(box.height)}</details></div>}
       </div>
