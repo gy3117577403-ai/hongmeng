@@ -74,7 +74,19 @@ try{
    await page.getByLabel('清除型号搜索').click();await page.waitForFunction(()=>document.querySelectorAll('.sl-product-card').length===12);await page.getByRole('button',{name:/加载更多/}).click();await page.waitForFunction(()=>document.querySelectorAll('.sl-product-card').length===16);
    await page.locator('.sl-product-card').last().scrollIntoViewIfNeeded();const beforeScroll=await page.locator('.sl-list-scroll').evaluate(el=>el.scrollTop);await page.locator('.sl-product-card').last().click();await page.locator('.sl-product-hero').waitFor();await page.goBack();check(await page.locator('.sl-product-card').count()===16,'return keeps loaded pages');check(Math.abs(await page.locator('.sl-list-scroll').evaluate(el=>el.scrollTop)-beforeScroll)<5,'return keeps list scroll position');
    await page.getByLabel('查看样品库二维码').click();const qr=page.getByRole('dialog',{name:'手机样品库二维码'});await qr.locator('img').waitFor();check(await qr.getByLabel('样品库链接').inputValue()===origin+'/sample-library','global QR uses stable authenticated library URL');await shot('global-qr-390');const exported=page.waitForEvent('download');await qr.getByRole('link',{name:'保存二维码'}).click();const download=await exported;await download.saveAs(dir+'/library-qr.png');check(!await download.failure(),'QR image can be downloaded');await page.goBack();await qr.waitFor({state:'detached'});
+   // Delay section hydration after task metadata arrives: editing must not start
+   // while the late response can still restore the active category and draft rows.
+   let releaseSections,sectionsRequested=false;
+   const sectionsGate=new Promise(resolve=>{releaseSections=resolve;});
+   const sectionRoute='**/api/sample-tasks/*/sections';
+   if(engine!=='webkit')await page.route(sectionRoute,async route=>{const response=await route.fetch();sectionsRequested=true;await sectionsGate;await route.fulfill({response});});
    await page.evaluate(()=>fetch('/api/auth/logout',{method:'POST'}));await login(f.adminUsername,f.adminPassword,'/sample-capture/'+f.taskCode);
+   if(engine!=='webkit'){
+    for(let i=0;!sectionsRequested&&i<100;i++)await page.waitForTimeout(50);
+    check(sectionsRequested,'slow section hydration is held after task metadata loads');
+    check(await page.locator('.sample-capture-loading').isVisible()&&await page.locator('.sample-category-grid button').count()===0,'capture waits for all draft sections before allowing edits');
+    releaseSections();await page.locator('.sample-category-grid button').first().waitFor();await page.unroute(sectionRoute);
+   }
    await page.locator('.sample-category-grid button').filter({hasText:'注意事项'}).click();await page.getByLabel('注意事项内容',{exact:true}).fill('验收草稿：参考历史后保留这段内容');
    await page.getByRole('button',{name:'参考历次样品资料',exact:true}).click();const reference=page.getByRole('dialog',{name:'参考历次样品',exact:true});await reference.waitFor();const frame=page.frameLocator('iframe[title="手机样品参考库"]');await frame.locator('.sl-product-hero').waitFor();check(await frame.locator('.sl-product-hero h1').textContent()===f.model,'capture reference opens same product');await page.getByLabel('返回当前采集').click();check(await page.getByLabel('注意事项内容',{exact:true}).inputValue()==='验收草稿：参考历史后保留这段内容','reference return retains unsubmitted capture text');
    await page.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByText('记录已保存到服务器草稿',{exact:true}).waitFor();check(await page.getByLabel('注意事项内容',{exact:true}).inputValue()==='','capture text can be saved after reference return');

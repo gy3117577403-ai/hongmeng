@@ -855,7 +855,9 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   const focused = tab === 'data' || tab === 'photos';
   const canSubmit = Boolean(task && !readOnly && online && !dirtySections.size && !formHasData && !photoQueue.length && !submitting);
 
-  if (loading && !task) return <main className="sample-capture-loading"><Loader2 className="spin" /><strong>正在读取样品二维码</strong><span>加载任务和已采集记录…</span></main>;
+  // Section hydration restores the active category and rows. Keep the editor closed
+  // until it finishes so a late response cannot replace a category the user just opened.
+  if (loading) return <main className="sample-capture-loading"><Loader2 className="spin" /><strong>正在读取样品二维码</strong><span>加载任务和已采集记录…</span></main>;
   if (!task) return <main className="sample-capture-failure"><AlertTriangle /><strong>无法打开样品任务</strong><p>{error || '二维码无效或任务不存在'}</p><button type="button" onClick={() => void load()}><RefreshCw />重新读取</button></main>;
   if (hardClosed) return <main className="sample-capture-terminal">
     <header className="sample-capture-header">
