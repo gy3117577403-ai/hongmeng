@@ -41,7 +41,7 @@ try{
    await page.waitForFunction(()=>document.querySelector('.sl-photo-view')?.getAttribute('data-photo-state')==='loading');
    check(await page.locator('.sl-photo-transform img').getAttribute('src')===initialImage.src,'visible preview stays during high resolution request');
    // The route has now been issued; wait for it without a fixed delay.
-   for(let i=0;!heldHd&&i<100;i++)await new Promise(resolve=>setTimeout(resolve,50));check(Boolean(heldHd),'HD request intercepted');
+   for(let i=0;!heldHd&&i<100;i++)await page.waitForTimeout(50);check(Boolean(heldHd),'HD request intercepted');
    await heldHd.fulfill({status:503,contentType:'application/json',body:'{"error":"test storage unavailable"}'});
    await page.getByRole('button',{name:'重新加载',exact:true}).waitFor();
    check(await page.locator('.sl-photo-transform img').getAttribute('src')===initialImage.src,'failed HD request keeps visible image and actionable error');
