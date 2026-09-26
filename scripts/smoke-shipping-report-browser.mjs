@@ -36,7 +36,7 @@ async function scenario(page, f, base, out) {
     await page.locator('.fg-table').waitFor();
   };
   const reportDialog = () => page.getByRole('dialog', { name: '出货报告', exact: true });
-  const row = index => page.locator('tr[data-fg-row]').filter({ has: page.locator('.fg-identity', { hasText: f.lots[index].workOrderCode }) }).first();
+  const row = index => page.locator('tr[data-fg-row]').filter({ has: page.locator('.fg-identity[title=' + JSON.stringify(f.lots[index].workOrderCode) + ']') }).first();
   const preview = async () => {
     await page.locator('.sr-preview-updating').waitFor({ state: 'detached', timeout: 45000 });
     await page.waitForFunction(() => {
@@ -64,7 +64,7 @@ async function scenario(page, f, base, out) {
       check(r.status === 200, 'product ' + index + ' receives actual stock through business API');
     }
     await page.reload(); await row(0).getByRole('button', { name: '出货报告', exact: true }).waitFor();
-    const sourceUrl = page.url(), sourceScroll = await page.locator('.fg-table-wrap').evaluate(el => el.scrollTop).catch(() => 0);
+    const sourceUrl = page.url(), sourceScroll = await page.locator('.fg-table-scroll').evaluate(el => el.scrollTop);
     const before = (await api('/api/finished-goods?view=stock&scope=all&q=' + f.marker)).body.data;
     await row(0).getByRole('button', { name: '出货报告', exact: true }).click(); await reportDialog().waitFor();
     await preview();
@@ -95,7 +95,7 @@ async function scenario(page, f, base, out) {
     await screenshot('03-saved-report');
     await page.getByRole('button', { name: '关闭出货报告' }).click(); await page.locator('.sr-dialog').waitFor({ state: 'detached' });
     check(page.url() === sourceUrl, 'close returns to originating warehouse filters');
-    check((await page.locator('.fg-table-wrap').evaluate(el => el.scrollTop).catch(() => 0)) === sourceScroll, 'close preserves table position');
+    check((await page.locator('.fg-table-scroll').evaluate(el => el.scrollTop)) === sourceScroll, 'close preserves table position');
     const after = (await api('/api/finished-goods?view=stock&scope=all&q=' + f.marker)).body.data;
     check(JSON.stringify(before.rows.map(r => [r.lotId, r.pending, r.available, r.shippedQuantity, r.version])) === JSON.stringify(after.rows.map(r => [r.lotId, r.pending, r.available, r.shippedQuantity, r.version])), 'report generation does not alter stock, shipment or source version');
     await row(0).getByRole('button', { name: '出货报告', exact: true }).click(); await preview();
