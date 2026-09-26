@@ -105,7 +105,7 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_finished_goods_ci'
           npx prisma migrate deploy
-          npx tsx --test --test-concurrency=1 tests/finished-goods-integration.test.ts
+          npx tsx --test --test-concurrency=1 tests/finished-goods-integration.test.ts tests/shipping-report-integration.test.ts
       - name: Purchasing PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -517,6 +517,9 @@ jobs:
             FINISHED_GOODS_QA_FIXTURE=artifacts/finished-goods/release-fixture.json \
             FINISHED_GOODS_QA_OUTPUT=artifacts/finished-goods/release-http.json \
             node scripts/smoke-finished-goods.mjs
+          S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources \
+            SHIPPING_QA_OUTPUT=output/playwright/shipping-report-release \
+            bash scripts/check-shipping-report-runtime.sh
           mkdir -p artifacts/realtime-hours
           docker exec -i -e REALTIME_HOURS_QA_ALLOW=disposable-realtime-hours-runtime hongmeng-release-smoke node \
             < scripts/seed-realtime-hours-smoke.cjs > artifacts/realtime-hours/release-fixture.json
@@ -961,6 +964,11 @@ jobs:
             FINISHED_GOODS_QA_FIXTURE=artifacts/finished-goods/hangzhou-fixture.json \
             FINISHED_GOODS_QA_OUTPUT=artifacts/finished-goods/hangzhou-http.json \
             node scripts/smoke-finished-goods.mjs
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources \
+            SHIPPING_QA_BASE=http://127.0.0.1:3300 \
+            SHIPPING_QA_OUTPUT=output/playwright/shipping-report-hangzhou \
+            bash scripts/check-shipping-report-runtime.sh
           mkdir -p artifacts/realtime-hours
           docker exec -i -e REALTIME_HOURS_QA_ALLOW=disposable-realtime-hours-runtime "$app_name" node \
             < scripts/seed-realtime-hours-smoke.cjs > artifacts/realtime-hours/hangzhou-fixture.json
@@ -1049,6 +1057,15 @@ jobs:
           name: purchasing-${{ github.ref_name }}
           path: artifacts/purchasing/*-http.json
           if-no-files-found: ignore
+      - name: Upload shipping report acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shipping-reports-${{ github.ref_name }}
+          path: |
+            output/playwright/shipping-report-release
+            output/playwright/shipping-report-hangzhou
+          if-no-files-found: warn
       - name: Upload finished goods acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4

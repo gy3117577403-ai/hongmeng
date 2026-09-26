@@ -75,7 +75,7 @@ main.fg-shell.hm-workbench-root.hm-workbench-root { --hm-shell-header:0px; paddi
 .fg-col-process { width:82px; }
 .fg-col-received,.fg-col-dispatched { width:104px; }
 .fg-col-status { width:80px; }
-.fg-col-actions { width:160px; }
+.fg-col-actions { width:184px; }
 .fg-table td { height:32px; padding:2px 6px; }
 .fg-table th { padding:0 6px; }
 .fg-table th:nth-child(n+5):nth-child(-n+8),.fg-table td:nth-child(n+5):nth-child(-n+8) { text-align:right; font-variant-numeric:tabular-nums; }
@@ -89,7 +89,7 @@ main.fg-shell.hm-workbench-root.hm-workbench-root { --hm-shell-header:0px; paddi
 .fg-process-quantity .fg-saved { position:absolute; right:0; top:-5px; background:#fff; }
 .fg-unit { display:inline; font-size:10px; margin-left:3px; color:#8494a4; }
 .fg-shell .fg-actions>button.fg-secondary { color:#71849a; }
-.fg-shell .fg-actions { flex-wrap:nowrap; }
+.fg-shell .fg-actions { flex-wrap:wrap; }
 .fg-status.partial i { background:#ee9c22; }
 .fg-table .fg-status.partial { color:#ad690e; }
 .fg-dock-identity span { white-space:normal; overflow-wrap:anywhere; }
@@ -106,6 +106,8 @@ main.fg-shell.hm-workbench-root.hm-workbench-root { --hm-shell-header:0px; paddi
 .fg-shell .fg-actions { gap:4px; }
 .fg-shell .fg-actions>button { white-space:nowrap; padding-inline:2px; }
 .fg-shell .fg-actions .fg-row-more { width:24px; min-width:24px; height:28px; }
+.fg-shell .fg-actions .fg-report-button { display:inline-flex; align-items:center; gap:3px; min-height:28px; color:#617e99; padding:2px 4px; border:1px solid #e0e8ef; border-radius:6px; background:#f9fbfd; margin-left:2px; font-size:11px; }
+.fg-shell .fg-actions .fg-report-button:hover { color:#c06422; border-color:#edc29f; background:#fff7ee; }
 .fg-missing-dot { font-size:10px; color:#ba5b16; margin-left:3px; }
 .fg-dialog-overlay { background:#20334a26; backdrop-filter:none; padding:16px; }
 .fg-dialog { width:520px; max-height:calc(100dvh - 32px); border-radius:10px; box-shadow:0 16px 60px #122e4c30; }

@@ -2,11 +2,15 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { AlertCircle, ArrowDownToLine, ArrowRight, Boxes, Check, ChevronLeft, ChevronRight, ClipboardList, Copy, Download, FileText, History, Layers3, MoreHorizontal, Pause, Plus, RefreshCw, Search, Truck, X } from 'lucide-react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { FG_KINDS, fgCompactTime, fgShortWorkOrder, type FgInput, type FgRow, type FgWorkbench } from '@/lib/finished-goods-domain';
 import { canAccessAppRoute } from '@/lib/app-route-access';
 import type { CurrentUserDTO } from '@/types';
+import type { ShippingReportSource } from '@/lib/shipping-report-domain';
+
+const ShippingReportDialog = dynamic(() => import('./ShippingReportDialog'), { ssr: false });
 
 type Draft = { quantity: string; method: string; batchId: string; note: string; externalReference: string };
 type Dialog = { kind: string; row?: FgRow; rows?: FgRow[] };
@@ -39,6 +43,14 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
   const [workingMethod, setWorkingMethod] = useState('COURIER'); const [detailMore, setDetailMore] = useState(false);
   const [retryOperation, setRetryOperation] = useState<RetryOperation | null>(null); const roundLoaded = useRef(false); const detailToken = useRef(0);
   const [poll, setPoll] = useState(0);
+  const [reportSource, setReportSource] = useState<ShippingReportSource | null>(null);
+  const reportOrigin = useRef<Dialog | null>(null);
+  const canReport = (row: FgRow) => Boolean(row.receivedAt && !row.legacyClosedAt);
+  function openReport(row: FgRow) {
+    reportOrigin.current = dialog; setDialog(null);
+    setReportSource({ lotId: row.lotId, ...(row.shipmentId ? { shipmentId: row.shipmentId } : row.status === 'received' ? { receiptId: row.id } : {}) });
+  }
+  function closeReport() { setReportSource(null); if (reportOrigin.current) setDialog(reportOrigin.current); reportOrigin.current = null; }
   const queryKey = useRef('');
   const storageKey = `hm-finished-goods:quantities-v188:${user.id}`;
   const draftFor = (row: FgRow): Draft => drafts[row.id] ? { ...defaultDraft(row), ...drafts[row.id] } : { ...defaultDraft(row), method: row.shipmentId ? row.method : workingMethod, batchId: row.shipmentId ? row.batchId : workingBatchId };
@@ -78,7 +90,7 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
     }).catch(e => { if (e.name !== 'AbortError') setError(e.message); }).finally(() => { if (requestToken.current === token) setLoading(false); });
     return () => abort.abort();
   }, [params, refresh, poll]);
-  useEffect(() => { const timer = window.setInterval(() => { if (!busyRef.current && !dialog && document.visibilityState === 'visible' && !document.activeElement?.matches('input,select,textarea')) setPoll(n => n + 1); }, 30000); return () => window.clearInterval(timer); }, [dialog]);
+  useEffect(() => { const timer = window.setInterval(() => { if (!busyRef.current && !dialog && !reportSource && document.visibilityState === 'visible' && !document.activeElement?.matches('input,select,textarea')) setPoll(n => n + 1); }, 30000); return () => window.clearInterval(timer); }, [dialog, reportSource]);
   useEffect(() => {
     if (!Object.keys(drafts).length) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -269,7 +281,7 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
                 {row.ownerType==='CUSTOMER' && (actionable || row.status==='reserved') ? <button disabled={busy || loading} onClick={()=>open('ship',row)}>{receiveFirst ? '入库并发货' : '发货'}</button> : row.ownerType==='PUBLIC' && row.available>0 ? <button disabled={busy || loading} onClick={()=>open('allocate',row)}>分配客户</button> : row.status==='held' ? <button disabled={busy || loading} onClick={()=>open('release',row)}>解除留库</button> : !canReceive(row) && <button onClick={()=>open('detail',row)}>查看原因</button>}
                 {canReceive(row) ? <button className="fg-secondary" disabled={busy || loading} onClick={()=>open('receive',row)}>仅入库</button> : actionable && row.available>0 && !row.shipmentId ? <button className="fg-secondary" disabled={busy || loading} onClick={()=>open('hold',row)}>留库</button> : null}
                 <button aria-label={`${row.workOrderCode} 更多操作`} className="fg-row-more" onClick={()=>open('detail',row)}><MoreHorizontal size={14}/></button>
-              </>}</div></td>
+              </>}{canReport(row) && <button type="button" className="fg-report-button" title="预览并打印出货报告" disabled={busy} onClick={() => openReport(row)}><FileText size={13}/>出货报告</button>}</div></td>
             </tr>
           </Fragment>;
         })}</tbody>
@@ -353,11 +365,12 @@ export default function FinishedGoodsWorkbench({ user, initialData, initialQuery
         {dialog.row.workOrderId && <Link className="fg-source-link" href={`/production?workOrderId=${encodeURIComponent(dialog.row.workOrderId)}`}>查看生产来源<ArrowRight size={13}/></Link>}
       </>}
       </div>
-      <footer>{dialog.kind==='detail' ? <><button disabled={busy} onClick={()=>setDialog(null)}>关闭</button>{dialog.row && (!dialog.row.legacyClosedAt || dialog.row.status==='shipped') && dialog.row.ownerType==='CUSTOMER' && (dialog.row.shipmentId || isActionable(dialog.row)) && <button className="fg-primary" disabled={busy} onClick={()=>void save(dialog.row!)}>保存备注与关联单据</button>}</> : <>
+      <footer>{dialog.kind==='detail' ? <><button disabled={busy} onClick={()=>setDialog(null)}>关闭</button>{dialog.row && canReport(dialog.row) && <button disabled={busy} onClick={() => openReport(dialog.row!)}><FileText size={15}/>出货报告</button>}{dialog.row && (!dialog.row.legacyClosedAt || dialog.row.status==='shipped') && dialog.row.ownerType==='CUSTOMER' && (dialog.row.shipmentId || isActionable(dialog.row)) && <button className="fg-primary" disabled={busy} onClick={()=>void save(dialog.row!)}>保存备注与关联单据</button>}</> : <>
         {dialogNeedsCheck && <label className="fg-check"><input type="checkbox" checked={checked} onChange={e=>setChecked(e.target.checked)}/>实物数量已核对</label>}
         <button onClick={()=>setDialog(null)} disabled={busy}>取消</button>
         <button className="fg-primary" disabled={busy || Boolean(dialogNeedsCheck && !checked) || Boolean(bulkInvalid) || (dialog.kind==='ship' && (dialog.row?.shipmentLineCount || 0)>1 && !detail?.shipment) || (dialog.kind==='merge' && dialog.rows?.some(r=>Boolean(r.shipmentId)))} onClick={()=>void submitDialog()}>{busy ? '正在处理…' : dialog.kind==='ship' ? dialog.row?.status==='pending' ? '确认入库并发货' : '确认发货' : dialog.kind==='batchShip' ? '确认批量发货' : dialog.kind==='receive' || dialog.kind==='batchReceive' ? '确认入库' : dialog.kind==='receiveHold' ? '确认入库并留库' : '确认保存'}</button>
       </>}</footer>
     </section></div>}
+    {reportSource && <ShippingReportDialog source={reportSource} readOnly={moduleReadOnly} onClose={closeReport}/>}
   </main>;
 }

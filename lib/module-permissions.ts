@@ -89,7 +89,7 @@ export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string,
   if (access.workbenchEnabled === false) return false;
   if (/(?:^|\/)(?:purge|permanent-delete|cleanup|reset-all)(?:\/|$)/.test(path) || ruleModules.includes('SYSTEM_CONFIGURATION') && !path.startsWith('/api/knowledge')) return false;
   // Read-only POSTs must be individually declared, never inferred from a UI button label.
-  const readCommand = verb === 'POST' && /^\/api\/(?:reports\/[^/]+\/(?:preview|export)|drawing-library\/[^/]+\/print-preview|planning\/weekly-plan-export\/preview)$/.test(path);
+  const readCommand = verb === 'POST' && /^\/api\/(?:reports\/[^/]+\/(?:preview|export)|drawing-library\/[^/]+\/print-preview|planning\/weekly-plan-export\/preview|finished-goods\/reports\/preview)$/.test(path);
   const write = !read && !readCommand;
   const dependencies = /^\/api\/(?:work-orders|departments|customers|resource-categories|categories)(?:\/|$)/.test(path);
   if (read && dependencies && Object.keys(access.modulePermissions).length) return true;

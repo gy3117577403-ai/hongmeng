@@ -45,12 +45,39 @@ model FgLot {
   holds FgHold[]
   lines FgShipmentLine[]
   reworks FgRework[]
+  shippingReports FgShippingReport[]
   @@index([workOrderId])
   @@index([sampleTaskId])
   @@index([customerName, productKey])
   @@index([createdAt])
   @@index([legacyClosedAt])
   @@map("fg_lots")
+}
+
+model FgShippingReport {
+  id String @id @default(uuid())
+  number String @unique
+  lotId String
+  shipmentId String?
+  receiptId String?
+  template String
+  templateVersion String
+  snapshot Json
+  quantity Int
+  unit String
+  objectKey String
+  size Int
+  sha256 String
+  actorId String
+  actorName String
+  requestKey String @unique
+  requestHash String
+  createdAt DateTime @default(now())
+  deletedAt DateTime?
+  lot FgLot @relation(fields: [lotId], references: [id], onDelete: Restrict)
+  @@index([lotId, createdAt])
+  @@index([shipmentId])
+  @@map("fg_shipping_reports")
 }
 
 model FgCutover {
