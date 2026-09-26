@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { PDFDocument, degrees, rgb } from 'pdf-lib';
+import { PDFDict, PDFDocument, PDFName, PDFNumber, PDFRawStream, degrees, rgb } from 'pdf-lib';
+import sharp from 'sharp';
 import { normalizeShippingReport, recommendShippingTemplate, type ShippingReportContext } from '../lib/shipping-report-domain';
 import { generateShippingReportPdf } from '../lib/shipping-report-pdf';
 
@@ -63,8 +64,21 @@ test('all three templates create self-contained one-page A4 PDFs with correct is
     assert.ok(Math.abs(pdf.getPage(0).getHeight() - 841.89) < 0.1);
     assert.equal(pdf.getAuthor(), template === 'xinxinghui' ? '杭州迈斯嘉电子科技有限公司' : '杭州杭连电子有限公司');
     assert.equal(pdf.getTitle(), 'CHBG-QA-001 · A35DR2-80600-V1');
-    assert.equal(pdf.getSubject(), '杭州益威电子有限公司 · 12 套'); assert.ok(bytes.length > 15000);
+    assert.equal(pdf.getSubject(), '杭州益威电子有限公司 · 12 套'); assert.ok(bytes.length > 15000 && bytes.length < 400000, 'CJK report embeds only required glyphs');
   }
+});
+
+test('camera originals honor EXIF orientation and embed actual image pixels', async () => {
+  const body = await sharp({ create: { width: 40, height: 80, channels: 3, background: '#ec6b14' } }).withMetadata({ orientation: 6 }).jpeg().toBuffer();
+  const s = normalizeShippingReport({ ...input, drawingId: context.drawings[0].id, drawingUpdatedAt: context.drawings[0].updatedAt, drawingPage: 1 }, context);
+  const result = await generateShippingReportPdf(s, { body, mimeType: 'image/jpeg' });
+  assert.equal(result.drawingPages, 1);
+  const pdf = await PDFDocument.load(result.bytes);
+  const images = pdf.getPage(0).node.Resources()!.lookup(PDFName.of('XObject'), PDFDict);
+  const image = pdf.context.lookup(images.entries()[0][1], PDFRawStream);
+  assert.equal(image.dict.lookup(PDFName.of('Subtype'), PDFName).asString(), '/Image');
+  assert.equal(image.dict.lookup(PDFName.of('Width'), PDFNumber).asNumber(), 80);
+  assert.equal(image.dict.lookup(PDFName.of('Height'), PDFNumber).asNumber(), 40);
 });
 test('original PDF page selection and landscape rotation embed without adding pages or stretching the report', async () => {
   const source = await PDFDocument.create(); source.addPage([200, 400]); const rotated = source.addPage([200, 400]); rotated.setRotation(degrees(90));

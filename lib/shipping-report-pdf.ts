@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import fontkit from '@pdf-lib/fontkit';
+import { Readable } from 'node:stream';
+import { create as createFont } from 'fontkit';
 import { PDFDocument, PDFFont, PDFPage, degrees, rgb } from 'pdf-lib';
 import sharp from 'sharp';
 import { FinishedGoodsError } from './finished-goods-domain';
@@ -10,6 +11,20 @@ const MM = 72 / 25.4, W = 210 * MM, H = 297 * MM;
 let fontBytes: Promise<Buffer> | undefined;
 function fontData() { return fontBytes ||= fs.readFile(path.join(process.cwd(), 'public/fonts/NotoSansSC-Regular.otf')); }
 type Drawing = { body: Uint8Array; mimeType: string };
+
+// pdf-lib expects the older streaming encoder; fontkit 2 fixes CJK subset glyph loss.
+const pdfFontkit: Parameters<PDFDocument['registerFontkit']>[0] = {
+  create(bytes) {
+    const font = createFont(Buffer.from(bytes));
+    if (!('createSubset' in font)) throw new Error('Expected a single report font');
+    const subset = font.createSubset.bind(font);
+    font.createSubset = () => {
+      const result = subset();
+      return Object.assign(result, { encodeStream: () => Readable.from([result.encode()]) });
+    };
+    return font as unknown as ReturnType<Parameters<PDFDocument['registerFontkit']>[0]['create']>;
+  },
+};
 
 class Paper {
   constructor(readonly page: PDFPage, readonly font: PDFFont) {}
@@ -115,7 +130,7 @@ function xinxinghuiReport(p: Paper, s: ShippingReportSnapshot) {
 }
 
 export async function generateShippingReportPdf(snapshot: ShippingReportSnapshot, drawing?: Drawing, number?: string): Promise<{ bytes: Buffer; drawingPages: number }> {
-  const pdf = await PDFDocument.create(); pdf.registerFontkit(fontkit);
+  const pdf = await PDFDocument.create(); pdf.registerFontkit(pdfFontkit);
   const font = await pdf.embedFont(await fontData(), { subset: true });
   const page = pdf.addPage([W, H]); const paper = new Paper(page, font);
   if (snapshot.template === 'xinxinghui') xinxinghuiReport(paper, snapshot); else standardReport(paper, snapshot);

@@ -44,7 +44,11 @@ async function scenario(page, f, base, out) {
       if (!canvas || canvas.width < 100 || canvas.height < 100) return false;
       const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data; let dark = 0, white = 0;
       for (let i = 0; i < pixels.length; i += 80) { if (pixels[i + 3] && pixels[i] < 170) dark++; if (pixels[i] > 240 && pixels[i + 1] > 240) white++; }
-      return dark > 20 && white > 100;
+      const ctx = canvas.getContext('2d');
+      const title = ctx.getImageData(Math.floor(canvas.width * .15), Math.floor(canvas.height * .025), Math.floor(canvas.width * .7), Math.floor(canvas.height * .058)).data;
+      let titleInk = 0;
+      for (let i = 0; i < title.length; i += 4) if (title[i + 3] && title[i] < 150 && title[i + 1] < 150) titleInk++;
+      return dark > 20 && white > 100 && titleInk > 80;
     }, null, { timeout: 40000 });
     check(await page.locator('.sr-error').count() === 0, 'PDF preview has no render/load error');
   };
@@ -100,7 +104,7 @@ async function scenario(page, f, base, out) {
     check(JSON.stringify(before.rows.map(r => [r.lotId, r.pending, r.available, r.shippedQuantity, r.version])) === JSON.stringify(after.rows.map(r => [r.lotId, r.pending, r.available, r.shippedQuantity, r.version])), 'report generation does not alter stock, shipment or source version');
     await row(0).getByRole('button', { name: '出货报告', exact: true }).click(); await preview();
     await page.getByRole('tab', { name: /历史报告/ }).click(); await page.locator('.sr-history-row').first().click(); await preview();
-    const archived = await page.request.get(base + '/api/finished-goods/reports/' + reports[0].id + '/file'); check(archived.status() === 200, 'historical PDF available');
+    const archived = await api('/api/finished-goods/reports/' + reports[0].id + '/file'); check(archived.status === 200 && archived.type === 'pdf', 'historical PDF available in the authenticated browser');
     const repeated = page.waitForEvent('download'); await page.getByRole('button', { name: '下载报告 PDF' }).click(); await (await repeated).saveAs(out + '/yiwei-history.pdf');
     check((await api('/api/finished-goods/reports?lotId=' + f.lots[0].id)).body.data.reports.length === 1, 'reprint/download does not create another report');
     await page.getByRole('button', { name: '打印报告', exact: true }).click();
