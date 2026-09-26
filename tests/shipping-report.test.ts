@@ -75,7 +75,8 @@ test('camera originals honor EXIF orientation and embed actual image pixels', as
   assert.equal(result.drawingPages, 1);
   const pdf = await PDFDocument.load(result.bytes);
   const images = pdf.getPage(0).node.Resources()!.lookup(PDFName.of('XObject'), PDFDict);
-  const image = pdf.context.lookup(images.entries()[0][1], PDFRawStream);
+  const image = pdf.context.lookup(images.entries()[0][1]);
+  assert.ok(image instanceof PDFRawStream);
   assert.equal(image.dict.lookup(PDFName.of('Subtype'), PDFName).asString(), '/Image');
   assert.equal(image.dict.lookup(PDFName.of('Width'), PDFNumber).asNumber(), 80);
   assert.equal(image.dict.lookup(PDFName.of('Height'), PDFNumber).asNumber(), 40);
