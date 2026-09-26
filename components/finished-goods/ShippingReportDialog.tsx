@@ -5,6 +5,7 @@ import { Check, CheckCheck, ChevronRight, Download, FileClock, FileImage, FileTe
 import { chinaDateKey } from '@/lib/china-date';
 import { SHIPPING_REPORT_TEMPLATES, recommendShippingTemplate, type ShippingReportContext, type ShippingReportFields, type ShippingReportRecord, type ShippingReportSource } from '@/lib/shipping-report-domain';
 import { ShippingReportPreview } from './ShippingReportPreview';
+import { printShippingReportPdf } from '@/lib/shipping-report-print';
 import './shipping-report.css';
 
 const fileUrl = (id: string) => `/api/finished-goods/reports/${encodeURIComponent(id)}/file`;
@@ -12,6 +13,7 @@ const stamp = (value: string) => new Date(value).toLocaleString('zh-CN', { timeZ
 export default function ShippingReportDialog({ source, readOnly, onClose }: { source: ShippingReportSource; readOnly: boolean; onClose: () => void }) {
   const [context, setContext] = useState<ShippingReportContext | null>(null), [fields, setFields] = useState<ShippingReportFields | null>(null);
   const [error, setError] = useState(''), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [previewBusy, setPreviewBusy] = useState(false);
+  const [printing, setPrinting] = useState(false), printBusy = useRef(false);
   const [bytes, setBytes] = useState<ArrayBuffer | null>(null), [pages, setPages] = useState(1), [retry, setRetry] = useState(0), [loadRetry, setLoadRetry] = useState(0);
   const [tab, setTab] = useState<'edit' | 'history'>('edit'), [selected, setSelected] = useState<ShippingReportRecord | null>(null);
   const [discard, setDiscard] = useState(false), [notice, setNotice] = useState('');
@@ -31,7 +33,7 @@ export default function ShippingReportDialog({ source, readOnly, onClose }: { so
     return () => abort.abort();
   }, [sourceKey, loadRetry, setDefaults]);
   const dirty = Boolean(fields && !selected && JSON.stringify(fields) !== initial.current);
-  const closeRef = useRef(() => {}); closeRef.current = () => { if (busyRef.current) return; setHistoryPending(null); if (dirty) setDiscard(true); else onClose(); };
+  const closeRef = useRef(() => {}); closeRef.current = () => { if (busyRef.current || printBusy.current) return; setHistoryPending(null); if (dirty) setDiscard(true); else onClose(); };
   useEffect(() => {
     const focused = document.activeElement as HTMLElement | null, overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -80,12 +82,21 @@ export default function ShippingReportDialog({ source, readOnly, onClose }: { so
   }
   async function download() { if (readOnly && !selected) { downloadDraft(); return; } const saved = await save(); if (saved) { const a = document.createElement('a'); a.href = `${fileUrl(saved.id)}?download=1`; a.download = `${saved.number}.pdf`; a.click(); } }
   async function print() {
-    const report = selected || (readOnly ? null : await save()); if (!report && !readOnly) return;
-    if (!report && !bytes) return;
-    const blobUrl = !report ? URL.createObjectURL(new Blob([bytes!], { type: 'application/pdf' })) : null;
-    const frame = document.createElement('iframe'); frame.className = 'sr-print-frame'; frame.title = '出货报告打印'; frame.src = report ? fileUrl(report.id) : blobUrl!;
-    frame.onload = () => { setTimeout(() => { try { frame.contentWindow?.focus(); frame.contentWindow?.print(); setNotice('已打开打印窗口'); } catch { setError('浏览器未能打开打印窗口，可下载 PDF 后打印。'); } }, 250); };
-    document.body.appendChild(frame); setTimeout(() => { frame.remove(); if (blobUrl) URL.revokeObjectURL(blobUrl); }, 120000);
+    if (printBusy.current) return;
+    printBusy.current = true; setPrinting(true); setError('');
+    try {
+      const report = selected || (readOnly ? null : await save()); if (!report && !readOnly) return;
+      let paper = bytes;
+      if (report) {
+        const response = await fetch(fileUrl(report.id), { cache: 'no-store' });
+        if (!response.ok) throw Error('已保存报告读取失败，请重试。');
+        paper = await response.arrayBuffer();
+      }
+      if (!paper) return;
+      await printShippingReportPdf(paper, report?.number || `出货报告-${context?.specification || ''}`, report?.id);
+      setNotice('已打开打印窗口');
+    } catch (e) { setError(e instanceof Error ? e.message : '打印准备失败，请下载 PDF 后打印。'); }
+    finally { printBusy.current = false; setPrinting(false); }
   }
   function openHistory(report: ShippingReportRecord) { if (dirty) { setHistoryPending(report); setDiscard(true); return; } setSelected(report); setNotice(''); setDiscard(false); }
   function finishDiscard() { if (historyPending) { setSelected(historyPending); setHistoryPending(null); setDiscard(false); setNotice(''); } else onClose(); }
@@ -95,13 +106,13 @@ export default function ShippingReportDialog({ source, readOnly, onClose }: { so
     const next: ShippingReportFields = { template: s.template, customerName: context.customerName || s.customerName, orderNo: s.orderNo, lotNo: s.lotNo, reportDate: chinaDateKey(new Date()), quantity: String(context.quantityLocked ? context.quantity : Math.min(s.quantity, context.maxQuantity)), drawingId: context.drawings.some(d => d.id === s.drawing?.id) ? s.drawing!.id : context.drawings[0]?.id || '', drawingPage: context.drawings.some(d => d.id === s.drawing?.id) ? s.drawing!.page : 1 };
     setFields(next); initial.current = ''; setSelected(null); setTab('edit'); setNotice('');
   }
-  const pending = loading || busy || previewBusy, valid = Boolean(bytes && !error && (selected || canPreview));
+  const pending = loading || busy || previewBusy || printing, valid = Boolean(bytes && !error && (selected || canPreview));
   return createPortal(<div className="sr-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) closeRef.current(); }}><div ref={root} className="sr-dialog" role="dialog" aria-modal="true" aria-labelledby="sr-title">
-    <header className="sr-header"><div className="sr-heading-icon"><FileText size={23}/></div><div className="sr-heading"><h2 id="sr-title">出货报告{readOnly && <small>只读</small>}</h2><p>{context?.customerName || '成品仓'}<span> / </span>{context?.specification || '正在读取产品资料'}</p></div><button type="button" className="sr-icon-close" aria-label="关闭出货报告" disabled={busy} onClick={() => closeRef.current()}><X size={21}/></button></header>
+    <header className="sr-header"><div className="sr-heading-icon"><FileText size={23}/></div><div className="sr-heading"><h2 id="sr-title">出货报告{readOnly && <small>只读</small>}</h2><p>{context?.customerName || '成品仓'}<span> / </span>{context?.specification || '正在读取产品资料'}</p></div><button type="button" className="sr-icon-close" aria-label="关闭出货报告" disabled={busy || printing} onClick={() => closeRef.current()}><X size={21}/></button></header>
     <div className="sr-body"><aside className="sr-sidebar"><div className="sr-tabs" role="tablist" aria-label="报告工作区"><button role="tab" aria-selected={tab === 'edit'} onClick={() => setTab('edit')}>本次报告</button><button role="tab" aria-selected={tab === 'history'} onClick={() => setTab('history')}>历史报告<span>{context?.reports.length || 0}</span></button></div>
       <div className="sr-sidebar-scroll">{loading ? <div className="sr-loading"><Loader2 className="sr-spin"/>读取入库资料</div> : !context ? <div className="sr-loading"><button onClick={() => setLoadRetry(n => n + 1)}><RefreshCw size={15}/>重新加载</button></div> : tab === 'history' ? <div className="sr-history">{context.reports.length ? context.reports.map(r => <button key={r.id} className={`sr-history-row ${selected?.id === r.id ? 'is-selected' : ''}`} onClick={() => openHistory(r)}><span className="sr-history-icon"><FileClock size={19}/></span><span><strong>{SHIPPING_REPORT_TEMPLATES.find(t => t.id === r.template)?.name} · {r.quantity} {r.unit}</strong><small>{r.number}</small><small>{stamp(r.createdAt)} · {r.actorName}</small></span><ChevronRight size={15}/></button>) : <div className="sr-empty"><FileClock size={30}/><strong>还没有保存的报告</strong></div>}</div> : selected ? <div className="sr-saved-card"><span className="sr-saved-icon"><CheckCheck size={25}/></span><h3>{selected.number}</h3><p>{stamp(selected.createdAt)}</p><dl><div><dt>客户</dt><dd>{selected.snapshot.customerName}</dd></div><div><dt>规格</dt><dd>{selected.snapshot.specification}</dd></div><div><dt>模板</dt><dd>{chosen?.name}</dd></div><div><dt>数量</dt><dd>{selected.quantity} {selected.unit}</dd></div><div><dt>订单号</dt><dd>{selected.snapshot.orderNo || '—'}</dd></div><div><dt>生成者</dt><dd>{selected.actorName}</dd></div><div><dt>原图</dt><dd>{selected.snapshot.drawing ? `${selected.snapshot.drawing.name} · 第 ${selected.snapshot.drawing.page} 页` : '未附图'}</dd></div></dl>{!readOnly && <button className="sr-secondary sr-wide" onClick={copyHistory}>沿用填写，另存报告<ChevronRight size={15}/></button>}<button className="sr-text-button sr-wide" onClick={() => setDefaults(context)}>新建报告</button></div> : fields && <>
         {!context.eligible && <div className="sr-callout">{context.ineligibleReason}</div>}
-        <fieldset disabled={busy || !context.eligible} className="sr-fields"><div className="sr-field-heading"><span>报告模板</span>{fields.template && fields.template !== recommended ? <small>手动选择</small> : recommended && <small><Check size={12}/>客户默认</small>}</div><div className="sr-template-options">{SHIPPING_REPORT_TEMPLATES.map(t => <button type="button" key={t.id} aria-pressed={fields.template === t.id} className={fields.template === t.id ? 'is-selected' : ''} onClick={() => update('template', t.id)}><FileText size={17}/><span>{t.name}</span>{fields.template === t.id && <Check size={13}/>}</button>)}</div>
+        <fieldset disabled={busy || printing || !context.eligible} className="sr-fields"><div className="sr-field-heading"><span>报告模板</span>{fields.template && fields.template !== recommended ? <small>手动选择</small> : recommended && <small><Check size={12}/>客户默认</small>}</div><div className="sr-template-options">{SHIPPING_REPORT_TEMPLATES.map(t => <button type="button" key={t.id} aria-pressed={fields.template === t.id} className={fields.template === t.id ? 'is-selected' : ''} onClick={() => update('template', t.id)}><FileText size={17}/><span>{t.name}</span>{fields.template === t.id && <Check size={13}/>}</button>)}</div>
         {!fields.template && <p className="sr-field-hint">请选择本次使用的模板</p>}
         {chosen?.id === 'xinxinghui' && <div className="sr-issuer"><ShieldCheck size={14}/><span>抬头 · 杭州迈斯嘉电子科技有限公司</span></div>}
         <label className="sr-field">客户<input aria-label="报告客户" value={fields.customerName} readOnly={Boolean(context.customerName)} onChange={e => update('customerName', e.target.value)} placeholder="填写本次报告客户" maxLength={200}/></label>
@@ -115,6 +126,6 @@ export default function ShippingReportDialog({ source, readOnly, onClose }: { so
       </>}</div></aside>
       <div className="sr-preview-column">{error && <div className="sr-error" role="alert"><span>{error}</span><button disabled={pending} onClick={() => context ? setRetry(n => n + 1) : setLoadRetry(n => n + 1)}><RefreshCw size={14}/>重试</button></div>}<ShippingReportPreview bytes={bytes} loading={previewBusy || loading} onError={setError}/></div>
     </div>
-    <footer className="sr-footer">{discard ? <><span className="sr-discard-label">有尚未保存的填写</span><button className="sr-secondary" onClick={() => setDiscard(false)}>继续填写</button><button className="sr-secondary" onClick={finishDiscard}>{historyPending ? '放弃并查看' : '放弃并关闭'}</button>{!readOnly && <button className="sr-primary" disabled={pending || !valid} onClick={async () => { if (await save()) finishDiscard(); }}>{historyPending ? '保存并查看' : '保存并关闭'}</button>}</> : <><span className="sr-footer-status" role="status">{busy ? <><Loader2 className="sr-spin" size={15}/>正在保存报告</> : notice ? <><CheckCheck size={15}/>{notice}</> : selected ? <><ShieldCheck size={15}/>已保存 · {selected.actorName}</> : <>{chosen?.name || '请选择模板'}{chosen && <span> · 检查数据留空</span>}</>}</span><div className="sr-footer-actions"><button className="sr-secondary sr-icon-action" aria-label="下载报告 PDF" title="保存并下载 PDF" disabled={pending || !valid} onClick={() => void download()}><Download size={18}/></button>{!readOnly && !selected && <button className="sr-secondary" disabled={pending || !valid} onClick={() => void save()}><Save size={16}/>保存报告</button>}<button className="sr-primary" disabled={pending || !valid} onClick={() => void print()}><Printer size={17}/>{busy ? '正在保存' : '打印报告'}</button></div></>}</footer>
+    <footer className="sr-footer">{discard ? <><span className="sr-discard-label">有尚未保存的填写</span><button className="sr-secondary" onClick={() => setDiscard(false)}>继续填写</button><button className="sr-secondary" onClick={finishDiscard}>{historyPending ? '放弃并查看' : '放弃并关闭'}</button>{!readOnly && <button className="sr-primary" disabled={pending || !valid} onClick={async () => { if (await save()) finishDiscard(); }}>{historyPending ? '保存并查看' : '保存并关闭'}</button>}</> : <><span className="sr-footer-status" role="status">{printing ? <><Loader2 className="sr-spin" size={15}/>正在准备打印</> : busy ? <><Loader2 className="sr-spin" size={15}/>正在保存报告</> : notice ? <><CheckCheck size={15}/>{notice}</> : selected ? <><ShieldCheck size={15}/>已保存 · {selected.actorName}</> : <>{chosen?.name || '请选择模板'}{chosen && <span> · 检查数据留空</span>}</>}</span><div className="sr-footer-actions"><button className="sr-secondary sr-icon-action" aria-label="下载报告 PDF" title="保存并下载 PDF" disabled={pending || !valid} onClick={() => void download()}><Download size={18}/></button>{!readOnly && !selected && <button className="sr-secondary" disabled={pending || !valid} onClick={() => void save()}><Save size={16}/>保存报告</button>}<button className="sr-primary" disabled={pending || !valid} onClick={() => void print()}><Printer size={17}/>{printing ? '准备打印中' : busy ? '正在保存' : '打印报告'}</button></div></>}</footer>
   </div></div>, document.body);
 }

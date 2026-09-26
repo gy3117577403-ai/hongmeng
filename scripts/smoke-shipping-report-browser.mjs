@@ -107,9 +107,24 @@ async function scenario(page, f, base, out) {
     const archived = await api('/api/finished-goods/reports/' + reports[0].id + '/file'); check(archived.status === 200 && archived.type === 'pdf', 'historical PDF available in the authenticated browser');
     const repeated = page.waitForEvent('download'); await page.getByRole('button', { name: '下载报告 PDF' }).click(); await (await repeated).saveAs(out + '/yiwei-history.pdf');
     check((await api('/api/finished-goods/reports?lotId=' + f.lots[0].id)).body.data.reports.length === 1, 'reprint/download does not create another report');
-    await page.getByRole('button', { name: '打印报告', exact: true }).click();
-    await page.locator('iframe.sr-print-frame').waitFor({ state: 'attached' });
-    check((await page.locator('iframe.sr-print-frame').getAttribute('src')).includes(reports[0].id), 'print uses archived PDF bytes');
+    await page.evaluate(() => {
+      window.__shippingPrintEvidence = null;
+      const observer = new MutationObserver(() => {
+        const frame = document.querySelector('iframe.sr-print-frame'); if (!frame) return;
+        observer.disconnect();
+        frame.contentWindow.addEventListener('beforeprint', () => {
+          const image = frame.contentDocument.querySelector('img');
+          window.__shippingPrintEvidence = { reportId: frame.dataset.reportId, width: image?.naturalWidth, height: image?.naturalHeight, loaded: image?.complete, title: frame.contentDocument.title };
+        }, { once: true });
+      });
+      observer.observe(document.body, { childList: true });
+    });
+    const printSource = page.waitForResponse(r => r.url().endsWith('/api/finished-goods/reports/' + reports[0].id + '/file') && r.status() === 200);
+    await page.getByRole('button', { name: '打印报告', exact: true }).click(); await printSource;
+    await page.waitForFunction(() => window.__shippingPrintEvidence?.loaded, null, { timeout: 40000 });
+    const paper = await page.evaluate(() => window.__shippingPrintEvidence);
+    check(paper.reportId === reports[0].id && paper.width >= 2480 && paper.height >= 3507, 'native print receives archived report at 300 dpi');
+    await page.getByText('已打开打印窗口', { exact: true }).waitFor();
     await page.getByRole('button', { name: '关闭出货报告' }).click();
     for (const [index, template, name] of [[1, '欣兴汇', 'xinxinghui'], [2, '常规', 'general']]) {
       await row(index).getByRole('button', { name: '出货报告', exact: true }).click(); await preview();
