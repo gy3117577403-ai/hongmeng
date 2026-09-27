@@ -61,7 +61,8 @@ export async function GET(req: NextRequest) {
       return [order.sourceOrderNo, order.customerName, order.salesperson, order.productName, order.specification, order.remark]
         .some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(normalizedOrderKeyword));
     });
-    const batches = all.flatMap(order => order.batches);
+    const realBatches = all.flatMap(order => order.batches);
+    const batches = realBatches.flatMap(batch => [batch, ...(batch.weekSlots || []).filter(s => s.weekStartDate !== batch.weekStartDate).map(s => ({ ...batch, retainedWeek: true, weekStartDate: s.weekStartDate, weekEndDate: s.weekEndDate, weekPlanQuantity: s.quantity }))]);
     const normalizedKeyword = keyword.toLocaleLowerCase('zh-CN');
     const visibleWipContinuations = allWipContinuations.filter(item => {
       if (customer && item.customerName !== customer) return false;
@@ -85,10 +86,10 @@ export async function GET(req: NextRequest) {
       return {
         weekStartDate,
         weekEndDate,
-        batchCount: weekBatches.length,
-        totalQuantity: weekBatches.reduce((sum, batch) => sum + batch.quantity, 0),
+        batchCount: weekBatches.filter(b => b.scheduleState !== 'DEFERRED' && !b.retainedWeek).length,
+        totalQuantity: weekBatches.reduce((sum, batch) => sum + (batch.weekPlanQuantity ?? batch.quantity), 0),
         unfinishedCount: weekBatches.filter(batch => (
-          batch.releaseState !== 'archived' && !batch.workOrderCompletedAt
+          batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek && batch.releaseState !== 'archived' && !batch.workOrderCompletedAt
         )).length,
         wipTaskCount: weekWip.length,
         wipQuantity: weekWip.reduce((sum, item) => sum + item.quantity, 0),
@@ -101,8 +102,8 @@ export async function GET(req: NextRequest) {
       const current = historyMap.get(batch.weekStartDate);
       if (current) {
         current.batchCount += 1;
-        current.totalQuantity += batch.quantity;
-        if (batch.releaseState !== 'archived' && !batch.workOrderCompletedAt) {
+        current.totalQuantity += batch.weekPlanQuantity ?? batch.quantity;
+        if (batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek && batch.releaseState !== 'archived' && !batch.workOrderCompletedAt) {
           current.unfinishedCount = (current.unfinishedCount || 0) + 1;
         }
         continue;
@@ -112,7 +113,7 @@ export async function GET(req: NextRequest) {
         weekEndDate: batch.weekEndDate,
         batchCount: 1,
         totalQuantity: batch.quantity,
-        unfinishedCount: batch.releaseState !== 'archived' && !batch.workOrderCompletedAt ? 1 : 0,
+        unfinishedCount: batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek && batch.releaseState !== 'archived' && !batch.workOrderCompletedAt ? 1 : 0,
       });
     }
     const upcoming = Array.from({ length: 12 }, (_, index) => {
@@ -125,13 +126,13 @@ export async function GET(req: NextRequest) {
       scheduledOrderCount: all.filter(order => order.status === 'scheduled' || order.status === 'partially_released').length,
       thisWeekBatchCount: batches.filter(batch => batch.weekStartDate === currentStart).length,
       nextWeekBatchCount: batches.filter(batch => batch.weekStartDate === nextStart).length,
-      preparationBatchCount: batches.filter(batch => batch.releaseState === 'preparation' && batch.weekStartDate === nextStart).length,
-      activeBatchCount: batches.filter(batch => batch.releaseState === 'active' && batch.weekStartDate === currentStart).length,
+      preparationBatchCount: realBatches.filter(batch => batch.scheduleState !== 'DEFERRED' && batch.releaseState === 'preparation' && batch.weekStartDate === nextStart).length,
+      activeBatchCount: realBatches.filter(batch => batch.scheduleState !== 'DEFERRED' && batch.releaseState === 'active' && batch.weekStartDate === currentStart).length,
       missingDrawingCount: all.filter(order => order.drawingFileCount === 0).length,
       missingSopCount: all.filter(order => order.sopFileCount === 0).length,
       missingProductTimeCount: all.filter(order => !order.effectiveUnitMilliseconds).length,
-      warehouseExceptionCount: batches.filter(batch => batch.warehouseStatus === 'exception').length,
-      processPendingCount: batches.filter(batch => batch.releaseState !== 'draft' && (batch.processStatus === 'not_created' || batch.processStatus === 'draft')).length,
+      warehouseExceptionCount: realBatches.filter(batch => batch.warehouseStatus === 'exception').length,
+      processPendingCount: realBatches.filter(batch => batch.releaseState !== 'draft' && (batch.processStatus === 'not_created' || batch.processStatus === 'draft')).length,
       thisWeekWipTaskCount: allWipContinuations.filter(item => item.targetWeekStartDate === currentStart).length,
       nextWeekWipTaskCount: allWipContinuations.filter(item => item.targetWeekStartDate === nextStart).length,
     };
@@ -282,7 +283,8 @@ export async function GET(req: NextRequest) {
       summary,
       customers,
       orderPoolCount: all.filter(order => order.remainingQuantity > 0 && !['cancelled', 'completed'].includes(order.status)).length,
-      carryoverCount: batches.filter(batch => batch.weekEndDate < currentStart && !(batch.releaseState === 'archived' && batch.workOrderCompletedAt)).length,
+      deferredCount: realBatches.filter(b => b.scheduleState === 'DEFERRED').length,
+      carryoverCount: batches.filter(batch => batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek && batch.weekEndDate < currentStart && !(batch.releaseState === 'archived' && batch.workOrderCompletedAt)).length,
       } : {}),
       ...(options ? { productOptions,
       salespeople: [...new Set(salespersonRows.map(row => row.salesperson).filter((value): value is string => Boolean(value)))],

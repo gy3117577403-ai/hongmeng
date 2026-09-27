@@ -96,11 +96,12 @@ export async function loadProductionWipSourceGate(
 async function assertNoActiveNonMaterialHold(
   tx: Prisma.TransactionClient,
   rootWorkOrderId: string,
+  allowWeekBackfill = false,
 ): Promise<void> {
   const activeHold = await tx.productionPlanBatchHold.findFirst({
     where: {
       status: 'ACTIVE',
-      holdType: { not: 'MATERIAL' },
+      holdType: { notIn: allowWeekBackfill ? ['MATERIAL', 'WEEK_SCHEDULE'] : ['MATERIAL'] },
       OR: [
         { workOrderId: rootWorkOrderId },
         { batch: { workOrderId: rootWorkOrderId } },
@@ -149,7 +150,7 @@ export async function assertProductionMayRun(
   backfill?: ProductionBackfillAuthorization,
 ): Promise<void> {
   const root = await lockProductionWorkOrder(tx, workOrderId);
-  await assertNoActiveNonMaterialHold(tx, root.id);
+  await assertNoActiveNonMaterialHold(tx, root.id, !!backfill);
   if (!root.productionPausedAt) {
     if (backfill) throw new ProductionControlError('暂停状态已变化，请刷新后重新确认补录方式', 'PRODUCTION_BACKFILL_INVALID', 409);
   } else if (backfill) {

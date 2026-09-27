@@ -250,7 +250,7 @@ function effectiveUnitMilliseconds(order: ProductionPlanOrderDTO, batch: Product
 
 function currentBatchHours(order: ProductionPlanOrderDTO, batch: ProductionPlanBatchDTO) {
   const unitMilliseconds = effectiveUnitMilliseconds(order, batch);
-  const totalMilliseconds = unitMilliseconds ? unitMilliseconds * batch.quantity : finiteNumber(batch.totalMillisecondsSnapshot);
+  const totalMilliseconds = batch.weekPlanMilliseconds !== undefined ? finiteNumber(batch.weekPlanMilliseconds) : unitMilliseconds ? unitMilliseconds * batch.quantity : finiteNumber(batch.totalMillisecondsSnapshot);
   return {
     unitHours: millisecondsToHours(unitMilliseconds),
     totalHours: millisecondsToHours(totalMilliseconds),
@@ -321,7 +321,7 @@ function buildExportRow(input: {
   const carryover = reference.carryover
     ? carryoverLabel(elapsedWeeks, reference.carryover.inclusionType)
     : null;
-  const scheduledQuantity = carryover ? remainingQty : batch.quantity;
+  const scheduledQuantity = carryover ? remainingQty : batch.weekPlanQuantity ?? batch.quantity;
   const hours = carryover
     ? carryoverHours(execution, scheduledQuantity)
     : currentBatchHours(order, batch);
@@ -450,8 +450,8 @@ export async function loadWeeklyPlanExportData(input: {
       where: {
         deletedAt: null,
         ...(scheduleRange
-          ? { plannedCompletionDate: { gte: scheduleRange.start, lt: scheduleRange.endExclusive } }
-          : { releaseState: { not: 'archived' }, weekStartDate: targetWindow }),
+          ? { OR: [{ plannedCompletionDate: { gte: scheduleRange.start, lt: scheduleRange.endExclusive } }, { weekSlots: { some: { completionDate: { gte: scheduleRange.start, lt: scheduleRange.endExclusive } } } }] }
+          : { releaseState: { not: 'archived' }, OR: [{ weekStartDate: targetWindow }, { weekSlots: { some: { weekStartDate: targetWindow } } }] }),
         planOrder: { deletedAt: null },
         ...productionBatchScopeWhere(input.productionScope),
       },
@@ -534,8 +534,16 @@ export async function loadWeeklyPlanExportData(input: {
     if (!planning) {
       throw new WeeklyPlanExportError('周计划批次数据已变化，请刷新后重试', 'WEEKLY_PLAN_EXPORT_STALE', 409);
     }
+    const matchedSlots = planning.batch.weekSlots?.filter(s => scheduleRange
+      ? s.completionDate >= scheduleRange.startDate && s.completionDate <= scheduleRange.endDate
+      : s.weekStartDate === chinaDate(week.start));
+    const scopedBatch = matchedSlots?.length ? { ...planning.batch,
+      weekPlanQuantity: matchedSlots.reduce((n, s) => n + s.quantity, 0),
+      weekPlanMilliseconds: matchedSlots.some(s => s.plannedMilliseconds === null) ? null : matchedSlots.reduce((n,s) => n + BigInt(s.plannedMilliseconds || 0), 0n).toString(),
+      weekStartDate: matchedSlots[0].weekStartDate, weekEndDate: matchedSlots[matchedSlots.length-1].weekEndDate,
+    } : planning.batch;
     return buildExportRow({
-      ...planning,
+      ...planning, batch: scopedBatch,
       reference,
       execution: reference.workOrderId ? executionById.get(reference.workOrderId) || null : null,
     });

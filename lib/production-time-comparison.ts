@@ -12,6 +12,7 @@ export function originalPlanTime(input: { quantity: number; batchUnit?: number |
 }
 
 export type TaskTimeComparison = {
+  weekAllocated?: boolean;
   originalPlan: number | null; originalSource: ReturnType<typeof originalPlanTime>['source'];
   currentStandard: number; missingSteps: number; priorDeducted: number; adjustedReported: number;
   estimate: number; movedOut: number; executionBasis: number;

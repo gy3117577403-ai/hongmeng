@@ -69,7 +69,7 @@ export function isCurrentProductionCarryoverTarget(value: Date | string, now = n
 export function activeProductionCarryoverBatchWhere(targetWeekStart: Date | string): Prisma.ProductionPlanBatchWhereInput {
   return {
     deletedAt: null,
-    releaseState: { in: CARRYOVER_BATCH_STATES },
+    releaseState: { in: CARRYOVER_BATCH_STATES }, scheduleState: 'ACTIVE',
     workOrderId: { not: null },
     planOrder: { deletedAt: null },
     workOrder: { is: activeCarryoverWorkOrderWhere() },
@@ -149,7 +149,7 @@ export async function reconcileProductionCarryovers(
     tx.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
-        releaseState: { in: CARRYOVER_BATCH_STATES },
+        releaseState: { in: CARRYOVER_BATCH_STATES }, scheduleState: 'ACTIVE',
         weekStartDate: previousWindow,
         workOrderId: { not: null },
         planOrder: { deletedAt: null },
@@ -168,7 +168,7 @@ export async function reconcileProductionCarryovers(
         status: PRODUCTION_CARRYOVER_ACTIVE,
         productionPlanBatch: {
           deletedAt: null,
-          releaseState: { in: CARRYOVER_BATCH_STATES },
+          releaseState: { in: CARRYOVER_BATCH_STATES }, scheduleState: 'ACTIVE',
           planOrder: { deletedAt: null },
         },
         workOrder: { deletedAt: null },
@@ -195,7 +195,7 @@ export async function reconcileProductionCarryovers(
         productionPlanBatch: {
           select: {
             workOrderId: true,
-            releaseState: true,
+            releaseState: true, scheduleState: true,
             deletedAt: true,
             planOrder: { select: { deletedAt: true } },
           },
@@ -217,6 +217,7 @@ export async function reconcileProductionCarryovers(
       item.workOrder.deletedAt
       || item.productionPlanBatch.deletedAt
       || item.productionPlanBatch.planOrder.deletedAt
+      || item.productionPlanBatch.scheduleState !== 'ACTIVE'
       || !CARRYOVER_BATCH_STATES.includes(item.productionPlanBatch.releaseState)
       || item.productionPlanBatch.workOrderId !== item.workOrderId,
     );
@@ -408,7 +409,7 @@ export async function listOlderProductionCarryoverCandidates(input: {
   const batches = await prisma.productionPlanBatch.findMany({
     where: {
       deletedAt: null,
-      releaseState: { in: CARRYOVER_BATCH_STATES },
+      releaseState: { in: CARRYOVER_BATCH_STATES }, scheduleState: 'ACTIVE',
       weekStartDate: { lt: previousWeekStart },
       workOrderId: { not: null },
       planOrder: { deletedAt: null },
@@ -474,7 +475,7 @@ export async function includeOlderProductionCarryovers(input: {
       where: {
         id: { in: batchIds },
         deletedAt: null,
-        releaseState: { in: CARRYOVER_BATCH_STATES },
+        releaseState: { in: CARRYOVER_BATCH_STATES }, scheduleState: 'ACTIVE',
         weekStartDate: { lt: previousWeekStart },
         workOrderId: { not: null },
         planOrder: { deletedAt: null },
@@ -540,7 +541,7 @@ export async function loadProductionCarryoverCounts(
   const older = await prisma.productionPlanBatch.count({
       where: {
         deletedAt: null,
-        releaseState: { in: CARRYOVER_BATCH_STATES },
+        releaseState: { in: CARRYOVER_BATCH_STATES }, scheduleState: 'ACTIVE',
         weekStartDate: { lt: previous },
         workOrderId: { not: null },
         planOrder: { deletedAt: null },

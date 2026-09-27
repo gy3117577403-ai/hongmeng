@@ -26,16 +26,16 @@ async function loadPlanningCapacitySnapshot(range: PlanningDateRange) {
     prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
-        plannedCompletionDate: { gte: range.start, lt: range.endExclusive },
+        OR: [{ plannedCompletionDate: { gte: range.start, lt: range.endExclusive } }, { weekSlots: { some: { completionDate: { gte: range.start, lt: range.endExclusive } } } }],
         planOrder: { deletedAt: null },
       },
       select: {
-        quantity: true,
+        quantity: true, weekSlots: true,
         plannedCompletionDate: true,
         totalMillisecondsSnapshot: true,
         unitMillisecondsSnapshot: true,
         planOrder: { select: { planningUnitMilliseconds: true } },
-        holds: { where: { status: 'ACTIVE', holdType: { not: 'MATERIAL' } }, select: { id: true } },
+        holds: { where: { status: 'ACTIVE', holdType: { notIn: ['MATERIAL', 'WEEK_SCHEDULE'] } }, select: { id: true } },
       },
     }),
     prisma.employee.findMany({
@@ -96,7 +96,11 @@ export function summarizePlanningCapacitySnapshot(
   options: { now?: Date } = {},
 ): PlanningCapacityMetric {
   const now = options.now || new Date();
-  const batches = snapshot.batches.filter(batch => dateInPlanningRange(batch.plannedCompletionDate, range));
+  const batches = snapshot.batches.flatMap(batch => batch.weekSlots?.length
+    ? batch.weekSlots.filter(slot => dateInPlanningRange(slot.completionDate, range) && (slot.quantity > 0 || (slot.plannedMilliseconds || 0n) > 0n)).map(slot => ({ ...batch, quantity: slot.quantity,
+        plannedCompletionDate: slot.completionDate, unitMillisecondsSnapshot: null, planOrder: { planningUnitMilliseconds: null }, totalMillisecondsSnapshot: slot.plannedMilliseconds,
+        holds: batch.holds.filter(h => slot.quantity > 0) }))
+    : dateInPlanningRange(batch.plannedCompletionDate, range) ? [batch] : []);
   const employees = snapshot.employees;
   const attendance = snapshot.attendance.filter(record => dateInPlanningRange(record.workDate, range));
   const overrides = snapshot.overrides.filter(item => dateInPlanningRange(item.workDate, range));

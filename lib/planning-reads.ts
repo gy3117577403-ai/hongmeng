@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import { productionPlanOrderInclude, serializeProductionPlanOrder } from '@/lib/production-planning';
+import { chinaDate, productionPlanOrderInclude, serializeProductionPlanOrder } from '@/lib/production-planning';
 import { loadWipContinuations } from '@/lib/wip-continuations';
 
 export type PlanningReadMode = 'legacy' | 'all' | 'week' | 'metadata' | 'options';
@@ -8,7 +8,7 @@ function addDays(value: Date, days: number) { return new Date(value.getTime() + 
 /** Scoped rows and global allocation totals are intentionally independent. */
 export async function loadPlanningRows(read: PlanningReadMode, weekDate?: Date | null) {
     const weekWhere = read === 'week' && weekDate
-      ? { weekStartDate: { gte: weekDate, lt: addDays(weekDate, 1) } } : {};
+      ? { OR: [{ weekStartDate: { gte: weekDate, lt: addDays(weekDate, 1) } }, { weekSlots: { some: { weekStartDate: { gte: weekDate, lt: addDays(weekDate, 1) } } } }] } : {};
     const metadata = read === 'metadata';
     // Metadata keeps the same count inputs without loading print snapshots, route steps or risk archives.
     const batchInclude = productionPlanOrderInclude.batches.include;
@@ -46,6 +46,12 @@ export async function loadPlanningRows(read: PlanningReadMode, weekDate?: Date |
     const allocations = new Map(allocationRows.map(row => [row.planOrderId, row._sum.quantity || 0]));
     const orders = allRecords.map(record => {
       const order = serializeProductionPlanOrder(record);
+      if (read === 'week' && weekDate) order.batches = order.batches.map(batch => {
+        const slot = batch.weekSlots?.find(s => s.weekStartDate === chinaDate(weekDate));
+        if (!slot || batch.weekStartDate === slot.weekStartDate) return batch;
+        return { ...batch, retainedWeek: true, currentWeekStartDate: batch.weekStartDate, weekStartDate: slot.weekStartDate, weekEndDate: slot.weekEndDate,
+          plannedCompletionDate: slot.completionDate, weekPlanQuantity: slot.quantity, weekPlanMilliseconds: slot.plannedMilliseconds };
+      });
       if (read !== 'week') return order;
       const allocatedQuantity = allocations.get(record.id) || 0;
       return { ...order, allocatedQuantity, remainingQuantity: Math.max(0, order.orderQuantity - allocatedQuantity) };

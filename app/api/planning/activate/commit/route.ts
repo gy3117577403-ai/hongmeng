@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     const activationTime = new Date();
     const targetRange = productionPlanTargetWeek('active', activationTime);
     const batches = await prisma.productionPlanBatch.findMany({
-      where: { deletedAt: null, releaseState: 'preparation', weekStartDate: range.start, workOrderId: { not: null } },
+      where: { deletedAt: null, releaseState: 'preparation', scheduleState: 'ACTIVE', weekStartDate: range.start, workOrderId: { not: null } },
       include: {
         productTimeProfile: {
           select: { id: true, version: true, entries: { select: { unitMilliseconds: true } } },
@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
       },
     });
     if (!batches.length) return NextResponse.json({ ok: false, error: '所选周没有可启用的下周预备任务' }, { status: 409 });
+    if (await prisma.productionPlanWeekSlot.count({ where: { batchId: { in: batches.map(batch => batch.id) } } })) return NextResponse.json({ ok: false, error: '包含已调整周计划的订单，请使用加入周计划或转移周计划；目标周到达后会自动启用。' }, { status: 409 });
     const profileByBatch = new Map(batches.map(batch => [
       batch.id,
       batch.productTimeProfile || batch.planOrder.drawingLibraryItem?.productTimeProfiles[0] || null,
@@ -110,7 +111,7 @@ export async function POST(req: NextRequest) {
       const now = activationTime;
       const nextWorkOrderIds = batches.map(item => item.workOrderId).filter((id): id is string => Boolean(id));
       const current = await tx.productionPlanBatch.findMany({
-        where: { deletedAt: null, releaseState: 'active', workOrderId: { not: null } },
+        where: { deletedAt: null, releaseState: 'active', scheduleState: 'ACTIVE', workOrderId: { not: null } },
         select: { id: true, workOrderId: true, planOrderId: true },
       });
       const currentWorkOrders = await tx.workOrder.findMany({

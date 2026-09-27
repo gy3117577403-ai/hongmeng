@@ -63,7 +63,7 @@ async function main() {
     weekStartDate: week.start, weekEndDate: week.end,
   } });
   const warehouseTask = await db.warehouseMaterialTask.create({ data: { workOrderId: workOrder.id } });
-  await db.productionPlanOrder.create({ data: { sourceOrderNo:marker,sourceLineNo:1,customerName:workOrder.customerName,productName:workOrder.productName,specification,orderQuantity:12,orderDate:week.start,customerDueDate:week.end,status:'released',batches:{create:{batchNo:1,quantity:12,weekStartDate:week.start,weekEndDate:week.end,plannedCompletionDate:week.end,releaseState:'active',workOrderId:workOrder.id}} } });
+  await db.productionPlanOrder.create({ data: { sourceOrderNo:marker,sourceLineNo:1,customerName:workOrder.customerName,productName:workOrder.productName,specification,orderQuantity:12,planningUnitMilliseconds:300000,orderDate:week.start,customerDueDate:week.end,status:'released',batches:{create:{batchNo:1,quantity:12,unitMillisecondsSnapshot:300000,totalMillisecondsSnapshot:3600000n,weekStartDate:week.start,weekEndDate:week.end,plannedCompletionDate:week.end,releaseState:'active',workOrderId:workOrder.id}} } });
   const visual = {};
   const visualPrefix = 'material-visual-' + randomUUID().slice(0, 8);
   for (let index = 0; index < 12; index++) {

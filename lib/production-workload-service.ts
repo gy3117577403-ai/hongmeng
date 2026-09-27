@@ -25,9 +25,9 @@ export async function loadProductionWorkload(weekInput: string, scope: Productio
     const batches = await db.productionPlanBatch.findMany({
       where: { deletedAt: null, planOrder: { deletedAt: null }, releaseState: { not: 'cancelled' },
         ...(teamWhere ? { dailyProcessTasks: { some: { status: { not: 'CANCELLED' }, plan: { team: teamWhere } } } } : {}),
-        OR: [{ weekStartDate: { gte: window.gte, lt: window.lt } },
+        OR: [{ weekStartDate: { gte: window.gte, lt: window.lt } }, { weekSlots: { some: { weekStartDate: { gte: window.gte, lt: window.lt } } } },
           { carryovers: { some: { targetWeekStartDate: { gte: window.gte, lt: window.lt }, status: { not: 'DISMISSED' } } } }] },
-      select: { id: true, batchNo: true, quantity: true, weekStartDate: true, workOrderId: true,
+      select: { id: true, batchNo: true, quantity: true, weekStartDate: true, workOrderId: true, scheduleState: true, weekSlots: true,
         totalMillisecondsSnapshot: true, unitMillisecondsSnapshot: true, importedUnitMilliseconds: true,
         planOrder: { select: { customerName: true, specification: true, planningUnitMilliseconds: true,
           drawingLibraryItem: { select: { deletedAt: true, productTimeProfiles: {
@@ -135,15 +135,17 @@ export async function loadProductionWorkload(weekInput: string, scope: Productio
     for (const batch of batches) {
       if (batch.workOrder?.deletedAt) continue;
       const order = batch.workOrder;
+      const slot = batch.weekSlots.find(s => chinaDateKey(s.weekStartDate) === week.startKey);
       const task: WorkloadTask = { id: batch.id, workOrderId: batch.workOrderId, code: order?.code || `待下发 · 批次${batch.batchNo}`,
         specification: order?.specification || batch.planOrder.specification || '未填写规格', customer: batch.planOrder.customerName,
-        sourceWeek: chinaDateKey(batch.weekStartDate), kind: chinaDateKey(batch.weekStartDate) === week.startKey ? 'plan' : 'carryover',
+        sourceWeek: chinaDateKey(batch.weekStartDate), kind: slot || chinaDateKey(batch.weekStartDate) === week.startKey ? 'plan' : 'carryover',
         routeVersion: order?.processRoute?.version ?? null, steps: [] };
       const drawing = batch.planOrder.drawingLibraryItem;
       const publishedUnit = drawing && !drawing.deletedAt ? drawing.productTimeProfiles[0]?.entries.reduce((n, e) => n + e.unitMilliseconds, 0) : null;
       const originalPlan = originalPlanTime({ quantity: batch.quantity, batchUnit: batch.unitMillisecondsSnapshot,
         orderUnit: batch.planOrder.planningUnitMilliseconds, publishedUnit, totalSnapshot: batch.totalMillisecondsSnapshot });
-      const comparison: TaskTimeComparison = { originalPlan: originalPlan.milliseconds, originalSource: originalPlan.source,
+      const comparison: TaskTimeComparison = { originalPlan: slot ? (slot.plannedMilliseconds === null ? null : Number(slot.plannedMilliseconds)) : originalPlan.milliseconds, originalSource: originalPlan.source,
+        weekAllocated: !!slot,
         currentStandard: 0, missingSteps: 0, priorDeducted: 0, adjustedReported: 0, estimate: 0, movedOut: 0, executionBasis: 0 };
       let activeStepCount = 0;
       for (const step of order?.processRoute?.steps || []) {
@@ -151,22 +153,22 @@ export async function loadProductionWorkload(weekInput: string, scope: Productio
         const retired = step.retiredAt !== null || step.status === 'skipped';
         if (retired && !facts.current) continue;
         const valid = (step.timeBasis === 'per_unit' || step.timeBasis === 'per_batch') && (step.standardMillisecondsPerUnit || 0) > 0;
-        const original = retired ? facts.before + facts.current : valid ? Number(calculateTaskStandardMilliseconds({
+        const original = slot ? Number((slot.stepMilliseconds as Prisma.JsonObject)?.[step.id] || 0) : retired ? facts.before + facts.current : valid ? Number(calculateTaskStandardMilliseconds({
           timeBasis: step.timeBasis as 'per_unit' | 'per_batch', standardMillisecondsPerUnit: step.standardMillisecondsPerUnit!,
           setupMilliseconds: step.setupMilliseconds, unitsPerProduct: Math.max(1, step.unitsPerProduct),
         }, batch.quantity)) : 0;
         if (!retired) {
           activeStepCount += 1;
           comparison.currentStandard += original;
-          comparison.priorDeducted += Math.min(original, Math.max(0, facts.before));
+          comparison.priorDeducted += slot ? 0 : Math.min(original, Math.max(0, facts.before));
           if (!valid) comparison.missingSteps += 1;
         } else comparison.adjustedReported += facts.current;
         task.steps.push(workloadStep({ id: step.id, name: `${step.processName}${retired ? '（已调整）' : ''}`, position: step.position,
-          original, before: facts.before, movedOut: movedByStep.get(key) || 0,
+          original, before: slot ? 0 : facts.before, movedOut: movedByStep.get(key) || 0,
           reported: Math.max(0, facts.current - wip.current), pending: Math.max(0, facts.pending - wip.pending), missingStandard: !valid }));
       }
       if (!task.steps.length) { task.steps.push(workloadStep({ id: `${batch.id}:unbound`, name: '计划工时（待补工序）', position: 0,
-        original: Number(batch.totalMillisecondsSnapshot || 0n) || (batch.unitMillisecondsSnapshot || batch.importedUnitMilliseconds || 0) * batch.quantity,
+        original: slot ? Number(slot.plannedMilliseconds || 0n) : Number(batch.totalMillisecondsSnapshot || 0n) || (batch.unitMillisecondsSnapshot || batch.importedUnitMilliseconds || 0) * batch.quantity,
         reported: 0, missingStandard: true })); comparison.estimate = task.steps[0].planned; }
       if (!activeStepCount) comparison.missingSteps = Math.max(1, comparison.missingSteps);
       comparison.movedOut = task.steps.reduce((n, s) => n + s.movedOut, 0);

@@ -8,7 +8,7 @@ test('material quantities distinguish usable, reported, in transit and rejected 
     { status: 'SHIPPED', quantity: 15, acceptedQuantity: 0, rejectedQuantity: 0 },
     { status: 'CANCELLED', quantity: 20, acceptedQuantity: 0, rejectedQuantity: 0 },
   ]);
-  assert.deepEqual(quantities, { usable: 30, pending: 20, transit: 15, rejected: 10, remaining: 50, unallocated: 35 });
+  assert.deepEqual(quantities, { usable: 30, pending: 20, transit: 15, rejected: 10, missing: 70, remaining: 50, unallocated: 35 });
   assert.equal(materialAmounts(null, []).remaining, null);
   assert.equal(materialOrderState('pending', 0, 0), 'UNCHECKED');
   assert.equal(materialOrderState('pending', 0, 2), 'CONFIRM');

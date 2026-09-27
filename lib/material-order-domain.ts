@@ -5,7 +5,7 @@ export function materialAmounts(required: number | null, batches: ArrivalAmounts
   const pending = round(batches.reduce((n, b) => n + (b.status === 'ARRIVED' ? b.quantity : 0), 0));
   const transit = round(batches.reduce((n, b) => n + (b.status === 'SHIPPED' ? b.quantity : 0), 0));
   const rejected = round(batches.reduce((n, b) => n + (b.status === 'VERIFIED' ? b.rejectedQuantity : 0), 0));
-  return { usable, pending, transit, rejected, remaining: required === null ? null : Math.max(0, round(required - usable - pending)), unallocated: required === null ? null : Math.max(0, round(required - usable - pending - transit)) };
+  return { usable, pending, transit, rejected, missing: required === null ? null : Math.max(0, round(required - usable)), remaining: required === null ? null : Math.max(0, round(required - usable - pending)), unallocated: required === null ? null : Math.max(0, round(required - usable - pending - transit)) };
 }
 export function materialOrderState(status: string, openCount: number, historyCount: number) {
   if (status === 'completed' && !openCount) return 'READY' as const;

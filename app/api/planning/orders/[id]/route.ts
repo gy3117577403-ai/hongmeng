@@ -1,3 +1,4 @@
+import { refreshPlanningWeekTime } from '@/lib/planning-week-time';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { canAdjustProductionDates, serializeProductionControl } from '@/lib/production-control';
@@ -55,6 +56,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
               workOrderId: true,
               productTimeProfileId: true,
               planTimeSource: true,
+              totalMillisecondsSnapshot: true,
             },
           },
         },
@@ -192,6 +194,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
               totalMillisecondsSnapshot: totalMilliseconds,
             },
           });
+          await refreshPlanningWeekTime(tx, batch.id, batch.totalMillisecondsSnapshot);
           if (batch.releaseState !== 'draft' && batch.workOrderId && effectiveUnitMilliseconds && totalMilliseconds) {
             await tx.workOrder.update({
               where: { id: batch.workOrderId },

@@ -1,3 +1,4 @@
+import { refreshPlanningWeekTime } from '@/lib/planning-week-time';
 import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -130,6 +131,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
           totalMillisecondsSnapshot: effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(parsed.data.quantity) : null,
         },
       });
+      await refreshPlanningWeekTime(tx, existing.id, existing.totalMillisecondsSnapshot);
       if (released && existing.workOrderId) {
         await tx.workOrder.update({
           where: { id: existing.workOrderId },

@@ -1,3 +1,4 @@
+import { refreshPlanningWeekTime } from '@/lib/planning-week-time';
 import type { Prisma } from '@prisma/client';
 import { resolvePlanMilliseconds, planTotalMilliseconds } from '@/lib/planning-time';
 import { randomUUID } from 'node:crypto';
@@ -95,6 +96,7 @@ export const productionPlanOrderInclude = {
     where: { deletedAt: null },
     orderBy: [{ weekStartDate: 'asc' as const }, { batchNo: 'asc' as const }],
     include: {
+      weekSlots: true,
       holds: {
         where: { status: 'ACTIVE', holdType: { not: 'MATERIAL' } },
         orderBy: { frozenAt: 'asc' as const },
@@ -780,6 +782,7 @@ export async function previewProductionPlanRelease(
     );
     const warnings: string[] = [];
     const blockers: string[] = [];
+    if (batch.scheduleState === 'DEFERRED') blockers.push('该订单已暂退，请使用加入周计划');
     if (batch.releaseState === 'archived') blockers.push('该批次已经归档');
     const transitionBlocker = productionPlanReleaseTransitionBlocker(
       batch.releaseState,
@@ -1401,6 +1404,10 @@ function batchDto(
     estimatedCompletionDate: chinaDate(batch.estimatedCompletionDate || batch.workOrder?.estimatedCompletionAt || batch.plannedCompletionDate),
     productionControl: batch.workOrder ? serializeProductionControl(batch.workOrder) : null,
     releaseState: state,
+    scheduleState: batch.scheduleState, scheduleVersion: batch.scheduleVersion, scheduleReason: batch.scheduleReason,
+    weekSlots: (batch.weekSlots || []).map(s => ({ weekStartDate: chinaDate(s.weekStartDate), weekEndDate: chinaDate(s.weekEndDate), completionDate: chinaDate(s.completionDate), quantity: s.quantity, plannedMilliseconds: s.plannedMilliseconds?.toString() ?? null, standardMilliseconds: s.standardMilliseconds?.toString() ?? null })),
+    weekPlanQuantity: (batch.weekSlots || []).find(s => chinaDate(s.weekStartDate) === chinaDate(batch.weekStartDate))?.quantity ?? batch.quantity,
+    weekPlanMilliseconds: batch.weekSlots?.length ? ((batch.weekSlots || []).find(s => chinaDate(s.weekStartDate) === chinaDate(batch.weekStartDate))?.plannedMilliseconds?.toString() ?? null) : undefined,
     workOrderId: batch.workOrderId,
     productTimeProfileId: batch.productTimeProfileId,
     productTimeProfileVersion: batch.productTimeProfileVersion,
@@ -1816,6 +1823,7 @@ export async function releaseProductionPlanBatch(
       activatedById: planActive ? input.actorId : batch.activatedById,
     },
   });
+  await refreshPlanningWeekTime(tx, batch.id, batch.totalMillisecondsSnapshot);
   await syncProductionBatchToDueShipmentPlan(tx, {
     batchId: batch.id,
     actorId: input.actorId,
@@ -1997,6 +2005,7 @@ export async function reconcileAutomaticallyReleasedProductionPlanBatches(
       deletedAt: null,
       planOrder: { deletedAt: null },
       releaseState: { in: ['draft', 'preparation', 'active'] },
+      scheduleState: 'ACTIVE',
       weekStartDate: {
         gte: addPlanningDays(currentWeek.start, -1),
         lt: addPlanningDays(nextWeek.start, 2),

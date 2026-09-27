@@ -3613,6 +3613,11 @@ model ProductionPlanOrder {
 }
 
 model ProductionPlanBatch {
+  scheduleState                 String                    @default("ACTIVE") @map("schedule_state")
+  scheduleVersion               Int                       @default(0) @map("schedule_version")
+  scheduleReason                String?                   @map("schedule_reason")
+  deferredAt                    DateTime?                 @map("deferred_at")
+  weekSlots                     ProductionPlanWeekSlot[]
   documentReviewRequired Boolean? @map("document_review_required")
   id                            String                    @id @default(uuid())
   planOrderId                   String                    @map("plan_order_id")
@@ -3663,7 +3668,36 @@ model ProductionPlanBatch {
   @@index([materialExecutionDecisionById])
   @@index([deletedAt])
   @@index([deletedAt, weekStartDate, releaseState], map: "production_plan_batch_active_week_idx")
+  @@index([scheduleState, deletedAt], map: "production_plan_batches_schedule_state_idx")
   @@map("production_plan_batches")
+}
+
+// A batch keeps one identity. Week slots retain work already assigned to an old
+// week while only unfinished work is moved. Actual reports are never rewritten.
+model ProductionPlanWeekSlot {
+  id                       String   @id @default(uuid())
+  batchId                  String   @map("batch_id")
+  weekStartDate            DateTime @map("week_start_date")
+  weekEndDate              DateTime @map("week_end_date")
+  completionDate           DateTime @map("completion_date")
+  quantity                 Int
+  plannedMilliseconds      BigInt?  @map("planned_milliseconds")
+  standardMilliseconds     BigInt?  @map("standard_milliseconds")
+  stepMilliseconds         Json     @default("{}") @map("step_milliseconds")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+  batch                    ProductionPlanBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  @@unique([batchId, weekStartDate])
+  @@index([completionDate])
+  @@index([weekStartDate])
+  @@map("production_plan_week_slots")
+}
+
+model ProductionPlanWeekCommand {
+  key          String   @id
+  hash         String
+  result       Json
+  createdAt    DateTime @default(now()) @map("created_at")
+  @@map("production_plan_week_commands")
 }
 
 model ProductionPlanBatchHold {

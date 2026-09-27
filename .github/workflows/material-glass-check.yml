@@ -1,7 +1,7 @@
 name: Material Glass Preflight
 on:
   push:
-    branches: ["codex/material-glass-v134238", "codex/material-assignment-v134240", "codex/material-compact-v134241", "codex/material-week-orders-v134243"]
+    branches: ["codex/material-glass-v134238", "codex/material-assignment-v134240", "codex/material-compact-v134241", "codex/material-week-orders-v134243", "codex/planning-week-membership-v134244"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
       - name: Material database consistency
         run: RUN_DB_INTEGRATION=1 npm run test:material-follow-up-integration
       - name: Planning and cross-week regression
-        run: RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/production-control-integration.test.ts tests/production-carryover-integration.test.ts tests/planning-time-consistency-integration.test.ts
+        run: RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/production-control-integration.test.ts tests/production-carryover-integration.test.ts tests/planning-time-consistency-integration.test.ts tests/planning-week-membership-integration.test.ts
       - name: Prepare disposable material browser orders
         env:
           MATERIAL_COLLAB_QA_ALLOW: disposable-material-runtime

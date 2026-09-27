@@ -1766,6 +1766,14 @@ export type ProductionPlanBatchHoldDTO = {
 };
 
 export type ProductionPlanBatchDTO = {
+  scheduleState?: string;
+  scheduleVersion?: number;
+  scheduleReason?: string | null;
+  retainedWeek?: boolean;
+  currentWeekStartDate?: string;
+  weekPlanQuantity?: number;
+  weekPlanMilliseconds?: string | null;
+  weekSlots?: { weekStartDate: string; weekEndDate: string; completionDate: string; quantity: number; plannedMilliseconds: string | null; standardMilliseconds: string | null }[];
   productionControl?: import('@/lib/production-control').ProductionControlView | null;
   estimatedCompletionDate?: string | null;
   id: string;

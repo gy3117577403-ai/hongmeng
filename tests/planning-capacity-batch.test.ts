@@ -6,6 +6,8 @@ import { prisma } from '../lib/prisma';
 import {
   loadPlanningCapacities,
   loadPlanningCapacity,
+  summarizePlanningCapacitySnapshot,
+  type PlanningCapacitySnapshot,
 } from '../lib/planning-capacity';
 import { parsePlanningDateRange, planningMonthRange } from '../lib/planning-date-range';
 
@@ -13,6 +15,26 @@ const hour = 60 * 60 * 1000;
 const hours = (value: number) => BigInt(value * hour);
 const shanghaiDate = (value: string) => new Date(`${value}T00:00:00.000+08:00`);
 const databaseDate = (value: string) => new Date(`${value}T00:00:00.000Z`);
+
+test('capacity uses retained and transferred weekly amounts and excludes completely deferred work', () => {
+  const snapshot = { batches: [
+    { quantity: 10, plannedCompletionDate: shanghaiDate('2026-10-04'), totalMillisecondsSnapshot: hours(100), unitMillisecondsSnapshot: 10 * hour,
+      planOrder: { planningUnitMilliseconds: 10 * hour }, holds: [], weekSlots: [
+        { quantity: 4, completionDate: shanghaiDate('2026-09-27'), plannedMilliseconds: hours(70) },
+        { quantity: 6, completionDate: shanghaiDate('2026-10-04'), plannedMilliseconds: hours(30) },
+      ] },
+    { quantity: 20, plannedCompletionDate: shanghaiDate('2026-09-27'), totalMillisecondsSnapshot: hours(200), unitMillisecondsSnapshot: 10 * hour,
+      planOrder: { planningUnitMilliseconds: 10 * hour }, holds: [], weekSlots: [
+        { quantity: 0, completionDate: shanghaiDate('2026-09-27'), plannedMilliseconds: 0n },
+      ] },
+  ], employees: [], attendance: [], overrides: [], sourceWipLots: [], targetWipAllocations: [] } as unknown as PlanningCapacitySnapshot;
+  const before = summarizePlanningCapacitySnapshot(parsePlanningDateRange('2026-09-21', '2026-09-27'), snapshot);
+  const after = summarizePlanningCapacitySnapshot(parsePlanningDateRange('2026-09-28', '2026-10-04'), snapshot);
+  assert.equal(before.scheduledMilliseconds, hours(70).toString());
+  assert.equal(before.batchCount, 1);
+  assert.equal(after.scheduledMilliseconds, hours(30).toString());
+  assert.equal(BigInt(before.scheduledMilliseconds) + BigInt(after.scheduledMilliseconds), hours(100));
+});
 
 test('batched capacity rejects a segment outside its loaded snapshot range before querying', async () => {
   const month = planningMonthRange('2026-09');
@@ -74,9 +96,11 @@ test('batched month capacity matches independent range loads with fixed query co
     mutable.findMany = implementation;
     t.after(() => { mutable.findMany = original; });
   };
-  replaceFindMany(prisma.productionPlanBatch, async (args: any) => (
-    inRequestedRange('productionPlanBatch', batches, args.where.plannedCompletionDate, row => row.plannedCompletionDate)
-  ));
+  replaceFindMany(prisma.productionPlanBatch, async (args: any) => {
+    const range = args.where.OR[0].plannedCompletionDate;
+    assert.deepEqual(args.where.OR[1].weekSlots.some.completionDate, range);
+    return inRequestedRange('productionPlanBatch', batches, range, row => row.plannedCompletionDate);
+  });
   replaceFindMany(prisma.employee, async () => {
     calls.push({ model: 'employee' });
     return employees;

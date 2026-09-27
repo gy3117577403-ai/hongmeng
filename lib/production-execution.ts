@@ -895,6 +895,7 @@ export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhere
     ],
   });
   const liveBatch: Prisma.ProductionPlanBatchWhereInput = {
+    scheduleState: 'ACTIVE',
     deletedAt: null,
     planOrder: { deletedAt: null },
   };
@@ -1032,6 +1033,7 @@ export async function loadProductionWeekNavigation(
   const nextStart = addDays(natural.start, 7);
   const afterNextStart = addDays(natural.start, 14);
   const planningBatchWhere = (weekStart: Date) => ({
+    scheduleState: 'ACTIVE',
     deletedAt: null,
     planOrder: { deletedAt: null },
     weekStartDate: sameDayRange(weekStart),

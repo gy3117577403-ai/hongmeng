@@ -96,6 +96,7 @@ export async function mutateProductionControl(actor: ProductionControlActor, wor
       }
       if (root.productionControlVersion !== expectedVersion) throw new ProductionControlError('备注、暂停或日期刚被其他人更新，请刷新后重试', 'PRODUCTION_CONTROL_VERSION_CONFLICT', 409);
       if (action === 'resume') {
+        if (await tx.productionPlanBatch.count({ where: { workOrderId: root.id, scheduleState: 'DEFERRED' } })) throw new ProductionControlError('该订单已暂退周计划，请由计划选择加入周计划', 'WEEK_SCHEDULE_DEFERRED', 409);
         const wipSourceGate = await loadProductionWipSourceGate(tx, root);
         if (wipSourceGate.fullyMovedOut) {
           const wipAllocationId = text(input.wipAllocationId, 80);
