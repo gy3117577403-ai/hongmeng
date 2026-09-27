@@ -54,7 +54,7 @@ async function scenario(page, origin, f, dir) {
     await submit('登记到料');
     order=await read();
     check(order.events[0].pending===2&&order.events[0].usable===0&&order.state==='SHORTAGE','partial reported arrival never becomes usable or kitted');
-    const denied=await api('/api/warehouse/material-orders/'+order.id,'PATCH',{action:'verify_arrival',version:order.version,requestKey:crypto.randomUUID(),exceptionId:eid,arrivalId:order.events[0].arrivals[0].id,acceptedQuantity:2});
+    const denied=await api('/api/warehouse/material-orders/'+order.id,'PATCH',{action:'verify_arrival',version:order.version,requestKey:f.marker+'-denied-verify',exceptionId:eid,arrivalId:order.events[0].arrivals[0].id,acceptedQuantity:2});
     check(denied.status===403,'procurement cannot self-verify warehouse receipts');
     await login('warehouse',target);
     await page.locator('.mo-material-line').first().getByRole('button',{name:'核验本批',exact:true}).click();
@@ -80,7 +80,7 @@ async function scenario(page, origin, f, dir) {
     await login('reader','/workspace/procurement?orderId='+f.visual.warehouseTaskId);
     await page.getByRole('heading',{name:f.visual.specification,exact:true}).waitFor();
     check(await page.getByRole('button',{name:'登记缺料',exact:true}).count()===0,'read-only mode has no mutation actions');
-    const forbidden=await api('/api/warehouse/material-orders/'+f.warehouseTaskId,'PATCH',{action:'note',requestKey:crypto.randomUUID(),note:'readonly mutation'});
+    const forbidden=await api('/api/warehouse/material-orders/'+f.warehouseTaskId,'PATCH',{action:'note',requestKey:f.marker+'-readonly-note',note:'readonly mutation'});
     check(forbidden.status===403,'read-only is enforced at API');
     await login('admin','/weekly-plan-center');
     await page.getByRole('button',{name:'查看 '+f.workOrder.specification+' 配料明细',exact:true}).waitFor({timeout:30000});

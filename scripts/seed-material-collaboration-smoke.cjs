@@ -63,7 +63,7 @@ async function main() {
     weekStartDate: week.start, weekEndDate: week.end,
   } });
   const warehouseTask = await db.warehouseMaterialTask.create({ data: { workOrderId: workOrder.id } });
-  await db.productionPlanOrder.create({ data: { sourceOrderNo:marker,sourceLineNo:1,customerName:workOrder.customerName,productName:workOrder.productName,specification,orderQuantity:12,orderDate:week.start,customerDueDate:week.end,status:'released',batches:{create:{batchNo:1,quantity:12,weekStartDate:week.start,weekEndDate:week.end,plannedCompletionDate:week.end,releaseState:'released',workOrderId:workOrder.id}} } });
+  await db.productionPlanOrder.create({ data: { sourceOrderNo:marker,sourceLineNo:1,customerName:workOrder.customerName,productName:workOrder.productName,specification,orderQuantity:12,orderDate:week.start,customerDueDate:week.end,status:'released',batches:{create:{batchNo:1,quantity:12,weekStartDate:week.start,weekEndDate:week.end,plannedCompletionDate:week.end,releaseState:'active',workOrderId:workOrder.id}} } });
   const visual = {};
   const visualPrefix = 'material-visual-' + randomUUID().slice(0, 8);
   for (let index = 0; index < 12; index++) {
@@ -79,7 +79,7 @@ async function main() {
       workOrderId: visualOrder.id, status: 'exception', exceptionType: 'shortage',
       exceptionNote: '物料未齐，逐项跟进并核实',
     } });
-    await db.productionPlanOrder.create({ data: { sourceOrderNo:visualOrder.code,sourceLineNo:1,customerName:visualOrder.customerName,productName:visualOrder.productName,specification:visualOrder.specification,orderQuantity:visualOrder.productionTargetQty,orderDate:oldWeek,customerDueDate:new Date(oldWeek.getTime()+4*86400000),status:'released',batches:{create:{batchNo:1,quantity:visualOrder.productionTargetQty,weekStartDate:oldWeek,weekEndDate:new Date(oldWeek.getTime()+6*86400000),plannedCompletionDate:new Date(oldWeek.getTime()+4*86400000),releaseState:'released',workOrderId:visualOrder.id}} } });
+    await db.productionPlanOrder.create({ data: { sourceOrderNo:visualOrder.code,sourceLineNo:1,customerName:visualOrder.customerName,productName:visualOrder.productName,specification:visualOrder.specification,orderQuantity:visualOrder.productionTargetQty,orderDate:oldWeek,customerDueDate:new Date(oldWeek.getTime()+4*86400000),status:'released',batches:{create:{batchNo:1,quantity:visualOrder.productionTargetQty,weekStartDate:oldWeek,weekEndDate:new Date(oldWeek.getTime()+6*86400000),plannedCompletionDate:new Date(oldWeek.getTime()+4*86400000),releaseState:'active',workOrderId:visualOrder.id}} } });
     for (let item = 0; item < (index === 0 ? 3 : 1); item++) {
       const state = item === 1 ? 'WAITING_WAREHOUSE' : (index === 2 ? 'PENDING' : 'WAITING_ARRIVAL');
       const model = item === 0 ? 'DJ7061Y-89直扣' : item === 1 ? '132036-111国产尾夹' : 'LM-12-J12SX-03-401';

@@ -38,6 +38,10 @@ jobs:
         run: RUN_DB_INTEGRATION=1 npm run test:material-follow-up-integration
       - name: Planning and cross-week regression
         run: RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/production-control-integration.test.ts tests/production-carryover-integration.test.ts tests/planning-time-consistency-integration.test.ts
+      - name: Prepare disposable material browser orders
+        env:
+          MATERIAL_COLLAB_QA_ALLOW: disposable-material-runtime
+        run: node scripts/seed-material-collaboration-smoke.cjs > /tmp/material-fixture.json
       - run: npm run build
       - name: Real material collaboration browser acceptance
         env:
@@ -48,7 +52,6 @@ jobs:
           MATERIAL_COLLAB_QA_OUTPUT: artifacts/material-glass
         run: |
           set -euo pipefail
-          node scripts/seed-material-collaboration-smoke.cjs > "$MATERIAL_COLLAB_QA_FIXTURE"
           npm run start > material-server.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" || true' EXIT

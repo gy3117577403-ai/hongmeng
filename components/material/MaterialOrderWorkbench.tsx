@@ -23,7 +23,7 @@ const past = (v?: string | null) => !!v && /^\d{4}-\d{2}-\d{2}/.test(v) && day(v
 const weekPlus = (v: string, n: number) => { const d = new Date(v + 'T12:00:00+08:00'); d.setUTCDate(d.getUTCDate() + n); return day(d.toISOString()); };
 const safeReturn = (v: string | null) => v && /^\/(?:workspace(?:\/|\?)|weekly-plan-center(?:\?|$)|home(?:\?|$))/.test(v) ? v : '';
 async function json(url: string, options?: RequestInit) { const r = await fetch(url, { cache: 'no-store', ...options }); const b = await r.json(); if (!r.ok || !b.ok) throw Object.assign(Error(b.error || '加载失败，请重试'), { status: r.status }); return b; }
-function phase(e: Event) { if (e.status === 'RESOLVED') return '已解决'; if (e.status === 'CANCELLED') return '已取消'; if (e.pending) return e.remaining ? '部分到料' : '待仓库核验'; if (e.transit) return '运输中'; return e.expectedAt ? '等待到料' : '交期待确认'; }
+function phase(e: Event) { if (e.status === 'RESOLVED') return '已解决'; if (e.status === 'CANCELLED') return '已取消'; if (e.pending) return e.remaining === 0 ? '待仓库核验' : '部分到料'; if (e.transit) return '运输中'; return e.expectedAt ? '等待到料' : '交期待确认'; }
 
 export default function MaterialOrderWorkbench({ user, mode = 'warehouse', workOrderId, orderId, onClose, onChanged, onEditorChange }: { user: CurrentUserDTO; mode?: Mode; workOrderId?: string; orderId?: string; onClose?: () => void; onChanged?: () => void; onEditorChange?: (open: boolean) => void }) {
   const embedded = !!(workOrderId || orderId), tracking = mode === 'tracking';
@@ -132,3 +132,4 @@ export default function MaterialOrderWorkbench({ user, mode = 'warehouse', workO
     </div><footer><button type="button" disabled={saving} onClick={() => setEdit(null)}>取消</button><button className="mo-primary" disabled={saving} type="submit">{saving ? '保存中…' : actionText[edit.action]}</button></footer></form></section></div>}
   </main>;
 }
+

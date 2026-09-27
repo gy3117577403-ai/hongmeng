@@ -5,6 +5,7 @@ import { prepareWarehouseTaskTransition, warehouseMaterialTaskDetailInclude, war
 import { materialFollowUpDetailInclude, prepareMaterialFollowUpTransition } from '@/lib/material-follow-up';
 import { MATERIAL_SOURCES, MaterialInputError, materialSource, materialSourceText, materialExceptionLabel, materialQuantity, validateMaterialAmounts } from '@/lib/material-source';
 import { synchronizeMaterialProductionHold } from '@/lib/production-plan-holds';
+import { materialAmounts } from '@/lib/material-order-domain';
 import type { WarehouseExceptionType, WarehouseMaterialStatus } from '@/types';
 
 type Tx = Prisma.TransactionClient;
@@ -81,6 +82,16 @@ export async function updateWarehouseException(tx: Tx, id: string, input: Input,
         : target?.expectedArrivalAt || null;
       const etaChanged = target?.expectedArrivalAt?.getTime() !== expectedArrivalAt?.getTime();
       const details = { supplySource: source, materialModel: text(input.materialModel ?? target?.materialModel, 160), shortageQuantity: required, unit: text(input.unit ?? target?.unit, 12) || '个' };
+      if (action === 'update_exception' && target) {
+        const receipts = await tx.materialArrivalBatch.findMany({ where: { exceptionId: target.id, status: { not: 'CANCELLED' } } });
+        if (receipts.length && ((target.materialModel && details.materialModel !== target.materialModel) || details.unit !== target.unit)) {
+          throw new MaterialInputError('本项已有发货或到料记录，不能改成其他型号或单位；请另行登记缺料');
+        }
+        const allocated = materialAmounts(required, receipts);
+        if (required !== null && required + 1e-6 < allocated.usable + allocated.pending + allocated.transit) {
+          throw new MaterialInputError('登记数量不能小于已核验、待核验与在途数量；请先处理对应批次');
+        }
+      }
       if (['shortage', 'insufficient_quantity'].includes(transition.next.exceptionType!)) {
         if (source === 'UNKNOWN') throw new MaterialInputError('请选择采购物料或客供物料');
         if (!details.materialModel) throw new MaterialInputError('请填写缺料型号');

@@ -32,6 +32,9 @@ test('weekly order closes through partial receipt and verification with shared a
     assert.equal(concurrent.filter(r => r.status === 'fulfilled').length, 1);
     order = await readMaterialOrder(order.id);
     await change('record_shipment', { exceptionId: first, quantity: 4, trackingNumber: 'SHARED-PARCEL', logisticsMode: 'EXPRESS' }, false, colleague.id);
+    await assert.rejects(change('update_exception', { exceptionId: first, materialModel: 'ANOTHER-MODEL', supplySource: 'PURCHASED', shortageQuantity: 10, unit: '个', exceptionType: 'shortage' }), /型号或单位/);
+    await assert.rejects(change('update_exception', { exceptionId: first, materialModel: 'TERM-A', supplySource: 'PURCHASED', shortageQuantity: 10, unit: '米', exceptionType: 'shortage' }), /型号或单位/);
+    await assert.rejects(mutateWarehouseException(order.id, { action: 'update_exception', version: order.version, exceptionId: first, materialModel: 'OTHER', supplySource: 'PURCHASED', shortageQuantity: 10, unit: '个', exceptionType: 'shortage', exceptionNote: '更换物料' }, actor.id, true), /型号或单位/);
     let arrival = order.events[0].arrivals[0];
     await change('report_arrival', { exceptionId: first, arrivalId: arrival.id }, false, colleague.id);
     assert.equal(order.events[0].pending, 4);

@@ -93,11 +93,6 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
     const auditDetail: { [key: string]: Prisma.InputJsonValue | null } = { exceptionCaseId: eventId || null, arrivalId: arrivalId || null, requestKey: key };
     if (['report_exception', 'update_exception', 'complete', 'reopen'].includes(action)) {
       if (action === 'report_exception' && current.exceptionCases.some(e => e.status === 'OPEN' && e.materialModel === text(input.materialModel,160) && e.supplySource === input.supplySource && e.unit === (text(input.unit,12) || '个'))) throw new MaterialInputError('本单已登记相同来源、型号与单位的缺料，请修改已有明细', 409);
-      if (action === 'update_exception' && event) {
-        const allocated = materialAmounts(event.shortageQuantity, event.arrivals);
-        const required = materialQuantity(input.shortageQuantity, true);
-        if (required !== null && required < allocated.usable + allocated.pending + allocated.transit) throw new MaterialInputError('登记数量不能小于已核验、待核验与在途数量；请先处理对应批次');
-      }
       await updateWarehouseException(tx, id, { ...input, departmentCollaboration: true, ownerId: undefined, version: current.version, exceptionNote: text(input.exceptionNote) || text(input.materialModel) }, actorId, canConfirm);
     } else {
       if (current.status === 'completed') throw new MaterialInputError('已配齐订单请先由仓库重新核对', 409);
