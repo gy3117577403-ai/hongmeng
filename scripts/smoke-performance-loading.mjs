@@ -55,7 +55,18 @@ for (const row of weekly.orders) {
 }
 const metadata = await get('/api/planning/orders?read=metadata');
 assert.equal(metadata.orders, undefined);
-assert.equal(metadata.periods.current.batchCount, weekly.orders.flatMap(order => order.batches).length);
+const weekRows = weekly.orders.flatMap(order => order.batches);
+const scheduledRows = weekRows.filter(batch => batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek);
+assert.equal(metadata.periods.current.batchCount, scheduledRows.length, 'week cards count scheduled orders, including neither deferred nor retained transfer rows');
+assert.equal(metadata.summary.thisWeekBatchCount, scheduledRows.length, 'summary and week cards share the scheduled-order count');
+assert.equal(metadata.periods.current.totalQuantity, weekRows.reduce((sum, batch) => sum + (batch.weekPlanQuantity ?? batch.quantity), 0), 'weekly quantities preserve completed shares without counting moved work twice');
+for (const retained of weekRows.filter(batch => batch.retainedWeek)) {
+  const current = all.orders.flatMap(order => order.batches).find(batch => batch.id === retained.id);
+  assert.ok(current && current.weekStartDate !== fixture.weekStart, 'retained row refers to the same batch in its destination week');
+  const slot = current.weekSlots.find(item => item.weekStartDate === fixture.weekStart);
+  assert.ok(slot, 'retained row has an explicit source-week allocation');
+  assert.equal(retained.weekPlanQuantity, slot.quantity);
+}
 await get('/api/planning/orders?read=options');
 await get('/api/planning/orders?read=week&week=2026-02-31', 400);
 const board = await get('/api/work-orders/execution?view=board&scope=current&pageSize=2');

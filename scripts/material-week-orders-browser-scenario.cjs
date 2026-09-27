@@ -9,6 +9,17 @@ async function scenario(page, origin, f, dir) {
     return {status:r.status,body:await r.json().catch(()=>({}))};
   },{path,method,data});
   const read=async()=>{const r=await api('/api/warehouse/material-orders/'+f.warehouseTaskId);check(r.status===200,'order detail readable');return r.body.order;};
+  const verifyPlanCounts=async(label,batchId,expectedRetained)=>{
+    const metadata=(await api('/api/planning/orders?read=metadata')).body;
+    const current=metadata.periods.current;
+    const weekly=(await api('/api/planning/orders?read=week&week='+current.weekStartDate)).body;
+    const rows=weekly.orders.flatMap(o=>o.batches);
+    const scheduled=rows.filter(b=>b.scheduleState!=='DEFERRED'&&!b.retainedWeek);
+    check(current.batchCount===scheduled.length&&metadata.summary.thisWeekBatchCount===scheduled.length,label+' scheduled counts agree across card, summary and list');
+    check(current.totalQuantity===rows.reduce((sum,b)=>sum+(b.weekPlanQuantity??b.quantity),0),label+' weekly quantities agree with retained allocations');
+    const selected=rows.find(b=>b.id===batchId);
+    check(!!selected&&Boolean(selected.retainedWeek)===expectedRetained,label+' original row remains accessible');
+  };
   const shot=async name=>{
     if(name!=='failure' && await page.locator('.mo-queue').count()) {
       await page.waitForFunction(()=>!document.querySelector('.mo-queue h3 small')?.textContent.includes('—'));
@@ -114,20 +125,24 @@ async function scenario(page, origin, f, dir) {
     check(await row.getAttribute('class').then(c=>c.includes('state-week-deferred')),'deferred row is orange and remains in original week');
     await shot('planning-deferred-1366x1024');
     check((await read()).state==='READY','deferral preserves warehouse confirmation');
+    await verifyPlanCounts('after deferral',planBatch.id,false);
     await row.getByRole('button',{name:'加入周计划',exact:true}).click();
     const join=page.getByRole('dialog',{name:'加入周计划',exact:true});
     await join.getByRole('button',{name:'确认加入周计划',exact:true}).click();
     await join.waitFor({state:'detached'});
     await row.getByRole('button',{name:'转周',exact:true}).waitFor();
+    await verifyPlanCounts('after rejoin',planBatch.id,false);
     await row.getByRole('button',{name:'转周',exact:true}).click();
     const transfer=page.getByRole('dialog',{name:'转移周计划',exact:true});
     await transfer.getByRole('button',{name:'确认转移周计划',exact:true}).waitFor();
+    await transfer.getByText('正在核对剩余工作量',{exact:true}).waitFor({state:'hidden'});
     await shot('planning-week-transfer-dialog-1366x1024');
     await transfer.getByRole('button',{name:'确认转移周计划',exact:true}).click();
     await transfer.waitFor({state:'detached'});
     await page.waitForFunction(id=>document.querySelector('[data-batch-id="'+id+'"]')?.textContent.includes('已转至'),planBatch.id);
     check(page.url()===planURL,'week action preserves source page and shows transferred record');
     check((await read()).state==='READY','transfer preserves warehouse confirmation');
+    await verifyPlanCounts('after transfer',planBatch.id,true);
     await page.goto(origin+'/workspace/warehouse?orderId='+f.visual.warehouseTaskId+'&status=all');
     await page.getByRole('heading',{name:f.visual.specification,exact:true}).waitFor();
     await shot('warehouse-week-orders-1366x1024');

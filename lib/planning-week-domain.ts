@@ -1,5 +1,10 @@
 import { calculateTaskStandardMilliseconds } from './daily-plan-domain';
 
+/** Retained rows stay visible for traceability without occupying the week's order count. */
+export function isScheduledPlanningBatch(batch: { scheduleState?: string; retainedWeek?: boolean }) {
+  return batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek;
+}
+
 type Step = {
   id?: string; status: string; goodOutputQty: number; processedQty: number;
   standardMillisecondsPerUnit: number | null; timeBasis: string | null;

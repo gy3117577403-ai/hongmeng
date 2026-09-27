@@ -22,6 +22,7 @@ import type {
 } from '@/types';
 import { resolveArchivedQualityWarning } from '@/lib/internal-quality-risks';
 import { loadPlanningRows, type PlanningReadMode } from '@/lib/planning-reads';
+import { isScheduledPlanningBatch } from '@/lib/planning-week-domain';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -86,7 +87,7 @@ export async function GET(req: NextRequest) {
       return {
         weekStartDate,
         weekEndDate,
-        batchCount: weekBatches.filter(b => b.scheduleState !== 'DEFERRED' && !b.retainedWeek).length,
+        batchCount: weekBatches.filter(isScheduledPlanningBatch).length,
         totalQuantity: weekBatches.reduce((sum, batch) => sum + (batch.weekPlanQuantity ?? batch.quantity), 0),
         unfinishedCount: weekBatches.filter(batch => (
           batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek && batch.releaseState !== 'archived' && !batch.workOrderCompletedAt
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
       if (batch.weekStartDate >= currentStart) continue;
       const current = historyMap.get(batch.weekStartDate);
       if (current) {
-        current.batchCount += 1;
+        current.batchCount += isScheduledPlanningBatch(batch) ? 1 : 0;
         current.totalQuantity += batch.weekPlanQuantity ?? batch.quantity;
         if (batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek && batch.releaseState !== 'archived' && !batch.workOrderCompletedAt) {
           current.unfinishedCount = (current.unfinishedCount || 0) + 1;
@@ -111,8 +112,8 @@ export async function GET(req: NextRequest) {
       historyMap.set(batch.weekStartDate, {
         weekStartDate: batch.weekStartDate,
         weekEndDate: batch.weekEndDate,
-        batchCount: 1,
-        totalQuantity: batch.quantity,
+        batchCount: isScheduledPlanningBatch(batch) ? 1 : 0,
+        totalQuantity: batch.weekPlanQuantity ?? batch.quantity,
         unfinishedCount: batch.scheduleState !== 'DEFERRED' && !batch.retainedWeek && batch.releaseState !== 'archived' && !batch.workOrderCompletedAt ? 1 : 0,
       });
     }
@@ -124,8 +125,8 @@ export async function GET(req: NextRequest) {
       orderCount: all.length,
       pendingOrderCount: all.filter(order => order.status === 'pending').length,
       scheduledOrderCount: all.filter(order => order.status === 'scheduled' || order.status === 'partially_released').length,
-      thisWeekBatchCount: batches.filter(batch => batch.weekStartDate === currentStart).length,
-      nextWeekBatchCount: batches.filter(batch => batch.weekStartDate === nextStart).length,
+      thisWeekBatchCount: batches.filter(batch => batch.weekStartDate === currentStart && isScheduledPlanningBatch(batch)).length,
+      nextWeekBatchCount: batches.filter(batch => batch.weekStartDate === nextStart && isScheduledPlanningBatch(batch)).length,
       preparationBatchCount: realBatches.filter(batch => batch.scheduleState !== 'DEFERRED' && batch.releaseState === 'preparation' && batch.weekStartDate === nextStart).length,
       activeBatchCount: realBatches.filter(batch => batch.scheduleState !== 'DEFERRED' && batch.releaseState === 'active' && batch.weekStartDate === currentStart).length,
       missingDrawingCount: all.filter(order => order.drawingFileCount === 0).length,
