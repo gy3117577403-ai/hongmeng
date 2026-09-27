@@ -76,6 +76,10 @@ async function scenario(page, origin, f, dir) {
     await page.getByLabel('本批数量',{exact:true}).fill('4');
     await page.getByLabel('物流方式',{exact:true}).selectOption('SELF_DELIVERY');
     await submit('登记到料');
+    await login('operator','/workspace/procurement?orderId='+f.warehouseTaskId);
+    await page.locator('.mo-material-line').first().getByRole('button',{name:'查看进展',exact:true}).waitFor();
+    check(await page.getByRole('button',{name:'登记发货',exact:true}).count()===0,'fully reported items do not offer duplicate shipments to procurement');
+    await login('warehouse',target);
     await page.locator('.mo-material-line').first().getByRole('button',{name:'核验本批',exact:true}).click();
     await submit('核验本批');
     order=await read();check(order.state==='CONFIRM','all shortages resolved still awaits whole-order physical confirmation');
