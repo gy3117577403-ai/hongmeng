@@ -61,7 +61,9 @@ BEGIN
     WHERE warehouse_task_id=task_id AND status NOT IN ('RESOLVED','CANCELLED');
   UPDATE warehouse_material_exception_cases SET status='CANCELLED',resolution_note='来源订单已取消，保留收料事实',updated_at=CURRENT_TIMESTAMP
     WHERE warehouse_task_id=task_id AND status='OPEN';
-  UPDATE warehouse_material_tasks SET version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=task_id;
+  UPDATE warehouse_material_tasks SET status=CASE WHEN status='exception' THEN 'pending' ELSE status END,
+    exception_type=NULL,exception_note=NULL,expected_at=NULL,
+    version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=task_id;
   INSERT INTO warehouse_material_activities(id,task_id,action,content)
     VALUES(gen_random_uuid()::text,task_id,'source_cancelled','来源订单已取消，停止跟进；历史到料与核验记录保留');
 END $$;

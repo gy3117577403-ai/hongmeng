@@ -64,6 +64,9 @@ test('weekly order closes through partial receipt and verification with shared a
     await prisma.workOrder.update({ where: { id: work.id }, data: { deletedAt: new Date() } });
     order = await readMaterialOrder(order.id);
     assert.equal(order.cancelled, true);
+    const cancelledProjection = await prisma.warehouseMaterialTask.findUniqueOrThrow({ where: { id: order.id } });
+    assert.notEqual(cancelledProjection.status, 'exception', 'cancelled sources must not leave an active warehouse anomaly');
+    assert.equal(cancelledProjection.expectedAt, null);
     assert.equal(order.events.find(e => e.model === 'EXTRA-C')?.status, 'CANCELLED');
     assert.equal(order.openCount, 0);
     await assert.rejects(change('note', { note: 'cancelled write' }), /已取消/);
