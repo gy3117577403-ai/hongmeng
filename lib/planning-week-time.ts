@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { getProductionQuantitySummary } from './production-quantity';
 import { weekRemainder } from './planning-week-domain';
+import { chinaDateKey } from './china-date';
 
 /** Keep weekly allocations coherent when existing plan editing changes time. */
 export async function refreshPlanningWeekTime(tx: Prisma.TransactionClient, batchId: string, previousTotal: bigint | null) {
@@ -12,7 +13,7 @@ export async function refreshPlanningWeekTime(tx: Prisma.TransactionClient, batc
   const unit = batch.unitMillisecondsSnapshot || batch.planOrder.planningUnitMilliseconds;
   const total = unit ? BigInt(unit) * BigInt(batch.quantity) : null;
   const remaining = weekRemainder(batch.quantity, unit, batch.workOrder ? getProductionQuantitySummary(batch.workOrder).completedQty || 0 : 0, batch.workOrder?.processRoute?.steps || []);
-  const current = batch.weekSlots.find(s => s.weekStartDate.getTime() === batch.weekStartDate.getTime());
+  const current = batch.weekSlots.find(s => chinaDateKey(s.weekStartDate) === chinaDateKey(batch.weekStartDate));
   if (!current) throw new Error('WEEK_ALLOCATION_SOURCE_MISSING');
   let historicalTotal = 0n, historicalQuantity = 0;
   for (const slot of batch.weekSlots.filter(s => s.id !== current.id)) {

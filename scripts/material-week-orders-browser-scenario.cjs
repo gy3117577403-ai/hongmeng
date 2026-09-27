@@ -59,7 +59,7 @@ async function scenario(page, origin, f, dir) {
     await page.getByLabel('物流公司',{exact:true}).fill('顺丰');
     await page.getByLabel('快递单号',{exact:true}).fill('SF-ACCEPTANCE-001');
     await submit('登记发货');
-    await page.locator('.mo-material-line').first().getByRole('button',{name:'登记到料',exact:true}).click();
+    await page.locator('.mo-material-line').first().getByRole('button',{name:'反馈已到',exact:true}).click();
     await submit('登记到料');
     order=await read();
     check(order.events[0].pending===2&&order.events[0].usable===0&&order.state==='SHORTAGE','partial reported arrival never becomes usable or kitted');

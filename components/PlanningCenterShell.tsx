@@ -119,6 +119,7 @@ type PlanningReturnState = {
   readinessFilters: PlanningReadinessFilter[];
   expandedOrderId: string;
   selectedBatchIds?: string[];
+  deferredOnly?: boolean;
   selectedWeekStartDate?: string;
   historyWeekStartDate?: string;
   scheduleScrollTop: number;
@@ -976,6 +977,7 @@ export default function PlanningCenterShell({
           setReadinessFilters(state.readinessFilters.filter(isPlanningReadinessFilter));
           setExpandedOrderId(state.expandedOrderId);
           setSelectedBatchIds(Array.isArray(state.selectedBatchIds) ? state.selectedBatchIds.filter(id => typeof id === 'string') : []);
+          setDeferredOnly(state.deferredOnly === true);
           if (state.selectedWeekStartDate) {
             requestedWeekStartRef.current = state.selectedWeekStartDate;
             setSelectedWeekStartDate(state.selectedWeekStartDate);
@@ -1337,6 +1339,7 @@ export default function PlanningCenterShell({
       readinessFilters,
       expandedOrderId,
       selectedBatchIds,
+      deferredOnly,
       selectedWeekStartDate,
       historyWeekStartDate,
       scheduleScrollTop: scheduleScrollRef.current?.scrollTop || 0,
@@ -2651,7 +2654,7 @@ export default function PlanningCenterShell({
       </div>
     </main>
 
-    {weekCommand && <PlanningWeekDialog action={weekCommand.action} batchIds={weekCommand.ids} weeks={editableWeeks} initialWeek={weekCommand.action === 'move' ? editableWeeks.find(w => w.weekStartDate !== selectedWeekStartDate)?.weekStartDate || selectedWeekStartDate : selectedWeekStartDate} onClose={() => setWeekCommand(null)} onSaved={message => { setWeekCommand(null); setSelectedBatchIds([]); setToast(message); setRefreshToken(v => v + 1); }} />}
+    {weekCommand && <PlanningWeekDialog action={weekCommand.action} batchIds={weekCommand.ids} weeks={editableWeeks} initialWeek={weekCommand.action === 'move' ? editableWeeks.find(w => w.weekStartDate > selectedWeekStartDate)?.weekStartDate || editableWeeks[0]?.weekStartDate || selectedWeekStartDate : selectedWeekStartDate} onClose={() => setWeekCommand(null)} onSaved={message => { setWeekCommand(null); setSelectedBatchIds([]); setToast(message); setRefreshToken(v => v + 1); }} />}
     {carryoverOpen && <PlanningDetailDrawer title="历史遗留未完" subtitle={`${carryoverRows.length} 批 · ${carryoverQuantity.toLocaleString()} 件 · 保留原生产周，不计入本周正常批次`} onClose={() => setCarryoverOpen(false)}>
                       <div className="planning-carryover-list">
                   {carryoverRows.map(({ order, batch }) => {
