@@ -1,7 +1,8 @@
 // Executed by the existing guarded Playwright CLI harness against a disposable runtime.
 async function scenario(page, origin, f, dir) {
-  const checks=[], errors=[];
+  const checks=[], errors=[], consoleErrors=[];
   page.on('pageerror', error=>errors.push(String(error)));
+  page.on('console', message=>{if(message.type()==='error')consoleErrors.push(message.text());});
   const check=(value,label)=>{if(!value)throw Error(label);checks.push(label);};
   const api=(path,method='GET',data)=>page.evaluate(async ({path,method,data})=>{
     const r=await fetch(path,{method,headers:{'content-type':'application/json'},body:data?JSON.stringify(data):undefined});
@@ -12,7 +13,7 @@ async function scenario(page, origin, f, dir) {
     if(name!=='failure' && await page.locator('.mo-queue').count()) {
       await page.waitForFunction(()=>!document.querySelector('.mo-queue h3 small')?.textContent.includes('—'));
     }
-    return page.screenshot({path:dir+'/'+name+'.png',fullPage:false});
+    return page.screenshot({path:dir+'/'+name+'.png',fullPage:false,animations:'disabled'});
   };
   const login=async(kind,target)=>{
     await page.context().clearCookies(); await page.goto(origin+'/login?next='+encodeURIComponent(target));
@@ -97,9 +98,13 @@ async function scenario(page, origin, f, dir) {
     await page.getByRole('button',{name:'查看 '+f.workOrder.specification+' 配料明细',exact:true}).click();
     await page.getByRole('dialog',{name:'周订单物料明细'}).getByRole('heading',{name:f.workOrder.specification,exact:true}).waitFor();
     check(await page.getByRole('dialog',{name:'周订单物料明细'}).getByText('已配齐',{exact:true}).count()>0,'planning drawer reflects warehouse physical completion');
-    await shot('plan-material-drawer-1366x1024');
+    await shot('plan-completed-drawer-1366x1024');
     await page.getByRole('button',{name:'关闭订单缺料',exact:true}).click();
     check(page.url()===planURL,'plan drawer closes without changing route or plan selection');
+    await page.getByRole('button',{name:'查看 '+f.visual.specification+' 配料明细',exact:true}).click();
+    await page.getByRole('dialog',{name:'周订单物料明细'}).locator('.mo-material-line').first().waitFor();
+    await shot('plan-material-drawer-1366x1024');
+    await page.getByRole('button',{name:'关闭订单缺料',exact:true}).click();
     await page.goto(origin+'/workspace/warehouse?orderId='+f.visual.warehouseTaskId+'&status=all');
     await page.getByRole('heading',{name:f.visual.specification,exact:true}).waitFor();
     await shot('warehouse-week-orders-1366x1024');
@@ -132,6 +137,6 @@ async function scenario(page, origin, f, dir) {
     await page.waitForFunction(()=>new URL(location.href).searchParams.get('scope')==='next');
     await page.locator('.mo-order-row').first().waitFor();
     check(errors.length===0,'no uncaught browser errors: '+errors.join(';'));
-    return {passed:true,checks};
+    return {passed:true,checks,consoleErrors};
   } catch(error) {await shot('failure');throw error;}
 }
