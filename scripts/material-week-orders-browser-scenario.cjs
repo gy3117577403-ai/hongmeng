@@ -8,7 +8,12 @@ async function scenario(page, origin, f, dir) {
     return {status:r.status,body:await r.json().catch(()=>({}))};
   },{path,method,data});
   const read=async()=>{const r=await api('/api/warehouse/material-orders/'+f.warehouseTaskId);check(r.status===200,'order detail readable');return r.body.order;};
-  const shot=name=>page.screenshot({path:dir+'/'+name+'.png',fullPage:false});
+  const shot=async name=>{
+    if(name!=='failure' && await page.locator('.mo-queue').count()) {
+      await page.waitForFunction(()=>!document.querySelector('.mo-queue h3 small')?.textContent.includes('—'));
+    }
+    return page.screenshot({path:dir+'/'+name+'.png',fullPage:false});
+  };
   const login=async(kind,target)=>{
     await page.context().clearCookies(); await page.goto(origin+'/login?next='+encodeURIComponent(target));
     await page.getByLabel('员工编号 / 管理账号').fill(f.users[kind].username);
@@ -90,6 +95,7 @@ async function scenario(page, origin, f, dir) {
     const planURL=page.url();
     await page.getByRole('button',{name:'查看 '+f.workOrder.specification+' 配料明细',exact:true}).click();
     await page.getByRole('dialog',{name:'周订单物料明细'}).getByRole('heading',{name:f.workOrder.specification,exact:true}).waitFor();
+    check(await page.getByRole('dialog',{name:'周订单物料明细'}).getByText('已配齐',{exact:true}).count()>0,'planning drawer reflects warehouse physical completion');
     await shot('plan-material-drawer-1366x1024');
     await page.getByRole('button',{name:'关闭订单缺料',exact:true}).click();
     check(page.url()===planURL,'plan drawer closes without changing route or plan selection');
