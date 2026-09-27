@@ -15,3 +15,8 @@ test('setup time is retained in original week and unknown standards remain expli
   assert.equal(weekRemainder(10,60000,0,[]).remainingPlanned,600000n);
   assert.equal(subtractWorkload(null,100n),null);
 });
+
+test('skipped operations never inflate work moved into a future week', () => {
+  const r = weekRemainder(10,60000,4,[{...step,status:'skipped'}, {...step,processedQty:4,goodOutputQty:4}]);
+  assert.equal(r.standard,600000n);assert.equal(r.remainingStandard,360000n);assert.equal(r.remainingPlanned,360000n);
+});

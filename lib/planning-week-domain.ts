@@ -13,7 +13,7 @@ export function weekRemainder(quantity: number, unit: number | null, completed: 
   let standard = 0n, remainingStandard = 0n;
   let missing = false;
   const stepWork: Record<string, { full: string; remaining: string }> = {};
-  for (const step of steps.filter(s => s.countsForEfficiency)) {
+  for (const step of steps.filter(s => s.countsForEfficiency && s.status !== 'skipped')) {
     const target = step.supplementObligation
       ? Math.max(0, step.supplementObligation.requiredQty - step.supplementObligation.systemCoveredQty) : quantity;
     const done = Math.min(target, step.supplementObligation?.reportedQty ?? Math.max(completed, step.goodOutputQty));

@@ -2487,8 +2487,8 @@ export default function PlanningCenterShell({
 
           <div className="planning-schedule-board">
             <div className="planning-inline-summary" aria-label="当前列表汇总">
-              <div className="planning-inline-count">{planDataAvailable ? <><b>{scheduleRows.length}</b> 批 <span>·</span> <b>{selectedWeekQuantity.toLocaleString()}</b> 件{readinessFilters.length > 0 && <small> / 全周 {baseScheduleRows.length} 批</small>}</> : loading ? '正在加载计划…' : '排产数据未获取'}</div>
-              {planDataAvailable && <PlanningTimeComparison inline week={selectedWeek?.weekStartDate} batchIds={scheduleRows.map(item => item.batch.id)} key={`${refreshToken}-${deferredOnly}`} />}
+              <div className="planning-inline-count">{planDataAvailable ? <><b>{scheduleRows.length}</b> 行{scheduleRows.some(r => r.batch.scheduleState === 'DEFERRED') && <small> · 暂退 {scheduleRows.filter(r => r.batch.scheduleState === 'DEFERRED').length} 批</small>} <span>·</span> <b>{selectedWeekQuantity.toLocaleString()}</b> 件{readinessFilters.length > 0 && <small> / 全周 {baseScheduleRows.length} 批</small>}</> : loading ? '正在加载计划…' : '排产数据未获取'}</div>
+              {planDataAvailable && !deferredOnly && <PlanningTimeComparison inline week={selectedWeek?.weekStartDate} batchIds={scheduleRows.map(item => item.batch.id)} key={`${refreshToken}-${deferredOnly}`} />}
             </div>
             <div ref={scheduleScrollRef} className="planning-table-scroll hm-scroll-region" tabIndex={0} aria-label="计划明细连续滚动列表">
               <table className="planning-table compact-schedule-table">

@@ -1922,12 +1922,13 @@ export async function automaticallyReleaseProductionPlanBatch(
       id: true,
       weekStartDate: true,
       releaseState: true,
+      scheduleState: true,
       workOrderId: true,
       deletedAt: true,
       planOrder: { select: { deletedAt: true, status: true } },
     },
   });
-  if (!batch || batch.deletedAt || batch.planOrder.deletedAt) return null;
+  if (!batch || batch.deletedAt || batch.planOrder.deletedAt || batch.scheduleState === 'DEFERRED') return null;
   if (batch.planOrder.status === 'paused' || batch.planOrder.status === 'cancelled') return null;
   if (batch.workOrderId && (await lockProductionWorkOrder(tx, batch.workOrderId)).productionPausedAt) return null;
   const target = automaticProductionPlanReleaseTarget(batch, input.now);
@@ -1962,6 +1963,7 @@ export async function reconcileAutomaticallyReleasedProductionPlanBatch(
     select: {
       id: true,
       releaseState: true,
+      scheduleState: true,
       workOrderId: true,
       deletedAt: true,
       planOrder: { select: { deletedAt: true, status: true } },
@@ -1976,7 +1978,7 @@ export async function reconcileAutomaticallyReleasedProductionPlanBatch(
       },
     },
   });
-  if (!batch || batch.deletedAt || batch.planOrder.deletedAt) return null;
+  if (!batch || batch.deletedAt || batch.planOrder.deletedAt || batch.scheduleState === 'DEFERRED') return null;
   if (batch.planOrder.status === 'paused' || batch.planOrder.status === 'cancelled') return null;
   if (batch.releaseState !== 'active' || !batch.workOrderId || !batch.workOrder) return null;
   const workOrderStage = normalizeWorkOrderStage(batch.workOrder.stage || batch.workOrder.status) || 'not_issued';

@@ -228,6 +228,7 @@ async function runAutomaticReleasePhase(now: Date, limit: number): Promise<Phase
       tx.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
+        scheduleState: 'ACTIVE',
         ...(automaticReleaseActiveCursor ? { id: { gt: automaticReleaseActiveCursor } } : {}),
         planOrder: { deletedAt: null, status: { notIn: ['paused', 'cancelled'] } },
         weekStartDate: { gte: currentWeek.start, lt: addUtcDays(currentWeek.start, 1) },
@@ -243,6 +244,7 @@ async function runAutomaticReleasePhase(now: Date, limit: number): Promise<Phase
       tx.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
+        scheduleState: 'ACTIVE',
         ...(automaticReleasePreparationCursor ? { id: { gt: automaticReleasePreparationCursor } } : {}),
         planOrder: { deletedAt: null, status: { notIn: ['paused', 'cancelled'] } },
         weekStartDate: { gte: nextWeek.start, lt: addUtcDays(nextWeek.start, 1) },
@@ -357,6 +359,7 @@ async function runAutomaticFinalizePhase(now: Date, limit = 2): Promise<PhaseExe
         deletedAt: null,
         id: automaticFinalizeCursor ? { gt: automaticFinalizeCursor } : undefined,
         releaseState: 'active',
+        scheduleState: 'ACTIVE',
         workOrderId: { not: null },
         weekStartDate: { gte: currentWeek.start, lt: addUtcDays(currentWeek.start, 1) },
         planOrder: { deletedAt: null, status: { notIn: ['paused', 'cancelled'] } },
