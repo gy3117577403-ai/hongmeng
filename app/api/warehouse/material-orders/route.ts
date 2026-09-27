@@ -29,7 +29,8 @@ export async function GET(req: NextRequest) {
       : { OR: [{ weekStartDate: { gte: week, lt: addDays(week, 1) } }, ...(scope === 'current' ? [activeProductionCarryoverWorkOrderWhere(current)] : [])] };
     const cancelled: Prisma.WorkOrderWhereInput = { OR: [{ deletedAt: { not: null } }, { productionPlanBatch: { is: { OR: [{ deletedAt: { not: null } }, { planOrder: { OR: [{ status: 'cancelled' }, { deletedAt: { not: null } }] } }] } } }] };
     const base: Prisma.WarehouseMaterialTaskWhereInput[] = [ { workOrder: { is: { AND: [status === 'cancelled' ? cancelled : { NOT: cancelled }, managed, period] } } } ];
-    if (scope === 'overdue') base.push({ status: { not: 'completed' } });
+    const unfinished: Prisma.WarehouseMaterialTaskWhereInput = { OR: [{ status: { not: 'completed' } }, { exceptionCases: { some: { status: 'OPEN' } } }] };
+    if (scope === 'overdue') base.push(unfinished);
     if (p.get('view') === 'tracking') base.push({ exceptionCases: { some: {} } });
     if (source !== 'ALL') base.push({ exceptionCases: { some: { supplySource: source } } });
     if (keyword) base.push({ OR: [
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest) {
       { exceptionCases: { some: { OR: [{ materialModel: { contains: keyword, mode: 'insensitive' } }, { exceptionNote: { contains: keyword, mode: 'insensitive' } }, { arrivals: { some: { trackingNumber: { contains: keyword, mode: 'insensitive' } } } }] } } },
     ] });
     const filters: { [key: string]: Prisma.WarehouseMaterialTaskWhereInput } = {
-      active: { status: { not: 'completed' } }, ready: { status: 'completed' },
+      active: unfinished, ready: { status: 'completed', exceptionCases: { none: { status: 'OPEN' } } },
       waiting: { exceptionCases: { some: { status: 'OPEN', arrivals: { some: { status: 'ARRIVED' } } } } },
       unchecked: { status: 'pending', exceptionCases: { none: {} } },
       shortage: { exceptionCases: { some: { status: 'OPEN' } } },
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest) {
       const [orders, counts, older, weeks] = await Promise.all([
         tx.warehouseMaterialTask.findMany({ where, include: materialOrderInclude, orderBy: [{ workOrder: { productionPlanBatch: { planOrder: { customerDueDate: 'asc' } } } }, { createdAt: 'asc' }, { id: 'asc' }], skip: (page - 1) * size, take: size }),
         Promise.all(['all','active','ready','waiting','unchecked','shortage','unknown','late'].map(async name => [name, await tx.warehouseMaterialTask.count({ where: { AND: [...base, filters[name]] } })] as const)),
-        tx.warehouseMaterialTask.count({ where: { status: { not: 'completed' }, workOrder: { is: { AND: [managed, { NOT: cancelled }, { weekStartDate: { lt: current } }] } } } }),
+        tx.warehouseMaterialTask.count({ where: { AND: [unfinished, { workOrder: { is: { AND: [managed, { NOT: cancelled }, { weekStartDate: { lt: current } }] } } }] } }),
         tx.workOrder.groupBy({ by: ['weekStartDate'], where: { AND: [managed, { deletedAt: null, weekStartDate: { lt: current }, materialTask: { isNot: null } }] }, orderBy: { weekStartDate: 'desc' } }),
       ]);
       return { orders: orders.map(serializeMaterialOrder), summary: Object.fromEntries(counts), older, weeks: weeks.flatMap(w => w.weekStartDate ? [ymd(w.weekStartDate)] : []), currentWeek: ymd(current), week: ymd(week), pagination: { page, total, pages: Math.max(1, Math.ceil(total / size)) } };

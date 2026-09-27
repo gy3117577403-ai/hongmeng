@@ -23,6 +23,9 @@ async function scenario(page, origin, f, dir) {
     await page.setViewportSize({width:1366,height:1024});
     await login('warehouse',target);
     await page.getByRole('heading',{name:f.workOrder.specification,exact:true}).waitFor();
+    const queue=await api('/api/warehouse/material-orders?scope=current&status=all&q='+f.marker);
+    check(queue.status===200&&queue.body.orders.some(o=>o.id===f.warehouseTaskId),'weekly queue returns the registered order: '+JSON.stringify(queue.body.error||queue.body.pagination||queue.body));
+    await page.locator('.mo-order-row').filter({hasText:f.workOrder.specification}).waitFor({timeout:20000});
     await page.getByRole('button',{name:'登记缺料',exact:true}).click();
     await page.getByLabel('缺料型号',{exact:true}).fill('TERM-A');
     await page.getByLabel('登记缺料数量',{exact:true}).fill('5');
@@ -41,7 +44,7 @@ async function scenario(page, origin, f, dir) {
     await page.getByRole('heading',{name:f.workOrder.specification,exact:true}).waitFor();
     await page.getByRole('link',{name:'返回来源',exact:true}).click();
     await page.getByRole('heading',{name:f.workOrder.specification,exact:true}).waitFor();
-    check(new URL(page.url()).searchParams.get('q')===f.marker,'cross-module return retains order and search');
+    check(await page.evaluate(()=>new URL(location.href).searchParams.get('q'))===f.marker,'cross-module return retains order and search');
     await login('operator','/workspace/procurement?orderId='+f.warehouseTaskId);
     await page.locator('.mo-material-line').filter({hasText:'TERM-A'}).waitFor();
     check(await page.getByRole('button',{name:/接收|分配|负责人/}).count()===0,'department collaboration has no personal claim gate');
@@ -105,6 +108,14 @@ async function scenario(page, origin, f, dir) {
       check(geometry.scroll<3&&geometry.width<3&&geometry.panel>230&&geometry.footer<=height,'single viewport and usable inner scroll '+height+': '+JSON.stringify(geometry));
       await shot('tracking-week-orders-1366x'+height);
     }
+    await page.locator('.mo-detail-scroll').evaluate(el=>el.scrollTop=120);
+    await page.waitForFunction(()=>document.querySelector('.mo-detail-scroll').scrollTop>=100);
+    await page.getByRole('link',{name:'仓库配料',exact:true}).click();
+    await page.getByRole('heading',{name:f.visual.specification,exact:true}).waitFor();
+    await page.getByRole('link',{name:'返回来源',exact:true}).click();
+    await page.getByRole('heading',{name:f.visual.specification,exact:true}).waitFor();
+    await page.waitForFunction(()=>document.querySelector('.mo-detail-scroll').scrollTop>=100);
+    check(true,'cross-module return restores detail scroll position');
     await page.getByRole('button',{name:/历史未结/}).click();
     await page.waitForFunction(()=>new URL(location.href).searchParams.get('scope')==='overdue');
     await page.locator('.mo-order-row').first().waitFor();
