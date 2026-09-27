@@ -125,6 +125,7 @@ export const productionPlanOrderInclude = {
               status: true,
               version: true,
               completedAt: true,
+              exceptionCases: { where: { status: 'OPEN' }, select: { id: true, arrivals: { where: { status: 'ARRIVED' }, select: { id: true } } } },
             },
           },
           processRoute: {
@@ -1424,6 +1425,8 @@ function batchDto(
     processRouteSource: route?.routeSource || null,
     processRouteProductTimeProfileVersion: route?.productTimeProfileVersion || null,
     warehouseCompletedAt: batch.workOrder?.materialTask?.completedAt?.toISOString() || null,
+    materialOpenCount: batch.workOrder?.materialTask?.exceptionCases.length || 0,
+    materialPendingBatchCount: batch.workOrder?.materialTask?.exceptionCases.reduce((n, e) => n + e.arrivals.length, 0) || 0,
     processConfirmedAt: route?.confirmedAt?.toISOString() || null,
     processStartedAt: route?.startedAt?.toISOString() || null,
     processCompletedAt: route?.completedAt?.toISOString() || null,

@@ -94,6 +94,7 @@ export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string,
   const dependencies = /^\/api\/(?:work-orders|departments|customers|resource-categories|categories)(?:\/|$)/.test(path);
   if (read && dependencies && Object.keys(access.modulePermissions).length) return true;
   // Only read dependencies needed by selected business screens, never their mutations.
+  if (read && /^\/api\/warehouse\/material-orders(?:\/|$)/.test(path)) return moduleAllows(access, ['materials', 'production']);
   if (read && /^\/api\/reports\/employee-attainment(?:\/|$)/.test(path)) return moduleAllows(access, ['people', 'reports']);
   if (read && /^\/api\/quality-fixtures(?:\/|$)/.test(path)) return moduleAllows(access, ['quality', 'technology', 'production', 'materials']);
   const owners = API_OWNERS.find(([prefix]) => prefixMatch(path, prefix))?.[1];

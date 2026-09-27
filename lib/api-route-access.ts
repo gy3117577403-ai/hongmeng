@@ -85,6 +85,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
 
   { prefix: '/api/material-follow-ups/classify', anyOf: ['PROCUREMENT'], action: 'UPDATE' },
   { prefix: '/api/material-follow-ups', anyOf: ['PROCUREMENT'] },
+  { prefix: '/api/warehouse/material-orders', anyOf: ['WAREHOUSE', 'PROCUREMENT', 'PLANNING'], readOnlyModules: ['PLANNING'] },
   { prefix: '/api/warehouse/material-tasks', anyOf: ['WAREHOUSE', 'PROCUREMENT'] },
   { prefix: '/api/warehouse', anyOf: ['WAREHOUSE'] },
 

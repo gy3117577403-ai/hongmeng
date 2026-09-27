@@ -1790,6 +1790,8 @@ export type ProductionPlanBatchDTO = {
   processRouteSource?: string | null;
   processRouteProductTimeProfileVersion?: number | null;
   warehouseCompletedAt?: string | null;
+  materialOpenCount?: number;
+  materialPendingBatchCount?: number;
   processConfirmedAt?: string | null;
   processStartedAt?: string | null;
   processCompletedAt?: string | null;

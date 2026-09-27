@@ -3,6 +3,7 @@ import FixtureRequirementControl from '@/components/quality-fixtures/FixtureRequ
 import { QualityFixtureStatus, type QualityFixtureBadge } from '@/components/quality-fixtures/QualityFixtureStatus';
 
 import { PlanningDetailDrawer } from '@/components/PlanningDetailDrawer';
+import { MaterialOrderDrawer } from '@/components/material/MaterialOrderDrawer';
 import { PlanningTimeComparison } from '@/components/ProductionWorkload';
 import type { ProductionPlanImportRow } from '@/lib/production-plan-import';
 import { productionPlanImportNeedsProductDecision, resolvePlanningImportTime, planningImportTimeSourceText } from '@/lib/planning-import-time';
@@ -677,6 +678,7 @@ export default function PlanningCenterShell({
   const moduleReadOnly = user.access.modulePermissions?.production === 'READ';
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [materialOrderId, setMaterialOrderId] = useState<string | null>(null);
   const [view, setView] = useState<PlanningView>('schedule');
   const [orders, setOrders] = useState<ProductionPlanOrderDTO[]>([]);
   const [wipContinuations, setWipContinuations] = useState<ProductionPlanningWipContinuationDTO[]>([]);
@@ -2519,9 +2521,8 @@ export default function PlanningCenterShell({
                     <td title={planTimeSourceText[batch.planTimeSource || "legacy"]}><strong>{planMinutesText(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
                     <td><QualityFixtureStatus id={batch.id} kind="batches" compact provided={{ data: documentBadges[batch.id], error: documentBadgeError }} /><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span><a className={`planning-sop-stage ${sopInfo.stage}`} href={drawingLibraryHref} onClick={rememberPlanningState} title={sopInfo.title} aria-label={`SOP 状态 ${sopInfo.label}，进入图纸档案`}><FlaskConical size={12} />{sopInfo.label}</a>{Boolean(order.qualityWarningCount) && <a className={`planning-warning-link severity-${order.highestQualityWarningSeverity?.toLowerCase()}`} href={`${drawingLibraryHref}#quality-warning`} onClick={rememberPlanningState} title={`${order.qualityWarningCount} 条已归档产品异常警示`}><ShieldAlert size={12} />警示 {order.qualityWarningCount}</a>}</div></td>
                     <td><div className="planning-material-control">
-                      <span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常/缺料' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span>
+                      <button className="mo-plan-summary" type="button" disabled={!batch.workOrderId} onClick={() => { if (batch.workOrderId) setMaterialOrderId(batch.workOrderId); }} aria-label={`查看 ${order.specification} 配料明细`}><strong>{batch.warehouseStatus === 'completed' ? '已配齐' : batch.materialOpenCount ? `缺料 ${batch.materialOpenCount} 项` : batch.warehouseStatus === 'not_created' ? '未下达' : '待核对'}</strong>{!!batch.materialPendingBatchCount && <em>{batch.materialPendingBatchCount} 批待核验</em>}{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</button>
                       {activeHold && <span className="planning-status status-frozen" title={activeHold.reason}><strong><LockKeyhole size={12} />生产冻结</strong><small>{activeHold.reason}</small></span>}
-                      {batch.warehouseStatus !== 'completed' && <small className="planning-material-warning">仅提示，不影响开工/报工</small>}
                     </div></td>
                     <td><span className={`planning-status status-${batch.processStatus} readiness-${processDisplay.readiness}`}><strong>{processDisplay.label}</strong>{processDisplay.detail && <small>{processDisplay.detail}</small>}{processFinishedAt && <small>{flowTime(processFinishedAt)}</small>}</span></td>
                     <td><a className={`planning-flow-link tone-${flow.tone}`} href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState} title="查看该批次完整流程"><strong>{flow.label}</strong>{flowFinishedAt && <small>{flowTime(flowFinishedAt)}</small>}</a></td>
@@ -3051,5 +3052,6 @@ export default function PlanningCenterShell({
       </footer>
     </div>}
 
+    {materialOrderId && <MaterialOrderDrawer user={user} workOrderId={materialOrderId} onClose={() => setMaterialOrderId(null)} onChanged={() => setRefreshToken(v => v + 1)} />}
   </>;
 }

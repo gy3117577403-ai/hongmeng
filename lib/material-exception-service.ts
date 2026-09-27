@@ -44,7 +44,7 @@ export async function mutateWarehouseException(id: string, input: Input, actorId
   return prisma.$transaction(tx => updateWarehouseException(tx, id, input, actorId, canConfirm));
 }
 
-async function updateWarehouseException(tx: Tx, id: string, input: Input, actorId: string, canConfirm: boolean) {
+export async function updateWarehouseException(tx: Tx, id: string, input: Input, actorId: string, canConfirm: boolean) {
     const current = await lockWarehouse(tx, id);
     version(current.version, input.version);
     const action = text(input.action, 40);
@@ -100,7 +100,7 @@ async function updateWarehouseException(tx: Tx, id: string, input: Input, actorI
       if (ownerId && !await tx.user.count({ where: { id: ownerId, isActive: true } })) throw new MaterialInputError('请选择有效的负责人');
       // Warehouse-only users can register an exception without the procurement
       // people list. Assign the agreed default only when it resolves uniquely.
-      if (action === 'report_exception' && !ownerId) {
+      if (action === 'report_exception' && !ownerId && !input.departmentCollaboration) {
         const defaults = await tx.user.findMany({
           where: { isActive: true, OR: [{ displayName: '贾改真' }, { username: '贾改真' }] },
           select: { id: true },
@@ -118,7 +118,7 @@ async function updateWarehouseException(tx: Tx, id: string, input: Input, actorI
       const mustResumeProgress = arrivalNoLongerComplete || etaNoLongerKnown;
       const follow = await tx.materialFollowUpTask.upsert({
         where: { warehouseExceptionId: target.id },
-        create: { warehouseTaskId: id, warehouseExceptionId: target.id, createdById: actorId, latestProgress: content, ownerId: ownerId || null, assignedAt: ownerId ? new Date() : null, expectedAt: expectedArrivalAt },
+        create: { warehouseTaskId: id, warehouseExceptionId: target.id, createdById: actorId, latestProgress: content, status: input.departmentCollaboration ? 'IN_PROGRESS' : 'PENDING', ownerId: ownerId || null, assignedAt: ownerId ? new Date() : null, expectedAt: expectedArrivalAt },
         update: { ...(mustResumeProgress ? { status: 'IN_PROGRESS' as const } : {}), ...(etaChanged ? { expectedAt: expectedArrivalAt } : {}), version: { increment: 1 } },
       });
       if (arrivalNoLongerComplete) {
@@ -132,6 +132,9 @@ async function updateWarehouseException(tx: Tx, id: string, input: Input, actorI
         toStatus: follow.status,
       } });
     } else if (action === 'resolve') {
+      const ledger = await tx.materialArrivalBatch.findMany({ where: { exceptionId: target!.id, status: { not: 'CANCELLED' } } });
+      if (ledger.some(b => b.status !== 'VERIFIED')) throw new MaterialInputError('请在周订单配料中逐批核验到料，不能将报到直接视为配齐', 409);
+      if (ledger.length && target!.shortageQuantity !== null && ledger.reduce((sum, b) => sum + b.acceptedQuantity, 0) < target!.shortageQuantity) throw new MaterialInputError('已核验可用数量不足，请继续跟进', 409);
       if (target!.shortageQuantity !== null && target!.receivedQuantity < target!.shortageQuantity) {
         throw new MaterialInputError('累计到料未达到缺料数量，请继续跟进并由仓库核对', 409);
       }
@@ -215,6 +218,7 @@ async function updateFollowUp(tx: Tx, id: string, input: Input, actorId: string)
       transition.next.latestProgress = transition.content;
     }
     const received = input.receivedQuantity === undefined ? event.receivedQuantity : materialQuantity(input.receivedQuantity)!;
+    if (received !== event.receivedQuantity && await tx.materialArrivalBatch.count({ where: { exceptionId: event.id } })) throw new MaterialInputError('本项已有分批到料记录，请在周订单物料追踪中登记本批到料', 409);
     validateMaterialAmounts(event.shortageQuantity, received);
     if (event.shortageQuantity !== null && received < event.shortageQuantity && transition.next.status === 'WAITING_WAREHOUSE') throw new MaterialInputError('当前仅部分到料，请保留跟进状态，全部到料后再提交仓库确认');
     if (received !== event.receivedQuantity) changes.push(`累计到料：${event.receivedQuantity} → ${received} ${event.unit}`);

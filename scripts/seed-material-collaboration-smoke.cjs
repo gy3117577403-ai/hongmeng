@@ -38,6 +38,7 @@ async function main() {
     ['operator', '采购跟进员', 'MATERIAL_FOLLOW_UP_OPERATOR', departments.PROCUREMENT],
     ['dispatcher', '物料协调员', 'MATERIAL_FOLLOW_UP_OPERATOR', departments.PROCUREMENT],
     ['ordinary', '普通协同员', 'FIELD_REPORTER', null],
+    ['admin', '计划验收员', 'SYSTEM_ADMIN', null],
   ]) {
     const employee = key === 'ordinary' ? await db.employee.create({ data: {
       employeeNo: `${marker}-ordinary-employee`, name: displayName, department: '生产部',
@@ -47,11 +48,13 @@ async function main() {
       employeeId: employee?.id,
       passwordHash: await bcrypt.hash(password, 10), laborRole: 'EMPLOYEE',
       mustChangePassword: false, isActive: true, accountStatus: 'ACTIVE',
-      accessGrants: { create: { profile, scopeKey: department?.id || `EMPLOYEE:${employee.id}`, departmentId: department?.id } },
+      accessGrants: { create: { profile, scopeKey: department?.id || (employee ? `EMPLOYEE:${employee.id}` : 'GLOBAL'), departmentId: department?.id } },
     } });
     users[key] = { id: user.id, username: user.username, displayName };
   }
   const week = currentProductionWeek();
+  const reader = await db.user.create({ data: { username: marker + '-reader', displayName: '物料只读验收', passwordHash: await bcrypt.hash(password,10), mustChangePassword:false, isActive:true, accountStatus:'ACTIVE', accessGrants: { create: [ { profile:'MODULE_ACCESS', scopeKey:'MODULES:ON', grantType:'PRIMARY' }, { profile:'MODULE_ACCESS', scopeKey:'MODULE:materials:READ', grantType:'CONCURRENT' } ] } } });
+  users.reader = { id: reader.id, username: reader.username, displayName: reader.displayName };
   const specification = `${marker}-连接线束`;
   const workOrder = await db.workOrder.create({ data: {
     code: `${marker}-WO`, productName: '隔离验收连接线束', specification,
@@ -60,10 +63,11 @@ async function main() {
     weekStartDate: week.start, weekEndDate: week.end,
   } });
   const warehouseTask = await db.warehouseMaterialTask.create({ data: { workOrderId: workOrder.id } });
+  await db.productionPlanOrder.create({ data: { sourceOrderNo:marker,sourceLineNo:1,customerName:workOrder.customerName,productName:workOrder.productName,specification,orderQuantity:12,orderDate:week.start,customerDueDate:week.end,status:'released',batches:{create:{batchNo:1,quantity:12,weekStartDate:week.start,weekEndDate:week.end,plannedCompletionDate:week.end,releaseState:'released',workOrderId:workOrder.id}} } });
   const visual = {};
   const visualPrefix = 'material-visual-' + randomUUID().slice(0, 8);
   for (let index = 0; index < 12; index++) {
-    const oldWeek = index === 1 ? new Date(week.start.getTime() - 14 * 86400000) : week.start;
+    const oldWeek = index === 1 ? new Date(week.start.getTime() - 14 * 86400000) : index === 11 ? new Date(week.start.getTime() + 7 * 86400000) : week.start;
     const visualOrder = await db.workOrder.create({ data: {
       code: visualPrefix + '-' + index, productName: index === 0 ? 'KTP4503 控制箱航插线 · 单弯头' : '线束物料协同验收',
       specification: index === 0 ? 'D014503-8301-V02' : 'D011601-' + (8412 + index) + '-V01',
@@ -75,6 +79,7 @@ async function main() {
       workOrderId: visualOrder.id, status: 'exception', exceptionType: 'shortage',
       exceptionNote: '物料未齐，逐项跟进并核实',
     } });
+    await db.productionPlanOrder.create({ data: { sourceOrderNo:visualOrder.code,sourceLineNo:1,customerName:visualOrder.customerName,productName:visualOrder.productName,specification:visualOrder.specification,orderQuantity:visualOrder.productionTargetQty,orderDate:oldWeek,customerDueDate:new Date(oldWeek.getTime()+4*86400000),status:'released',batches:{create:{batchNo:1,quantity:visualOrder.productionTargetQty,weekStartDate:oldWeek,weekEndDate:new Date(oldWeek.getTime()+6*86400000),plannedCompletionDate:new Date(oldWeek.getTime()+4*86400000),releaseState:'released',workOrderId:visualOrder.id}} } });
     for (let item = 0; item < (index === 0 ? 3 : 1); item++) {
       const state = item === 1 ? 'WAITING_WAREHOUSE' : (index === 2 ? 'PENDING' : 'WAITING_ARRIVAL');
       const model = item === 0 ? 'DJ7061Y-89直扣' : item === 1 ? '132036-111国产尾夹' : 'LM-12-J12SX-03-401';
@@ -94,6 +99,8 @@ async function main() {
         latestProgress: note, lastFollowedAt: new Date(), expectedAt,
         activities: { create: { action: 'note', content: note, actorId: users.operator.id } },
       } });
+      if(index !== 2) await db.materialArrivalBatch.create({data:{exceptionId:exception.id,status:state === 'WAITING_WAREHOUSE' ? 'ARRIVED' : 'VERIFIED',quantity:state === 'WAITING_WAREHOUSE' ? 10 : 3,acceptedQuantity:state === 'WAITING_WAREHOUSE' ? 0 : 3,logisticsMode:'EXPRESS',carrier:'顺丰',trackingNumber:'SF000'+index+item,arrivedAt:new Date(),verifiedAt:state === 'WAITING_WAREHOUSE' ? null : new Date(),recordedById:users.operator.id,verifiedById:state === 'WAITING_WAREHOUSE' ? null : users.warehouse.id}});
+      await db.warehouseMaterialActivity.create({data:{taskId:visualTask.id,action:'note',content:model+'：'+note,actorId:users.operator.id}});
       if(index === 2) visual.pendingId = follow.id;
       if(index === 0 && item === 0) Object.assign(visual, {
         marker: visualPrefix,

@@ -3071,6 +3071,7 @@ model WarehouseMaterialTask {
   activities     WarehouseMaterialActivity[]
   exceptionCases WarehouseMaterialExceptionCase[]
   followUpTasks  MaterialFollowUpTask[]
+  commands       MaterialOrderCommand[]
 
   @@index([status])
   @@index([exceptionType])
@@ -3111,6 +3112,7 @@ model WarehouseMaterialExceptionCase {
   actualArrivalBy          User?                        @relation("WarehouseExceptionArrivedBy", fields: [actualArrivalById], references: [id], onDelete: SetNull)
   resolvedBy               User?                        @relation("WarehouseExceptionResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
   followUpTask             MaterialFollowUpTask?
+  arrivals                 MaterialArrivalBatch[]
 
   @@unique([warehouseTaskId, sequence])
   @@index([warehouseTaskId, status])
@@ -3119,6 +3121,44 @@ model WarehouseMaterialExceptionCase {
   @@index([weekStartDate, status])
   @@index([resolvedAt])
   @@map("warehouse_material_exception_cases")
+}
+
+model MaterialArrivalBatch {
+  id               String   @id @default(uuid())
+  exceptionId      String   @map("exception_id")
+  status           String   @default("SHIPPED")
+  quantity         Float
+  acceptedQuantity Float    @default(0) @map("accepted_quantity")
+  rejectedQuantity Float    @default(0) @map("rejected_quantity")
+  logisticsMode    String   @default("EXPRESS") @map("logistics_mode")
+  carrier          String   @default("")
+  trackingNumber   String   @default("") @map("tracking_number")
+  shippedAt        DateTime? @map("shipped_at")
+  expectedAt       DateTime? @map("expected_at")
+  arrivedAt        DateTime? @map("arrived_at")
+  verifiedAt       DateTime? @map("verified_at")
+  note             String   @default("")
+  recordedById     String?  @map("recorded_by_id")
+  verifiedById     String?  @map("verified_by_id")
+  legacy           Boolean @default(false)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  exception        WarehouseMaterialExceptionCase @relation(fields: [exceptionId], references: [id], onDelete: Cascade)
+
+  @@index([exceptionId, status])
+  @@index([trackingNumber])
+  @@map("material_arrival_batches")
+}
+
+model MaterialOrderCommand {
+  id         String @id @default(uuid())
+  taskId     String @map("task_id")
+  key        String
+  hash       String
+  createdAt  DateTime @default(now()) @map("created_at")
+  task       WarehouseMaterialTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  @@unique([taskId, key])
+  @@map("material_order_commands")
 }
 
 model WarehouseMaterialActivity {
