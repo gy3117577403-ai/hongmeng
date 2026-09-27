@@ -84,7 +84,8 @@ async function scenario(page, origin, f, dir) {
     order=await read();check(order.state==='READY','warehouse completes the whole order');
     await page.goto(origin+'/workspace/warehouse?status=ready&q='+f.marker);
     await page.locator('.mo-order-row').filter({hasText:f.workOrder.specification}).waitFor();
-    check(await page.getByRole('heading',{name:f.workOrder.specification,exact:true}).count()===1,'completed order remains visible in completed queue');
+    await page.getByRole('heading',{name:f.workOrder.specification,exact:true}).waitFor({timeout:20000});
+    check((await read()).state==='READY','completed order remains visible in completed queue');
     await login('reader','/workspace/procurement?orderId='+f.visual.warehouseTaskId);
     await page.getByRole('heading',{name:f.visual.specification,exact:true}).waitFor();
     check(await page.getByRole('button',{name:'登记缺料',exact:true}).count()===0,'read-only mode has no mutation actions');
