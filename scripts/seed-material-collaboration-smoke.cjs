@@ -38,7 +38,7 @@ async function main() {
     ['operator', '采购跟进员', 'MATERIAL_FOLLOW_UP_OPERATOR', departments.PROCUREMENT],
     ['dispatcher', '物料协调员', 'MATERIAL_FOLLOW_UP_OPERATOR', departments.PROCUREMENT],
     ['ordinary', '普通协同员', 'FIELD_REPORTER', null],
-    ['admin', '计划验收员', 'SYSTEM_ADMIN', null],
+    ['admin', '计划验收员', 'ADMIN_GLOBAL', null],
   ]) {
     const employee = key === 'ordinary' ? await db.employee.create({ data: {
       employeeNo: `${marker}-ordinary-employee`, name: displayName, department: '生产部',

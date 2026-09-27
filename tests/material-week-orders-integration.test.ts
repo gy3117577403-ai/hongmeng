@@ -57,9 +57,12 @@ test('weekly order closes through partial receipt and verification with shared a
     assert.notEqual(order.state, 'READY', 'plan quantity change reopens physical verification');
     assert.equal(order.events[0].usable, 10, 'receipt facts survive the plan change');
     assert.ok(order.activities.some(a => a.action === 'plan_changed'));
+    await change('report_exception', { materialModel: 'EXTRA-C', supplySource: 'CUSTOMER', shortageQuantity: 1, unit: '个', exceptionType: 'shortage' });
     await prisma.workOrder.update({ where: { id: work.id }, data: { deletedAt: new Date() } });
     order = await readMaterialOrder(order.id);
     assert.equal(order.cancelled, true);
+    assert.equal(order.events.find(e => e.model === 'EXTRA-C')?.status, 'CANCELLED');
+    assert.equal(order.openCount, 0);
     await assert.rejects(change('note', { note: 'cancelled write' }), /已取消/);
     assert.equal(order.events[0].usable, 10);
   } finally {
