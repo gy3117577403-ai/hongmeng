@@ -36,6 +36,8 @@ jobs:
       - run: npm run test:unit
       - name: Material database consistency
         run: RUN_DB_INTEGRATION=1 npm run test:material-follow-up-integration
+      - name: Planning and cross-week regression
+        run: RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/production-control-integration.test.ts tests/production-carryover-integration.test.ts tests/planning-time-consistency-integration.test.ts
       - run: npm run build
       - name: Real material collaboration browser acceptance
         env:

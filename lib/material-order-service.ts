@@ -8,7 +8,7 @@ import { sampleMaterialSourceSelect, sampleMaterialSource } from '@/lib/sample-m
 
 const actor = { select: { id: true, displayName: true, username: true } } as const;
 export const materialOrderInclude = Prisma.validator<Prisma.WarehouseMaterialTaskInclude>()({
-  workOrder: { include: { productionPlanBatch: { select: { batchNo: true, deletedAt: true, plannedCompletionDate: true, planOrder: { select: { customerDueDate: true, status: true, deletedAt: true } } } } } },
+  workOrder: { select: { id: true, code: true, productName: true, specification: true, customerName: true, productionTargetQty: true, uncompletedQty: true, weekStartDate: true, weekEndDate: true, deliveryDay: true, deletedAt: true, productionPlanBatch: { select: { batchNo: true, deletedAt: true, plannedCompletionDate: true, planOrder: { select: { customerDueDate: true, status: true, deletedAt: true } } } } } },
   sampleTask: { select: sampleMaterialSourceSelect },
   completedBy: actor,
   exceptionCases: { orderBy: { sequence: 'asc' }, include: {
@@ -92,6 +92,7 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
     let event = current.exceptionCases.find(e => e.id === eventId);
     const auditDetail: { [key: string]: Prisma.InputJsonValue | null } = { exceptionCaseId: eventId || null, arrivalId: arrivalId || null, requestKey: key };
     if (['report_exception', 'update_exception', 'complete', 'reopen'].includes(action)) {
+      if (action === 'report_exception' && current.exceptionCases.some(e => e.status === 'OPEN' && e.materialModel === text(input.materialModel,160) && e.supplySource === input.supplySource && e.unit === (text(input.unit,12) || '个'))) throw new MaterialInputError('本单已登记相同来源、型号与单位的缺料，请修改已有明细', 409);
       if (action === 'update_exception' && event) {
         const allocated = materialAmounts(event.shortageQuantity, event.arrivals);
         const required = materialQuantity(input.shortageQuantity, true);

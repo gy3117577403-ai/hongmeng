@@ -70,3 +70,11 @@ test('shared drawing commands distinguish preparation, review and system reviewe
   assert.equal(moduleFixtureActionAllowed(access({ quality: 'COLLABORATE' }), 'APPROVE'), true);
   assert.equal(moduleFixtureActionAllowed(access({ quality: 'COLLABORATE' }), 'SAVE_SETTINGS'), false);
 });
+
+test('planning can read the shared material detail but cannot write it without materials access', () => {
+  const path = '/api/warehouse/material-orders/order';
+  assert.equal(canAccessApiRoute(access({ production: 'COLLABORATE' }), path, 'GET'), true);
+  assert.equal(canAccessApiRoute(access({ production: 'COLLABORATE' }), path, 'PATCH'), false);
+  assert.equal(canAccessApiRoute(access({ materials: 'READ' }), path, 'PATCH'), false);
+  assert.equal(canAccessApiRoute(access({ materials: 'COLLABORATE' }), path, 'PATCH'), true);
+});
