@@ -123,7 +123,7 @@ try {
  cookie=adminCookie;
  const soloEmployee=(await req('create capture-only mobile employee','/api/employees',{name:tag+'手机采集',departmentId:engineer.id},201)).employee;
  const soloAccount=(await req('grant capture without desktop or library','/api/users/module-access',{employeeId:soloEmployee.id,username:soloEmployee.employeeNo,displayName:soloEmployee.name,password:initial,accountStatus:'ACTIVE',modulePermissions:{},workbenchEnabled:false,fieldReportEnabled:false,sampleCaptureEnabled:true})).user;
- await login(soloAccount.username,initial);await req('solo initial password','/api/auth/change-password',{currentPassword:initial,newPassword:password,confirmPassword:password});
+ await login(soloAccount.username,initial);await req('solo initial password','/api/auth/change-password',{currentPassword:initial,newPassword:password,confirmPassword:password});await login(soloAccount.username,password);
  await req('solo can read task','/api/sample-tasks/code/'+current.qrCode);
  const soloContext=await req('capture-only context omits unrelated employee catalog','/api/sample-team/context');assert.equal(soloContext.members.length,0);assert.equal(soloContext.products.length,0);
  await req('capture alone cannot read library','/api/sample-library',undefined,403);
