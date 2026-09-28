@@ -29,7 +29,14 @@ async function scenario(page,f,origin,dir,engine,state=null) {
   page.on('pageerror',e=>errors.push(String(e)));page.setDefaultTimeout(20000);
   const next='/sample-capture/'+f.captureTaskCode+'?tab=photos';
   const logout=()=>page.evaluate(async()=>{const response=await fetch('/api/auth/logout',{method:'POST'});if(!response.ok)throw Error('Disposable browser logout failed');});
-  const fillLogin=async username=>{await page.getByLabel('员工编号 / 管理账号').fill(username);await page.getByLabel('密码',{exact:true}).fill(f.password);await page.getByRole('button',{name:'登录',exact:true}).click();};
+  const fillLogin=async username=>{
+    await page.getByLabel('员工编号 / 管理账号').fill(username);
+    // Complete the employee identity preview before navigating away from login.
+    // This also verifies that the mobile account switch resolves the intended employee.
+    if (/^\d{2,12}$/.test(username)) await page.locator('.login-employee-identity').filter({hasText:username}).waitFor();
+    await page.getByLabel('密码',{exact:true}).fill(f.password);
+    await page.locator('.login-card button.primary-button').click();
+  };
   const login=async(username,destination)=>{await page.goto(origin+'/login?next='+encodeURIComponent(destination));await fillLogin(username);await page.waitForURL(u=>u.pathname===destination.split('?')[0]);};
   const queueValue=()=>page.evaluate(async ({id,code})=>{
     const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('hongmeng-sample-capture',2);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
@@ -94,7 +101,7 @@ async function scenario(page,f,origin,dir,engine,state=null) {
     check(await page.locator('article.server').count()===count+1,'uploaded photo becomes visible immediately');
     await page.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByText('照片草稿已保存到当前账号的本机空间',{exact:true}).waitFor();check((await queueValue()).length===0,'successful upload clears the persisted retry queue');
     for(const width of [360,390,430]){await page.setViewportSize({width,height:844});check(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1),'capture fits mobile width '+width);await shot('capture-uploaded-'+width);}
-    check(errors.length===0,'no uncaught browser errors');return {ok:true,engine,checks};
+    check(errors.length===0,'no uncaught browser errors'+(errors.length?': '+JSON.stringify(errors):''));return {ok:true,engine,checks};
   }catch(error){await shot('failure').catch(()=>{});throw Error(error.message+'\nCompleted: '+JSON.stringify(checks)+'\nUI: '+await page.locator('body').ariaSnapshot());}
 }
 try {
