@@ -176,7 +176,7 @@ function SupplyEditor({ value, disabled, onChange }: { value: SupplyForm[]; disa
   );
 }
 
-export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
+export function TerminalToolingWorkbench({ user, embedded = false }: { user: CurrentUserDTO; embedded?: boolean }) {
   const [tab, setTab] = useState<Tab>('setups');
   const [terminals, setTerminals] = useState<TerminalToolingTerminalDTO[]>([]);
   const [blades, setBlades] = useState<TerminalToolingBladeDTO[]>([]);
@@ -458,12 +458,12 @@ export function TerminalToolingWorkbench({ user }: { user: CurrentUserDTO }) {
 
   return (
     <main className="tooling-page hm-workbench-root">
-      <AppWorkbenchHeader
+      {!embedded && <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/terminal-tooling"
         subtitle="端子、四刀位与调模版本标准库"
         menuItems={[{ label: '刷新资料', onSelect: loadAll }, { label: '返回首页', href: '/home' }, { label: '退出登录', onSelect: logout }]}
-      />
+      />}
       <input ref={importInputRef} hidden type="file" accept=".csv,.xlsx,.xls,text/csv" onChange={event => handleImportFile(event.target.files?.[0])} />
 
       <section className="tooling-command-bar">

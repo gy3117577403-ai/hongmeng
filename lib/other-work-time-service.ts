@@ -30,12 +30,12 @@ function scopeWhere(actor: Actor): Prisma.OtherWorkTimeRequestWhereInput {
 export function serializeOtherWork(row: RecordWithDetail, actor: Actor) {
   return { ...row, workDate: dateKeyFromDatabase(row.workDate),
     attachments: row.attachments.map(({ objectKey: _key, ...file }) => ({ ...file, url: '/api/other-work-times/' + row.id + '/attachments/' + file.id })),
-    permissions: { edit: row.createdById === actor.id && editable.includes(row.status),
+    permissions: { edit: !row.toolingJobId && row.createdById === actor.id && editable.includes(row.status),
       submit: row.createdById === actor.id && editable.includes(row.status),
-      withdraw: row.createdById === actor.id && row.status === 'PENDING',
+      withdraw: !row.toolingJobId && row.createdById === actor.id && row.status === 'PENDING',
       review: canReviewOtherWork(actor, row) && row.status === 'PENDING',
-      void: actor.laborRole === 'ADMIN' && row.status === 'APPROVED',
-      requestCorrection: (row.createdById === actor.id || row.employeeId === actor.employeeId) && row.status === 'APPROVED' && !row.correctionRequestedAt } };
+      void: !row.toolingJobId && actor.laborRole === 'ADMIN' && row.status === 'APPROVED',
+      requestCorrection: !row.toolingJobId && (row.createdById === actor.id || row.employeeId === actor.employeeId) && row.status === 'APPROVED' && !row.correctionRequestedAt } };
 }
 export function otherWorkToday(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
@@ -109,6 +109,14 @@ async function validateOverlap(tx: Tx, row: RecordWithDetail) {
   if (total + row.requestedMinutes > 1440) throw new OtherWorkError('同日有效及待审其他工时合计不能超过 24 小时', 409);
   if (row.startedAt && row.endedAt && sameDay.some(other => other.startedAt && other.endedAt && other.startedAt < row.endedAt! && other.endedAt > row.startedAt!)) {
     throw new OtherWorkError('与同日其他工时的起止时段重叠，请核对', 409);
+  }
+  if (row.startedAt && row.endedAt) {
+    const activeTooling = await tx.toolingSegment.findFirst({ where: {
+      kind: 'WORK', startedAt: { lt: row.endedAt },
+      OR: [{ endedAt: null }, { endedAt: { gt: row.startedAt } }],
+      job: { employeeId: row.employeeId },
+    }, select: { id: true } });
+    if (activeTooling) throw new OtherWorkError('与调模或协助作业的有效时段重叠，请在端子调模记录中核对', 409);
   }
 }
 async function reviewerIds(tx: Tx, row: RecordScope) {
@@ -196,6 +204,9 @@ export async function commandOtherWork(actor: Actor, id: string, data: Record<st
     await lockEmployee(tx, initial.employeeId);
     const row = await mutable(tx, id, actor, data.version);
     const action = String(data.action || '');
+    if (row.toolingJobId && (action !== 'APPROVE' || (data.approvedMinutes != null && data.approvedMinutes !== row.requestedMinutes))) {
+      throw new OtherWorkError('此工时来自端子调模记录，请在端子调模台账修正原始时段，系统会同步工时');
+    }
     let update: Prisma.OtherWorkTimeRequestUpdateManyMutationInput = {};
     const reason = optionalText(data.reason, 1000);
     if (['EDIT', 'SUBMIT', 'WITHDRAW', 'CORRECTION_REQUEST'].includes(action) && row.createdById !== actor.id && !(action === 'CORRECTION_REQUEST' && actor.employeeId === row.employeeId)) throw new OtherWorkError('只能操作本人申报', 403);

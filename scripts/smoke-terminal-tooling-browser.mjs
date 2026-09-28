@@ -26,7 +26,7 @@ try {
       check(login.status()===200,'authenticated login');
       await page.setViewportSize({width:1366,height:1024});
       await page.goto(origin+'/workspace/terminal-tooling');
-      await page.locator('.tooling-tabs button').filter({hasText:'刀片库'}).click();
+      await page.getByRole('button',{name:'端子与方案',exact:true}).click();await page.locator('.tooling-tabs button').filter({hasText:'刀片库'}).click();
       await page.getByRole('button',{name:'新增刀片型号',exact:true}).click();
       const form=page.locator('dialog.tooling-blade-dialog[open]:not(.blade-extra-dialog)');
       await form.waitFor();
@@ -35,7 +35,7 @@ try {
       await form.getByRole('button',{name:'保存整组刀片',exact:true}).click();
       check(await form.count()===1 && await form.locator('.blade-spec-missing').count()===4,'missing specification keeps editor open and identifies positions');
       const labels=['上外刀','上内刀','下外刀','下内刀'], values=['2.4×1.5','1.85×1.2','2.6×1.65','2.05×1.35'];
-      for(let i=0;i<4;i++)await form.getByLabel(labels[i]+'规格',{exact:true}).fill(values[i]);
+      for(let i=0;i<4;i++){await form.getByLabel(labels[i]+'尺寸A',{exact:true}).fill(values[i].split('×')[0]);await form.getByLabel(labels[i]+'尺寸B',{exact:true}).fill(values[i].split('×')[1]);check(await form.getByLabel(labels[i]+'规格',{exact:true}).inputValue()===values[i],'dimensions generate '+labels[i]);}await form.locator('.blade-spec-card').first().getByRole('button',{name:'自定义规格',exact:true}).click();
       await form.getByLabel('上外刀规格',{exact:true}).fill('2.45×1.55');
       check(await form.getByLabel('上外刀尺寸A',{exact:true}).inputValue()==='2.45','simple spec fills only its own dimensions');
       for(let i=1;i<4;i++)check(await form.getByLabel(labels[i]+'规格',{exact:true}).inputValue()===values[i],'independent '+labels[i]);
@@ -72,7 +72,7 @@ try {
       const row=page.locator('.tooling-blade-table tbody tr').filter({hasText:f.marker+'-UI'});await row.waitFor();
       check((await row.innerText()).includes('2.45×1.55') && (await row.innerText()).includes('2.05×1.35'),'library displays independent specs');
       await page.screenshot({path:dir+'/tablet-four-spec-library.png'});
-      await page.reload();await page.locator('.tooling-tabs button').filter({hasText:'刀片库'}).click();
+      await page.reload();await page.getByRole('button',{name:'端子与方案',exact:true}).click();await page.locator('.tooling-tabs button').filter({hasText:'刀片库'}).click();
       await page.getByPlaceholder('搜索刀片型号、规格、材质或供应商').fill(f.marker+'-UI');
       await row.getByRole('button',{name:'编辑',exact:true}).click();await form.waitFor();
       check(await form.getByLabel('上外刀规格',{exact:true}).inputValue()==='2.45×1.55','saved specs survive reload');
@@ -83,7 +83,7 @@ try {
       const downloadPromise=page.waitForEvent('download');await page.getByRole('link',{name:'导出 CSV',exact:true}).click();
       const download=await downloadPromise;await download.saveAs(dir+'/blade-export.csv');check((await download.failure())===null,'real CSV download');
       await page.getByRole('button',{name:'新增刀片型号',exact:true}).click();
-      await form.locator('[name="blade-model"]').fill(f.marker+'-PARTIAL');await form.getByLabel('上内刀规格',{exact:true}).fill('单刀位草稿');
+      await form.locator('[name="blade-model"]').fill(f.marker+'-PARTIAL');await form.locator('.blade-spec-card').nth(1).getByRole('button',{name:'自定义规格',exact:true}).click();await form.getByLabel('上内刀规格',{exact:true}).fill('单刀位草稿');
       await form.getByRole('button',{name:'保存草稿',exact:true}).click();await form.waitFor({state:'hidden'});
       await page.getByPlaceholder('搜索刀片型号、规格、材质或供应商').fill(f.marker+'-PARTIAL');
       const draftRow=page.locator('.tooling-blade-table tbody tr').filter({hasText:f.marker+'-PARTIAL'});await draftRow.waitFor();

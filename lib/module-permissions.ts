@@ -49,6 +49,7 @@ export function moduleAllows(access: ModuleAccessCarrier, owners: readonly Busin
   return owners.some(owner => write ? access.modulePermissions?.[owner] === 'COLLABORATE' : Boolean(access.modulePermissions?.[owner]));
 }
 const PAGE_OWNERS: Array<[string, BusinessAccessModule[]]> = [
+  ['/tooling-mobile', ['technology']],
   ['/workspace/other-hours/approvals', ['collaboration']], ['/workspace/employees/accounts', ['people']],
   ['/workspace/reviews', ['quality', 'technology']], ['/workspace/quality', ['quality']], ['/workspace/quality-', ['quality']], ['/quality-capture', ['quality']], ['/quality-quick-capture', ['quality']],
   ['/material-upload', ['materials']], ['/workspace/material-library', ['materials']], ['/workspace/finished-goods', ['materials']], ['/workspace/wip', ['materials']], ['/workspace/warehouse', ['materials']], ['/workspace/procurement', ['materials']], ['/workspace/purchases', ['materials']],

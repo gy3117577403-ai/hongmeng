@@ -16,6 +16,8 @@ async function call(route, method = 'GET', data, status = 200) {
   return body;
 }
 await call('/api/terminal-tooling/blades', 'GET', undefined, 401);
+await call('/api/terminal-tooling/inventory', 'GET', undefined, 401);
+await call('/api/terminal-tooling/worklog', 'GET', undefined, 401);
 const login = await fetch(origin + '/api/auth/login', { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify({ username: f.username, password: f.password }) });
 assert.equal(login.status, 200); cookie = (login.headers.get('set-cookie') || '').match(/hm_session=[^;]+/)?.[0] || ''; assert.ok(cookie);
 const positions = ['UPPER_OUTER', 'UPPER_INNER', 'LOWER_OUTER', 'LOWER_INNER'];
@@ -67,5 +69,28 @@ const disabled = (await call('/api/terminal-tooling/blades/' + blade.id, 'PATCH'
 assert.equal(disabled.isActive, false); assert.deepEqual(disabled.positionSpecs, blade.positionSpecs);
 const enabled = (await call('/api/terminal-tooling/blades/' + blade.id, 'PATCH', { lockVersion: disabled.lockVersion, isActive: true })).blade;
 assert.equal(enabled.isActive, true);
+const mobile = await fetch(origin+'/tooling-mobile',{headers:{Cookie:cookie}});
+assert.equal(mobile.status,200); assert.ok((await mobile.text()).includes('手机端子调模'));
+const registration={key:crypto.randomUUID(),action:'REGISTER',bladeId:blade.id,kind:'KIT',quantity:1,box:100};
+await call('/api/terminal-tooling/inventory','POST',registration);
+await call('/api/terminal-tooling/inventory','POST',registration);
+let stock=(await call('/api/terminal-tooling/inventory')).blades.find(b=>b.id===blade.id);
+assert.equal(stock.stock.total,4);assert.equal(stock.stock.completeKits,1);
+const start={key:crypto.randomUUID(),action:'START',kind:'TUNING',terminalId:terminal.id,choices:stock.units.map(u=>({position:u.position,bladeId:blade.id,stockId:u.id}))};
+const started=await call('/api/terminal-tooling/worklog','POST',start);
+assert.equal((await call('/api/terminal-tooling/worklog','POST',start)).jobId,started.jobId);
+let job=(await call('/api/terminal-tooling/worklog?id='+started.jobId)).job;
+await call('/api/terminal-tooling/worklog','POST',{key:crypto.randomUUID(),action:'PAUSE',jobId:job.id,version:job.version,reason:'镜像验收暂停'});
+job=(await call('/api/terminal-tooling/worklog?id='+job.id)).job;
+assert.equal(job.status,'PAUSED');
+await call('/api/terminal-tooling/worklog','POST',{key:crypto.randomUUID(),action:'RESUME',jobId:job.id,version:job.version});
+job=(await call('/api/terminal-tooling/worklog?id='+job.id)).job;
+await call('/api/terminal-tooling/worklog','POST',{key:crypto.randomUUID(),action:'FINISH',jobId:job.id,version:job.version,result:'COMPLETED',dispositions:job.usages.map(u=>({usageId:u.id,disposition:'HOME'}))});
+job=(await call('/api/terminal-tooling/worklog?id='+job.id)).job;
+assert.equal(job.status,'COMPLETED');assert.ok(job.workMs>0);
+assert.equal(job.ledger.reduce((n,r)=>n+(r.status==='VOIDED'?0:r.reportedMilliseconds),0),job.workMs);
+stock=(await call('/api/terminal-tooling/inventory')).blades.find(b=>b.id===blade.id);
+assert.equal(stock.stock.completeKits,1);assert.equal(stock.stock.inUse,0);
+checks.push('Mobile route, replay-safe physical inventory, start/pause/resume/finish and exact shared hours verified in published image');
 fs.mkdirSync(path.dirname(output), { recursive: true }); fs.writeFileSync(output, JSON.stringify({ passed: true, checks, bladeId: blade.id, setupId: setup.id }, null, 2));
 console.log(`Terminal tooling HTTP acceptance passed: ${checks.length} checks`);

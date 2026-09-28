@@ -205,7 +205,7 @@ export async function loadEmployeeHoursReport(input: {
     const otherWorkFacts = await prisma.otherWorkTimeRequest.findMany({
       where: { status: { in: ['PENDING', 'APPROVED'] }, voidedAt: null, workDate: { gte: startDate, lt: factDateEnd },
         ...(employeeIdConstraint ? { employeeId: employeeIdConstraint } : {}) },
-      select: { id: true, correctionOfId: true, status: true, voidedAt: true, requestedMinutes: true,
+      select: { id: true, correctionOfId: true, status: true, voidedAt: true, requestedMinutes: true, reportedMilliseconds: true,
         categoryNameSnapshot: true, description: true, submittedAt: true, createdAt: true,
         employeeId: true, workDate: true, approvedMinutes: true, attainmentEligibleSnapshot: true, attainmentStreamSnapshot: true, teamSnapshot: true },
     });
@@ -412,7 +412,8 @@ export async function loadEmployeeHoursReport(input: {
       if (!isEmployeeEmployedOnDate(employeeById.get(other.employeeId), dateKeyFromDatabase(other.workDate))) continue;
       const daily = dailyFor(other.employeeId, dateKeyFromDatabase(other.workDate));
       activityEmployeeIds.add(other.employeeId);
-      const milliseconds = (other.status === 'APPROVED' ? other.approvedMinutes ?? other.requestedMinutes : other.requestedMinutes) * 60_000;
+      const milliseconds = other.reportedMilliseconds != null && (other.status !== 'APPROVED' || other.approvedMinutes == null || other.approvedMinutes === other.requestedMinutes)
+        ? other.reportedMilliseconds : (other.status === 'APPROVED' ? other.approvedMinutes ?? other.requestedMinutes : other.requestedMinutes) * 60_000;
       daily.otherWorkMilliseconds = (daily.otherWorkMilliseconds || 0) + milliseconds;
       daily.otherWorkCount = (daily.otherWorkCount || 0) + 1;
       daily.attainmentEligible = other.attainmentEligibleSnapshot;

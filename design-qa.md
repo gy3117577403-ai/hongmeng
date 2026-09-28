@@ -150,3 +150,33 @@ Focused review covered the toolbar labels, workload strip, full specification te
 - [x] Compare full view and focused regions against selected reference.
 
 final result: passed
+
+
+# Terminal tooling v1.34.250 — implementation QA
+
+Source: the user's four-position editor screenshot and the approved terminal-tooling previews. Implemented in the existing application and existing permissions, with no separate product scaffold.
+
+## Visual and interaction acceptance
+
+- Desktop: 1366 × 1024; document dimensions exactly 1366 × 1024. Records and detail scroll internally. Sticky action controls remain visible.
+- Mobile: 390 × 844; separate mobile route with no desktop sidebar. Home, timer, blade lookup, records and account navigation tested.
+- Start dialog: selecting terminal 10023 loads its published combination and box 007. Replacing upper-inner blade with another model selects box 008 independently.
+- Timing: start on desktop, pause, open mobile, resume and finish all persisted. Work and pause durations remain separate. A discovered final-second display discrepancy was fixed by using the closed server timestamp.
+- Finish dialog: each blade can return home, return to another box, remain on equipment or enter maintenance. The upper-inner blade retained on equipment stays in use after job completion.
+- Inventory: registered two sets in box 017, yielding eight physical components. Unknown stock is displayed as pending count. Mobile rows were changed to cards so box numbers appear directly.
+- Blade editor: four independent positions remain visible above desktop footer. Changing dimension A updates only that position's specification; custom specification is explicitly selectable. Original leading zeros retained.
+- Navigation: mobile detail back returns to the prior work screen. Closing dialogs restores the underlying page.
+- Export: downloaded an actual weekly CSV and checked its two work records and exact formatted durations.
+- Browser console: no uncaught errors observed.
+
+## Data and access acceptance
+
+- PostgreSQL integration covers replayed commands, last-kit concurrency, active-task uniqueness, blade replacement, device retention, return location, historical snapshots, cross-day correction, precise shared-hours reconciliation, assembly/disassembly/movement/retirement and invalid box rejection.
+- Local HTTP acceptance: 34 checks, including actual persisted image-contract workflows.
+- Anonymous endpoints return 401. Technology READ can view the mobile page/catalog; both mutation endpoints return 403. COLLABORATE reaches business validation and can operate.
+- Full local unit suite: 1,306 passed, 222 database/runtime-gated cases skipped, zero failures. Database cases for the changed module run separately.
+- Reference screenshots and HTTP evidence are under output/terminal-worklog-v134250. All depicted records are disposable QA fixtures.
+
+## Verification boundary
+
+Real iOS and Android WeChat hardware is unavailable in this environment. Mobile layout and workflows were verified in Chromium at phone size; no physical-WeChat certification is claimed. Published image acceptance is recorded separately by the release workflow, including clean PostgreSQL/MinIO startup and anonymous Hangzhou image pull.

@@ -47,6 +47,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/connector-assembly-manuals', anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'] },
   { prefix: '/connector-parameters', anyOf: ['ENGINEERING'] },
   { prefix: '/workspace/terminal-tooling', anyOf: ['TERMINAL_TOOLING'] },
+  { prefix: '/tooling-mobile', anyOf: ['TERMINAL_TOOLING'] },
   { prefix: '/workspace/capability-showcase', anyOf: ['ACCOUNT_SELF'] },
   { prefix: '/workspace/material-library', anyOf: ['QUALITY'] },
   { prefix: '/workspace/quality-tasks', anyOf: ['ACCOUNT_SELF'] },

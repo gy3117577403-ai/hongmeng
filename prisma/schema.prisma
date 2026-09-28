@@ -748,6 +748,7 @@ enum RecruitmentInterviewStatus {
 }
 
 model User {
+  toolingJobs                     ToolingJob[]
   processQualityEvidence ProcessQualityEvidence[]
   otherWorkRequests               OtherWorkTimeRequest[]                 @relation("OtherWorkCreator")
   otherWorkReviews                OtherWorkTimeReview[]
@@ -1508,6 +1509,9 @@ model OtherWorkTimeRequest {
   categoryId                 String
   categoryNameSnapshot       String
   requestedMinutes           Int
+  reportedMilliseconds       Int?
+  toolingJobId               String?
+  toolingJob                 ToolingJob?               @relation(fields: [toolingJobId], references: [id], onDelete: Restrict)
   approvedMinutes            Int?
   description                String
   arranger                   String?
@@ -1542,6 +1546,7 @@ model OtherWorkTimeRequest {
   @@index([teamIdSnapshot, status])
   @@index([correctionOfId])
   @@map("other_work_time_requests")
+  @@index([toolingJobId])
 }
 
 model OtherWorkTimeAttachment {
@@ -1579,6 +1584,7 @@ model OtherWorkTimeReview {
 }
 
 model Employee {
+  toolingJobs                      ToolingJob[]
   attainmentPolicyChanges          EmployeeAttainmentPolicyChange[]
   otherWorkRequests                OtherWorkTimeRequest[]
   id                               String                               @id @default(uuid())
@@ -6246,6 +6252,7 @@ model TerminalToolingTerminal {
   updatedAt         DateTime                        @updatedAt @map("updated_at")
   supplierLinks     TerminalToolingTerminalSupply[]
   setups            TerminalToolingSetup[]
+  jobs              ToolingJob[]
   qualityReferences QualityReference[]
 
   @@index([specification])
@@ -6356,6 +6363,9 @@ model TerminalToolingBlade {
   setupPositions      TerminalToolingSetupPosition[]
   isDraft             Boolean                        @default(false) @map("is_draft")
   positionSpecs       TerminalToolingBladeSpec[]
+  stockUnits          ToolingStock[]
+  usages              ToolingUsage[]
+  inventoryCountedAt  DateTime?                      @map("inventory_counted_at")
 
   @@index([model])
   @@index([manufacturer])
@@ -6474,6 +6484,7 @@ model TerminalToolingSetup {
   updatedAt   DateTime                       @updatedAt @map("updated_at")
   terminal    TerminalToolingTerminal        @relation(fields: [terminalId], references: [id], onDelete: Restrict)
   positions   TerminalToolingSetupPosition[]
+  jobs        ToolingJob[]
   tags        TerminalToolingSetupTag[]
 
   @@unique([terminalId, contextKey, version])
@@ -6497,6 +6508,126 @@ model TerminalToolingSetupPosition {
   @@unique([setupId, position])
   @@index([bladeId])
   @@map("terminal_tooling_setup_positions")
+}
+
+model ToolingKit {
+  id        String         @id @default(cuid())
+  code      String         @unique
+  createdAt DateTime       @default(now()) @map("created_at")
+  units     ToolingStock[]
+  @@map("tooling_kits")
+}
+
+model ToolingStock {
+  id           String                       @id @default(cuid())
+  bladeId      String                       @map("blade_id")
+  position     TerminalToolingBladePosition
+  kitId        String?                      @map("kit_id")
+  homeBox      Int                          @map("home_box")
+  currentBox   Int?                         @map("current_box")
+  state        String                       @default("AVAILABLE")
+  inUseJobId   String?                      @map("in_use_job_id")
+  version      Int                          @default(1)
+  createdAt    DateTime                     @default(now()) @map("created_at")
+  updatedAt    DateTime                     @updatedAt @map("updated_at")
+  blade        TerminalToolingBlade         @relation(fields: [bladeId], references: [id], onDelete: Restrict)
+  kit          ToolingKit?                  @relation(fields: [kitId], references: [id], onDelete: Restrict)
+  inUseJob     ToolingJob?                  @relation(fields: [inUseJobId], references: [id], onDelete: Restrict)
+  usages       ToolingUsage[]
+  @@index([bladeId, position, state], map: "tooling_stocks_blade_position_state_idx")
+  @@index([currentBox], map: "tooling_stocks_current_box_idx")
+  @@map("tooling_stocks")
+}
+
+model ToolingJob {
+  id               String                 @id @default(cuid())
+  actorId          String                 @map("actor_id")
+  employeeId       String                 @map("employee_id")
+  actorName        String                 @map("actor_name")
+  employeeNo       String                 @map("employee_no")
+  kind             String
+  status           String
+  activeEmployee   String?                @unique @map("active_employee")
+  terminalId       String?                @map("terminal_id")
+  setupId          String?                @map("setup_id")
+  terminalSnapshot Json                   @map("terminal_snapshot")
+  contextSnapshot  Json                   @map("context_snapshot")
+  description      String                 @default("")
+  category         String                 @default("")
+  resultNote       String                 @default("") @map("result_note")
+  backfillReason   String?                @map("backfill_reason")
+  startedAt        DateTime               @map("started_at")
+  endedAt          DateTime?              @map("ended_at")
+  version          Int                    @default(1)
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+  actor            User                   @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  employee         Employee               @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  terminal         TerminalToolingTerminal? @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+  setup            TerminalToolingSetup?   @relation(fields: [setupId], references: [id], onDelete: Restrict)
+  segments         ToolingSegment[]
+  usages           ToolingUsage[]
+  heldStock        ToolingStock[]
+  events           ToolingEvent[]
+  ledger           OtherWorkTimeRequest[]
+  @@index([employeeId, startedAt], map: "tooling_jobs_employee_started_idx")
+  @@index([status, startedAt], map: "tooling_jobs_status_started_idx")
+  @@index([terminalId], map: "tooling_jobs_terminal_idx")
+  @@map("tooling_jobs")
+}
+
+model ToolingSegment {
+  id        String     @id @default(cuid())
+  jobId     String     @map("job_id")
+  kind      String
+  reason    String     @default("")
+  startedAt DateTime   @map("started_at")
+  endedAt   DateTime?  @map("ended_at")
+  job       ToolingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  @@index([jobId], map: "tooling_segments_job_idx")
+  @@map("tooling_segments")
+}
+
+model ToolingUsage {
+  id          String                       @id @default(cuid())
+  jobId       String                       @map("job_id")
+  bladeId     String                       @map("blade_id")
+  stockId     String?                      @map("stock_id")
+  position    TerminalToolingBladePosition
+  snapshot    Json
+  isCurrent   Boolean                      @default(true) @map("is_current")
+  disposition String?
+  startedAt   DateTime                     @default(now()) @map("started_at")
+  endedAt     DateTime?                    @map("ended_at")
+  job         ToolingJob                   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  blade       TerminalToolingBlade         @relation(fields: [bladeId], references: [id], onDelete: Restrict)
+  stock       ToolingStock?                @relation(fields: [stockId], references: [id], onDelete: Restrict)
+  @@index([stockId], map: "tooling_usages_stock_idx")
+  @@map("tooling_usages")
+}
+
+model ToolingEvent {
+  id        String      @id @default(cuid())
+  actorId   String      @map("actor_id")
+  actorName String      @map("actor_name")
+  jobId     String?     @map("job_id")
+  action    String
+  detail    Json
+  createdAt DateTime    @default(now()) @map("created_at")
+  job       ToolingJob? @relation(fields: [jobId], references: [id], onDelete: Restrict)
+  @@index([jobId, createdAt], map: "tooling_events_job_created_idx")
+  @@map("tooling_events")
+}
+
+model ToolingReceipt {
+  id        String   @id @default(cuid())
+  actorId   String   @map("actor_id")
+  key       String
+  hash      String
+  result    Json
+  createdAt DateTime @default(now()) @map("created_at")
+  @@unique([actorId, key])
+  @@map("tooling_receipts")
 }
 
 model TerminalToolingTag {
