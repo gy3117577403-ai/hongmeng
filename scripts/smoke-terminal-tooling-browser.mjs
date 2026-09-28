@@ -88,6 +88,17 @@ try {
       await page.getByPlaceholder('搜索刀片型号、规格、材质或供应商').fill(f.marker+'-PARTIAL');
       const draftRow=page.locator('.tooling-blade-table tbody tr').filter({hasText:f.marker+'-PARTIAL'});await draftRow.waitFor();
       check((await draftRow.innerText()).includes('草稿'),'partial draft survives server save');
+      await page.getByRole('button',{name:'刀片库存',exact:true}).click();
+      await page.getByPlaceholder('搜索刀片型号 / 规格').fill(f.marker+'-PARTIAL');
+      await page.locator('.tl-inventory-list tbody tr').filter({hasText:f.marker+'-PARTIAL'}).click();
+      await page.getByRole('button',{name:'登记库存',exact:true}).click();
+      const stockForm=page.getByRole('dialog',{name:'登记实物库存',exact:true});await stockForm.waitFor();
+      check(await stockForm.getByRole('button',{name:'整套刀片',exact:true}).isDisabled(),'single-position model does not offer a nonexistent complete kit');
+      check(await stockForm.getByLabel('刀位',{exact:true}).inputValue()==='UPPER_INNER','loose inventory defaults to the actual compatible position');
+      await stockForm.getByLabel('数量（把）',{exact:true}).fill('2');await stockForm.getByLabel('存放盒号',{exact:true}).fill('23');
+      await stockForm.getByRole('button',{name:'确认登记',exact:true}).click();await stockForm.waitFor({state:'hidden'});
+      check(await page.locator('.tl-inventory-detail .tl-stock-unit').count()===2,'single-position loose inventory saves two physical blades');
+      await page.screenshot({path:dir+'/tablet-loose-inventory.png'});
       check(errors.length===0,'no uncaught browser errors');return {passed:true,checks,errors};
     } catch(error) {await page.screenshot({path:dir+'/failure.png'});throw error;}
   }`;

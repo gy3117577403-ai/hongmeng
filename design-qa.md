@@ -180,3 +180,9 @@ Source: the user's four-position editor screenshot and the approved terminal-too
 ## Verification boundary
 
 Real iOS and Android WeChat hardware is unavailable in this environment. Mobile layout and workflows were verified in Chromium at phone size; no physical-WeChat certification is claimed. Published image acceptance is recorded separately by the release workflow, including clean PostgreSQL/MinIO startup and anonymous Hangzhou image pull.
+
+### v1.34.251 散刀入口复核
+- 单独上内刀型号自动使用散刀与实际可用刀位，不允许误登记整套。浏览器完成 2 把上内刀登记到 023 号盒并核对实物记录。
+- 在端子资料新增型号后直接切换刀片库存，自动刷新可见，无需另点刷新。
+- 截图：output/terminal-worklog-v134250/desktop-loose-inventory-v251.png。
+- v1.34.250 在镜像发布前主动停止，修正用独立 v1.34.251 标签交付。
