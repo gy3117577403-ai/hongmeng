@@ -12,7 +12,7 @@ assert.ok(['localhost','127.0.0.1'].includes(new URL(process.env.DATABASE_URL).h
 const db=new PrismaClient(),tag='SL-'+randomUUID().slice(0,8),checks=[],password='Codex-Mobile-Sample-2026!R',initial='Codex-Mobile-Start-2026!Z';let cookie='';
 async function req(label,url,body,expected=200,method=body===undefined?'GET':'POST'){
  const response=await fetch(base+url,{method,headers:{Cookie:cookie,Origin:base,...(body===undefined||body instanceof FormData?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:body instanceof FormData?body:JSON.stringify(body),signal:AbortSignal.timeout(45000)});
- const data=await response.json();assert.equal(response.status,expected,`${label}: ${JSON.stringify(data).slice(0,650)}`);if(url==='/api/auth/login')cookie=response.headers.get('set-cookie')?.match(/hm_session=[^;]+/)?.[0]||'';checks.push({label,status:response.status});return data;
+ const raw=await response.text();let data;try{data=raw?JSON.parse(raw):null;}catch{throw new Error(`${label}: HTTP ${response.status} returned non-JSON: ${raw.slice(0,250)}`);}assert.equal(response.status,expected,`${label}: ${JSON.stringify(data).slice(0,650)}`);if(url==='/api/auth/login')cookie=response.headers.get('set-cookie')?.match(/hm_session=[^;]+/)?.[0]||'';checks.push({label,status:response.status});return data;
 }
 const check=(ok,label)=>{assert.ok(ok,label);checks.push({label});};
 const login=(username,password)=>req('login disposable account','/api/auth/login',{username,password});
@@ -113,7 +113,7 @@ try {
  const uploaded=await req('ordinary employee photo upload to S3','/api/sample-tasks/'+snap.id+'/photos',form,201);snap=uploaded.task;
  const replay=await req('photo retry is deduplicated','/api/sample-tasks/'+snap.id+'/photos',form,200);assert.equal(replay.deduplicated,true);assert.equal(replay.task.photos.length,1);
  const media=await fetch(base+snap.photos[0].contentUrl,{headers:{Cookie:cookie}});assert.equal(media.status,200);check((await media.arrayBuffer()).byteLength>100,'ordinary capture employee can read uploaded image');
- for(const [url,method] of [['/api/sample-tasks','POST'],['/api/sample-tasks/'+snap.id,'PATCH'],['/api/sample-tasks/'+snap.id+'/review','POST'],['/api/sample-tasks/schedule','POST'],['/api/users/module-access','POST']]) await req('capture grant rejects privileged '+url,url,{},403,method);
+ for(const [url,method] of [['/api/sample-tasks','POST'],['/api/sample-tasks/'+snap.id,'PATCH'],['/api/sample-tasks/'+snap.id+'/review','POST'],['/api/sample-tasks/schedule','PATCH'],['/api/users/module-access','POST']]) await req('capture grant rejects privileged '+url,url,{},403,method);
  snap=(await req('ordinary employee submits package','/api/sample-tasks/'+snap.id+'/submit',{expectedVersion:snap.version,clientMutationId:randomUUID()})).task;assert.equal(snap.status,'SUBMITTED');
  snap=(await req('ordinary employee withdraws unreviewed package','/api/sample-tasks/'+snap.id+'/withdraw-submission',{expectedVersion:snap.version,clientMutationId:randomUUID(),reason:'继续补充照片'})).task;assert.notEqual(snap.status,'SUBMITTED');
  // Keep a second genuine read-only account for browser controls and cross-account draft tests.
