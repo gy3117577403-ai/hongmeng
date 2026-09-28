@@ -588,6 +588,10 @@ jobs:
 
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
+      - name: Order pool preparation browser acceptance against exact release image
+        env:
+          ORDER_POOL_IMAGE: hongmeng-release-smoke:${{ github.sha }}
+        run: bash scripts/check-order-pool-image.sh
       - name: Push verified release image
         id: push_release
         env:
@@ -1020,6 +1024,16 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload order pool browser acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: order-pool-image-acceptance
+          path: |
+            artifacts/order-pool-image/*.png
+            artifacts/order-pool-image/browser-runtime.txt
+            artifacts/order-pool-image/browser-failure.txt
+            order-pool-image-server.log
       - name: Upload sample planning browser acceptance
         if: always()
         uses: actions/upload-artifact@v4

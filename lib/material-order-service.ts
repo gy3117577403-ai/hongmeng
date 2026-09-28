@@ -54,7 +54,7 @@ export function serializeMaterialOrder(task: ListRecord | Record) {
     quantity: source.productionTargetQty ?? source.uncompletedQty ?? 0, weekStart: iso(source.weekStartDate), weekEnd: iso(source.weekEndDate),
     dueDate: pool ? (pool.customerDueDateConfirmed ? iso(pool.customerDueDate) : null) : (work?.productionPlanBatch ? (work.productionPlanBatch.planOrder.customerDueDateConfirmed ? iso(work.productionPlanBatch.planOrder.customerDueDate) : null) : (work?.deliveryDay || null)),
     batchNo: work?.productionPlanBatch?.batchNo || null, scheduleState: work?.productionPlanBatch?.scheduleState || 'ACTIVE', scheduleReason: work?.productionPlanBatch?.scheduleReason || null, cancelled: !!pool?.deletedAt || pool?.status === 'cancelled' || !!work?.deletedAt || !!work?.productionPlanBatch?.deletedAt || !!work?.productionPlanBatch?.planOrder.deletedAt || work?.productionPlanBatch?.planOrder.status === 'cancelled' || task.sampleTask?.status === 'CANCELLED',
-    state: materialOrderState(task.status, open.length, events.filter(e => e.status === 'RESOLVED').length), status: task.status,
+    state: pool && task.preparedQuantity > 0 && !open.length && task.status !== 'completed' ? 'PARTIAL' as const : materialOrderState(task.status, open.length, events.filter(e => e.status === 'RESOLVED').length), status: task.status,
     openCount: open.length, purchased: open.filter(e => e.source === 'PURCHASED').length, customerProvided: open.filter(e => e.source === 'CUSTOMER').length,
     unknownSource: open.filter(e => e.source === 'UNKNOWN').length, pendingBatches, forecast, events,
     completedAt: iso(task.completedAt), completedBy: task.completedBy?.displayName || task.completedBy?.username || '', updatedAt: iso(task.updatedAt)!,

@@ -23,6 +23,7 @@ async function scenario(page,origin,f,dir){
   const base=await queue();
   check(base.orders.length===8,'all unallocated orders visible without a week');
   check(base.orders.every(o=>!o.customerDueDate&&o.batches.length===0),'unknown customer date preserved; no production batches');
+  check(await page.getByRole('button',{name:'新建订单',exact:true}).count()===1,'pool has one search/action toolbar');
   await shot('order-pool-1366x1024');
   const fit=await page.evaluate(()=>({outer:document.documentElement.scrollHeight<=innerHeight+2,footer:document.querySelector('.op-footer').getBoundingClientRect().bottom<=innerHeight+2}));
   check(fit.outer&&fit.footer,'planning pool uses internal scrolling and visible action footer: '+JSON.stringify(fit));
@@ -74,10 +75,12 @@ async function scenario(page,origin,f,dir){
   const response=await uploaded;check(response.ok(),'technical drawing upload reaches object storage: '+await response.text());
   await page.getByText('图纸资料文件已上传',{exact:true}).waitFor();
   check((await first()).drawingCount===1,'canonical drawing count shared with plan without duplicating product');
+  await page.locator('.opt-item').filter({hasText:f.first.specification}).getByText('图纸 1 · SOP 0',{exact:true}).waitFor();
   await page.getByLabel('技术准备进展').fill('原图已上传，等待审核');
   await page.getByRole('button',{name:'保存技术进展'}).click();
   await page.waitForFunction(()=>document.querySelector('[aria-label="技术准备进展"]')?.value==='');
   await shot('technical-pool-1920x1080');
+  await page.setViewportSize({width:1366,height:1024});await shot('technical-pool-1366x1024');
   const deniedTechnical=await api('/api/order-pool/commands','POST',{action:'cancel',ids:[f.first.id],requestKey:key()});
   check(deniedTechnical.status===403,'technical collaborator cannot reorder or cancel planning orders');
   // Warehouse confirms product coverage; no shipment operation is shown here.
@@ -91,6 +94,8 @@ async function scenario(page,origin,f,dir){
   await shot('confirm-pool-quantity-1366x1024');
   await submit('确认可配套数量');
   check((await first()).readyRemaining===40,'warehouse product-set confirmation appears in planning pool');
+  await page.locator('.mo-order-strip').getByText('部分配套',{exact:true}).waitFor();
+  await page.locator('.mo-toast').waitFor({state:'detached'});
   await shot('warehouse-pool-1366x1024');
   // Allocate 30 of the 100 units. Remaining and retained prepared quantities must agree.
   await login('admin','/weekly-plan-center?view=pool');await waitRows();
@@ -106,7 +111,7 @@ async function scenario(page,origin,f,dir){
   const source=await api('/api/warehouse/material-orders?workOrderId='+batch.workOrderId);
   check(source.status===200&&source.body.order.state==='READY','weekly warehouse inherits confirmed 30 sets');
   await page.getByRole('button',{name:'查看对应周计划',exact:false}).click();
-  check(!new URL(page.url()).searchParams.has('view'),'view-week button preserves real weekly navigation on reload');
+  check(await page.evaluate(()=>!new URL(location.href).searchParams.has('view')),'view-week button preserves real weekly navigation on reload');
   await page.getByRole('button',{name:/订单池/}).first().click();await waitRows();
   o=await first();
   const body={requestKey:key(),poolVersion:o.version,quantity:40,weekStartDate:f.currentWeek,plannedCompletionDate:f.currentWeek};
@@ -122,4 +127,3 @@ async function scenario(page,origin,f,dir){
   return{passed:true,checks};
  }catch(e){await shot('failure');throw Error(String(e)+'; browser errors: '+errors.join('; '));}
 }
-

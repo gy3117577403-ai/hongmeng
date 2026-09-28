@@ -2,6 +2,7 @@ import {writeFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import * as XLSX from 'xlsx';
+import sharp from 'sharp';
 import {prisma} from '../lib/prisma';
 import {poolCommand,loadOrderPool} from '../lib/order-pool-service';
 import {mutateMaterialOrder,readMaterialOrder} from '../lib/material-order-service';
@@ -25,8 +26,7 @@ async function main(){
  let m=await readMaterialOrder(second.warehouseTaskId!);
  await mutateMaterialOrder(m.id,{action:'report_exception',requestKey:randomUUID(),version:m.version,materialModel:'DJ7061Y-89直扣',supplySource:'CUSTOMER',shortageQuantity:20,exceptionType:'shortage',unit:'个'},users.warehouse.id,true);
  const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet([['订单号','行号','客户','规格','订单数量','客户交期','单套工时(分钟)'],[marker+'-import',1,'杭州昆泰','POOL-IMPORT-01',60,'',1.5],[marker+'-invalid',1,'杭州昆泰','POOL-INVALID',-2,'',1]]),'订单池');XLSX.writeFile(book,'/tmp/order-pool-import.xlsx');
- writeFileSync('/tmp/order-pool-upload.png',Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5asAAAAASUVORK5CYII=','base64'));
+ await sharp(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="white"/><rect x="32" y="32" width="1136" height="736" fill="none" stroke="#233b52" stroke-width="2"/><text x="70" y="94" font-family="sans-serif" font-size="26" fill="#233b52">GRQ05-Estop-V1 / ORDER POOL QA DRAWING</text><text x="70" y="133" font-family="sans-serif" font-size="15" fill="#788a9d">Disposable acceptance fixture - no production technical data</text><path d="M260 330 H930 M260 380 H930 M260 430 H930" fill="none" stroke="#233b52" stroke-width="8"/><rect x="160" y="270" width="100" height="220" rx="12" fill="#eef3f7" stroke="#233b52" stroke-width="3"/><rect x="930" y="270" width="100" height="220" rx="12" fill="#eef3f7" stroke="#233b52" stroke-width="3"/><path d="M260 540 V580 H930 V540" fill="none" stroke="#788a9d" stroke-width="2"/><text x="540" y="568" font-family="sans-serif" font-size="24" fill="#233b52">1000 mm</text><path d="M32 650 H1168 M760 650 V768" stroke="#233b52" stroke-width="2"/><text x="65" y="700" font-family="sans-serif" font-size="21" fill="#233b52">HARNESS - PREPARATION REFERENCE</text><text x="795" y="700" font-family="sans-serif" font-size="20" fill="#233b52">REV A / SHEET 1 OF 1</text></svg>`)).png().toFile('/tmp/order-pool-upload.png');
  return{marker,password,users,first,second,currentWeek:q.currentWeek,ids,importFile:'/tmp/order-pool-import.xlsx',uploadFile:'/tmp/order-pool-upload.png'};
 }
 main().then(f=>console.log(JSON.stringify(f))).catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>prisma.$disconnect());
-

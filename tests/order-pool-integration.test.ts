@@ -60,6 +60,7 @@ test('order pool: preparation without a week, shared priority, material coverage
   const oldKey=randomUUID(),version=material.version;
   const request={action:'confirm_prepared',preparedQuantity:50,version,requestKey:oldKey};
   material=await mutateMaterialOrder(material.id,request,actor.id,true);
+  assert.equal(material.state,'PARTIAL','partly prepared pool orders cannot still say unchecked');
   await mutateMaterialOrder(material.id,request,actor.id,true);
   assert.equal((await queue()).orders.find(o=>o.id===ids[0])?.readyRemaining,20,'retry never duplicates confirmed units');
   await change('reopen',{note:'重新核对现场'});

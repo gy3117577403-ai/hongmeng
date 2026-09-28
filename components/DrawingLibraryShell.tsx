@@ -248,6 +248,7 @@ export function DrawingLibraryShell({
   const canManageArchive = user.laborRole === 'ADMIN';
   const [lifecycleTarget, setLifecycleTarget] = useState<DrawingLifecycleTarget | null>(null);
   const [poolMode,setPoolMode]=useState(initialPool);
+  const [poolDataRevision,setPoolDataRevision]=useState(0);
   const [items, setItems] = useState(initialItems);
   const [customers, setCustomers] = useState(initialCustomers);
   const [keyword, setKeyword] = useState('');
@@ -592,7 +593,7 @@ export function DrawingLibraryShell({
     loadControllerRef.current = controller;
     setLoading(true);
     try {
-      if(poolMode){const id=new URLSearchParams(location.search).get('itemId');if(id){const r=await fetch('/api/drawing-library/'+encodeURIComponent(id),{cache:'no-store',signal:controller.signal});const b=await r.json();if(!r.ok||!b.item)throw Error(b.error||'资料加载失败');setItems(current=>[b.item,...current.filter(i=>i.id!==b.item.id)]);}return;}
+      if(poolMode){const id=new URLSearchParams(location.search).get('itemId');if(id){const r=await fetch('/api/drawing-library/'+encodeURIComponent(id),{cache:'no-store',signal:controller.signal});const b=await r.json();if(!r.ok||!b.item)throw Error(b.error||'资料加载失败');setItems(current=>[b.item,...current.filter(i=>i.id!==b.item.id)]);}setPoolDataRevision(v=>v+1);return;}
       const params = new URLSearchParams();
       if (keyword.trim()) params.set('keyword', keyword.trim());
       params.set('filter', filter);
@@ -1101,7 +1102,7 @@ export function DrawingLibraryShell({
         </>}</section>
 
         <section className={`drawing-workspace ${qualityWarningMode ? 'quality-warning-mode' : ''}`.trim()}>
-          {poolMode ? <OrderPoolTechnicalQueue selectedId={selectedId} onSelect={choosePoolItem} canWrite={canManageDrawing} refreshKey={selectedItem?.updatedAt || ""}/> : <aside className="drawing-browser" aria-label="图纸规格结果">
+          {poolMode ? <OrderPoolTechnicalQueue selectedId={selectedId} onSelect={choosePoolItem} canWrite={canManageDrawing} refreshKey={poolDataRevision+':'+(selectedItem?.updatedAt || "")}/> : <aside className="drawing-browser" aria-label="图纸规格结果">
             <div className="drawing-panel-head">
               <div><strong>规格结果</strong><span>{week ? planWeekLabel(week) : customer === '全部客户' ? '全部客户' : customer}</span></div>
               <b aria-live="polite" title={`${visibleFileCount} 个文件`}>{loading ? "…" : visibleItems.length}</b>

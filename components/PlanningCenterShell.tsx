@@ -2358,7 +2358,7 @@ export default function PlanningCenterShell({
           </div>
         </section>
 
-        <section className="planning-toolbar" aria-label="计划筛选和操作">
+        <section className="planning-toolbar" aria-label="计划筛选和操作" style={view === 'orders' ? {display:'none'} : undefined}>
           <label className="planning-search"><Search size={17} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、业务员、规格或品名" /></label>
           <select value={customer} onChange={event => setCustomer(event.target.value)} aria-label="筛选客户"><option value="">全部客户</option>{customers.map(item => <option value={item} key={item}>{item}</option>)}</select>
           <select value={priority} onChange={event => setPriority(event.target.value as typeof priority)} aria-label="筛选优先级"><option value="all">全部优先级</option><option value="insert">插单</option><option value="urgent">紧急</option><option value="normal">一般</option></select>

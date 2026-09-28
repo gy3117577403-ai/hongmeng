@@ -17,4 +17,4 @@ export function materialForecast(events: { open: boolean; remaining: number | nu
   const dates = awaiting.flatMap(e => e.expectedAt ? [e.expectedAt] : []).sort();
   return { next: dates[0] || null, latest: dates[dates.length - 1] || null, unknown: awaiting.filter(e => !e.expectedAt).length };
 }
-export const materialOrderStates = { READY: '已配齐', SHORTAGE: '缺料中', CONFIRM: '待齐料确认', UNCHECKED: '待核对' } as const;
+export const materialOrderStates = { READY: '已配齐', SHORTAGE: '缺料中', PARTIAL: '部分配套', CONFIRM: '待齐料确认', UNCHECKED: '待核对' } as const;

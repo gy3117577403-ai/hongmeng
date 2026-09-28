@@ -41,7 +41,8 @@ export async function loadOrderPool(p: URLSearchParams, db = prisma) {
   let shown = filtered.filter(o => match(o,p.get('filter') || 'all'));
   if (p.get('sort') === 'due') shown = [...shown].sort((a,b) => (a.customerDueDate || '9999').localeCompare(b.customerDueDate || '9999') || a.rank - b.rank);
   const total = shown.length, pageSize = 30, pages = Math.max(1, Math.ceil(total/pageSize)), page = Math.min(pages, Math.max(1, Math.floor(Number(p.get('page')) || 1)));
-  return { orders: shown.slice((page-1)*pageSize,page*pageSize), counts, total, allTotal: all.length, page, pages, pageSize, queueToken,
+  const totals = { remaining: shown.reduce((n,o)=>n+o.remaining,0), milliseconds: shown.reduce((n,o)=>n+(o.unitMilliseconds||0)*o.remaining,0), missingTime: shown.filter(o=>!o.unitMilliseconds).length };
+  return { orders: shown.slice((page-1)*pageSize,page*pageSize), counts, totals, total, allTotal: all.length, page, pages, pageSize, queueToken,
     customers: [...new Set(all.map(o => o.customerName))].sort(), currentWeek: chinaDate(chinaWeekRange(new Date()).start) };
 }
 function serializePool(order: Row, rank: number, documentsReady: boolean) {
