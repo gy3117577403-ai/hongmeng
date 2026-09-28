@@ -22,7 +22,7 @@ async function scenario(page,f,origin,dir,engine) {
   const shot=name=>page.screenshot({path:dir+'/'+name+'.png',animations:'disabled'});
   page.on('pageerror',e=>errors.push(String(e)));page.on('dialog',d=>d.accept());page.setDefaultTimeout(20000);
   const next='/sample-capture/'+f.captureTaskCode+'?tab=photos';
-  const logout=()=>page.request.post(origin+'/api/auth/logout');
+  const logout=()=>page.evaluate(async()=>{const response=await fetch('/api/auth/logout',{method:'POST'});if(!response.ok)throw Error('Disposable browser logout failed');});
   const fillLogin=async username=>{await page.getByLabel('员工编号 / 管理账号').fill(username);await page.getByLabel('密码',{exact:true}).fill(f.password);await page.getByRole('button',{name:'登录',exact:true}).click();};
   const login=async(username,destination)=>{await page.goto(origin+'/login?next='+encodeURIComponent(destination));await fillLogin(username);await page.waitForURL(u=>u.pathname===destination.split('?')[0]);};
   const queueValue=()=>page.evaluate(async ({id,code})=>{
@@ -46,7 +46,7 @@ async function scenario(page,f,origin,dir,engine) {
     check(await page.getByRole('button',{name:'提交审核',exact:true}).isDisabled(),'production reader cannot submit a sample');await shot('capture-readonly');
     await logout();await login(f.captureUsername,next);await page.locator('.sample-photo-actions').waitFor();
     check(await page.getByRole('button',{name:'从相册选择',exact:true}).isEnabled(),'independent capture grant enables ordinary employee photo input');
-    const initial=await (await page.request.get(origin+'/api/sample-tasks/code/'+f.captureTaskCode)).json();const count=initial.task.photos.length;
+    const count=await page.locator('article.server').count();
     const mutation='legacy-photo-'+engine;
     // Seed a v245-style failed local photo to test the real upgrade path.
     await page.evaluate(async({code,mutation,engine})=>{
