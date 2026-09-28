@@ -36,7 +36,7 @@ test('order pool: preparation without a week, shared priority, material coverage
   let material=await readMaterialOrder(one.warehouseTaskId!);
   const change=async(action:string,values:Record<string,unknown>={},confirm=true)=>{material=await mutateMaterialOrder(material.id,{action,version:material.version,requestKey:randomUUID(),...values},actor.id,confirm);return material;};
   await change('confirm_prepared',{preparedQuantity:40});
-  assert.equal(material.preparedQuantity,40);assert.equal(material.state,'UNCHECKED');
+  assert.equal(material.preparedQuantity,40);assert.equal(material.state,'PARTIAL');
   await change('report_exception',{materialModel:'TERM-A',supplySource:'PURCHASED',shortageQuantity:1,unit:'个',exceptionType:'shortage'});
   assert.equal(material.preparedQuantity,0,'new shortage invalidates unallocated coverage');
   const event=material.events[0];
