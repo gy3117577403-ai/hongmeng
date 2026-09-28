@@ -92,7 +92,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { photoId: s
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json({ ok: true, task: await loadTask(taskId) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_PHOTO_NOT_FOUND') return NextResponse.json({ ok: false, error: '照片不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
@@ -167,7 +167,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { photoId: 
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json({ ok: true, task: await loadTask(taskId) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_PHOTO_NOT_FOUND') return NextResponse.json({ ok: false, error: '照片不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });

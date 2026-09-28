@@ -16,7 +16,7 @@ export async function GET(_req: Request, { params }: { params: { code: string } 
     if (!task) return NextResponse.json({ ok: false, error: '样品二维码无效或任务不存在' }, { status: 404 });
     return NextResponse.json({ ok: true, task: serializeSampleTask(task) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     console.error('sample task qr lookup failed', error);
     return NextResponse.json({ ok: false, error: '样品任务读取失败' }, { status: 500 });
   }

@@ -750,7 +750,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const task = await prisma.sampleTask.findUnique({ where: { id: params.id }, include: sampleTaskInclude });
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof SamplePlanError || error instanceof FixtureError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     if (error instanceof ForbiddenError) return forbidden(error.message);
     if (error instanceof SamplePackageReviewError) {

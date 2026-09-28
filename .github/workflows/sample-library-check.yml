@@ -1,7 +1,7 @@
 name: Sample Library Preflight
 on:
   push:
-    branches: ["codex/mobile-photo-hr-v134237"]
+    branches: ["codex/mobile-sample-access-v134246"]
   workflow_dispatch:
 permissions:
   contents: read

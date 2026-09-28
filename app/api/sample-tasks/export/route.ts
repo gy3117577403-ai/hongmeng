@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     const data = [['序号', '任务编号', '客户', '产品型号', '样品类型', '计划周', '计划数量', '完成数量', '单套计划工时（分钟/套）','总计划工时（小时）','剩余数量','剩余计划工时（小时）','计划下达日期', '客户交期', '计划完成日期', '状态', '提前预警天数', '交期提示','来源订单号','订单行号','备注'], ...rows.map((r,i) => {const time=samplePlanTime({...r,sampleQuantity:r.quantity});return [i+1, r.code, r.customer, r.model, r.taskType === 'REPEAT' ? '老产品制作' : '新品试制', r.week || (r.status==='COMPLETED'?'历史周未记录':'待排期'), r.quantity, r.completedQuantityKnown?r.completedQuantity:'历史完成数量未记录',time.unitPlannedMinutes??'待补',sampleHours(time.totalPlannedMilliseconds),time.remainingQuantity??'未记录',sampleHours(time.remainingPlannedMilliseconds), r.issued || '未记录', r.due, r.plannedCompletion, r.taskType === 'REPEAT' && r.status === 'IN_PROGRESS' ? '制作中' : status[r.status] || r.status, r.warningDays, sampleWarning({ status: r.status, dueDate: r.due, warningDays: r.warningDays }).label,r.sourceOrderNo,r.sourceOrderLine,r.planRemark];})];
     return new NextResponse('\uFEFF' + data.map(row => row.map(cell).join(',')).join('\r\n'), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="sample-plans.csv"; filename*=UTF-8''${encodeURIComponent('样品计划清单.csv')}`, 'Cache-Control': 'no-store' } });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof SampleQueryError) return NextResponse.json({ ok:false, error:error.message }, { status:400 });
     console.error('sample export failed', error); return NextResponse.json({ ok:false, error:'样品清单导出失败' }, { status:500 });
   }

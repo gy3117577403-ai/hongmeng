@@ -99,3 +99,4 @@ try{
  }`);
  const result=cli(['run-code','--filename',file]);writeFileSync(join(dir,'browser-result.txt'),result);const section=result.match(/### Result\r?\n([\s\S]*?)(?:\r?\n### |$)/),accepted=section?JSON.parse(section[1].trim()):null;if(accepted?.ok!==true||accepted.checks?.length<20)throw Error(result);console.log(result);
 }finally{try{cli(['close']);}catch{}rmSync(file,{force:true});}
+await import('./smoke-sample-capture-access-browser.mjs');

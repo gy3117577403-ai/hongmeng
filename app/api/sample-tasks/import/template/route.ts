@@ -124,7 +124,7 @@ export async function GET() {
       },
     });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     console.error('sample plan template failed', error);
     return NextResponse.json({ ok: false, error: '模板生成失败，请稍后重试' }, { status: 500 });
   }

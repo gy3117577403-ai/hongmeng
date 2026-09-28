@@ -198,7 +198,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string; 
       section: section ? serializeSampleDraftSection(section) : null,
     });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof Error && error.message === 'SAMPLE_REPEAT_CAPTURE_DISABLED') return NextResponse.json({ ok: false, error: '老产品制作只审核图纸资料，无需采集或整包审核' }, { status: 409 });
     if (error instanceof Error) {
       const response = responseFor(error);

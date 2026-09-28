@@ -417,6 +417,7 @@ export type DailyPlanningRoleDTO = 'WORKSHOP_SUPERVISOR' | 'TEAM_LEADER' | 'MEMB
 export type AccountStatusDTO = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
 export type AccessProfileKeyDTO =
   | 'EMPLOYEE_ACCESS_MANAGER'
+  | 'SAMPLE_CAPTURE_COLLABORATOR'
   | 'SAMPLE_LIBRARY_READER'
   | 'MODULE_ACCESS'
   | 'ADMIN_GLOBAL'
@@ -505,6 +506,7 @@ export type AccessScopeHintDTO = {
 };
 
 export type AccessContextDTO = {
+  sampleCaptureEnabled?: boolean;
   sampleLibraryEnabled?: boolean;
   employeeAccountManager?: boolean;
   modulePermissions?: import('@/lib/module-permissions').ModulePermissions | null;
@@ -653,6 +655,7 @@ export type UserDTO = {
     isActive: boolean;
   } | null;
   accessMethods?: {
+    sampleCapture?: boolean;
     sampleLibrary?: boolean;
     employeeAccountManager?: boolean;
     workbench: boolean;

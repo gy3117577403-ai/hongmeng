@@ -26,7 +26,7 @@ export async function GET(_req: Request, { params }: { params: { photoId: string
       },
     });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     console.error('sample photo content failed', error);
     return NextResponse.json({ ok: false, error: '照片读取失败' }, { status: 500 });
   }

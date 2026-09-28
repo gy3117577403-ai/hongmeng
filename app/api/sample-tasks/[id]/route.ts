@@ -37,7 +37,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     if (!task) return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
     return NextResponse.json({ ok: true, task: serializeSampleTask(task) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     console.error('sample task detail failed', error);
     return NextResponse.json({ ok: false, error: '样品任务加载失败' }, { status: 500 });
   }
@@ -250,7 +250,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null });
   } catch (error) {
     if (error instanceof SamplePlanError || error instanceof FixtureError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });

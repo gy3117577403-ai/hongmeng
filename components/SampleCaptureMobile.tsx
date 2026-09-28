@@ -33,6 +33,9 @@ import Image from 'next/image';
 import Link from 'next/link';
 import SampleLibraryReference from '@/components/sample-library/SampleLibraryReference';
 import { canReadSampleLibrary } from '@/lib/sample-library-access';
+import { canAccessApiRoute } from '@/lib/api-route-access';
+import { canAccessAppRoute } from '@/lib/app-route-access';
+import { sampleCaptureDraftKeys } from '@/lib/sample-capture-access';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { normalizeCapturedImage, prepareSamplePhotoForUpload } from '@/lib/image-client';
 import { sampleCustomerLevelStyle } from '@/lib/sample-customer-levels';
@@ -212,7 +215,7 @@ async function readPhotoStoreValue(key: string): Promise<Record<string, any> | n
 
 async function writePhotoStoreValue(key: string, value: Record<string, unknown> | null) {
   const db = await openPhotoDb();
-  if (!db) return;
+  if (!db) throw new Error('当前浏览器无法保存照片草稿，请保持页面打开');
   await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction(PHOTO_STORE, 'readwrite');
     if (value) transaction.objectStore(PHOTO_STORE).put(value, key);
@@ -253,6 +256,13 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [captureAllowed, setCaptureAllowed] = useState(() => canAccessApiRoute(_user.access, '/api/sample-tasks/current/sections/PROCESS_TIME', 'PUT') === true);
+  const [accessIssue, setAccessIssue] = useState('');
+  const [accessCode, setAccessCode] = useState('');
+  const [checkingAccess, setCheckingAccess] = useState(false);
+  const [legacyAvailable, setLegacyAvailable] = useState(false);
+  const photoAccessStopped = useRef(false);
+  const photoPersistChain = useRef<Promise<void>>(Promise.resolve());
   const [tab, setTab] = useState<CaptureTab>('overview');
   const [activeKind, setActiveKind] = useState<SampleDataKindDTO>('PROCESS_TIME');
   const [form, setForm] = useState<DataForm>(emptyDataForm);
@@ -294,16 +304,96 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   const genericDraftHydrated = useRef(false);
   const photoQueueHydrated = useRef(false);
 
-  const genericDraftKey = `sample-capture:${code}:draft`;
-  const sectionDraftKey = `sample-capture:${code}:sections-v2`;
+  const draftKeys = sampleCaptureDraftKeys(_user.id, code);
+  const genericDraftKey = draftKeys.generic;
+  const sectionDraftKey = draftKeys.sections;
+  const photoQueueKey = draftKeys.photos;
   const legacyPhotoQueueKey = `sample-capture:${code}:photo`;
-  const photoQueueKey = `sample-capture:${code}:photo-queue-v2`;
-  const submissionMutationKey = `sample-capture:${code}:submission-mutation`;
-  const withdrawMutationKey = `sample-capture:${code}:withdraw-mutation`;
+  const oldPhotoQueueKey = `sample-capture:${code}:photo-queue-v2`;
+  const oldGenericKey = `sample-capture:${code}:draft`;
+  const oldSectionKey = `sample-capture:${code}:sections-v2`;
+  const legacyClaimKey = `sample-capture:${code}:legacy-owner`;
+  const submissionMutationKey = draftKeys.submission;
+  const withdrawMutationKey = draftKeys.withdrawal;
+  const mobileNext = `/sample-capture/${encodeURIComponent(code)}${tab === 'photos' ? '?tab=photos' : ''}`;
+  const loginLink = `/login?next=${encodeURIComponent(mobileNext)}`;
+  const permissionReadOnly = !captureAllowed || Boolean(accessIssue);
+  const returnHref = canAccessAppRoute(_user.access, '/weekly-plan-center?branch=samples') ? '/weekly-plan-center?branch=samples' : canReadSampleLibrary(_user.access) ? '/sample-library' : '/account';
+
+  async function captureBody(response: Response) {
+    const body = await bodyJson(response);
+    if (response.status === 401 || response.status === 403) {
+      photoAccessStopped.current = true;
+      setCaptureAllowed(false);
+      setAccessCode(body.code || (response.status === 401 ? 'SESSION_EXPIRED' : 'PERMISSION_DENIED'));
+      setAccessIssue(response.status === 401 ? '登录已失效，草稿仍保留在本机。重新登录后继续上传。' : body.code === 'PASSWORD_CHANGE_REQUIRED' ? '请先修改登录密码，完成后会回到当前任务。' : '当前账号仅可查看，请开通手机样品采集协同权限。');
+    }
+    return body;
+  }
+
+  async function checkCaptureAccess() {
+    setCheckingAccess(true);
+    try {
+      const response = await fetch('/api/me', { cache: 'no-store' });
+      const body = await captureBody(response);
+      if (!response.ok) return false;
+      if (body.user?.id !== _user.id) {
+        setAccessCode('ACCOUNT_CHANGED'); setAccessIssue('登录账号已变化。当前草稿仍属于原账号，请刷新后继续。'); setCaptureAllowed(false); return false;
+      }
+      if (body.user.mustChangePassword) {
+        setAccessCode('PASSWORD_CHANGE_REQUIRED'); setAccessIssue('请先修改登录密码'); setCaptureAllowed(false); return false;
+      }
+      const allowed = canAccessApiRoute(body.user.access, '/api/sample-tasks/current/sections/PROCESS_TIME', 'PUT') === true;
+      setCaptureAllowed(allowed);
+      setAccessIssue(allowed ? '' : '当前账号仅可查看，请开通手机样品采集协同权限。');
+      setAccessCode(allowed ? '' : 'PERMISSION_DENIED');
+      photoAccessStopped.current = !allowed;
+      return allowed;
+    } catch { setMessage('无法检查登录权限，请检查网络后重试'); return false; }
+    finally { setCheckingAccess(false); }
+  }
+
+  function persistPhotoQueue(items: LocalPhotoDraft[]) {
+    const stored = items.map(({ objectUrl: _objectUrl, ...item }) => item);
+    const next = photoPersistChain.current.catch(() => {}).then(() => writePhotoStoreValue(photoQueueKey, stored.length ? { version: 2, items: stored } : null));
+    photoPersistChain.current = next;
+    return next;
+  }
+
+  async function saveLocalPhotos() {
+    try { await persistPhotoQueue(photoQueue); setMessage('照片草稿已保存到当前账号的本机空间'); }
+    catch { setMessage('照片草稿未能保存，请保持页面打开，不要退出'); }
+  }
+
+  async function restoreLegacyDraft() {
+    if (formHasData || dirtySections.size) { setMessage('请先保存当前文字或参数草稿，再恢复升级前草稿'); return; }
+    if (!window.confirm(`将本机升级前的样品草稿恢复到 ${_user.displayName}（${_user.username}）？请确认这些草稿是你填写的。`)) return;
+    try {
+      const claimant = localStorage.getItem(legacyClaimKey);
+      if (claimant && claimant !== _user.id) { setLegacyAvailable(false); setMessage('这份旧草稿已由另一账号恢复'); return; }
+      const stored = await readPhotoStoreValue(oldPhotoQueueKey);
+      const single = stored ? null : await readPhotoStoreValue(legacyPhotoQueueKey);
+      const oldItems: StoredLocalPhoto[] = Array.isArray(stored?.items) ? stored.items : single?.file instanceof File ? [{ id: newMutationId(), file: single.file, originalName: single.file.name, category: single.category || 'UNCLASSIFIED', caption: String(single.caption || ''), linkedEntryId: String(single.linkedEntryId || ''), source: 'CAMERA', mutationId: String(single.mutationId || newMutationId()), status: 'LOCAL', progress: 0, error: '' }] : [];
+      const restored = oldItems.filter(item => item.file instanceof File && !photoQueue.some(current => current.mutationId === item.mutationId)).map(item => ({ ...item, status: 'LOCAL' as const, progress: 0, error: '', objectUrl: createObjectUrl(item.file) }));
+      const combined = [...photoQueue, ...restored];
+      await persistPhotoQueue(combined);
+      setPhotoQueue(combined);
+      const generic = localStorage.getItem(oldGenericKey), sections = localStorage.getItem(oldSectionKey);
+      if (generic) { const parsed = JSON.parse(generic); localStorage.setItem(genericDraftKey, generic); if (parsed.form) setForm({ ...emptyDataForm, ...parsed.form }); if (parsed.entryMutationId) setEntryMutationId(parsed.entryMutationId); }
+      if (sections) localStorage.setItem(sectionDraftKey, sections);
+      localStorage.setItem(legacyClaimKey, _user.id);
+      setLegacyAvailable(false);
+      await writePhotoStoreValue(oldPhotoQueueKey, null); await writePhotoStoreValue(legacyPhotoQueueKey, null);
+      localStorage.removeItem(oldGenericKey); localStorage.removeItem(oldSectionKey);
+      if (sections) await load();
+      if (restored.length) setTab('photos');
+      setMessage(`已恢复旧草稿${restored.length ? `及 ${restored.length} 张照片` : ''}，确认内容后可重试上传`);
+    } catch { setMessage('旧草稿恢复未完成，原草稿仍保留，请重试'); }
+  }
 
   const hardClosed = task?.status === 'COMPLETED' || task?.status === 'CANCELLED';
   const submitted = task?.status === 'SUBMITTED';
-  const readOnly = hardClosed || submitted;
+  const readOnly = hardClosed || submitted || permissionReadOnly;
   const formHasData = useMemo(() => hasMeaningfulForm(form), [form]);
   const processHasData = useMemo(() => processRows.some(processRowHasContent), [processRows]);
   const strippingHasData = useMemo(() => strippingRows.some(strippingRowHasContent), [strippingRows]);
@@ -378,16 +468,16 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     try {
       const [taskResponse, contextResponse] = await Promise.all([
         fetch(`/api/sample-tasks/code/${encodeURIComponent(code)}`, { cache: 'no-store' }),
-        fetch('/api/sample-team/context', { cache: 'no-store' }),
+        fetch('/api/sample-team/context?capture=1', { cache: 'no-store' }),
       ]);
-      const taskBody = await bodyJson(taskResponse);
-      const contextBody = await bodyJson(contextResponse);
+      const taskBody = await captureBody(taskResponse);
+      const contextBody = await captureBody(contextResponse);
       if (!taskResponse.ok) throw new Error(taskBody.error || '样品任务读取失败');
       const nextTask = taskBody.task as SampleTaskDTO;
       setTask(nextTask);
       if (contextResponse.ok) setProcesses(Array.isArray(contextBody.processes) ? contextBody.processes : []);
       const sectionResponse = await fetch(`/api/sample-tasks/${nextTask.id}/sections`, { cache: 'no-store' });
-      const sectionBody = await bodyJson(sectionResponse);
+      const sectionBody = await captureBody(sectionResponse);
       if (sectionResponse.ok) {
         if (sectionBody.task) setTask(sectionBody.task as SampleTaskDTO);
         hydrateSections((sectionBody.task || nextTask) as SampleTaskDTO, Array.isArray(sectionBody.sections) ? sectionBody.sections : []);
@@ -404,13 +494,14 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
 
   const reloadTaskOnly = useCallback(async () => {
     const response = await fetch(`/api/sample-tasks/code/${encodeURIComponent(code)}`, { cache: 'no-store' });
-    const body = await bodyJson(response);
+    const body = await captureBody(response);
     if (!response.ok) throw new Error(body.error || '样品任务刷新失败');
     setTask(body.task as SampleTaskDTO);
     return body.task as SampleTaskDTO;
   }, [code]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (new URLSearchParams(window.location.search).get('tab') === 'photos') setTab('photos'); }, []);
   useEffect(() => {
     setOnline(navigator.onLine);
     const markOnline = () => setOnline(true);
@@ -435,21 +526,21 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     const hydrateQueue = async () => {
       try {
         const stored = await readPhotoStoreValue(photoQueueKey);
-        const legacy = stored ? null : await readPhotoStoreValue(legacyPhotoQueueKey);
-        let items: StoredLocalPhoto[] = [];
-        if (stored && Array.isArray(stored.items)) items = stored.items as StoredLocalPhoto[];
-        else if (legacy?.file instanceof File) items = [{ id: newMutationId(), file: legacy.file, originalName: legacy.file.name, category: (legacy.category || 'UNCLASSIFIED') as SamplePhotoCategoryDTO, caption: String(legacy.caption || ''), linkedEntryId: String(legacy.linkedEntryId || ''), source: 'CAMERA', mutationId: String(legacy.mutationId || newMutationId()), status: 'LOCAL', progress: 0, error: '' }];
+        const items: StoredLocalPhoto[] = Array.isArray(stored?.items) ? stored.items : [];
         const hydrated = items.filter(item => item.file instanceof File).map(item => ({ ...item, status: item.status === 'UPLOADING' ? 'LOCAL' as const : item.status, progress: item.status === 'UPLOADING' ? 0 : Number(item.progress || 0), objectUrl: createObjectUrl(item.file) }));
         setPhotoQueue(hydrated);
-        if (legacy && hydrated.length) {
-          await writePhotoStoreValue(photoQueueKey, { version: 2, items: hydrated.map(({ objectUrl: _objectUrl, ...item }) => item) });
-          await writePhotoStoreValue(legacyPhotoQueueKey, null);
+        const owner = localStorage.getItem(legacyClaimKey);
+        if (!owner || owner === _user.id) {
+          const oldQueue = await readPhotoStoreValue(oldPhotoQueueKey), single = await readPhotoStoreValue(legacyPhotoQueueKey);
+          const generic = JSON.parse(localStorage.getItem(oldGenericKey) || 'null');
+          const sections = JSON.parse(localStorage.getItem(oldSectionKey) || 'null');
+          setLegacyAvailable(Boolean(oldQueue?.items?.length || single?.file || generic?.form && hasMeaningfulForm(generic.form) || sections?.dirtyKinds?.length));
         }
       } catch { setMessage('本机照片队列读取失败，请重新选择照片'); }
       finally { photoQueueHydrated.current = true; }
     };
     void hydrateQueue();
-  }, [createObjectUrl, legacyPhotoQueueKey, photoQueueKey]);
+  }, [createObjectUrl, legacyPhotoQueueKey, photoQueueKey, legacyClaimKey, oldPhotoQueueKey, oldGenericKey, oldSectionKey, _user.id]);
 
   useEffect(() => () => { for (const url of objectUrlsRef.current) URL.revokeObjectURL(url); objectUrlsRef.current.clear(); }, []);
   useEffect(() => {
@@ -471,8 +562,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   }, [activeKind, dirtySections, lastActiveRow, processRows, sectionDraftKey, strippingRows]);
   useEffect(() => {
     if (!photoQueueHydrated.current) return;
-    const items = photoQueue.map(({ objectUrl: _objectUrl, ...item }) => item);
-    void writePhotoStoreValue(photoQueueKey, items.length ? { version: 2, items } : null).catch(() => setMessage('照片队列保存失败，请保持页面打开后重试'));
+    void persistPhotoQueue(photoQueue).catch(() => setMessage('照片队列保存失败，请保持页面打开后重试'));
   }, [photoQueue, photoQueueKey]);
   useEffect(() => { onDirtyChange?.(!!(formHasData || dirtySections.size || photoQueue.length || saving || savingSection || submitting || photoUploading)); }, [onDirtyChange, formHasData, dirtySections.size, photoQueue.length, saving, savingSection, submitting, photoUploading]);
   useEffect(() => {
@@ -576,6 +666,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     if (!online) { setMessage('当前离线：内容已保存在本机，联网后请再次点击保存草稿'); return; }
     setSavingSection(kind);
     try {
+      if (!await checkCaptureAccess()) return;
       const rows = kind === 'PROCESS_TIME' ? serializeProcessRows(processRows) : serializeStrippingRows(strippingRows);
       const activeRows = kind === 'PROCESS_TIME' ? processRows : strippingRows;
       const response = await fetch(`/api/sample-tasks/${task.id}/sections/${kind}`, {
@@ -588,7 +679,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
           uiState: { visibleRowCount: activeRows.length, lastEditedRowId: lastActiveRow[kind] || activeRows[0]?.rowId || '', lastActiveKind: kind },
         }),
       });
-      const body = await bodyJson(response);
+      const body = await captureBody(response);
       if (!response.ok) throw new Error(body.error || '草稿保存失败');
       if (body.task) setTask(current => !current || (body.task as SampleTaskDTO).version >= current.version ? body.task as SampleTaskDTO : current);
       const section = body.section as SampleSectionEnvelope;
@@ -622,6 +713,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     if (!task || readOnly || (!editingEntry && !hasMeaningfulForm(form))) return;
     setSaving(true);
     try {
+      if (!await checkCaptureAccess()) return;
       const response = await fetch(editingEntry ? `/api/sample-entries/${editingEntry.id}` : `/api/sample-tasks/${task.id}/entries`, {
         method: editingEntry ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -629,7 +721,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
           ...(!editingEntry ? { clientMutationId: entryMutationId } : {}), ...(editingEntry ? { expectedVersion: editingEntry.version } : {}),
         }),
       });
-      const body = await bodyJson(response);
+      const body = await captureBody(response);
       if (!response.ok) throw new Error(body.error || '数据保存失败');
       setTask(body.task as SampleTaskDTO);
       setForm({ ...emptyDataForm, kind: form.kind });
@@ -643,11 +735,12 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   async function deleteEntry(entry: SampleDataEntryDTO) {
     if (!task || readOnly || !window.confirm('删除这条样品采集记录？已发布记录不能删除。')) return;
     try {
+      if (!await checkCaptureAccess()) return;
       const response = await fetch(`/api/sample-entries/${entry.id}`, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ expectedVersion: entry.version, expectedTaskVersion: task.version }),
       });
-      const body = await bodyJson(response);
+      const body = await captureBody(response);
       if (!response.ok) throw new Error(body.error || '删除失败');
       setTask(body.task as SampleTaskDTO); setMessage('记录已软删除并保留审计痕迹');
     } catch (reason) { setMessage(reason instanceof Error ? reason.message : '删除失败'); }
@@ -660,7 +753,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   }
 
   async function choosePhotos(files: FileList | null, source: PhotoSource) {
-    if (!files?.length || readOnly) return;
+    if (!files?.length || readOnly || !await checkCaptureAccess()) return;
     setPhotoPreparing(true);
     let added = 0;
     for (const file of Array.from(files)) {
@@ -677,6 +770,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   }
 
   function openPhotoPicker(category: SamplePhotoCategoryDTO, source: PhotoSource) {
+    if (readOnly) return;
     photoCategoryRef.current = category;
     setPhotoCategory(category);
     window.requestAnimationFrame(() => (source === 'CAMERA' ? cameraInputRef.current : albumInputRef.current)?.click());
@@ -719,7 +813,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
         },
         body: uploadFile,
       });
-      const body = await bodyJson(response);
+      const body = await captureBody(response);
       if (!response.ok) throw new Error(body.error || '照片上传失败');
       if (body.task) setTask(current => !current || (body.task as SampleTaskDTO).version >= current.version ? body.task as SampleTaskDTO : current);
       updateLocalPhoto(item.id, { progress: 100 }); removeLocalPhoto(item.id); return body.deduplicated === true ? 'deduplicated' as const : 'uploaded' as const;
@@ -733,10 +827,12 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     if (!task || readOnly || !online || photoUploading) return;
     const candidates = photoQueue.filter(item => (!targetId || item.id === targetId) && item.status !== 'UPLOADING');
     if (!candidates.length) return;
+    if (!await checkCaptureAccess()) return;
+    await persistPhotoQueue(photoQueue).catch(() => setMessage('本机保存失败，请保持页面打开直到上传完成'));
     setPhotoUploading(true);
     let cursor = 0; let success = 0; let deduplicated = 0;
     const workers = Array.from({ length: Math.min(2, candidates.length) }, async () => {
-      while (cursor < candidates.length) {
+      while (cursor < candidates.length && !photoAccessStopped.current) {
         const index = cursor++;
         const result = await uploadLocalPhoto(candidates[index], (task.photos.length || 0) + index);
         if (result) success += 1;
@@ -754,11 +850,12 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     if (!task || !photoEditor || readOnly) return;
     setPhotoEditing(true);
     try {
+      if (!await checkCaptureAccess()) return;
       const response = await fetch(`/api/sample-photos/${photoEditor.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ expectedVersion: photoEditor.version, expectedTaskVersion: task.version, category: photoEditor.category, caption: photoEditor.caption, captureSource: photoEditor.captureSource, linkedEntryId: photoEditor.linkedEntryId || null, sortOrder: photoEditor.sortOrder }),
       });
-      const body = await bodyJson(response);
+      const body = await captureBody(response);
       if (!response.ok) throw new Error(body.error || '照片说明保存失败');
       setTask(body.task as SampleTaskDTO); setPhotoEditor(null); setMessage('照片分类与说明已保存');
     } catch (reason) { setMessage(reason instanceof Error ? reason.message : '照片说明保存失败'); }
@@ -768,11 +865,12 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   async function deleteServerPhoto(photo: SamplePhotoDTO, skipConfirm = false, expectedTaskVersion = task?.version) {
     if (!task || readOnly || (!skipConfirm && !window.confirm('移除这张照片？原文件会按软删除规则保留。'))) return false;
     try {
+      if (!await checkCaptureAccess()) return false;
       const response = await fetch(`/api/sample-photos/${photo.id}`, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ expectedVersion: photo.version, expectedTaskVersion, deleteReason: '采集端删除草稿照片' }),
       });
-      const body = await bodyJson(response);
+      const body = await captureBody(response);
       if (!response.ok) throw new Error(body.error || '照片删除失败');
       setTask(body.task as SampleTaskDTO);
       setSelectedPhotos(current => { const next = new Set(current); next.delete(`server:${photo.id}`); return next; });
@@ -802,11 +900,12 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     if (!online) { setMessage('当前离线，联网后才能提交审核'); return; }
     setSubmitting(true);
     try {
+      if (!await checkCaptureAccess()) return;
       const response = await fetch(`/api/sample-tasks/${task.id}/submit`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ expectedVersion: task.version, clientMutationId: submissionMutationId }),
       });
-      const body = await bodyJson(response);
+      const body = await captureBody(response);
       if (!response.ok) throw new Error(body.error || '提交失败');
       setTask(body.task as SampleTaskDTO);
       const nextSubmissionMutationId = newMutationId(); setSubmissionMutationId(nextSubmissionMutationId);
@@ -817,14 +916,15 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   }
 
   async function withdrawSubmission() {
-    if (!task || task.status !== 'SUBMITTED' || !window.confirm('撤回本次提交并继续编辑？已经发生审核的项目不能撤回。')) return;
+    if (!task || permissionReadOnly || task.status !== 'SUBMITTED' || !window.confirm('撤回本次提交并继续编辑？已经发生审核的项目不能撤回。')) return;
     setWithdrawing(true);
     try {
+      if (!await checkCaptureAccess()) return;
       const response = await fetch(`/api/sample-tasks/${task.id}/withdraw-submission`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ expectedVersion: task.version, reason: '现场继续补充或修正样品采集数据', clientMutationId: withdrawMutationId }),
       });
-      const body = await bodyJson(response);
+      const body = await captureBody(response);
       if (!response.ok) throw new Error(body.error || '撤回提交失败');
       setTask(body.task as SampleTaskDTO);
       const nextWithdrawMutationId = newMutationId();
@@ -857,11 +957,13 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
 
   // Section hydration restores the active category and rows. Keep the editor closed
   // until it finishes so a late response cannot replace a category the user just opened.
+  const accessNotice = permissionReadOnly && <section className="sample-mobile-access-notice" role="status"><div><strong>{accessCode === 'SESSION_EXPIRED' ? '请重新登录' : accessCode === 'ACCOUNT_CHANGED' ? '账号已切换' : '当前为只读模式'}</strong><p>{accessIssue || '尚未开通手机样品采集协同，照片与参数可查看。'}</p></div>{accessCode === 'SESSION_EXPIRED' ? <a href={loginLink}>重新登录并返回</a> : accessCode === 'PASSWORD_CHANGE_REQUIRED' ? <a href={`/change-password?next=${encodeURIComponent(mobileNext)}`}>修改密码</a> : accessCode === 'ACCOUNT_CHANGED' ? <button onClick={() => window.location.reload()}>刷新当前账号</button> : <button disabled={checkingAccess} onClick={() => void checkCaptureAccess()}>{checkingAccess ? '检查中…' : '重新检查权限'}</button>}</section>;
+  const legacyNotice = legacyAvailable && <section className="sample-mobile-access-notice"><div><strong>发现升级前的本机草稿</strong><p>恢复至 {_user.displayName} · {_user.username}</p></div><button onClick={() => void restoreLegacyDraft()}>恢复旧草稿</button></section>;
   if (loading) return <main className="sample-capture-loading"><Loader2 className="spin" /><strong>正在读取样品二维码</strong><span>加载任务和已采集记录…</span></main>;
-  if (!task) return <main className="sample-capture-failure"><AlertTriangle /><strong>无法打开样品任务</strong><p>{error || '二维码无效或任务不存在'}</p><button type="button" onClick={() => void load()}><RefreshCw />重新读取</button></main>;
+  if (!task) return <main className="sample-capture-failure"><AlertTriangle /><strong>无法打开样品任务</strong><p>{error || '二维码无效或任务不存在'}</p>{accessNotice}{legacyNotice}<button type="button" onClick={() => void load()}><RefreshCw />重新读取</button></main>;
   if (hardClosed) return <main className="sample-capture-terminal">
     <header className="sample-capture-header">
-      <>{embedded ? <button type="button" aria-label="返回试制记录" onClick={onBack}><ArrowLeft /></button> : <Link href="/weekly-plan-center?branch=samples" aria-label="返回样品计划"><ArrowLeft /></Link>}</>
+      <>{embedded ? <button type="button" aria-label="返回试制记录" onClick={onBack}><ArrowLeft /></button> : <Link href={returnHref} aria-label="返回入口"><ArrowLeft /></Link>}</>
       <div><span>样品资料历史</span><strong>{task.code}</strong></div>
       <button type="button" aria-label="刷新" onClick={() => void load()}><RefreshCw /></button>
     </header>
@@ -898,7 +1000,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   const renderSubmitFooter = (kind?: SectionKind) => <footer className="sample-focus-submitbar">
     {submitted ? <>
       <div><span>当前版本已提交，需撤回后编辑</span></div>
-      <button className="secondary" type="button" disabled={withdrawing} onClick={() => void withdrawSubmission()}>{withdrawing ? <Loader2 className="spin" /> : <RotateCcw />}撤回提交</button>
+      <button className="secondary" type="button" disabled={withdrawing || permissionReadOnly} onClick={() => void withdrawSubmission()}>{withdrawing ? <Loader2 className="spin" /> : <RotateCcw />}撤回提交</button>
     </> : <>
       <button className="secondary" type="button" disabled={readOnly || saving || Boolean(savingSection)} onClick={() => kind ? void saveSection(kind) : void saveEntry()}>{saving || savingSection === kind ? <><Loader2 className="spin" />保存中</> : <><Save />保存草稿</>}</button>
       <button className="primary" type="button" disabled={!canSubmit} onClick={() => void submitTask()}>{submitting ? <><Loader2 className="spin" />提交中</> : <><Send />提交审核</>}</button>
@@ -924,11 +1026,12 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
     <input className="sample-photo-input-hidden" ref={cameraInputRef} type="file" accept="image/*" capture="environment" onChange={event => void choosePhotos(event.target.files, 'CAMERA')} />
     <input className="sample-photo-input-hidden" ref={albumInputRef} type="file" accept="image/*" multiple onChange={event => void choosePhotos(event.target.files, 'ALBUM')} />
     {!focused && <header className="sample-capture-header">
-      <>{embedded ? <button type="button" aria-label="返回试制记录" onClick={onBack}><ArrowLeft /></button> : <Link href="/weekly-plan-center?branch=samples" aria-label="返回样品计划"><ArrowLeft /></Link>}</>
+      <>{embedded ? <button type="button" aria-label="返回试制记录" onClick={onBack}><ArrowLeft /></button> : <Link href={returnHref} aria-label="返回入口"><ArrowLeft /></Link>}</>
       <div><span>样品数据采集</span><strong>{task.code}</strong></div>
       <button type="button" aria-label="刷新" onClick={() => void load()}><RefreshCw /></button>
     </header>}
 
+    {accessNotice}{legacyNotice}
     {tab === 'data' && activeSectionKind && renderFocusHeader(kindLabels[activeSectionKind], sectionSavedAt[activeSectionKind] ? `已保存 ${formatDraftTime(sectionSavedAt[activeSectionKind])}` : dirtySections.has(activeSectionKind) ? '有未保存内容' : '尚未保存')}
     {tab === 'data' && !activeSectionKind && renderFocusHeader(kindLabels[activeKind], formHasData ? '有未保存内容' : '草稿编辑')}
     {tab === 'photos' && renderFocusHeader('样品照片', `${task.photos.length + photoQueue.length} 张`)}
@@ -975,7 +1078,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
       </div>}
       <div className="sample-overview-actions">
         <button className="primary" type="button" disabled={hardClosed} onClick={() => void openCategory(captureCategories[0])}><Plus />继续采集</button>
-        {submitted ? <button className="secondary" type="button" disabled={withdrawing} onClick={() => void withdrawSubmission()}>{withdrawing ? <Loader2 className="spin" /> : <RotateCcw />}撤回提交并编辑</button>
+        {submitted ? <button className="secondary" type="button" disabled={withdrawing || permissionReadOnly} onClick={() => void withdrawSubmission()}>{withdrawing ? <Loader2 className="spin" /> : <RotateCcw />}撤回提交并编辑</button>
           : <button className="secondary" type="button" disabled={!canSubmit} onClick={() => void submitTask()}>{submitting ? <><Loader2 className="spin" />提交中</> : <><Send />提交本次记录</>}</button>}
       </div>
       <div className="sample-optional-note"><CheckCircle2 /><span><strong>保存不等于提交</strong><small>保存只更新服务器草稿；提交后当前版本冻结并进入管理员/工艺审核。</small></span></div>
@@ -1079,7 +1182,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
             <input aria-label="照片说明" disabled={readOnly || item.status === 'UPLOADING'} value={item.caption} placeholder="添加照片说明" onChange={event => updateLocalPhoto(item.id, { caption: event.target.value })} />
             {item.status === 'FAILED' && <p role="alert">{item.error}</p>}
           </div>
-          <footer><button type="button" onClick={() => setPreviewIndex(index)}><Eye />预览</button>{item.status === 'FAILED' && <button type="button" disabled={!online || photoUploading} onClick={() => void uploadPhotoQueue(item.id)}><RotateCcw />重试</button>}<button type="button" disabled={item.status === 'UPLOADING'} onClick={() => removeLocalPhoto(item.id)}><Trash2 />删除</button></footer>
+          <footer><button type="button" onClick={() => setPreviewIndex(index)}><Eye />预览</button>{item.status === 'FAILED' && <button type="button" disabled={!online || photoUploading || readOnly} onClick={() => void uploadPhotoQueue(item.id)}><RotateCcw />重试</button>}<button type="button" disabled={item.status === 'UPLOADING'} onClick={() => removeLocalPhoto(item.id)}><Trash2 />删除</button></footer>
         </article>)}
         {task.photos.map((photo, serverIndex) => {
           const previewPosition = photoQueue.length + serverIndex;
@@ -1107,12 +1210,12 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
         </article>)}
         {!task.entries.length && !task.photos.length && <div className="sample-mobile-empty"><Plus /><strong>本次还没有服务器记录</strong><p>先在各分区保存草稿，再统一提交审核。</p></div>}
       </div>
-      {submitted && <button className="sample-record-withdraw" type="button" disabled={withdrawing} onClick={() => void withdrawSubmission()}>{withdrawing ? <Loader2 className="spin" /> : <RotateCcw />}撤回提交并继续编辑</button>}
+      {submitted && <button className="sample-record-withdraw" type="button" disabled={withdrawing || permissionReadOnly} onClick={() => void withdrawSubmission()}>{withdrawing ? <Loader2 className="spin" /> : <RotateCcw />}撤回提交并继续编辑</button>}
     </section>}
 
     {tab === 'data' && activeSectionKind && renderSubmitFooter(activeSectionKind)}
     {tab === 'data' && !activeSectionKind && renderSubmitFooter()}
-    {tab === 'photos' && <footer className="sample-focus-submitbar sample-photo-submitbar"><div><CloudOff /><span>{photoQueue.length ? `还有 ${photoQueue.length} 张照片未同步` : '全部照片已同步'}</span></div><button className="secondary" type="button" disabled={readOnly || photoPreparing} onClick={() => setMessage('照片队列已保存在本机；上传成功后会同步到服务器草稿')}><Save />保存草稿</button><button className="primary" type="button" disabled={!canSubmit} onClick={() => void submitTask()}><Send />提交审核</button></footer>}
+    {tab === 'photos' && <footer className="sample-focus-submitbar sample-photo-submitbar"><div><CloudOff /><span>{photoQueue.length ? `还有 ${photoQueue.length} 张照片未同步` : '全部照片已同步'}</span></div><button className="secondary" type="button" disabled={photoPreparing} onClick={() => void saveLocalPhotos()}><Save />保存草稿</button><button className="primary" type="button" disabled={!canSubmit} onClick={() => void submitTask()}><Send />提交审核</button></footer>}
 
     {photoEditor && <div className="sample-photo-editor-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPhotoEditor(null); }}>
       <section className="sample-photo-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-photo-editor-title">

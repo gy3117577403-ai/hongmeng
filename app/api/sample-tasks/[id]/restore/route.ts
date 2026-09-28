@@ -24,7 +24,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     });
     return NextResponse.json({ ok: true, task });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof ForbiddenError) return NextResponse.json({ ok: false, error: '仅系统管理员可以恢复样品任务' }, { status: 403 });
     if (error instanceof SampleTaskDeletionError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     console.error('sample task restore failed', error);

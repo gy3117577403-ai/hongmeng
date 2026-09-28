@@ -11,12 +11,13 @@ assert.ok(['localhost','127.0.0.1'].includes(new URL(base).hostname));
 assert.ok(['localhost','127.0.0.1'].includes(new URL(process.env.DATABASE_URL).hostname),'Isolated local database only');
 const db=new PrismaClient(),tag='SL-'+randomUUID().slice(0,8),checks=[],password='Codex-Mobile-Sample-2026!R',initial='Codex-Mobile-Start-2026!Z';let cookie='';
 async function req(label,url,body,expected=200,method=body===undefined?'GET':'POST'){
- const response=await fetch(base+url,{method,headers:{Cookie:cookie,Origin:base,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(45000)});
+ const response=await fetch(base+url,{method,headers:{Cookie:cookie,Origin:base,...(body===undefined||body instanceof FormData?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:body instanceof FormData?body:JSON.stringify(body),signal:AbortSignal.timeout(45000)});
  const data=await response.json();assert.equal(response.status,expected,`${label}: ${JSON.stringify(data).slice(0,650)}`);if(url==='/api/auth/login')cookie=response.headers.get('set-cookie')?.match(/hm_session=[^;]+/)?.[0]||'';checks.push({label,status:response.status});return data;
 }
 const check=(ok,label)=>{assert.ok(ok,label);checks.push({label});};
 const login=(username,password)=>req('login disposable account','/api/auth/login',{username,password});
 try {
+ await import('./check-sample-capture-migration.mjs');
  await req('anonymous library requires login','/api/sample-library',undefined,401);
  if(process.env.SAMPLE_LIBRARY_INITIAL_PASSWORD){await login(process.env.SEED_ADMIN_USERNAME,process.env.SAMPLE_LIBRARY_INITIAL_PASSWORD);await req('initialize isolated admin password','/api/auth/change-password',{currentPassword:process.env.SAMPLE_LIBRARY_INITIAL_PASSWORD,newPassword:process.env.SMOKE_ADMIN_CHANGED_PASSWORD,confirmPassword:process.env.SMOKE_ADMIN_CHANGED_PASSWORD});}
  await login(process.env.SEED_ADMIN_USERNAME,process.env.SMOKE_ADMIN_CHANGED_PASSWORD);const adminCookie=cookie;
@@ -86,9 +87,47 @@ try {
  cookie=adminCookie;
  const fresh=(await req('load current mobile account version','/api/users')).users.find(user=>user.id===reader.id);
  const revoked=(await req('revoke mobile entitlement','/api/users/sample-library-access',{id:reader.id,enabled:false,expectedUpdatedAt:fresh.updatedAt})).user;
- cookie=mobileCookie;await req('revocation invalidates old cookie','/api/sample-library',undefined,403);
+ cookie=mobileCookie;await req('revocation invalidates old cookie','/api/sample-library',undefined,401);
  cookie=adminCookie;await req('restore mobile fixture for browser','/api/users/sample-library-access',{id:reader.id,enabled:true,expectedUpdatedAt:revoked.updatedAt});
- const fixture={marker:tag,username:reader.username,password,adminUsername:process.env.SEED_ADMIN_USERNAME,adminPassword:process.env.SMOKE_ADMIN_CHANGED_PASSWORD,photoId:first.id,productId:p.id,model:p.specification,customer,otherCustomer,taskCode:current.qrCode,oldKey:old.id+':1',rejectedKey:old.id+':2'};
+ // Reproduce a production READ + technology COLLABORATE account without giving it planning writes.
+ const engineer=catalog.departments.find(d=>d.code==='ENGINEERING');assert.ok(engineer);
+ const captureEmployee=(await req('create independent capture employee','/api/employees',{name:tag+'采集员工',departmentId:engineer.id},201)).employee;
+ const captureAccount=(await req('create read-only production account','/api/users/module-access',{employeeId:captureEmployee.id,username:captureEmployee.employeeNo,displayName:captureEmployee.name,password:initial,accountStatus:'ACTIVE',modulePermissions:{production:'READ',technology:'COLLABORATE',collaboration:'COLLABORATE'},workbenchEnabled:true,fieldReportEnabled:false,sampleCaptureEnabled:false})).user;
+ await login(captureAccount.username,initial);await req('capture account initial password','/api/auth/change-password',{currentPassword:initial,newPassword:password,confirmPassword:password});await login(captureAccount.username,password);
+ await req('read-only account can view QR task','/api/sample-tasks/code/'+current.qrCode);
+ await req('read-only account cannot upload','/api/sample-tasks/'+current.id+'/photos',{},403);
+ const oldCaptureCookie=cookie;cookie=adminCookie;
+ const latestCapture=(await req('refresh capture account','/api/users')).users.find(u=>u.id===captureAccount.id);
+ const granted=(await req('independent capture grant preserves business modules','/api/users/module-access',{id:latestCapture.id,displayName:latestCapture.displayName,accountStatus:'ACTIVE',sampleCaptureEnabled:true,preserveBusinessGrants:true,expectedUpdatedAt:latestCapture.updatedAt})).user;
+ check(granted.accessMethods.sampleCapture&&granted.moduleAccess.permissions.production==='READ','capture grant never promotes production READ');
+ cookie=oldCaptureCookie;await req('old capture session expires after permission change','/api/sample-tasks/code/'+current.qrCode,undefined,401);
+ await login(captureAccount.username,password);
+ const captureTask=await task(p,{status:'IN_PROGRESS'});
+ let snap=(await req('read QR with independent capture','/api/sample-tasks/code/'+captureTask.qrCode)).task;
+ const captureContext=await req('capture context exposes process choices only','/api/sample-team/context?capture=1');assert.equal(captureContext.members.length,0);assert.equal(captureContext.products.length,0);
+ const section=await req('save stripping section as ordinary employee','/api/sample-tasks/'+snap.id+'/sections/STRIPPING',{expectedTaskVersion:snap.version,expectedSectionRevision:0,clientMutationId:randomUUID(),payload:{rows:[{rowId:'qa-strip',model:'QA-CONNECTOR',outerPeelMm:3,innerPeelMm:2}]}},200,'PUT');snap=section.task;
+ snap=(await req('save ordinary sample entry','/api/sample-tasks/'+snap.id+'/entries',{kind:'NOTICE',label:'权限验收',payload:{content:'独立采集权限'},expectedTaskVersion:snap.version,clientMutationId:randomUUID()},201)).task;
+ const form=new FormData();form.set('file',new Blob([image],{type:'image/jpeg'}),'capture.jpg');form.set('category','FINISHED');form.set('clientMutationId',randomUUID());form.set('expectedTaskVersion',String(snap.version));form.set('captureSource','ALBUM');
+ const uploaded=await req('ordinary employee photo upload to S3','/api/sample-tasks/'+snap.id+'/photos',form,201);snap=uploaded.task;
+ const replay=await req('photo retry is deduplicated','/api/sample-tasks/'+snap.id+'/photos',form,200);assert.equal(replay.deduplicated,true);assert.equal(replay.task.photos.length,1);
+ const media=await fetch(base+snap.photos[0].contentUrl,{headers:{Cookie:cookie}});assert.equal(media.status,200);check((await media.arrayBuffer()).byteLength>100,'ordinary capture employee can read uploaded image');
+ for(const [url,method] of [['/api/sample-tasks','POST'],['/api/sample-tasks/'+snap.id,'PATCH'],['/api/sample-tasks/'+snap.id+'/review','POST'],['/api/sample-tasks/schedule','POST'],['/api/users/module-access','POST']]) await req('capture grant rejects privileged '+url,url,{},403,method);
+ snap=(await req('ordinary employee submits package','/api/sample-tasks/'+snap.id+'/submit',{expectedVersion:snap.version,clientMutationId:randomUUID()})).task;assert.equal(snap.status,'SUBMITTED');
+ snap=(await req('ordinary employee withdraws unreviewed package','/api/sample-tasks/'+snap.id+'/withdraw-submission',{expectedVersion:snap.version,clientMutationId:randomUUID(),reason:'继续补充照片'})).task;assert.notEqual(snap.status,'SUBMITTED');
+ // Keep a second genuine read-only account for browser controls and cross-account draft tests.
+ cookie=adminCookie;
+ const readEmployee=(await req('create capture read-only browser employee','/api/employees',{name:tag+'只读员工',departmentId:engineer.id},201)).employee;
+ const readAccount=(await req('grant production read without capture','/api/users/module-access',{employeeId:readEmployee.id,username:readEmployee.employeeNo,displayName:readEmployee.name,password:initial,accountStatus:'ACTIVE',modulePermissions:{production:'READ'},workbenchEnabled:true,fieldReportEnabled:false})).user;
+ await login(readAccount.username,initial);await req('reader initial password','/api/auth/change-password',{currentPassword:initial,newPassword:password,confirmPassword:password});
+ cookie=adminCookie;
+ const soloEmployee=(await req('create capture-only mobile employee','/api/employees',{name:tag+'手机采集',departmentId:engineer.id},201)).employee;
+ const soloAccount=(await req('grant capture without desktop or library','/api/users/module-access',{employeeId:soloEmployee.id,username:soloEmployee.employeeNo,displayName:soloEmployee.name,password:initial,accountStatus:'ACTIVE',modulePermissions:{},workbenchEnabled:false,fieldReportEnabled:false,sampleCaptureEnabled:true})).user;
+ await login(soloAccount.username,initial);await req('solo initial password','/api/auth/change-password',{currentPassword:initial,newPassword:password,confirmPassword:password});
+ await req('solo can read task','/api/sample-tasks/code/'+current.qrCode);
+ await req('capture alone cannot read library','/api/sample-library',undefined,403);
+ cookie=adminCookie;
+ const browserTask=await task(p,{status:'IN_PROGRESS'});
+ const fixture={marker:tag,soloUsername:soloAccount.username,captureUsername:captureAccount.username,captureUserId:captureAccount.id,readUsername:readAccount.username,captureTaskCode:browserTask.qrCode,captureTaskId:browserTask.id,username:reader.username,password,adminUsername:process.env.SEED_ADMIN_USERNAME,adminPassword:process.env.SMOKE_ADMIN_CHANGED_PASSWORD,photoId:first.id,productId:p.id,model:p.specification,customer,otherCustomer,taskCode:current.qrCode,oldKey:old.id+':1',rejectedKey:old.id+':2'};
  const fixturePath=process.env.SAMPLE_LIBRARY_FIXTURE||'/tmp/sample-library-fixture.json';await fs.mkdir(path.dirname(fixturePath),{recursive:true});await fs.writeFile(fixturePath,JSON.stringify(fixture));
  const output=process.env.SAMPLE_LIBRARY_QA_OUTPUT||'artifacts/sample-library/http.json';await fs.mkdir(path.dirname(output),{recursive:true});await fs.writeFile(output,JSON.stringify({ok:true,marker:tag,checks},null,2));console.log(`Sample library HTTP acceptance: ${checks.length} checks passed`);
 } finally {await db.$disconnect();}

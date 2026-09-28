@@ -16,7 +16,7 @@ function taskIds(value: unknown) {
 }
 
 function respond(error: unknown) {
-  if (error instanceof UnauthorizedError) return unauthorized();
+  if (error instanceof UnauthorizedError) return unauthorized(error);
   if (error instanceof ForbiddenError) return NextResponse.json({ ok: false, error: '仅系统管理员可以清理样品测试数据' }, { status: 403 });
   if (error instanceof SampleTaskDeletionError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
   console.error('sample test cleanup failed', error);

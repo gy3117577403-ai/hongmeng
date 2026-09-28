@@ -88,7 +88,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { entryId: s
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json({ ok: true, task: await updatedTask(taskId) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_ENTRY_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品数据不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
@@ -155,7 +155,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { entryId: 
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     return NextResponse.json({ ok: true, task: await updatedTask(taskId) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_ENTRY_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品数据不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });

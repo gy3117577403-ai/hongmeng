@@ -31,7 +31,9 @@ export type Session = {
   sessionVersion?: number;
 };
 
-export class UnauthorizedError extends Error {}
+export class UnauthorizedError extends Error {
+  constructor(message = '未登录或登录已过期', readonly status: 401 | 403 = 401, readonly code = status === 401 ? 'SESSION_EXPIRED' : 'PERMISSION_DENIED') { super(message); }
+}
 export class ForbiddenError extends Error {}
 
 export const DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60;
@@ -236,7 +238,7 @@ export async function requireUser(options?: {
   const user = await currentUser();
   if (!user) throw new UnauthorizedError();
   if (user.mustChangePassword && options?.allowPasswordChange !== true) {
-    throw new UnauthorizedError('首次登录或密码重置后必须先修改密码');
+    throw new UnauthorizedError('首次登录或密码重置后必须先修改密码', 403, 'PASSWORD_CHANGE_REQUIRED');
   }
   const requestMethod = headers().get('x-hm-request-method');
   if (options?.allowPasswordChange === true) return user;
@@ -245,11 +247,11 @@ export async function requireUser(options?: {
     ? canAccessApiRoute(user.access, requestPath, requestMethod)
     : null;
   if (routeAllowed === false || (routeAllowed === null && user.accessConfigured && user.laborRole !== 'ADMIN')) {
-    throw new UnauthorizedError();
+    throw new UnauthorizedError('当前账号没有执行此操作的权限', 403);
   }
   if (routeAllowed === true) return user;
   if (!canUseRequestMethod(user.laborRole, requestMethod, options?.write)) {
-    throw new UnauthorizedError();
+    throw new UnauthorizedError('当前账号没有执行此操作的权限', 403);
   }
   return user;
 }
@@ -260,7 +262,7 @@ export async function requireCapability(
 ) {
   const user = await currentUser();
   if (!user) throw new UnauthorizedError();
-  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码');
+  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码', 403, 'PASSWORD_CHANGE_REQUIRED');
   const requestPath = headers().get('x-hm-request-path');
   if (user.access.modulePermissions != null && requestPath && canAccessApiRoute(user.access, requestPath, headers().get('x-hm-request-method')) === false) throw new ForbiddenError();
   if (!hasCapability(user.access, module, action)) throw new ForbiddenError();
@@ -270,7 +272,7 @@ export async function requireCapability(
 export async function requireAdmin() {
   const user = await currentUser();
   if (!user) throw new UnauthorizedError();
-  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码');
+  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码', 403, 'PASSWORD_CHANGE_REQUIRED');
   if (
     user.laborRole !== 'ADMIN'
     && !hasCapability(user.access, 'ACCOUNT_ADMIN', 'MANAGE')
@@ -281,7 +283,7 @@ export async function requireAdmin() {
 export async function requireEmployeeAccountAuthorizer() {
   const user = await currentUser();
   if (!user) throw new UnauthorizedError();
-  if (user.mustChangePassword) throw new UnauthorizedError('请先修改初始密码');
+  if (user.mustChangePassword) throw new UnauthorizedError('请先修改初始密码', 403, 'PASSWORD_CHANGE_REQUIRED');
   if (!canAuthorizeEmployeeAccounts(user)) throw new ForbiddenError();
   return user;
 }
@@ -289,7 +291,7 @@ export async function requireEmployeeAccountAuthorizer() {
 export async function requireEmployeeAccountManager() {
   const user = await currentUser();
   if (!user) throw new UnauthorizedError();
-  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码');
+  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码', 403, 'PASSWORD_CHANGE_REQUIRED');
   if (!canManageEmployeeAccounts(user)) throw new ForbiddenError();
   return user;
 }
@@ -302,12 +304,13 @@ export async function requireEmployeeAccountManager() {
 export async function requireSystemAdministrator() {
   const user = await currentUser();
   if (!user) throw new UnauthorizedError();
-  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码');
+  if (user.mustChangePassword) throw new UnauthorizedError('首次登录或密码重置后必须先修改密码', 403, 'PASSWORD_CHANGE_REQUIRED');
   if (user.laborRole !== 'ADMIN') throw new ForbiddenError();
   return user;
 }
 
-export function unauthorized() {
+export function unauthorized(error?: UnauthorizedError) {
+  if (error) return NextResponse.json({ ok: false, error: error.message, message: error.message, code: error.code }, { status: error.status });
   const authenticated = !!verifyToken(cookies().get(SESSION_COOKIE)?.value);
   const message = authenticated ? '当前账号没有执行此操作的权限' : '未登录或登录已过期';
   return NextResponse.json({ ok: false, error: message, message }, { status: authenticated ? 403 : 401 });

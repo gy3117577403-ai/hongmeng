@@ -10,11 +10,11 @@ function sampleMemberScore(employee: { team: string | null; position: string | n
   return /样品/.test(text) ? 1 : 0;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await requireUser();
     const managementModules = new Set(['BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS']);
-    const captureOnly = user.access.modules.includes('FIELD_REPORT')
+    const captureOnly = new URL(request.url).searchParams.get('capture') === '1' || user.access.sampleCaptureEnabled || user.access.modules.includes('FIELD_REPORT')
       && !user.access.modules.some(module => managementModules.has(module));
     if (captureOnly) {
       const processes = await prisma.processDefinition.findMany({
@@ -54,7 +54,7 @@ export async function GET() {
       processes,
     });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     console.error('sample team context failed', error);
     return NextResponse.json({ ok: false, error: '样品组基础资料加载失败' }, { status: 500 });
   }

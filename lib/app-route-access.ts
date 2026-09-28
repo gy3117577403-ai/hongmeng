@@ -114,6 +114,7 @@ export function routeAccessRule(pathname: string): RouteAccessRule | null {
 
 export function canAccessAppRoute(access: AppAccess, pathname: string): boolean {
   if (/^\/sample-library(?:\/|$)/.test(normalizedPath(pathname))) return canReadSampleLibrary(access);
+  if (access.sampleCaptureEnabled && /^\/sample-capture\/[^/]+$/.test(normalizedPath(pathname))) return true;
   const moduleDecision = modulePageDecision(access, pathname);
   if (moduleDecision !== null) return moduleDecision;
   // The former production sample workbench now lives inside planning. Preserve its

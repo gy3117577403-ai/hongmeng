@@ -24,7 +24,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       sections: task.draftSections.map(serializeSampleDraftSection),
     });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     console.error('load sample draft sections failed', error);
     return NextResponse.json({ ok: false, error: '样品采集草稿加载失败' }, { status: 500 });
   }

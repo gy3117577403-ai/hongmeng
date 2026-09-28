@@ -10,7 +10,7 @@ import { resolveAccessContext, hasCapability, type DepartmentCode } from '@/lib/
 export type ModuleAccountInput = {
   id?: unknown; employeeId?: unknown; username?: unknown; displayName?: unknown; password?: unknown;
   accountStatus?: unknown; modulePermissions?: unknown; workbenchEnabled?: unknown; fieldReportEnabled?: unknown;
-  expectedUpdatedAt?: unknown; sampleLibraryEnabled?: unknown; employeeAccountManager?: unknown; preserveBusinessGrants?: unknown;
+  expectedUpdatedAt?: unknown; sampleLibraryEnabled?: unknown; sampleCaptureEnabled?: unknown; employeeAccountManager?: unknown; preserveBusinessGrants?: unknown;
 };
 export async function saveModuleAccount(actor: EmployeeAccountActor, input: ModuleAccountInput) {
   if (!canAuthorizeEmployeeAccounts(actor)) throw new AccessGrantInputError('未开通员工业务授权管理', 403);
@@ -26,6 +26,7 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
     if (!input.workbenchEnabled && Object.keys(permissions).length) throw new AccessGrantInputError('关闭后台时请清空后台模块');
     if (input.workbenchEnabled && !Object.keys(permissions).length) throw new AccessGrantInputError('请至少开通一个后台模块');
   }
+  if (input.sampleCaptureEnabled !== undefined && typeof input.sampleCaptureEnabled !== 'boolean') throw new AccessGrantInputError('请选择有效的手机样品采集权限');
   if (input.sampleLibraryEnabled !== undefined && typeof input.sampleLibraryEnabled !== 'boolean') throw new AccessGrantInputError('请选择有效的手机样品库权限');
   if (input.employeeAccountManager !== undefined && (!global || typeof input.employeeAccountManager !== 'boolean')) throw new AccessGrantInputError('员工业务授权管理开关只能由管理员设置', 403);
   const status = String(input.accountStatus || 'ACTIVE');
@@ -41,11 +42,12 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
     const activeGrants = previous?.accessGrants.filter(grant => grant.isActive && grant.effectiveFrom <= now && (!grant.effectiveTo || grant.effectiveTo > now)) || [];
     const enabled = (profile: string) => activeGrants.some(grant => grant.profile === profile);
     const previousConfig = moduleConfiguration(activeGrants);
+    const sampleCaptureEnabled = input.sampleCaptureEnabled === undefined ? enabled('SAMPLE_CAPTURE_COLLABORATOR') : input.sampleCaptureEnabled;
     const sampleLibraryEnabled = input.sampleLibraryEnabled === undefined ? enabled('SAMPLE_LIBRARY_READER') : input.sampleLibraryEnabled;
     const employeeAccountManager = input.employeeAccountManager === undefined ? enabled('EMPLOYEE_ACCESS_MANAGER') : input.employeeAccountManager;
-    const workbenchEnabled = preserve ? previousConfig?.workbenchEnabled ?? activeGrants.some(grant => !['FIELD_REPORTER','SAMPLE_LIBRARY_READER','EMPLOYEE_ACCESS_MANAGER'].includes(grant.profile)) : input.workbenchEnabled === true;
+    const workbenchEnabled = preserve ? previousConfig?.workbenchEnabled ?? activeGrants.some(grant => !['FIELD_REPORTER','SAMPLE_LIBRARY_READER','SAMPLE_CAPTURE_COLLABORATOR','EMPLOYEE_ACCESS_MANAGER'].includes(grant.profile)) : input.workbenchEnabled === true;
     const fieldReportEnabled = preserve ? enabled('FIELD_REPORTER') : input.fieldReportEnabled === true;
-    if (!workbenchEnabled && !fieldReportEnabled && !sampleLibraryEnabled) throw new AccessGrantInputError('请至少保留一种访问方式；暂停访问请停用账号');
+    if (!workbenchEnabled && !fieldReportEnabled && !sampleLibraryEnabled && !sampleCaptureEnabled) throw new AccessGrantInputError('请至少保留一种访问方式；暂停访问请停用账号');
     if (employeeAccountManager) {
       const legacyAccess = resolveAccessContext(activeGrants.map(grant => ({ ...grant, departmentCode: grant.department?.code as DepartmentCode | null })));
       const hrCollaborator = preserve ? hasCapability(legacyAccess, 'HR', 'READ') && hasCapability(legacyAccess, 'HR', 'UPDATE') : workbenchEnabled && permissions.people === 'COLLABORATE';
@@ -58,7 +60,7 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
     if (!preserve && fieldReportEnabled && employee.departmentRef?.code !== 'PRODUCTION') throw new AccessGrantInputError('扫码报工仅对生产岗位开放，后台模块不受部门限制');
     const username = previous?.username || String(input.username || employee.employeeNo).trim();
     if (!username || username.length > 80) throw new AccessGrantInputError('账号格式不正确');
-    if (!previous || password || previous.fieldPasswordOnly && (workbenchEnabled || sampleLibraryEnabled)) {
+    if (!previous || password || previous.fieldPasswordOnly && (workbenchEnabled || sampleLibraryEnabled || sampleCaptureEnabled)) {
       const error = validateNewPassword(password, username);
       if (error) throw new AccessGrantInputError(previous?.fieldPasswordOnly ? '开通浏览访问需设置独立密码：' + error : error);
     }
@@ -76,6 +78,7 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
       accountId = previous.id;
       if (!preserve) await tx.userAccessGrant.updateMany({ where: { userId: accountId, isActive: true }, data: { isActive: false, version: { increment: 1 }, grantedById: actorId } });
       else await tx.userAccessGrant.updateMany({ where: { userId: accountId, isActive: true, profile: { in: [
+        ...(input.sampleCaptureEnabled !== undefined ? ['SAMPLE_CAPTURE_COLLABORATOR' as const] : []),
         ...(input.sampleLibraryEnabled !== undefined ? ['SAMPLE_LIBRARY_READER' as const] : []),
         ...(input.employeeAccountManager !== undefined ? ['EMPLOYEE_ACCESS_MANAGER' as const] : []),
       ] } }, data: { isActive: false, version: { increment: 1 }, grantedById: actorId } });
@@ -90,13 +93,14 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
       } });
       if (fieldReportEnabled) await tx.userAccessGrant.create({ data: { userId: accountId, profile: 'FIELD_REPORTER', grantType: 'CONCURRENT', scopeKey: 'EMPLOYEE:' + employeeId, departmentId: employee.departmentId, effectiveFrom: now, grantedById: actorId } });
     }
+    if (sampleCaptureEnabled && (!preserve || input.sampleCaptureEnabled !== undefined)) await tx.userAccessGrant.create({ data: { userId: accountId, profile: 'SAMPLE_CAPTURE_COLLABORATOR', grantType: 'CONCURRENT', scopeKey: 'MOBILE:SAMPLE_CAPTURE', effectiveFrom: now, grantedById: actorId } });
     if (sampleLibraryEnabled && (!preserve || input.sampleLibraryEnabled !== undefined)) await tx.userAccessGrant.create({ data: { userId: accountId, profile: 'SAMPLE_LIBRARY_READER', grantType: 'CONCURRENT', scopeKey: 'MOBILE:SAMPLE_LIBRARY', effectiveFrom: now, grantedById: actorId } });
     if (employeeAccountManager && (!preserve || input.employeeAccountManager !== undefined)) await tx.userAccessGrant.create({ data: { userId: accountId, profile: 'EMPLOYEE_ACCESS_MANAGER', grantType: 'CONCURRENT', scopeKey: 'EMPLOYEES:BUSINESS_ACCESS', effectiveFrom: now, grantedById: actorId } });
     await reconcileFieldReportPinEligibility(tx, employeeId, { resetById: actorId });
     await tx.operationLog.create({ data: { userId: actorId, action: id ? 'ACCOUNT_MODULE_ACCESS_UPDATED' : 'ACCOUNT_MODULE_ACCESS_CREATED', targetType: 'User', targetId: accountId, detail: {
       delegated: !global, preservedBusinessGrants: preserve,
       before: { configuration: previousConfig, grants: activeGrants.map(grant => ({ profile: grant.profile, scopeKey: grant.scopeKey })), status: previous?.accountStatus || null },
-      after: { permissions: preserve ? previousConfig?.permissions || null : permissions, workbenchEnabled, fieldReportEnabled, sampleLibraryEnabled, employeeAccountManager, status }, passwordChanged: Boolean(password),
+      after: { permissions: preserve ? previousConfig?.permissions || null : permissions, workbenchEnabled, fieldReportEnabled, sampleLibraryEnabled, sampleCaptureEnabled, employeeAccountManager, status }, passwordChanged: Boolean(password),
     } as Prisma.InputJsonValue } });
     return tx.user.findUniqueOrThrow({ where: { id: accountId }, include: adminUserInclude });
   });

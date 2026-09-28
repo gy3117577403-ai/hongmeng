@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
     const user = await requireUser();
     return NextResponse.json(await listSamplePlans(req.nextUrl.searchParams, user.employeeId));
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof SampleQueryError) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     console.error('sample task list failed', error);
     return NextResponse.json({ ok: false, error: '样品任务加载失败' }, { status: 500 });
@@ -163,7 +163,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null }, { status: 201 });
   } catch (error) {
     if (error instanceof SamplePlanError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof DrawingLibraryResolutionError) return NextResponse.json({ ok: false, error: error.message, code: error.code, itemIds: error.itemIds }, { status: 409 });
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_PRODUCT_NOT_FOUND') return NextResponse.json({ ok: false, error: '选择的产品资料不存在' }, { status: 404 });

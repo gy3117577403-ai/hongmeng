@@ -6,6 +6,7 @@ import {
 } from '@/lib/department-access';
 import { moduleApiDecision, type ModuleAccessCarrier } from '@/lib/module-permissions';
 import { canReadSampleLibrary } from '@/lib/sample-library-access';
+import { independentSampleCaptureRoute } from '@/lib/sample-capture-access';
 
 type ApiRule = {
   prefix: string;
@@ -748,6 +749,7 @@ export function canAccessApiRoute(
     return String(method || 'GET').toUpperCase() === 'POST' && (hasCapability(access, 'ACCOUNT_ADMIN', 'MANAGE')
       || Boolean(access.employeeAccountManager) && hasCapability(access, 'HR', 'READ') && hasCapability(access, 'HR', 'UPDATE'));
   }
+  if (independentSampleCaptureRoute(access, pathname, method || 'GET')) return true;
   const newRule = apiRouteAccessRule(pathname);
   const moduleDecision = moduleApiDecision(access, pathname, method, newRule?.anyOf);
   if (moduleDecision !== null) return moduleDecision && (!newRule?.allowedMethods || newRule.allowedMethods.includes(String(method || 'GET').toUpperCase()));

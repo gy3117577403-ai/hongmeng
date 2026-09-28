@@ -154,7 +154,7 @@ export async function POST(req: NextRequest) {
     };
     return NextResponse.json({ ok: true, fileName: file.name, rows: finalRows, summary });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof SamplePlanError) return NextResponse.json({ok:false,error:error.message},{status:error.status});
     console.error('sample plan import preview failed', error);
     return NextResponse.json({ ok: false, error: '批量导入预览失败，请检查模板后重试' }, { status: 500 });

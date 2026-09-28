@@ -24,7 +24,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       () => getObjectStream(photo.objectKey, { abortSignal: AbortSignal.timeout(25_000) }));
     return new NextResponse(new Uint8Array(bytes), { headers: { ...headers, 'Content-Type': variant === 'thumb' ? 'image/webp' : 'image/jpeg', 'X-Photo-Preview': variant } });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof ForbiddenError) return forbidden();
     const name = error instanceof Error ? error.name : '';
     const missing = name === 'NoSuchKey' || name === 'NotFound';

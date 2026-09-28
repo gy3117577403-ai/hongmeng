@@ -304,7 +304,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true, task: updated ? serializeSampleTask(updated) : null, photoId: photoResult.id, deduplicated: photoResult.duplicate }, { status: photoResult.duplicate ? 200 : 201 });
   } catch (error) {
     if (objectKey) await deleteObjectsBestEffort([objectKey]);
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof SamplePhotoRequestError) {
       const incidentId = crypto.randomUUID();
       console.error('parse sample photo request failed', {

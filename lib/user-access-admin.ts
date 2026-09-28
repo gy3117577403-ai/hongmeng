@@ -208,8 +208,9 @@ export function serializeAdminUser(
     fieldPin,
     accessMethods: {
       workbench: !passwordSetupRequired
-        && (moduleAccess ? moduleAccess.workbenchEnabled : activeGrants.some(grant => grant.profile !== AccessProfileKey.FIELD_REPORTER && grant.profile !== AccessProfileKey.SAMPLE_LIBRARY_READER && grant.profile !== AccessProfileKey.EMPLOYEE_ACCESS_MANAGER)),
+        && (moduleAccess ? moduleAccess.workbenchEnabled : activeGrants.some(grant => grant.profile !== AccessProfileKey.FIELD_REPORTER && grant.profile !== AccessProfileKey.SAMPLE_LIBRARY_READER && grant.profile !== AccessProfileKey.SAMPLE_CAPTURE_COLLABORATOR && grant.profile !== AccessProfileKey.EMPLOYEE_ACCESS_MANAGER)),
       sampleLibrary: profiles.has(AccessProfileKey.SAMPLE_LIBRARY_READER),
+      sampleCapture: profiles.has(AccessProfileKey.SAMPLE_CAPTURE_COLLABORATOR),
       employeeAccountManager: profiles.has(AccessProfileKey.EMPLOYEE_ACCESS_MANAGER),
       fieldReport: profiles.has(AccessProfileKey.FIELD_REPORTER),
       pin: fieldPin.configured && fieldPin.isActive && profiles.has(AccessProfileKey.FIELD_REPORTER),

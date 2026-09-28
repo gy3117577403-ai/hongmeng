@@ -311,7 +311,7 @@ export async function POST(req: NextRequest) {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 30_000 });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError) return unauthorized(error);
     if (error instanceof Error && error.message === 'SAMPLE_IMPORT_MUTATION_CONFLICT') {
       return NextResponse.json({ ok: false, error: '同一导入请求的内容已变化，请关闭窗口后重新导入' }, { status: 409 });
     }
