@@ -216,14 +216,16 @@ async function readPhotoStoreValue(key: string): Promise<Record<string, any> | n
 async function writePhotoStoreValue(key: string, value: Record<string, unknown> | null) {
   const db = await openPhotoDb();
   if (!db) throw new Error('当前浏览器无法保存照片草稿，请保持页面打开');
-  await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(PHOTO_STORE, 'readwrite');
-    if (value) transaction.objectStore(PHOTO_STORE).put(value, key);
-    else transaction.objectStore(PHOTO_STORE).delete(key);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-  db.close();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(PHOTO_STORE, 'readwrite');
+      if (value) transaction.objectStore(PHOTO_STORE).put(value, key);
+      else transaction.objectStore(PHOTO_STORE).delete(key);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('照片草稿保存中断'));
+    });
+  } finally { db.close(); }
 }
 
 function nonEmptyPayload(form: DataForm): Record<string, unknown> {
@@ -261,6 +263,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   const [accessCode, setAccessCode] = useState('');
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [legacyAvailable, setLegacyAvailable] = useState(false);
+  const [legacyRestoring, setLegacyRestoring] = useState(false);
   const photoAccessStopped = useRef(false);
   const photoPersistChain = useRef<Promise<void>>(Promise.resolve());
   const [tab, setTab] = useState<CaptureTab>('overview');
@@ -361,13 +364,16 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   }
 
   async function saveLocalPhotos() {
+    if (legacyRestoring) return;
     try { await persistPhotoQueue(photoQueue); setMessage('照片草稿已保存到当前账号的本机空间'); }
     catch { setMessage('照片草稿未能保存，请保持页面打开，不要退出'); }
   }
 
   async function restoreLegacyDraft() {
+    if (legacyRestoring) return;
     if (formHasData || dirtySections.size) { setMessage('请先保存当前文字或参数草稿，再恢复升级前草稿'); return; }
     if (!window.confirm(`将本机升级前的样品草稿恢复到 ${_user.displayName}（${_user.username}）？请确认这些草稿是你填写的。`)) return;
+    setLegacyRestoring(true);
     try {
       const claimant = localStorage.getItem(legacyClaimKey);
       if (claimant && claimant !== _user.id) { setLegacyAvailable(false); setMessage('这份旧草稿已由另一账号恢复'); return; }
@@ -389,11 +395,12 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
       if (restored.length) setTab('photos');
       setMessage(`已恢复旧草稿${restored.length ? `及 ${restored.length} 张照片` : ''}，确认内容后可重试上传`);
     } catch { setMessage('旧草稿恢复未完成，原草稿仍保留，请重试'); }
+    finally { setLegacyRestoring(false); }
   }
 
   const hardClosed = task?.status === 'COMPLETED' || task?.status === 'CANCELLED';
   const submitted = task?.status === 'SUBMITTED';
-  const readOnly = hardClosed || submitted || permissionReadOnly;
+  const readOnly = hardClosed || submitted || permissionReadOnly || legacyRestoring;
   const formHasData = useMemo(() => hasMeaningfulForm(form), [form]);
   const processHasData = useMemo(() => processRows.some(processRowHasContent), [processRows]);
   const strippingHasData = useMemo(() => strippingRows.some(strippingRowHasContent), [strippingRows]);
@@ -781,6 +788,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   }
 
   function removeLocalPhoto(id: string) {
+    if (legacyRestoring) return;
     setPhotoQueue(current => {
       const item = current.find(photo => photo.id === id); if (item) revokeObjectUrl(item.objectUrl);
       return current.filter(photo => photo.id !== id);
@@ -880,6 +888,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   }
 
   async function deleteSelectedPhotos() {
+    if (legacyRestoring) return;
     if (!selectedPhotos.size || !window.confirm(`删除选中的 ${selectedPhotos.size} 张照片？服务器照片将软删除。`)) return;
     const localIds = Array.from(selectedPhotos).filter(key => key.startsWith('local:')).map(key => key.slice(6));
     localIds.forEach(removeLocalPhoto);
@@ -958,7 +967,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
   // Section hydration restores the active category and rows. Keep the editor closed
   // until it finishes so a late response cannot replace a category the user just opened.
   const accessNotice = permissionReadOnly && <section className="sample-mobile-access-notice" role="status"><div><strong>{accessCode === 'SESSION_EXPIRED' ? '请重新登录' : accessCode === 'ACCOUNT_CHANGED' ? '账号已切换' : '当前为只读模式'}</strong><p>{accessIssue || '尚未开通手机样品采集协同，照片与参数可查看。'}</p></div>{accessCode === 'SESSION_EXPIRED' ? <a href={loginLink}>重新登录并返回</a> : accessCode === 'PASSWORD_CHANGE_REQUIRED' ? <a href={`/change-password?next=${encodeURIComponent(mobileNext)}`}>修改密码</a> : accessCode === 'ACCOUNT_CHANGED' ? <button onClick={() => window.location.reload()}>刷新当前账号</button> : <button disabled={checkingAccess} onClick={() => void checkCaptureAccess()}>{checkingAccess ? '检查中…' : '重新检查权限'}</button>}</section>;
-  const legacyNotice = legacyAvailable && <section className="sample-mobile-access-notice"><div><strong>发现升级前的本机草稿</strong><p>恢复至 {_user.displayName} · {_user.username}</p></div><button onClick={() => void restoreLegacyDraft()}>恢复旧草稿</button></section>;
+  const legacyNotice = (legacyAvailable || legacyRestoring) && <section className="sample-mobile-access-notice"><div><strong>{legacyRestoring ? '正在恢复旧草稿' : '发现升级前的本机草稿'}</strong><p>恢复至 {_user.displayName} · {_user.username}</p></div><button disabled={legacyRestoring} onClick={() => void restoreLegacyDraft()}>{legacyRestoring ? <><Loader2 className="spin" />恢复中</> : '恢复旧草稿'}</button></section>;
   if (loading) return <main className="sample-capture-loading"><Loader2 className="spin" /><strong>正在读取样品二维码</strong><span>加载任务和已采集记录…</span></main>;
   if (!task) return <main className="sample-capture-failure"><AlertTriangle /><strong>无法打开样品任务</strong><p>{error || '二维码无效或任务不存在'}</p>{accessNotice}{legacyNotice}<button type="button" onClick={() => void load()}><RefreshCw />重新读取</button></main>;
   if (hardClosed) return <main className="sample-capture-terminal">
@@ -1215,7 +1224,7 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
 
     {tab === 'data' && activeSectionKind && renderSubmitFooter(activeSectionKind)}
     {tab === 'data' && !activeSectionKind && renderSubmitFooter()}
-    {tab === 'photos' && <footer className="sample-focus-submitbar sample-photo-submitbar"><div><CloudOff /><span>{photoQueue.length ? `还有 ${photoQueue.length} 张照片未同步` : '全部照片已同步'}</span></div><button className="secondary" type="button" disabled={photoPreparing} onClick={() => void saveLocalPhotos()}><Save />保存草稿</button><button className="primary" type="button" disabled={!canSubmit} onClick={() => void submitTask()}><Send />提交审核</button></footer>}
+    {tab === 'photos' && <footer className="sample-focus-submitbar sample-photo-submitbar"><div><CloudOff /><span>{photoQueue.length ? `还有 ${photoQueue.length} 张照片未同步` : '全部照片已同步'}</span></div><button className="secondary" type="button" disabled={photoPreparing || legacyRestoring} onClick={() => void saveLocalPhotos()}><Save />保存草稿</button><button className="primary" type="button" disabled={!canSubmit} onClick={() => void submitTask()}><Send />提交审核</button></footer>}
 
     {photoEditor && <div className="sample-photo-editor-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPhotoEditor(null); }}>
       <section className="sample-photo-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-photo-editor-title">
