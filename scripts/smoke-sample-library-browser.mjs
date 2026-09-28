@@ -16,13 +16,14 @@ try{
   const engine=${JSON.stringify(engine)},f=${JSON.stringify(fixture)},origin=${JSON.stringify(origin)},dir=${JSON.stringify(dir)},checks=[],errors=[];
   const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label);};const shot=name=>page.screenshot({path:dir+'/'+name+'.png',animations:'disabled'});
   page.on('pageerror',error=>errors.push(String(error)));page.on('dialog',dialog=>dialog.accept());page.setDefaultTimeout(20000);
-  const login=async(username,password,next)=>{await page.goto(origin+'/login?next='+encodeURIComponent(next));await page.getByLabel('员工编号 / 管理账号').fill(username);await page.getByLabel('密码',{exact:true}).fill(password);await page.locator('button.primary-button').click();await page.waitForURL(u=>u.pathname===next.split('?')[0]);};
+  const fillLogin=async(username,password)=>{const userInput=page.getByLabel('员工编号 / 管理账号'),passwordInput=page.getByLabel('密码',{exact:true});await userInput.fill(username);if(/^[0-9]{2,12}$/.test(username))await page.locator('.login-employee-identity').filter({hasText:username}).waitFor();await passwordInput.fill(password);if(await userInput.inputValue()!==username||await passwordInput.inputValue()!==password)throw Error('Login fields changed before submission');await page.locator('.login-card button.primary-button').click();};
+  const login=async(username,password,next)=>{await page.goto(origin+'/login?next='+encodeURIComponent(next));await fillLogin(username,password);await page.waitForURL(u=>u.pathname===next.split('?')[0]);};
   const loaded=()=>page.locator('.sl-photo-grid img').first().waitFor();
   try{
    await page.setViewportSize({width:390,height:844});
    await page.goto(origin+'/sample-library?product='+f.productId);await page.waitForURL(u=>u.pathname==='/login');
    check((await page.evaluate(()=>new URL(window.location.href).searchParams.get('next'))).includes(f.productId),'QR login preserves product destination');
-   await page.getByLabel('员工编号 / 管理账号').fill(f.username);await page.getByLabel('密码',{exact:true}).fill(f.password);await page.locator('button.primary-button').click();await page.waitForURL(u=>u.pathname==='/sample-library');await loaded();
+   await fillLogin(f.username,f.password);await page.waitForURL(u=>u.pathname==='/sample-library');await loaded();
    check(await page.evaluate(()=>new URL(window.location.href).searchParams.get('product'))===f.productId,'mobile login returns to scanned product');
    check(await page.locator('.sl-version strong').textContent()==='已审核','older approved sample selected by default');
    for(const size of [{width:390,height:844},{width:360,height:800},{width:430,height:932}]){await page.setViewportSize(size);check(await page.locator('.sl-app').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'no horizontal overflow at '+size.width);await shot('detail-'+size.width);}

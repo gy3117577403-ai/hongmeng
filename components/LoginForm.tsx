@@ -21,6 +21,7 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [identity, setIdentity] = useState<EmployeeIdentity | null>(null);
@@ -45,6 +46,8 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
       setRememberAccount(true);
     } catch {
       localStorage.removeItem(REMEMBERED_ACCOUNT_KEY);
+    } finally {
+      setReady(true);
     }
   }, []);
 
@@ -147,7 +150,7 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
         </div>
       </section>
 
-      <form className="login-card" onSubmit={submit}>
+      <form className="login-card" onSubmit={submit} aria-busy={!ready || loading}>
         <div className="login-card-title">
           <span>账号登录</span>
           <strong>欢迎回来</strong>
@@ -156,7 +159,7 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
           <span><small>上次账号</small><strong>{rememberedAccount.displayName || rememberedAccount.loginId}</strong><em>{rememberedAccount.loginId}</em></span>
           <button type="button" onClick={clearRememberedAccount}>换个账号</button>
         </div>}
-        <label>员工编号 / 管理账号<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="生产员工请输入员工编号" autoFocus={!rememberedAccount} /></label>
+        <label>员工编号 / 管理账号<input value={username} onChange={e => setUsername(e.target.value)} disabled={!ready || loading} autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="生产员工请输入员工编号" /></label>
         {identity && <div className="login-employee-identity" role="status">
           <span>身份已识别</span>
           <strong>{identity.employeeNo} · {identity.name}</strong>
@@ -164,7 +167,7 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
         </div>}
         {identityState === 'loading' && <div className="login-identity-hint">正在核对员工姓名...</div>}
         {identityState === 'missing' && <div className="login-identity-hint warning">未找到已开通的员工账号，请核对编号或联系管理员</div>}
-        <label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>
+        <label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} disabled={!ready || loading} autoComplete="current-password" /></label>
         <div className="login-session-options">
           <label><input type="checkbox" checked={rememberAccount} onChange={event => {
             const checked = event.target.checked;
@@ -179,7 +182,7 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
         {rememberDevice && <div className="login-device-warning">共享电脑或车间平板请勿开启；可随时通过“退出登录”清除会话。</div>}
         {notice && <div className="form-success" role="status">{notice}</div>}
         {error && <div className="form-error">{error}</div>}
-        <button className="primary-button" disabled={loading || !username.trim() || !password}>{loading ? '登录中...' : identity ? `以 ${identity.name} 身份登录` : '登录'}</button>
+        <button className="primary-button" disabled={!ready || loading || !username.trim() || !password}>{loading ? '登录中...' : identity ? `以 ${identity.name} 身份登录` : '登录'}</button>
       </form>
     </main>
   );

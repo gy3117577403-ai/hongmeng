@@ -35,6 +35,7 @@ async function scenario(page,f,origin,dir,engine,state=null) {
     // This also verifies that the mobile account switch resolves the intended employee.
     if (/^\d{2,12}$/.test(username)) await page.locator('.login-employee-identity').filter({hasText:username}).waitFor();
     await page.getByLabel('密码',{exact:true}).fill(f.password);
+    if(await page.getByLabel('员工编号 / 管理账号').inputValue()!==username||await page.getByLabel('密码',{exact:true}).inputValue()!==f.password) throw Error('Login fields changed before submission');
     await page.locator('.login-card button.primary-button').click();
   };
   const login=async(username,destination)=>{await page.goto(origin+'/login?next='+encodeURIComponent(destination));await fillLogin(username);await page.waitForURL(u=>u.pathname===destination.split('?')[0]);};
