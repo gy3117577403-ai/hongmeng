@@ -1,4 +1,5 @@
 import { DOCUMENT_REVIEW_START } from '@/lib/quality-fixture-scope';
+import { lockOrderPool, ensurePoolPreparation, distributePoolCoverage } from '@/lib/order-pool-material';
 import { lockFixtureBusiness } from '@/lib/quality-fixture-service';
 import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
@@ -174,6 +175,7 @@ async function commitBatch(
   fixtureDecisions: Record<string, boolean>,
 ): Promise<CommitResult> {
   return prisma.$transaction(async tx => {
+    await lockOrderPool(tx);
     await lockFixtureBusiness(tx);
     const fixtureChoices = new Map<string, boolean>();
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-plan-import:${batchId}`}))`;
@@ -343,9 +345,11 @@ async function commitBatch(
               updatedById: userId,
             },
           });
+      const poolPreparation = await ensurePoolPreparation(tx, planOrder.id, userId);
       const batch = await tx.productionPlanBatch.create({
         data: {
           planOrderId: planOrder.id,
+          poolPreparationLinked: !!poolPreparation,
           batchNo: nextBatchNo,
           quantity: row.input.plannedQuantity,
           weekStartDate: targetWeek.start,
@@ -360,6 +364,7 @@ async function commitBatch(
         },
       });
       await refreshProductionPlanOrderStatus(tx, planOrder.id);
+      await distributePoolCoverage(tx, planOrder.id, userId);
       await tx.productionPlanChange.create({
         data: {
           planOrderId: planOrder.id,

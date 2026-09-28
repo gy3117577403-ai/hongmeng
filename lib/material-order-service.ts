@@ -49,7 +49,7 @@ export function serializeMaterialOrder(task: ListRecord | Record) {
   return { id: task.id, workOrderId: task.workOrderId, sampleTaskId: task.sampleTaskId, version: task.version,
     planOrderId: task.planOrderId, preparationTaskId: task.preparationTaskId, preparedQuantity: task.preparedQuantity,
     poolQuantities: pool ? poolQuantities(pool.orderQuantity, pool.preparationQuantity, task.preparedQuantity, pool.batches) : null,
-    preparationRank: pool?.preparationRank || 0, preparationPriority: pool?.priority || 'normal',
+    preparationRank: pool?.preparationRank || 0, preparationPriority: pool?.priority || 'normal', preparationDueAt: iso(pool?.preparationDueAt), preparationNote: pool?.preparationNote || '',
     code: source.code, specification: source.specification || source.productName, productName: source.productName, customer: source.customerName,
     quantity: source.productionTargetQty ?? source.uncompletedQty ?? 0, weekStart: iso(source.weekStartDate), weekEnd: iso(source.weekEndDate),
     dueDate: pool ? (pool.customerDueDateConfirmed ? iso(pool.customerDueDate) : null) : (work?.productionPlanBatch ? (work.productionPlanBatch.planOrder.customerDueDateConfirmed ? iso(work.productionPlanBatch.planOrder.customerDueDate) : null) : (work?.deliveryDay || null)),
@@ -102,6 +102,9 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
     const auditDetail: { [key: string]: Prisma.InputJsonValue | null } = { exceptionCaseId: eventId || null, arrivalId: arrivalId || null, requestKey: key };
     if (action === 'confirm_prepared' || current.planOrderId && action === 'complete') {
       try { await confirmPoolQuantity(tx,id,poolInteger(input.preparedQuantity,'累计可配套数量'),actorId); } catch(e) { if(e instanceof PoolError) throw new MaterialInputError(e.message,e.status); throw e; }
+    } else if (current.planOrderId && action === 'reopen') {
+      await synchronizeWarehouseExceptions(tx,id,actorId);
+      await tx.warehouseMaterialActivity.create({data:{taskId:id,action,actorId,content:content||'仓库重新核对订单池配套数量'}});
     } else if (['report_exception', 'update_exception', 'complete', 'reopen'].includes(action)) {
       if (action === 'report_exception' && current.exceptionCases.some(e => e.status === 'OPEN' && e.materialModel === text(input.materialModel,160) && e.supplySource === input.supplySource && e.unit === (text(input.unit,12) || '个'))) throw new MaterialInputError('本单已登记相同来源、型号与单位的缺料，请修改已有明细', 409);
       let version = current.version;

@@ -15,3 +15,5 @@ main.mo-workbench.hm-workbench-root.hm-workbench-root{--hm-shell-header:0px;disp
 .mo-drawer-overlay{backdrop-filter:none;background:#18344f14}
 
 .mo-pool-coverage{display:flex;flex-wrap:wrap;gap:16px;padding:14px 16px;background:#f4f8fc;border:1px solid #e0e9f4;border-radius:12px;margin-bottom:16px;color:#6c8199;font-size:13px}.mo-pool-coverage b{color:#183554;font-size:18px;margin:0 4px}.mo-prep-priority{display:inline-block;margin:0 8px 5px 0;font-size:11px;font-style:normal;border-radius:5px;padding:2px 6px;background:#eef2f7;color:#64778e}.mo-prep-priority.insert{background:#f0e8fc;color:#7446a5}.mo-prep-priority.urgent{background:#fff1d8;color:#a66b08}.mo-source-pool{display:flex;align-items:center;gap:6px;margin-bottom:14px;color:#386fa3;font-size:13px}.mo-pool-hint{padding:10px;background:#f2f7fd;border-radius:8px;font-size:13px}
+
+.mo-pool-note{padding:9px 16px;border:1px solid #ffe2c7;border-radius:9px;background:#fff8f0;color:#896d53;font-size:12px;overflow-wrap:anywhere}

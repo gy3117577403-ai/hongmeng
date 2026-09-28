@@ -154,6 +154,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:material-follow-up-integration
+      - name: Order pool preparation PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test tests/order-pool-integration.test.ts
       - name: Warehouse and material follow-up consistency audit
         run: npm run audit:material-follow-up-sync -- --json
       - name: Employee number reorder PostgreSQL integration
