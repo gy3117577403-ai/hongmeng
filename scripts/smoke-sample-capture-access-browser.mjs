@@ -111,7 +111,8 @@ try {
   const recovery=run(state),reloginState=parse(recovery);
   writeFileSync(join(dir,'browser-recovery.txt'),recovery);
   if(reloginState?.phase!=='relogin')throw Error(recovery);
-  const navigation=cli(['goto',origin+reloginState.relogin]);
+  writeFileSync(file,"async page => { await page.getByRole('link',{name:'重新登录并返回',exact:true}).click(); }");
+  const navigation=cli(['run-code','--filename',file]);
   if(navigation.includes('beforeunload'))cli(['dialog-accept']);
   else if(navigation.includes('### Modal state'))throw Error(navigation);
   const result=run(reloginState);writeFileSync(join(dir,'browser-result.txt'),result);
