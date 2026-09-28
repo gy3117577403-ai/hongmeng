@@ -155,6 +155,13 @@ const PHOTO_DB = 'hongmeng-sample-capture';
 const PHOTO_STORE = 'pending-photos';
 const PHOTO_DB_VERSION = 2;
 
+async function restoreLocalPhotoFile(file: File): Promise<File> {
+  // WebKit can keep a restored File tied to an IndexedDB blob that is removed
+  // when the legacy key is cleared or the queue is rewritten. Copy its bytes
+  // before persisting or uploading it again so retries retain an independent file.
+  return new File([await file.arrayBuffer()], file.name, { type: file.type, lastModified: file.lastModified });
+}
+
 function newMutationId() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
@@ -380,7 +387,10 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
       const stored = await readPhotoStoreValue(oldPhotoQueueKey);
       const single = stored ? null : await readPhotoStoreValue(legacyPhotoQueueKey);
       const oldItems: StoredLocalPhoto[] = Array.isArray(stored?.items) ? stored.items : single?.file instanceof File ? [{ id: newMutationId(), file: single.file, originalName: single.file.name, category: single.category || 'UNCLASSIFIED', caption: String(single.caption || ''), linkedEntryId: String(single.linkedEntryId || ''), source: 'CAMERA', mutationId: String(single.mutationId || newMutationId()), status: 'LOCAL', progress: 0, error: '' }] : [];
-      const restored = oldItems.filter(item => item.file instanceof File && !photoQueue.some(current => current.mutationId === item.mutationId)).map(item => ({ ...item, status: 'LOCAL' as const, progress: 0, error: '', objectUrl: createObjectUrl(item.file) }));
+      const restored = await Promise.all(oldItems.filter(item => item.file instanceof File && !photoQueue.some(current => current.mutationId === item.mutationId)).map(async item => {
+        const file = await restoreLocalPhotoFile(item.file);
+        return { ...item, file, status: 'LOCAL' as const, progress: 0, error: '', objectUrl: createObjectUrl(file) };
+      }));
       const combined = [...photoQueue, ...restored];
       await persistPhotoQueue(combined);
       setPhotoQueue(combined);
@@ -534,7 +544,10 @@ export default function SampleCaptureMobile({ code, user: _user, embedded = fals
       try {
         const stored = await readPhotoStoreValue(photoQueueKey);
         const items: StoredLocalPhoto[] = Array.isArray(stored?.items) ? stored.items : [];
-        const hydrated = items.filter(item => item.file instanceof File).map(item => ({ ...item, status: item.status === 'UPLOADING' ? 'LOCAL' as const : item.status, progress: item.status === 'UPLOADING' ? 0 : Number(item.progress || 0), objectUrl: createObjectUrl(item.file) }));
+        const hydrated = await Promise.all(items.filter(item => item.file instanceof File).map(async item => {
+          const file = await restoreLocalPhotoFile(item.file);
+          return { ...item, file, status: item.status === 'UPLOADING' ? 'LOCAL' as const : item.status, progress: item.status === 'UPLOADING' ? 0 : Number(item.progress || 0), objectUrl: createObjectUrl(file) };
+        }));
         setPhotoQueue(hydrated);
         const owner = localStorage.getItem(legacyClaimKey);
         if (!owner || owner === _user.id) {
