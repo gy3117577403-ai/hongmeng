@@ -94,7 +94,8 @@ try {
       await page.getByRole('button',{name:'登记库存',exact:true}).click();
       const stockForm=page.getByRole('dialog',{name:'登记实物库存',exact:true});await stockForm.waitFor();
       check(await stockForm.getByRole('button',{name:'整套刀片',exact:true}).isDisabled(),'single-position model does not offer a nonexistent complete kit');
-      check(await stockForm.getByLabel('刀位',{exact:true}).inputValue()==='UPPER_INNER','loose inventory defaults to the actual compatible position');
+      check(await stockForm.getByRole('combobox').inputValue()==='UPPER_INNER','loose inventory defaults to the actual compatible position');
+      check(await stockForm.evaluate(el=>el.getBoundingClientRect().height<innerHeight*.85),'compact stock dialog uses its content height');
       await stockForm.getByLabel('数量（把）',{exact:true}).fill('2');await stockForm.getByLabel('存放盒号',{exact:true}).fill('23');
       await stockForm.getByRole('button',{name:'确认登记',exact:true}).click();await stockForm.waitFor({state:'hidden'});
       check(await page.locator('.tl-inventory-detail .tl-stock-unit').count()===2,'single-position loose inventory saves two physical blades');

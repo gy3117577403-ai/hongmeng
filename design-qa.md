@@ -186,3 +186,8 @@ Real iOS and Android WeChat hardware is unavailable in this environment. Mobile 
 - 在端子资料新增型号后直接切换刀片库存，自动刷新可见，无需另点刷新。
 - 截图：output/terminal-worklog-v134250/desktop-loose-inventory-v251.png。
 - v1.34.250 在镜像发布前主动停止，修正用独立 v1.34.251 标签交付。
+
+### v1.34.252 镜像验收修正
+- v1.34.251 的 34 项调模 HTTP 检查通过；浏览器验收因 select 的隐式标签包括 option 文本而定位超时。改用弹窗内唯一 combobox，保留实际刀位与库存数量断言。
+- 登记/补充小弹窗改为 fit-content，避免原生 modal 的上下 inset 将 auto 高度拉满；720 高度视口中实测弹窗 597 高度。增加紧凑高度验收。
+- 截图：output/terminal-worklog-v134250/desktop-compact-stock-dialog-v252.png。
