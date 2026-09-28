@@ -1,7 +1,9 @@
 // This scenario uses only the disposable order-pool fixture; never a live customer system.
 async function scenario(page,origin,f,dir){
- const checks=[],errors=[];
+ const checks=[],errors=[],consoleErrors=[],rejectedRequests=[];
  page.on('pageerror',e=>errors.push(String(e)));
+ page.on('console',message=>{if(message.type()==='error')consoleErrors.push(message.text());});
+ page.on('response',response=>{if(response.status()>=400)rejectedRequests.push({status:response.status(),url:response.url()});});
  const check=(condition,label)=>{if(!condition)throw Error(label);checks.push(label);};
  const api=(path,method='GET',data)=>page.evaluate(async({path,method,data})=>{const r=await fetch(path,{method,headers:{'content-type':'application/json'},body:data?JSON.stringify(data):undefined});return{status:r.status,body:await r.json().catch(()=>({}))};},{path,method,data});
  const queue=async()=>{const r=await api('/api/order-pool');check(r.status===200,'pool API readable');return r.body;};
@@ -62,9 +64,12 @@ async function scenario(page,origin,f,dir){
   const last=page.locator('.op-table tbody tr').filter({hasText:'EXS-E75060C0330SAIC-G05'});
   await last.locator('summary').click();await last.getByRole('button',{name:'设置优先级',exact:true}).click();
   await page.getByRole('dialog').getByLabel('特急',{exact:false}).check();await submit('保存');
+  check(await page.locator('.op-row-actions details[open]').count()===0,'row action menu closes after the selected operation');
   q=await queue();const warehouse=await api('/api/warehouse/material-orders?scope=pool&status=all');
   check(JSON.stringify(warehouse.body.orders.map(o=>o.planOrderId))===JSON.stringify(q.orders.map(o=>o.id)),'plan and warehouse priority sequence are identical');
-  await page.setViewportSize({width:1920,height:1080});await shot('order-pool-1920x1080');
+  await page.setViewportSize({width:1920,height:1080});
+  await page.locator('.op-table-scroll').evaluate(element=>{element.scrollTop=0;});
+  await page.locator('.op-table tbody tr').first().waitFor();await shot('order-pool-1920x1080');
   // Technical upload is to the canonical library, visible to the pool immediately.
   await login('technician','/drawing-library?scope=pool&itemId='+f.first.drawingLibraryItemId);
   await page.locator('.opt-item').filter({hasText:f.first.specification}).waitFor();
@@ -124,6 +129,8 @@ async function scenario(page,origin,f,dir){
   check(await page.locator('.op-tools').getByRole('button',{name:'新建订单',exact:true}).isDisabled(),'read-only users see disabled mutation actions');
   check((await api('/api/order-pool/commands','POST',{action:'create',requestKey:key(),row:{}})).status===403,'server rejects read-only mutations');
   check(errors.length===0,'no browser runtime errors: '+errors.join('; '));
-  return{passed:true,checks};
+  check(rejectedRequests.every(r=>r.status===403&&r.url===origin+'/api/order-pool/commands'),'only the intentionally denied permission requests failed: '+JSON.stringify(rejectedRequests));
+  check(consoleErrors.every(message=>message.includes('403')&&message.includes('Failed to load resource')),'console errors are limited to the intentional permission denials: '+JSON.stringify(consoleErrors));
+  return{passed:true,checks,consoleErrors,rejectedRequests};
  }catch(e){await shot('failure');throw Error(String(e)+'; browser errors: '+errors.join('; '));}
 }
