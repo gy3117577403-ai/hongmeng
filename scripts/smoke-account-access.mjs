@@ -73,7 +73,8 @@ await req('stale editor is rejected without overwriting', '/api/users/module-acc
 const confirmed = (await req('verify stale save changed nothing', '/api/users')).users.find(user => user.id === reader.id);
 assert.deepEqual(confirmed.moduleAccess.permissions, { materials: 'READ' });
 cookie = reader.cookie;
-await req('permission update invalidates previous session', '/api/me', undefined, 403);
+const expiredSession = await req('permission update invalidates previous session', '/api/me', undefined, 401);
+assert.equal(expiredSession.code, 'SESSION_EXPIRED');
 cookie = adminCookie;
 await req('restore reader fixture for UI', '/api/users/module-access', saveBody(changed, allRead));
 const migrated = (await req('migrate legacy account by explicit save', '/api/users/module-access', saveBody(legacy, { people: 'READ' }))).user;
