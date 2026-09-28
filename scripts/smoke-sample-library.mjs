@@ -102,7 +102,8 @@ try {
  check(granted.accessMethods.sampleCapture&&granted.moduleAccess.permissions.production==='READ','capture grant never promotes production READ');
  cookie=oldCaptureCookie;await req('old capture session expires after permission change','/api/sample-tasks/code/'+current.qrCode,undefined,401);
  await login(captureAccount.username,password);
- const captureTask=await task(p,{status:'IN_PROGRESS'});
+ const captureProduct=await product('CAPTURE-QA-001',tag+' · 采集验收客户');
+ const captureTask=await task(captureProduct,{status:'IN_PROGRESS'});
  let snap=(await req('read QR with independent capture','/api/sample-tasks/code/'+captureTask.qrCode)).task;
  const captureContext=await req('capture context exposes process choices only','/api/sample-team/context?capture=1');assert.equal(captureContext.members.length,0);assert.equal(captureContext.products.length,0);
  const businessContext=await req('capture grant preserves existing planning context','/api/sample-team/context');check(businessContext.members.length>0&&businessContext.products.length>0,'independent capture grant does not narrow existing business reads');
@@ -128,7 +129,7 @@ try {
  const soloContext=await req('capture-only context omits unrelated employee catalog','/api/sample-team/context');assert.equal(soloContext.members.length,0);assert.equal(soloContext.products.length,0);
  await req('capture alone cannot read library','/api/sample-library',undefined,403);
  cookie=adminCookie;
- const browserTask=await task(p,{status:'IN_PROGRESS'});
+ const browserTask=await task(captureProduct,{status:'IN_PROGRESS'});
  const fixture={marker:tag,soloUsername:soloAccount.username,captureUsername:captureAccount.username,captureUserId:captureAccount.id,readUsername:readAccount.username,captureTaskCode:browserTask.qrCode,captureTaskId:browserTask.id,username:reader.username,password,adminUsername:process.env.SEED_ADMIN_USERNAME,adminPassword:process.env.SMOKE_ADMIN_CHANGED_PASSWORD,photoId:first.id,productId:p.id,model:p.specification,customer,otherCustomer,taskCode:current.qrCode,oldKey:old.id+':1',rejectedKey:old.id+':2'};
  const fixturePath=process.env.SAMPLE_LIBRARY_FIXTURE||'/tmp/sample-library-fixture.json';await fs.mkdir(path.dirname(fixturePath),{recursive:true});await fs.writeFile(fixturePath,JSON.stringify(fixture));
  const output=process.env.SAMPLE_LIBRARY_QA_OUTPUT||'artifacts/sample-library/http.json';await fs.mkdir(path.dirname(output),{recursive:true});await fs.writeFile(output,JSON.stringify({ok:true,marker:tag,checks},null,2));console.log(`Sample library HTTP acceptance: ${checks.length} checks passed`);
