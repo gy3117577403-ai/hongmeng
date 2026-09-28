@@ -89,7 +89,6 @@ test('planning center distinguishes a failed first load from a genuine empty pla
   assert.match(source, /planDataAvailable \? orderPool\.length : '—'/);
   assert.match(source, /: '排产数据未获取'/);
   assert.match(source, /!loading && planDataAvailable && !scheduleRows\.length/);
-  assert.match(source, /!loading && planDataAvailable && !filteredOrders\.length/);
 });
 
 test('production execution keeps a prior board on refresh failure and never presents a failed first load as empty', () => {

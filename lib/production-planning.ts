@@ -1,4 +1,5 @@
 import { refreshPlanningWeekTime } from '@/lib/planning-week-time';
+import { distributePoolCoverage, ensurePoolPreparation, lockOrderPool } from '@/lib/order-pool-material';
 import type { Prisma } from '@prisma/client';
 import { resolvePlanMilliseconds, planTotalMilliseconds } from '@/lib/planning-time';
 import { randomUUID } from 'node:crypto';
@@ -1043,11 +1044,12 @@ export async function deleteProductionPlanBatches(
   planOrderDeletedCount: number;
   removedOrderQuantity: number;
 }> {
+  await lockOrderPool(tx);
   const preview = await previewProductionPlanBatchDeletion(tx, input.batchIds);
   if (preview.blockers > 0) throw new Error('PLAN_BATCH_DELETE_BLOCKED');
   const batches = await tx.productionPlanBatch.findMany({
     where: { id: { in: input.batchIds }, deletedAt: null },
-    select: { id: true, planOrderId: true, releaseState: true, workOrderId: true, quantity: true },
+    select: { id: true, planOrderId: true, releaseState: true, workOrderId: true, quantity: true, poolPreparedQuantity: true },
   });
   if (batches.length !== input.batchIds.length) throw new Error('PLAN_BATCH_SELECTION_INVALID');
   const affectedOrderIds = Array.from(new Set(batches.map(batch => batch.planOrderId)));
@@ -1056,6 +1058,8 @@ export async function deleteProductionPlanBatches(
     select: {
       id: true,
       orderQuantity: true,
+      preparationQuantity: true,
+      poolMaterialTask: true,
       batches: {
         where: { deletedAt: null },
         select: { id: true, quantity: true },
@@ -1144,12 +1148,23 @@ export async function deleteProductionPlanBatches(
     } else if (disposition.nextOrderQuantity !== order.orderQuantity) {
       await tx.productionPlanOrder.update({
         where: { id: order.id },
-        data: { orderQuantity: disposition.nextOrderQuantity, updatedById: input.actorId },
+        data: { orderQuantity: disposition.nextOrderQuantity, preparationQuantity: order.preparationQuantity == null ? null : Math.min(order.preparationQuantity,disposition.nextOrderQuantity), updatedById: input.actorId },
       });
       await refreshProductionPlanOrderStatus(tx, order.id);
     } else {
       await refreshProductionPlanOrderStatus(tx, order.id);
     }
+    if(order.poolMaterialTask){
+      const removedCredit=batches.filter(b=>b.planOrderId===order.id).reduce((n,b)=>n+b.poolPreparedQuantity,0);
+      await tx.warehouseMaterialTask.update({where:{id:order.poolMaterialTask.id},data:{preparedQuantity:Math.min(disposition.nextOrderQuantity,Math.max(0,order.poolMaterialTask.preparedQuantity-removedCredit)),version:{increment:1}}});
+      const currentSource=await tx.warehouseMaterialTask.findUniqueOrThrow({where:{id:order.poolMaterialTask.id}});
+      const target=order.preparationQuantity==null?disposition.nextOrderQuantity:Math.min(order.preparationQuantity,disposition.nextOrderQuantity);
+      const open=await tx.warehouseMaterialExceptionCase.count({where:{warehouseTaskId:currentSource.id,status:'OPEN'}});
+      const full=target>0&&currentSource.preparedQuantity>=target&&!open;
+      await tx.warehouseMaterialTask.update({where:{id:currentSource.id},data:{status:full?'completed':open?'exception':'pending',requirementsConfirmed:full,...(!full?{completedAt:null,completedById:null}:{}),updatedById:input.actorId}});
+      await distributePoolCoverage(tx,order.id,input.actorId);
+    }
+    if(!disposition.shouldDeleteOrder)await ensurePoolPreparation(tx,order.id,input.actorId);
     await tx.productionPlanChange.create({
       data: {
         planOrderId: order.id,
@@ -1677,6 +1692,7 @@ export async function releaseProductionPlanBatch(
     trigger?: 'manual' | 'automatic_schedule' | 'automatic_reconciliation';
   },
 ): Promise<{ workOrderId: string; warnings: string[]; created: boolean; started: boolean }> {
+  await lockOrderPool(tx);
   const batch = await tx.productionPlanBatch.findUnique({
     where: { id: input.batchId },
     include: {
@@ -1796,7 +1812,7 @@ export async function releaseProductionPlanBatch(
       })
     : await tx.workOrder.create({ data: { ...data, businessCode }, select: { id: true } });
 
-  const materialTask = await tx.warehouseMaterialTask.upsert({
+  let materialTask = await tx.warehouseMaterialTask.upsert({
     where: { workOrderId: workOrder.id },
     create: { workOrderId: workOrder.id, status: 'pending', updatedById: input.actorId },
     update: {},
@@ -1824,6 +1840,10 @@ export async function releaseProductionPlanBatch(
     },
   });
   await refreshPlanningWeekTime(tx, batch.id, batch.totalMillisecondsSnapshot);
+  if (batch.poolPreparationLinked) {
+    await distributePoolCoverage(tx, batch.planOrderId, input.actorId);
+    materialTask=await tx.warehouseMaterialTask.findUniqueOrThrow({where:{id:materialTask.id},select:{id:true,status:true,exceptionType:true,exceptionNote:true,expectedAt:true}});
+  }
   await syncProductionBatchToDueShipmentPlan(tx, {
     batchId: batch.id,
     actorId: input.actorId,

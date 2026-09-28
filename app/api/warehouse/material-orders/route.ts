@@ -6,11 +6,14 @@ import { naturalProductionWeek } from '@/lib/production-execution';
 import { activeProductionCarryoverWorkOrderWhere } from '@/lib/production-carryovers';
 import { parseWeek, addDays, ymd } from '@/lib/weekly-work-orders';
 import { materialOrderInclude, serializeMaterialOrder, readMaterialOrder } from '@/lib/material-order-service';
+import { poolWarehouseQueue } from '@/lib/order-pool-warehouse';
 export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     await requireUser();
     const p = req.nextUrl.searchParams;
+    if (p.get('planOrderId')) { const t=await prisma.warehouseMaterialTask.findUnique({where:{planOrderId:p.get('planOrderId')!},select:{id:true}});return NextResponse.json({ok:true,order:t?await readMaterialOrder(t.id):null}); }
+    if (p.get('scope') === 'pool') return NextResponse.json({ok:true,...await poolWarehouseQueue(p)});
     if (p.get('workOrderId') || p.get('followUpId')) {
       const task = p.get('workOrderId') ? await prisma.warehouseMaterialTask.findUnique({ where: { workOrderId: p.get('workOrderId')! }, select: { id: true } })
         : await prisma.materialFollowUpTask.findUnique({ where: { id: p.get('followUpId')! }, select: { warehouseTaskId: true } });

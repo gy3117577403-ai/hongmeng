@@ -38,19 +38,20 @@ const includeFiles = {
 };
 
 type DrawingLibraryPageProps = {
-  searchParams?: { itemId?: string | string[]; week?: string };
+  searchParams?: { itemId?: string | string[]; week?: string; scope?: string };
 };
 
 export default async function DrawingLibraryPage({ searchParams }: DrawingLibraryPageProps) {
   const requestedItemId = Array.isArray(searchParams?.itemId) ? searchParams?.itemId[0] : searchParams?.itemId;
+  const pool = searchParams?.scope === 'pool';
   let week = '';
   try { if (searchParams?.week) week = planWeekStart(searchParams.week); } catch { /* Invalid URL filters fall back to all weeks. */ }
-  const next = requestedItemId ? `/drawing-library?itemId=${encodeURIComponent(requestedItemId)}` : '/drawing-library';
+  const next = '/drawing-library?' + new URLSearchParams({...requestedItemId?{itemId:requestedItemId}:{},...pool?{scope:'pool'}:{}});
   const user = await requirePageAccess('/drawing-library', next);
 
   const [items, requestedItem, categories] = await Promise.all([
     prisma.drawingLibraryItem.findMany({
-      where: { deletedAt: null, ...(week ? { AND: [drawingPlanWeekScope(week)] } : {}) },
+      where: { deletedAt: null, ...(pool ? { id: requestedItemId || '__pool_none__' } : {}), ...(week ? { AND: [drawingPlanWeekScope(week)] } : {}) },
       include: includeFiles,
       orderBy: [{ customerName: 'asc' }, { specification: 'asc' }],
       take: 600,
@@ -89,6 +90,7 @@ export default async function DrawingLibraryPage({ searchParams }: DrawingLibrar
       categories={categories.map(category => ({ id: category.id, name: category.name, code: category.code, sortOrder: category.sortOrder }))}
       requestedItemId={requestedItemId || ''}
       initialWeek={week}
+      initialPool={pool}
     />
   );
 }

@@ -1,4 +1,5 @@
 import { refreshPlanningWeekTime } from '@/lib/planning-week-time';
+import { lockOrderPool, distributePoolCoverage, ensurePoolPreparation } from '@/lib/order-pool-material';
 import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -46,6 +47,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const updated = await prisma.$transaction(async tx => {
+      await lockOrderPool(tx);
       const existing = await tx.productionPlanBatch.findUnique({
         where: { id: context.params.id },
         include: { planOrder: { include: { batches: { where: { deletedAt: null }, select: { id: true, quantity: true } } } } },
@@ -124,6 +126,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         where: { id: existing.id },
         data: {
           ...batchData,
+          poolPreparedQuantity: Math.min(existing.poolPreparedQuantity,parsed.data.quantity),
           productTimeProfileId: refs.productTimeProfileId,
           productTimeProfileVersion: refs.productTimeProfileVersion,
           unitMillisecondsSnapshot: effectiveUnitMilliseconds,
@@ -167,6 +170,8 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         actorId: user.id,
         trigger: 'automatic_schedule',
       });
+      await ensurePoolPreparation(tx,existing.planOrderId,user.id);
+      await distributePoolCoverage(tx,existing.planOrderId,user.id);
       const record = await tx.productionPlanOrder.findUniqueOrThrow({
         where: { id: existing.planOrderId },
         include: productionPlanOrderInclude,

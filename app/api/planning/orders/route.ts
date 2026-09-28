@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { lockOrderPool, ensurePoolPreparation } from '@/lib/order-pool-material';
 import { NextRequest, NextResponse } from 'next/server';
 import { DrawingLibraryResolutionError } from '@/lib/drawing-library-resolution';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -329,6 +330,7 @@ export async function POST(req: NextRequest) {
     const createDrawingLibraryProduct = body.createDrawingLibraryProduct === true;
     const restoreDrawingLibraryProduct = body.restoreDrawingLibraryProduct === true;
     const result = await prisma.$transaction(async tx => {
+      await lockOrderPool(tx);
       const product = await resolveOrCreatePlanningProduct(tx, parsed.data, {
         createIfMissing: createDrawingLibraryProduct,
         restoreIfDeleted: restoreDrawingLibraryProduct,
@@ -353,6 +355,7 @@ export async function POST(req: NextRequest) {
         },
         include: productionPlanOrderInclude,
       });
+      await ensurePoolPreparation(tx,created.id,user.id);
       await tx.productionPlanChange.create({
         data: {
           planOrderId: created.id,

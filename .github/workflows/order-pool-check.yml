@@ -1,0 +1,80 @@
+name: Order Pool Preflight
+on:
+  push:
+    branches: ["codex/order-pool-preparation-v134247"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: order-pool-preflight
+  cancel-in-progress: true
+jobs:
+  order-pool-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hongmeng_order_pool_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_order_pool_ci?schema=public
+      DAILY_PLAN_ENABLED: "true"
+      SESSION_SECRET: order-pool-ci-session-key-only-1234567890
+      APP_BASE_URL: http://127.0.0.1:3000
+      S3_ENDPOINT: http://127.0.0.1:19000
+      S3_PUBLIC_ENDPOINT: http://127.0.0.1:19000
+      S3_BUCKET: workorder-resources
+      S3_REGION: auto
+      S3_FORCE_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: orderpoolstorage
+      S3_SECRET_ACCESS_KEY: order-pool-ci-storage-only-123456
+      ORDER_POOL_QA_ALLOW: disposable-order-pool
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate && npx prisma generate && npx prisma migrate deploy
+      - run: npx tsc --noEmit
+      - run: npm run test:unit
+      - name: Database preparation and weekly consistency
+        run: RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/order-pool-integration.test.ts tests/material-week-orders-integration.test.ts tests/production-plan-auto-release-integration.test.ts tests/production-plan-direct-deletion-integration.test.ts tests/planning-time-consistency-integration.test.ts tests/planning-week-membership-integration.test.ts
+      - run: npm run build
+      - name: Real browser acceptance on disposable database and object storage
+        run: |
+          set -euo pipefail
+          bash scripts/pull-ci-minio.sh
+          docker run -d --name order-pool-storage --network host -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" hongmeng-ci-minio:verified-a1a8bd4ac40a server /data --address :19000
+          SMOKE_STORAGE_ALLOW=disposable-ci-storage node scripts/prepare-smoke-storage.mjs
+          SEED_ADMIN_USERNAME=orderpoolqa SEED_ADMIN_PASSWORD=Disposable-Pool-2026!A npm run prisma:seed
+          npx tsx scripts/seed-order-pool-smoke.ts > /tmp/order-pool-fixture.json
+          npm run start > order-pool-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; docker rm -f order-pool-storage >/dev/null' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3000/api/ready >/dev/null; then break; fi
+            sleep 2
+          done
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          ORDER_POOL_QA_FIXTURE=/tmp/order-pool-fixture.json node scripts/smoke-order-pool-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: order-pool-preflight
+          path: |
+            artifacts/order-pool/*.png
+            artifacts/order-pool/browser-runtime.txt
+            artifacts/order-pool/browser-failure.txt
+            order-pool-server.log
+

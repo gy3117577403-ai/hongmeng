@@ -29,6 +29,9 @@ type ApiRule = {
 
 /** Specific routes must appear before their broader namespace. */
 export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
+  { prefix: '/api/order-pool/commands', anyOf: ['PLANNING'], actionsByMethod: { POST: 'UPDATE' } },
+  { prefix: '/api/order-pool/import', anyOf: ['PLANNING'], actionsByMethod: { POST: 'UPDATE' } },
+  { prefix: '/api/order-pool', anyOf: ['PLANNING','WAREHOUSE','PROCUREMENT','ENGINEERING','DRAWING_LIBRARY'], actionsByMethod: { POST: 'UPDATE' } },
   // Shared product data. Independent reviewer checks are enforced in the service.
   { prefix: '/api/quality-fixtures', anyOf: ['ACCOUNT_SELF'], action: 'READ' },
   // The handler verifies reporting rights and photo ownership; quality readers only get personnel options.

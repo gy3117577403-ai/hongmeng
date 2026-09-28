@@ -1,0 +1,125 @@
+// This scenario uses only the disposable order-pool fixture; never a live customer system.
+async function scenario(page,origin,f,dir){
+ const checks=[],errors=[];
+ page.on('pageerror',e=>errors.push(String(e)));
+ const check=(condition,label)=>{if(!condition)throw Error(label);checks.push(label);};
+ const api=(path,method='GET',data)=>page.evaluate(async({path,method,data})=>{const r=await fetch(path,{method,headers:{'content-type':'application/json'},body:data?JSON.stringify(data):undefined});return{status:r.status,body:await r.json().catch(()=>({}))};},{path,method,data});
+ const queue=async()=>{const r=await api('/api/order-pool');check(r.status===200,'pool API readable');return r.body;};
+ const first=async()=>{const q=await queue();return q.orders.find(o=>o.id===f.first.id);};
+ const key=()=>f.marker+'-'+Math.random().toString(36).slice(2);
+ const shot=name=>page.screenshot({path:dir+'/'+name+'.png',fullPage:false,animations:'disabled'});
+ const login=async(role,target)=>{
+  await page.context().clearCookies();await page.goto(origin+'/login?next='+encodeURIComponent(target));
+  await page.getByLabel('员工编号 / 管理账号').fill(f.users[role].username);
+  await page.getByLabel('密码',{exact:true}).fill(f.password);
+  await page.getByRole('button',{name:'登录',exact:true}).click();
+  await page.waitForURL(u=>u.pathname===target.split('?')[0],{timeout:30000});
+ };
+ const submit=async(name)=>{const d=page.getByRole('dialog').last();await d.getByRole('button',{name,exact:true}).click();await d.waitFor({state:'detached',timeout:15000});};
+ const waitRows=()=>page.locator('.op-table tbody tr').first().waitFor({timeout:20000});
+ try{
+  await page.setViewportSize({width:1366,height:1024});
+  await login('admin','/weekly-plan-center?view=pool');await waitRows();
+  const base=await queue();
+  check(base.orders.length===8,'all unallocated orders visible without a week');
+  check(base.orders.every(o=>!o.customerDueDate&&o.batches.length===0),'unknown customer date preserved; no production batches');
+  await shot('order-pool-1366x1024');
+  const fit=await page.evaluate(()=>({outer:document.documentElement.scrollHeight<=innerHeight+2,footer:document.querySelector('.op-footer').getBoundingClientRect().bottom<=innerHeight+2}));
+  check(fit.outer&&fit.footer,'planning pool uses internal scrolling and visible action footer: '+JSON.stringify(fit));
+  // Create through the visible form, leaving the customer delivery date empty.
+  await page.locator('.op-tools').getByRole('button',{name:'新建订单',exact:true}).click();
+  await page.getByRole('dialog').getByLabel('客户',{exact:true}).fill('杭州池测试');
+  await page.getByRole('dialog').getByLabel('产品规格 / 品番',{exact:true}).fill('POOL-CREATE-01');
+  await page.getByRole('dialog').getByLabel('订单数量',{exact:true}).fill('25');
+  await page.getByRole('dialog').getByLabel('单套工时（分钟）',{exact:true}).fill('2');
+  await submit('保存');
+  await page.locator('.op-table tbody tr').filter({hasText:'POOL-CREATE-01'}).waitFor();
+  check((await queue()).orders.some(o=>o.specification==='POOL-CREATE-01'&&!o.customerDueDate),'new order is immediately visible without an invented date');
+  await page.getByRole('button',{name:'查看全部',exact:true}).click();
+  await page.getByRole('button',{name:'导入订单池',exact:true}).click();
+  await page.getByRole('dialog').locator('input[type=file]').setInputFiles(f.importFile);
+  await page.getByRole('dialog').getByText('POOL-IMPORT-01',{exact:true}).waitFor();
+  await page.getByRole('dialog').getByText('POOL-INVALID',{exact:true}).waitFor();
+  await shot('import-preview-1366x1024');
+  await submit('导入有效行');
+  await page.locator('.op-table tbody tr').filter({hasText:'POOL-IMPORT-01'}).waitFor();
+  let q=await queue();check(q.orders.filter(o=>o.specification==='POOL-IMPORT-01').length===1&&!q.orders.some(o=>o.specification==='POOL-INVALID'),'import valid row only and preserve bad-row feedback');
+  await page.getByRole('button',{name:'查看全部',exact:true}).click();
+  await page.getByRole('button',{name:'导入订单池',exact:true}).click();
+  await page.getByRole('dialog').locator('input[type=file]').setInputFiles(f.importFile);
+  await page.getByRole('dialog').getByText('重复，跳过',{exact:true}).waitFor();await submit('导入有效行');
+  check((await queue()).orders.filter(o=>o.specification==='POOL-IMPORT-01').length===1,'repeat spreadsheet does not duplicate an order');
+  await page.getByRole('button',{name:'查看全部',exact:true}).click();
+  await waitRows();
+  const row=page.locator('.op-table tbody tr').filter({hasText:f.first.specification});
+  await row.getByRole('button',{name:'待核对'}).click();
+  await page.getByRole('dialog',{name:'订单物料明细'}).waitFor();
+  const before=page.url();
+  await page.getByRole('button',{name:'关闭订单缺料',exact:true}).click();
+  check(page.url()===before&&await row.count()===1,'material popup returns to the same pool row');
+  // Plan priority is shared by all three workbenches.
+  const last=page.locator('.op-table tbody tr').filter({hasText:'EXS-E75060C0330SAIC-G05'});
+  await last.locator('summary').click();await last.getByRole('button',{name:'设置优先级',exact:true}).click();
+  await page.getByRole('dialog').getByLabel('特急',{exact:false}).check();await submit('保存');
+  q=await queue();const warehouse=await api('/api/warehouse/material-orders?scope=pool&status=all');
+  check(JSON.stringify(warehouse.body.orders.map(o=>o.planOrderId))===JSON.stringify(q.orders.map(o=>o.id)),'plan and warehouse priority sequence are identical');
+  await page.setViewportSize({width:1920,height:1080});await shot('order-pool-1920x1080');
+  // Technical upload is to the canonical library, visible to the pool immediately.
+  await login('technician','/drawing-library?scope=pool&itemId='+f.first.drawingLibraryItemId);
+  await page.locator('.opt-item').filter({hasText:f.first.specification}).waitFor();
+  await page.locator('.opt-item').filter({hasText:f.first.specification}).click();
+  await page.getByRole('button',{name:'上传资料',exact:true}).waitFor();
+  const uploaded=page.waitForResponse(r=>r.url().includes('/files/upload')&&r.request().method()==='POST');
+  await page.locator('input[type=file][accept*="pdf"]').setInputFiles(f.uploadFile);
+  const response=await uploaded;check(response.ok(),'technical drawing upload reaches object storage: '+await response.text());
+  await page.getByText('图纸资料文件已上传',{exact:true}).waitFor();
+  check((await first()).drawingCount===1,'canonical drawing count shared with plan without duplicating product');
+  await page.getByLabel('技术准备进展').fill('原图已上传，等待审核');
+  await page.getByRole('button',{name:'保存技术进展'}).click();
+  await page.waitForFunction(()=>document.querySelector('[aria-label="技术准备进展"]')?.value==='');
+  await shot('technical-pool-1920x1080');
+  const deniedTechnical=await api('/api/order-pool/commands','POST',{action:'cancel',ids:[f.first.id],requestKey:key()});
+  check(deniedTechnical.status===403,'technical collaborator cannot reorder or cancel planning orders');
+  // Warehouse confirms product coverage; no shipment operation is shown here.
+  await page.setViewportSize({width:1366,height:1024});
+  await login('warehouse','/workspace/warehouse?scope=pool&status=all&orderId='+f.first.warehouseTaskId);
+  await page.getByRole('heading',{name:f.first.specification,exact:true}).waitFor();
+  check(await page.getByRole('button',{name:'登记发货',exact:true}).count()===0,'warehouse does not ask users to register shipping');
+  await page.getByRole('button',{name:'确认可配套数量',exact:true}).click();
+  await page.getByLabel('累计可配套数量',{exact:true}).fill('40');
+  await page.getByRole('checkbox',{name:'已按实物核对以上产品套数'}).check();
+  await shot('confirm-pool-quantity-1366x1024');
+  await submit('确认可配套数量');
+  check((await first()).readyRemaining===40,'warehouse product-set confirmation appears in planning pool');
+  await shot('warehouse-pool-1366x1024');
+  // Allocate 30 of the 100 units. Remaining and retained prepared quantities must agree.
+  await login('admin','/weekly-plan-center?view=pool');await waitRows();
+  await page.locator('.op-table tbody tr').filter({hasText:f.first.specification}).getByRole('button',{name:'加入周计划'}).click();
+  await page.getByLabel('排产数量 '+f.first.specification,{exact:true}).fill('30');
+  await shot('join-week-1366x1024');
+  await page.getByRole('dialog').getByRole('button',{name:'确认加入',exact:true}).click();
+  await page.getByRole('button',{name:'查看对应周计划',exact:false}).waitFor({timeout:20000});
+  let o=await first();check(o.remaining===70&&o.consumed===30&&o.readyRemaining===10,'30 scheduled once: 70 remaining and 10 prepared remaining');
+  const weekly=(await api('/api/planning/orders?read=week&week='+f.currentWeek)).body;
+  const batch=weekly.orders.flatMap(x=>x.batches).find(b=>b.id===o.batches[0].id);
+  check(!!batch&&Number(batch.totalMillisecondsSnapshot)===30*180000,'weekly planned labor equals single-set time multiplied by 30');
+  const source=await api('/api/warehouse/material-orders?workOrderId='+batch.workOrderId);
+  check(source.status===200&&source.body.order.state==='READY','weekly warehouse inherits confirmed 30 sets');
+  await page.getByRole('button',{name:'查看对应周计划',exact:false}).click();
+  check(!new URL(page.url()).searchParams.has('view'),'view-week button preserves real weekly navigation on reload');
+  await page.getByRole('button',{name:/订单池/}).first().click();await waitRows();
+  o=await first();
+  const body={requestKey:key(),poolVersion:o.version,quantity:40,weekStartDate:f.currentWeek,plannedCompletionDate:f.currentWeek};
+  const calls=await Promise.all([api('/api/planning/orders/'+o.id+'/batches','POST',body),api('/api/planning/orders/'+o.id+'/batches','POST',{...body,requestKey:key()})]);
+  check(calls.filter(c=>c.status===201).length===1&&calls.some(c=>c.status===409),'concurrent allocations cannot overschedule an order');
+  const success=calls.find(c=>c.status===201),retryBody=calls[0]===success?body:null;
+  if(retryBody){check((await api('/api/planning/orders/'+o.id+'/batches','POST',retryBody)).status===201,'same allocation key is safely replayed');}
+  check((await first()).remaining===30,'only one concurrent 40-set allocation takes effect');
+  await login('reader','/weekly-plan-center?view=pool');await waitRows();
+  check(await page.locator('.op-tools').getByRole('button',{name:'新建订单',exact:true}).isDisabled(),'read-only users see disabled mutation actions');
+  check((await api('/api/order-pool/commands','POST',{action:'create',requestKey:key(),row:{}})).status===403,'server rejects read-only mutations');
+  check(errors.length===0,'no browser runtime errors: '+errors.join('; '));
+  return{passed:true,checks};
+ }catch(e){await shot('failure');throw Error(String(e)+'; browser errors: '+errors.join('; '));}
+}
+

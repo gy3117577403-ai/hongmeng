@@ -16,9 +16,10 @@ function version(actual: number, supplied: unknown) {
 }
 async function lockWarehouse(tx: Tx, id: string) {
   await tx.$queryRaw`SELECT id FROM warehouse_material_tasks WHERE id=${id} FOR UPDATE`;
-  const task = await tx.warehouseMaterialTask.findUnique({ where: { id }, include: { sampleTask: { select: sampleMaterialSourceSelect }, workOrder: { select: { weekStartDate: true, weekEndDate: true, deletedAt: true } } } });
+  const task = await tx.warehouseMaterialTask.findUnique({ where: { id }, include: { planOrder: { select: { deletedAt: true, status: true } }, sampleTask: { select: sampleMaterialSourceSelect }, workOrder: { select: { weekStartDate: true, weekEndDate: true, deletedAt: true } } } });
+  if (task?.planOrder && (task.planOrder.deletedAt || ['cancelled','completed'].includes(task.planOrder.status))) throw new MaterialInputError('订单已结束，仅可查看历史记录',409);
   if (!task || task.workOrder?.deletedAt || task.sampleTask?.deletedAt || task.sampleTask?.status === 'CANCELLED') throw new MaterialInputError('配料任务不存在或来源已取消', 404);
-  return { ...task, workOrder: task.workOrder || { ...sampleMaterialSource(task.sampleTask), deletedAt: null } };
+  return { ...task, workOrder: task.workOrder || (task.planOrderId ? { weekStartDate: null, weekEndDate: null, deletedAt: null } : { ...sampleMaterialSource(task.sampleTask), deletedAt: null }) };
 }
 
 // All open events contribute to the order summary. Closing one event cannot close its siblings.
@@ -42,13 +43,18 @@ export async function synchronizeWarehouseExceptions(tx: Tx, id: string, actorId
 
 export async function mutateWarehouseException(id: string, input: Input, actorId: string, canConfirm: boolean) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new MaterialInputError('提交内容不正确');
-  return prisma.$transaction(tx => updateWarehouseException(tx, id, input, actorId, canConfirm));
+  return prisma.$transaction(async tx => {
+    const task=await tx.warehouseMaterialTask.findUnique({where:{id},select:{planOrderId:true}});
+    if(task?.planOrderId)throw new MaterialInputError('请通过订单池配料处理，保留配套数量与周计划关联',409);
+    return updateWarehouseException(tx,id,input,actorId,canConfirm);
+  });
 }
 
 export async function updateWarehouseException(tx: Tx, id: string, input: Input, actorId: string, canConfirm: boolean) {
     const current = await lockWarehouse(tx, id);
     version(current.version, input.version);
     const action = text(input.action, 40);
+    if(['complete','reopen'].includes(action)) await tx.warehouseMaterialTask.update({where:{id},data:{poolCompletionInherited:false}});
     // Sample kitting is confirmed against the physical materials, independently of any legacy list.
     if (current.sampleTaskId && ['report_exception', 'update_exception'].includes(action)) {
       const existingEvent = action === 'update_exception' && input.exceptionId ? await tx.warehouseMaterialExceptionCase.findFirst({ where: { id: String(input.exceptionId), warehouseTaskId: id, status: 'OPEN' } }) : null;

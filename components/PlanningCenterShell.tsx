@@ -3,6 +3,7 @@ import FixtureRequirementControl from '@/components/quality-fixtures/FixtureRequ
 import { QualityFixtureStatus, type QualityFixtureBadge } from '@/components/quality-fixtures/QualityFixtureStatus';
 
 import { PlanningDetailDrawer } from '@/components/PlanningDetailDrawer';
+import { OrderPoolWorkbench } from '@/components/planning/OrderPoolWorkbench';
 import { MaterialOrderDrawer } from '@/components/material/MaterialOrderDrawer';
 import PlanningWeekDialog from '@/components/PlanningWeekDialog';
 import { PlanningTimeComparison } from '@/components/ProductionWorkload';
@@ -820,7 +821,7 @@ export default function PlanningCenterShell({
 
   const queryWeek = view === 'preparation' ? periods?.next.weekStartDate || currentPlanningWeek(1)
     : view === 'history' ? historyWeekStartDate || currentPlanningWeek(-1) : selectedWeekStartDate;
-  const readAll = view === 'orders' || orderPoolOpen || carryoverOpen || deferredOnly;
+  const readAll = orderPoolOpen || carryoverOpen || deferredOnly;
   const loadPlanRows = readAll || ['schedule', 'preparation', 'history'].includes(view);
   const rowQuery = readAll ? 'read=all' : `read=week&week=${encodeURIComponent(queryWeek)}`;
   const lastRowQuery = useRef('');
@@ -970,7 +971,7 @@ export default function PlanningCenterShell({
       if (stored) {
         try {
           const state = JSON.parse(stored) as PlanningReturnState;
-          setView(state.view);
+          setView(search.get('view') === 'pool' ? 'orders' : state.view);
           setKeyword(state.keyword);
           setCustomer(state.customer);
           setPriority(state.priority);
@@ -994,6 +995,7 @@ export default function PlanningCenterShell({
         }
       }
     }
+    if (search.get('view') === 'pool') setView('orders');
     const requestedWeekStartDate = String(search.get('week') || '').trim();
     requestedWeekStartRef.current = requestedWeekStartDate;
     if (/^\d{4}-\d{2}-\d{2}$/.test(requestedWeekStartDate)) {
@@ -1397,6 +1399,7 @@ export default function PlanningCenterShell({
   }
 
   function selectView(nextView: PlanningView): void {
+    const url=new URL(window.location.href);if(nextView==='orders')url.searchParams.set('view','pool');else url.searchParams.delete('view');window.history.replaceState(null,'',url);
     if (nextView !== 'schedule') setOrderPoolOpen(false);
     if (nextView === 'schedule') {
       selectScheduleWeek(selectedWeek?.weekStartDate || periods?.current.weekStartDate || '');
@@ -2263,9 +2266,9 @@ export default function PlanningCenterShell({
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   });
   const views: Array<{ id: PlanningView; label: string; icon: typeof ClipboardList; count?: number }> = [
-    { id: 'schedule', label: '计划排程', icon: CalendarCheck2, count: metadataReady ? summary.scheduledOrderCount : undefined },
+    { id: 'schedule', label: '周计划', icon: CalendarCheck2, count: metadataReady ? summary.scheduledOrderCount : undefined },
     { id: 'month', label: '月度排产', icon: CalendarRange },
-    { id: 'orders', label: '订单管理', icon: ClipboardList, count: metadataReady ? summary.pendingOrderCount : undefined },
+    { id: 'orders', label: '订单池', icon: ClipboardList },
     { id: 'preparation', label: '下周生产', icon: PackageCheck, count: metadataReady ? summary.preparationBatchCount : undefined },
     { id: 'changes', label: '插单与变更', icon: FilePenLine },
     { id: 'history', label: '历史计划', icon: History },
@@ -2295,7 +2298,7 @@ export default function PlanningCenterShell({
         moduleModeSwitcher={{ mode: 'mass', drawerId: 'planning-mode-drawer', drawerOpen: modeDrawer.open, onToggle: toggleModeDrawer, openFromSidebar: false }}
       />
 
-      <div className={`planning-center-main planning-compact-main${modeDrawer.open ? ' module-mode-open' : ''}`}>
+      <div className={`planning-center-main planning-compact-main${view === 'orders' ? ' planning-pool-main' : ''}${modeDrawer.open ? ' module-mode-open' : ''}`}>
         <header className="planning-titlebar">
           <div className="planning-navigation-trigger" id="planning-navigation-trigger" aria-label="平台导航入口" />
           <div className="planning-title-copy"><div className="planning-heading-line"><h1>计划中心</h1><ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={toggleModeDrawer} controls="planning-mode-drawer" compact /></div></div>
@@ -2401,7 +2404,7 @@ export default function PlanningCenterShell({
           </div>
           <div className="planning-toolbar-actions">
             {view === 'schedule' && <>
-              <button ref={orderPoolTriggerRef} className="planning-secondary-action pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池 <b>{metadataReady ? globalCounts.orderPool : '—'}</b></button>
+              <button ref={orderPoolTriggerRef} className="planning-secondary-action pool" type="button" onClick={() => selectView('orders')}><PanelLeftOpen size={15} />订单池 <b>{metadataReady ? globalCounts.orderPool : '—'}</b></button>
               <details className="planning-transfer-menu" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary><Upload size={15} />导入/导出<ChevronDown size={13} /></summary><div>
                 <button type="button" disabled={moduleReadOnly} onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); openPlanningImport(menu?.querySelector('summary') || event.currentTarget); }}>导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); void openWeeklyPlanExport(menu?.querySelector('summary') || event.currentTarget); }}>导出计划 Excel</button>
@@ -2575,10 +2578,7 @@ export default function PlanningCenterShell({
           </div>
         </section>}
 
-        {view === 'orders' && <section className="planning-orders-view">
-          <header><div><span>实时订单</span><h2>生产订单池</h2><p>订单变化直接在这里维护，不再依赖重复上传 Excel。</p></div><b>{planDataAvailable ? readinessFilters.length ? `筛选 ${filteredOrders.length} / ${baseFilteredOrders.length} 单` : `${filteredOrders.length} 单` : '未获取数据'}</b></header>
-          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th className="production-list-sequence">序号</th><th>客户 / 产品</th><th>业务员</th><th>规格 / 警示</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>单件 / 总工时</th><th>操作</th></tr></thead><tbody>{filteredOrders.map((order, rowIndex) => <tr key={order.id}><td className="production-list-sequence">{rowIndex + 1}</td><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b>{Boolean(order.qualityWarningCount) && <span className={`planning-quality-warning-badge severity-${order.highestQualityWarningSeverity?.toLowerCase()}`}><ShieldAlert size={11} />{planningWarningSeverityLabel[order.highestQualityWarningSeverity || 'LOW']}风险 · {order.qualityWarningCount}{order.qualityWarningPrintRequired ? ' · 必打' : ''}</span>}</td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate || '客户交期待确认'}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${planningUnitMilliseconds(order) ? 'ready' : 'warning'}`}>{planMinutesText(planningUnitMilliseconds(order))}<small>{totalDuration(order.planningTotalMilliseconds)}</small></span></td><td><div className="planning-row-actions text"><button type="button" disabled={saving} onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" disabled={saving} onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && planDataAvailable && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>{readinessFilters.length ? '没有符合准备状态的订单' : '订单池为空'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '点击右上角“新建订单”开始建立实时计划。'}</span></div>}</div>
-        </section>}
+        {view === 'orders' && <OrderPoolWorkbench user={user} refreshToken={refreshToken} onChanged={() => setRefreshToken(n => n + 1)} onWeek={week => { const url=new URL(window.location.href);url.searchParams.delete('view');window.history.replaceState(null,'',url);selectScheduleWeek(week);setRefreshToken(n => n + 1); }} />}
 
         {view === 'preparation' && <section className="planning-preparation-view">
           <header><div><span>下周提前生产</span><h2>{periods ? `${periods.next.weekStartDate} 至 ${periods.next.weekEndDate}` : '下周生产清单'}</h2><p>排入下周后自动生成生产工单，可直接提前处理；跨周后自动转为本周执行。</p></div><a className="planning-primary-action" href="/production?scope=next"><Factory size={16} />进入下周生产</a></header>

@@ -3051,6 +3051,13 @@ model ProcessRouteActivity {
 
 model WarehouseMaterialTask {
   id             String                           @id @default(uuid())
+  planOrderId    String?                          @unique @map("plan_order_id")
+  planOrder      ProductionPlanOrder?              @relation(fields: [planOrderId], references: [id], onDelete: Restrict)
+  preparedQuantity Int                            @default(0) @map("prepared_quantity")
+  poolCompletionInherited Boolean                  @default(false) @map("pool_completion_inherited")
+  preparationTaskId String?                        @map("preparation_task_id")
+  preparationTask WarehouseMaterialTask?           @relation("PoolMaterialSource", fields: [preparationTaskId], references: [id], onDelete: Restrict)
+  preparedBatches WarehouseMaterialTask[]          @relation("PoolMaterialSource")
   workOrderId    String?                          @unique @map("work_order_id")
   sampleTaskId   String?                          @unique @map("sample_task_id")
   sampleTask     SampleTask?                      @relation(fields: [sampleTaskId], references: [id], onDelete: Restrict)
@@ -3571,6 +3578,13 @@ model ProductQuotationTime {
 }
 
 model ProductionPlanOrder {
+  preparationRank Int @default(0) @map("preparation_rank")
+  preparationVersion Int @default(0) @map("preparation_version")
+  preparationQuantity Int? @map("preparation_quantity")
+  preparationDueAt DateTime? @map("preparation_due_at")
+  preparationNote String? @map("preparation_note")
+  preparationState String @default("open") @map("preparation_state")
+  poolMaterialTask WarehouseMaterialTask?
   id                       String                 @id @default(uuid())
   sourceOrderNo            String                 @map("source_order_no")
   sourceLineNo             Int                    @map("source_line_no")
@@ -3610,10 +3624,13 @@ model ProductionPlanOrder {
   @@index([drawingLibraryItemId])
   @@index([deletedAt])
   @@index([deletedAt, status, priority, customerDueDate], map: "production_plan_active_dispatch_idx")
+  @@index([deletedAt, status, priority, preparationRank], map: "pool_preparation_queue_idx")
   @@map("production_plan_orders")
 }
 
 model ProductionPlanBatch {
+  poolPreparedQuantity Int @default(0) @map("pool_prepared_quantity")
+  poolPreparationLinked Boolean @default(false) @map("pool_preparation_linked")
   scheduleState                 String                    @default("ACTIVE") @map("schedule_state")
   scheduleVersion               Int                       @default(0) @map("schedule_version")
   scheduleReason                String?                   @map("schedule_reason")
@@ -3671,6 +3688,14 @@ model ProductionPlanBatch {
   @@index([deletedAt, weekStartDate, releaseState], map: "production_plan_batch_active_week_idx")
   @@index([scheduleState, deletedAt], map: "production_plan_batches_schedule_state_idx")
   @@map("production_plan_batches")
+}
+
+model OrderPoolCommand {
+  key String @id
+  hash String
+  result Json
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("order_pool_commands")
 }
 
 // A batch keeps one identity. Week slots retain work already assigned to an old

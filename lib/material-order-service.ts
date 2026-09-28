@@ -5,10 +5,13 @@ import { MaterialInputError, materialQuantity } from '@/lib/material-source';
 import { materialAmounts, materialForecast, materialOrderState } from '@/lib/material-order-domain';
 import { updateWarehouseException, synchronizeWarehouseExceptions } from '@/lib/material-exception-service';
 import { sampleMaterialSourceSelect, sampleMaterialSource } from '@/lib/sample-material-source';
+import { lockOrderPool, confirmPoolQuantity, distributePoolCoverage } from './order-pool-material';
+import { poolQuantities, poolInteger, PoolError } from './order-pool-domain';
 
 const actor = { select: { id: true, displayName: true, username: true } } as const;
 export const materialOrderInclude = Prisma.validator<Prisma.WarehouseMaterialTaskInclude>()({
-  workOrder: { select: { id: true, code: true, productName: true, specification: true, customerName: true, productionTargetQty: true, uncompletedQty: true, weekStartDate: true, weekEndDate: true, deliveryDay: true, deletedAt: true, productionPlanBatch: { select: { batchNo: true, scheduleState: true, scheduleReason: true, deletedAt: true, plannedCompletionDate: true, planOrder: { select: { customerDueDate: true, status: true, deletedAt: true } } } } } },
+  planOrder: { include: { batches: { where: { deletedAt: null }, select: { quantity: true, poolPreparedQuantity: true } } } },
+  workOrder: { select: { id: true, code: true, productName: true, specification: true, customerName: true, productionTargetQty: true, uncompletedQty: true, weekStartDate: true, weekEndDate: true, deliveryDay: true, deletedAt: true, productionPlanBatch: { select: { batchNo: true, scheduleState: true, scheduleReason: true, deletedAt: true, plannedCompletionDate: true, planOrder: { select: { customerDueDate: true, customerDueDateConfirmed:true, status: true, deletedAt: true } } } } } },
   sampleTask: { select: sampleMaterialSourceSelect },
   completedBy: actor,
   exceptionCases: { orderBy: { sequence: 'asc' }, include: {
@@ -25,7 +28,8 @@ type ListRecord = Prisma.WarehouseMaterialTaskGetPayload<{ include: typeof mater
 const iso = (v: Date | null | undefined) => v?.toISOString() || null;
 export function serializeMaterialOrder(task: ListRecord | Record) {
   const work = task.workOrder;
-  const source = work || sampleMaterialSource(task.sampleTask);
+  const pool = task.planOrder;
+  const source = work || (pool ? { code: pool.sourceOrderNo, specification: pool.specification, productName: pool.productName, customerName: pool.customerName, productionTargetQty: pool.preparationQuantity ?? pool.orderQuantity, uncompletedQty: null, weekStartDate: null, weekEndDate: null } : sampleMaterialSource(task.sampleTask));
   const events = task.exceptionCases.map(e => {
     const amounts = materialAmounts(e.shortageQuantity, e.arrivals);
     // Closed historical events have no new receipt ledger. Preserve their confirmed outcome.
@@ -43,10 +47,13 @@ export function serializeMaterialOrder(task: ListRecord | Record) {
   const pendingBatches = open.reduce((n, e) => n + e.arrivals.filter(b => b.status === 'ARRIVED').length, 0);
   const detail = task as Record;
   return { id: task.id, workOrderId: task.workOrderId, sampleTaskId: task.sampleTaskId, version: task.version,
+    planOrderId: task.planOrderId, preparationTaskId: task.preparationTaskId, preparedQuantity: task.preparedQuantity,
+    poolQuantities: pool ? poolQuantities(pool.orderQuantity, pool.preparationQuantity, task.preparedQuantity, pool.batches) : null,
+    preparationRank: pool?.preparationRank || 0, preparationPriority: pool?.priority || 'normal',
     code: source.code, specification: source.specification || source.productName, productName: source.productName, customer: source.customerName,
     quantity: source.productionTargetQty ?? source.uncompletedQty ?? 0, weekStart: iso(source.weekStartDate), weekEnd: iso(source.weekEndDate),
-    dueDate: iso(work?.productionPlanBatch?.planOrder.customerDueDate) || (work?.deliveryDay || null),
-    batchNo: work?.productionPlanBatch?.batchNo || null, scheduleState: work?.productionPlanBatch?.scheduleState || 'ACTIVE', scheduleReason: work?.productionPlanBatch?.scheduleReason || null, cancelled: !!work?.deletedAt || !!work?.productionPlanBatch?.deletedAt || !!work?.productionPlanBatch?.planOrder.deletedAt || work?.productionPlanBatch?.planOrder.status === 'cancelled' || task.sampleTask?.status === 'CANCELLED',
+    dueDate: pool ? (pool.customerDueDateConfirmed ? iso(pool.customerDueDate) : null) : (work?.productionPlanBatch ? (work.productionPlanBatch.planOrder.customerDueDateConfirmed ? iso(work.productionPlanBatch.planOrder.customerDueDate) : null) : (work?.deliveryDay || null)),
+    batchNo: work?.productionPlanBatch?.batchNo || null, scheduleState: work?.productionPlanBatch?.scheduleState || 'ACTIVE', scheduleReason: work?.productionPlanBatch?.scheduleReason || null, cancelled: !!pool?.deletedAt || pool?.status === 'cancelled' || !!work?.deletedAt || !!work?.productionPlanBatch?.deletedAt || !!work?.productionPlanBatch?.planOrder.deletedAt || work?.productionPlanBatch?.planOrder.status === 'cancelled' || task.sampleTask?.status === 'CANCELLED',
     state: materialOrderState(task.status, open.length, events.filter(e => e.status === 'RESOLVED').length), status: task.status,
     openCount: open.length, purchased: open.filter(e => e.source === 'PURCHASED').length, customerProvided: open.filter(e => e.source === 'CUSTOMER').length,
     unknownSource: open.filter(e => e.source === 'UNKNOWN').length, pendingBatches, forecast, events,
@@ -76,6 +83,7 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
   const { version: suppliedVersion, requestKey: _key, ...payload } = input;
   const hash = createHash('sha256').update(JSON.stringify({ actorId, payload })).digest('hex');
   return prisma.$transaction(async tx => {
+    await lockOrderPool(tx);
     await tx.$queryRaw`SELECT id FROM warehouse_material_tasks WHERE id=${id} FOR UPDATE`;
     const current = await tx.warehouseMaterialTask.findUnique({ where: { id }, include: materialOrderInclude });
     if (!current) throw new MaterialInputError('配料订单不存在', 404);
@@ -84,15 +92,17 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
       if (replay.hash !== hash) throw new MaterialInputError('操作编号已使用，请重新提交', 409);
       return serializeMaterialOrder(await tx.warehouseMaterialTask.findUniqueOrThrow({ where: { id }, include: materialOrderDetailInclude }));
     }
-    if (serializeMaterialOrder(current).cancelled || current.sampleTask?.deletedAt) throw new MaterialInputError('订单已取消，仅可查看历史记录', 409);
+    if (serializeMaterialOrder(current).cancelled || current.sampleTask?.deletedAt || current.planOrder && (current.planOrder.deletedAt || ['cancelled','completed'].includes(current.planOrder.status))) throw new MaterialInputError('订单已取消，仅可查看历史记录', 409);
     if (action !== 'note' && (!Number.isInteger(suppliedVersion) || current.version !== suppliedVersion)) throw new MaterialInputError('订单已被更新，已刷新数据；请核对后重新提交', 409);
-    if (['confirm_arrival', 'verify_arrival', 'complete', 'reopen', 'resolve'].includes(action) && !canConfirm) throw new MaterialInputError('需要仓库到料确认权限', 403);
+    if (['confirm_prepared', 'confirm_arrival', 'verify_arrival', 'complete', 'reopen', 'resolve'].includes(action) && !canConfirm) throw new MaterialInputError('需要仓库到料确认权限', 403);
     if (input.workspace === 'warehouse' && ['record_shipment', 'cancel_shipment', 'report_arrival', 'eta'].includes(action)) throw new MaterialInputError('发货与交期请在物料追踪中维护', 400);
     const now = new Date();
     let content = text(input.note), eventId = text(input.exceptionId, 100), arrivalId = text(input.arrivalId, 100);
     let event = current.exceptionCases.find(e => e.id === eventId);
     const auditDetail: { [key: string]: Prisma.InputJsonValue | null } = { exceptionCaseId: eventId || null, arrivalId: arrivalId || null, requestKey: key };
-    if (['report_exception', 'update_exception', 'complete', 'reopen'].includes(action)) {
+    if (action === 'confirm_prepared' || current.planOrderId && action === 'complete') {
+      try { await confirmPoolQuantity(tx,id,poolInteger(input.preparedQuantity,'累计可配套数量'),actorId); } catch(e) { if(e instanceof PoolError) throw new MaterialInputError(e.message,e.status); throw e; }
+    } else if (['report_exception', 'update_exception', 'complete', 'reopen'].includes(action)) {
       if (action === 'report_exception' && current.exceptionCases.some(e => e.status === 'OPEN' && e.materialModel === text(input.materialModel,160) && e.supplySource === input.supplySource && e.unit === (text(input.unit,12) || '个'))) throw new MaterialInputError('本单已登记相同来源、型号与单位的缺料，请修改已有明细', 409);
       let version = current.version;
       if (action === 'report_exception' && current.status === 'completed') {
@@ -201,9 +211,18 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
       if (action === 'note') await tx.warehouseMaterialTask.update({ where: { id }, data: { version: { increment: 1 }, updatedById: actorId } });
       else await synchronizeWarehouseExceptions(tx, id, actorId);
     }
+    if (action === 'confirm_arrival' && input.confirmComplete === true && current.planOrderId) throw new MaterialInputError('请单独确认产品可配套数量，物料数量不能自动换算为套数');
     if (action === 'confirm_arrival' && input.confirmComplete === true) {
       const latest = await tx.warehouseMaterialTask.findUniqueOrThrow({ where: { id }, select: { version: true } });
       await updateWarehouseException(tx, id, { action: 'complete', version: latest.version, note: '到料确认并核对整单物料齐全' }, actorId, true);
+    }
+    if (current.planOrderId && ['reopen','report_exception','update_exception'].includes(action)) {
+      if (action === 'reopen') await tx.warehouseMaterialTask.update({ where: { id }, data: { preparedQuantity: 0 } });
+      else if(action==='report_exception'){
+        const credit=await tx.productionPlanBatch.aggregate({where:{planOrderId:current.planOrderId,deletedAt:null},_sum:{poolPreparedQuantity:true}});
+        await tx.warehouseMaterialTask.update({where:{id},data:{preparedQuantity:Math.min(current.preparedQuantity,credit._sum.poolPreparedQuantity||0)}});
+      }
+      await distributePoolCoverage(tx,current.planOrderId,actorId);
     }
     await tx.materialOrderCommand.create({ data: { taskId: id, key, hash } });
     return serializeMaterialOrder(await tx.warehouseMaterialTask.findUniqueOrThrow({ where: { id }, include: materialOrderDetailInclude }));

@@ -1,4 +1,6 @@
 import { refreshPlanningWeekTime } from '@/lib/planning-week-time';
+import { lockOrderPool, ensurePoolPreparation } from '@/lib/order-pool-material';
+import { resetPoolTargetStatus } from '@/lib/order-pool-service';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { canAdjustProductionDates, serializeProductionControl } from '@/lib/production-control';
@@ -44,9 +46,11 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const updated = await prisma.$transaction(async tx => {
+      await lockOrderPool(tx);
       const existing = await tx.productionPlanOrder.findUnique({
         where: { id: context.params.id },
         include: {
+          poolMaterialTask: {include:{activities:{take:1,select:{id:true}}}},
           batches: {
             where: { deletedAt: null },
             select: {
@@ -79,6 +83,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         specification: references.specification,
       };
       const allocated = existing.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+      if(canonical.orderQuantity<(existing.poolMaterialTask?.preparedQuantity||0))return NextResponse.json({ok:false,error:'订单数量不能低于已确认的配套数量，请先在仓库重新核对'},{status:409});
       if (canonical.orderQuantity < allocated) {
         return NextResponse.json({ ok: false, error: `订单数量不能小于已排产数量 ${allocated}` }, { status: 409 });
       }
@@ -86,6 +91,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       const productIdentityChanged = canonical.drawingLibraryItemId !== existing.drawingLibraryItemId
         || canonical.productName !== existing.productName
         || canonical.specification !== existing.specification;
+      if(productIdentityChanged && existing.poolMaterialTask?.activities.length)return NextResponse.json({ok:false,error:'已有订单池准备记录，不能将这些记录转给其他产品；请新建对应产品订单'},{status:409});
       if (productionPlanProductIdentityLocked({
         hasReleasedBatch: released.length > 0,
         identityChanged: productIdentityChanged,
@@ -135,12 +141,14 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       }
       await tx.productionPlanOrder.update({
         where: { id: existing.id },
-        data: { ...canonical, updatedById: user.id, ...(dateChanged ? {
+        data: { ...canonical, preparationQuantity:existing.preparationQuantity==null?null:Math.min(existing.preparationQuantity,canonical.orderQuantity),preparationVersion:{increment:1}, updatedById: user.id, ...(dateChanged ? {
           customerDueDateConfirmed: true, deliveryVersion: { increment: 1 },
           deliveryBaselineDate: existing.deliveryBaselineDate || (existing.customerDueDateConfirmed ? existing.customerDueDate : canonical.customerDueDate),
         } : {}) },
       });
       const linkedIds = released.map(batch => batch.workOrderId).filter((id): id is string => Boolean(id));
+      await ensurePoolPreparation(tx,existing.id,user.id);
+      await resetPoolTargetStatus(tx,existing.id,user.id);
       if (linkedIds.length) {
         await tx.workOrder.updateMany({
           where: { id: { in: linkedIds } },

@@ -91,6 +91,8 @@ export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string,
   // Read-only POSTs must be individually declared, never inferred from a UI button label.
   const readCommand = verb === 'POST' && /^\/api\/(?:reports\/[^/]+\/(?:preview|export)|drawing-library\/[^/]+\/print-preview|planning\/weekly-plan-export\/preview|finished-goods\/reports\/preview)$/.test(path);
   const write = !read && !readCommand;
+  if (path.startsWith('/api/order-pool/commands') || path.startsWith('/api/order-pool/import')) return moduleAllows(access, ['production'], write);
+  if (path.startsWith('/api/order-pool')) return moduleAllows(access, ['production', 'materials', 'technology'], write);
   const dependencies = /^\/api\/(?:work-orders|departments|customers|resource-categories|categories)(?:\/|$)/.test(path);
   if (read && dependencies && Object.keys(access.modulePermissions).length) return true;
   // Only read dependencies needed by selected business screens, never their mutations.
