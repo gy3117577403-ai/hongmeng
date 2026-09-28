@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { canAccessApiRoute } from '@/lib/api-route-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,7 +15,9 @@ export async function GET(request: Request) {
   try {
     const user = await requireUser();
     const managementModules = new Set(['BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS']);
-    const captureOnly = new URL(request.url).searchParams.get('capture') === '1' || user.access.sampleCaptureEnabled || user.access.modules.includes('FIELD_REPORT')
+    const independentOnly = user.access.sampleCaptureEnabled
+      && canAccessApiRoute({ ...user.access, sampleCaptureEnabled: false }, '/api/sample-team/context', 'GET') !== true;
+    const captureOnly = new URL(request.url).searchParams.get('capture') === '1' || independentOnly || user.access.modules.includes('FIELD_REPORT')
       && !user.access.modules.some(module => managementModules.has(module));
     if (captureOnly) {
       const processes = await prisma.processDefinition.findMany({

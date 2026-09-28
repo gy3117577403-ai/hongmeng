@@ -105,7 +105,8 @@ try {
  const captureTask=await task(p,{status:'IN_PROGRESS'});
  let snap=(await req('read QR with independent capture','/api/sample-tasks/code/'+captureTask.qrCode)).task;
  const captureContext=await req('capture context exposes process choices only','/api/sample-team/context?capture=1');assert.equal(captureContext.members.length,0);assert.equal(captureContext.products.length,0);
- const section=await req('save stripping section as ordinary employee','/api/sample-tasks/'+snap.id+'/sections/STRIPPING',{expectedTaskVersion:snap.version,expectedSectionRevision:0,clientMutationId:randomUUID(),payload:{rows:[{rowId:'qa-strip',model:'QA-CONNECTOR',outerPeelMm:3,innerPeelMm:2}]}},200,'PUT');snap=section.task;
+ const businessContext=await req('capture grant preserves existing planning context','/api/sample-team/context');check(businessContext.members.length>0&&businessContext.products.length>0,'independent capture grant does not narrow existing business reads');
+ const section=await req('save stripping section as ordinary employee','/api/sample-tasks/'+snap.id+'/sections/STRIPPING',{expectedTaskVersion:snap.version,expectedSectionRevision:0,clientMutationId:randomUUID(),payload:{rows:[{rowId:'qa-strip',position:0,model:'QA-CONNECTOR',outerPeelMm:3,innerPeelMm:2}]}},200,'PUT');snap=section.task;
  snap=(await req('save ordinary sample entry','/api/sample-tasks/'+snap.id+'/entries',{kind:'NOTICE',label:'权限验收',payload:{content:'独立采集权限'},expectedTaskVersion:snap.version,clientMutationId:randomUUID()},201)).task;
  const form=new FormData();form.set('file',new Blob([image],{type:'image/jpeg'}),'capture.jpg');form.set('category','FINISHED');form.set('clientMutationId',randomUUID());form.set('expectedTaskVersion',String(snap.version));form.set('captureSource','ALBUM');
  const uploaded=await req('ordinary employee photo upload to S3','/api/sample-tasks/'+snap.id+'/photos',form,201);snap=uploaded.task;
@@ -124,6 +125,7 @@ try {
  const soloAccount=(await req('grant capture without desktop or library','/api/users/module-access',{employeeId:soloEmployee.id,username:soloEmployee.employeeNo,displayName:soloEmployee.name,password:initial,accountStatus:'ACTIVE',modulePermissions:{},workbenchEnabled:false,fieldReportEnabled:false,sampleCaptureEnabled:true})).user;
  await login(soloAccount.username,initial);await req('solo initial password','/api/auth/change-password',{currentPassword:initial,newPassword:password,confirmPassword:password});
  await req('solo can read task','/api/sample-tasks/code/'+current.qrCode);
+ const soloContext=await req('capture-only context omits unrelated employee catalog','/api/sample-team/context');assert.equal(soloContext.members.length,0);assert.equal(soloContext.products.length,0);
  await req('capture alone cannot read library','/api/sample-library',undefined,403);
  cookie=adminCookie;
  const browserTask=await task(p,{status:'IN_PROGRESS'});
