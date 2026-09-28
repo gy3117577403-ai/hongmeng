@@ -35,12 +35,12 @@ async function scenario(page,f,origin,dir,engine) {
     await page.setViewportSize({width:390,height:844});
     const library='/sample-library?product='+f.productId;
     await login(f.soloUsername,library);await page.getByRole('heading',{name:'当前账号尚未开通'}).waitFor();
-    check(new URL(page.url()).pathname==='/sample-library','ungranted QR remains in mobile library instead of desktop fallback');
+    check(await page.evaluate(()=>location.pathname)==='/sample-library','ungranted QR remains in mobile library instead of desktop fallback');
     check(await page.getByText(f.soloUsername,{exact:false}).isVisible(),'mobile notice identifies signed-in employee');await shot('mobile-missing-access');
     await page.getByRole('button',{name:'切换账号',exact:true}).click();await page.waitForURL(u=>u.pathname==='/login');
-    check(new URL(page.url()).searchParams.get('next')===library,'switch account preserves scanned product');
+    check(await page.evaluate(()=>new URL(location.href).searchParams.get('next'))===library,'switch account preserves scanned product');
     await fillLogin(f.username);await page.locator('.sl-photo-grid img').first().waitFor();
-    check(new URL(page.url()).searchParams.get('product')===f.productId,'library reader returns to scanned product');
+    check(await page.evaluate(()=>new URL(location.href).searchParams.get('product'))===f.productId,'library reader returns to scanned product');
     await logout();await login(f.readUsername,next);await page.locator('.sample-photo-actions').waitFor();
     check(await page.getByRole('button',{name:'从相册选择',exact:true}).isDisabled(),'production reader cannot start a photo selection');
     check(await page.getByRole('button',{name:'提交审核',exact:true}).isDisabled(),'production reader cannot submit a sample');await shot('capture-readonly');
@@ -67,7 +67,7 @@ async function scenario(page,f,origin,dir,engine) {
     await page.getByRole('button',{name:'重试',exact:true}).click();await page.getByRole('link',{name:'重新登录并返回'}).waitFor();
     await page.getByRole('button',{name:'保存草稿',exact:true}).click();await page.getByText('照片草稿已保存到当前账号的本机空间',{exact:true}).waitFor();
     q=await queueValue();check(q.length===1&&q[0].mutationId===mutation,'expired session retains failed local photo');
-    const relogin=await page.getByRole('link',{name:'重新登录并返回'}).getAttribute('href');check(new URL(relogin,origin).searchParams.get('next')===next,'re-login preserves task and photo tab');await shot('capture-login-expired');
+    const relogin=await page.getByRole('link',{name:'重新登录并返回'}).getAttribute('href');check(await page.evaluate(value=>new URL(value,location.origin).searchParams.get('next'),relogin)===next,'re-login preserves task and photo tab');await shot('capture-login-expired');
     await page.unroute(photoRoute);await logout();await page.goto(origin+relogin);await fillLogin(f.readUsername);await page.locator('.sample-photo-actions').waitFor();
     check(await page.locator('article.local').count()===0,'another employee never inherits the previous account photo queue');
     q=await queueValue();check(q.length===1,'switching employee keeps original owner draft intact');
