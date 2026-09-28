@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 if (process.env.SAMPLE_LIBRARY_QA_ALLOW !== 'disposable-sample-library') throw Error('Disposable runtime required');
 const origin = process.env.SAMPLE_LIBRARY_QA_BASE || 'http://127.0.0.1:3000';
 if (!['localhost','127.0.0.1'].includes(new URL(origin).hostname)) throw Error('Loopback only');
@@ -10,6 +11,11 @@ const engine = process.env.SAMPLE_LIBRARY_BROWSER || 'chrome';
 const dir = join(process.env.SAMPLE_LIBRARY_BROWSER_OUTPUT || 'output/playwright/sample-library','capture-access');
 mkdirSync(dir,{recursive:true});
 const file = join(dir,'browser.generated.cjs'), config = join(dir,'browser.config.json');
+// WebKit ephemeral sessions intentionally reject IndexedDB File/Blob writes.
+// Use a fresh persistent profile for the actual draft-recovery contract.
+// https://github.com/WebKit/WebKit/pull/39577
+const profileRoot=resolve(tmpdir());
+const profile=engine==='webkit'?mkdtempSync(join(profileRoot,'hm-capture-')):null;
 // Failure injection is confined to this isolated loopback test browser.
 writeFileSync(config,JSON.stringify({browser:{contextOptions:{ignoreHTTPSErrors:new URL(origin).protocol==='https:',serviceWorkers:'block'}}}));
 function cli(args) {
@@ -92,7 +98,7 @@ async function scenario(page,f,origin,dir,engine,state=null) {
   }catch(error){await shot('failure').catch(()=>{});throw Error(error.message+'\nCompleted: '+JSON.stringify(checks)+'\nUI: '+await page.locator('body').ariaSnapshot());}
 }
 try {
-  cli(['open',origin+'/login','--config',config,'--browser',engine,...(engine==='webkit'?['--device','iPhone 13']:[])]);
+  cli(['open',origin+'/login','--config',config,'--browser',engine,...(engine==='webkit'?['--device','iPhone 13','--profile',profile]:[])]);
   const parse=text=>{const match=text.match(/### Result\r?\n([\s\S]*?)(?:\r?\n### |$)/);return match?JSON.parse(match[1].trim()):null;};
   const run=state=>{
     writeFileSync(file,`async page => (${scenario.toString()})(page,${JSON.stringify(f)},${JSON.stringify(origin)},${JSON.stringify(dir)},${JSON.stringify(engine)},${JSON.stringify(state)})`);
@@ -118,4 +124,8 @@ try {
   const result=run(reloginState);writeFileSync(join(dir,'browser-result.txt'),result);
   const accepted=parse(result);
   if(accepted?.ok!==true||accepted.checks?.length<15)throw Error(result);console.log(result);
-}finally{try{cli(['close']);}catch{}rmSync(file,{force:true});}
+}finally{
+  try{cli(['close']);}catch{}
+  rmSync(file,{force:true});
+  if(profile&&dirname(resolve(profile))===profileRoot&&basename(profile).startsWith('hm-capture-'))rmSync(profile,{recursive:true,force:true});
+}
