@@ -129,8 +129,9 @@ async function scenario(page,origin,f,dir){
   check(await page.locator('.op-tools').getByRole('button',{name:'新建订单',exact:true}).isDisabled(),'read-only users see disabled mutation actions');
   check((await api('/api/order-pool/commands','POST',{action:'create',requestKey:key(),row:{}})).status===403,'server rejects read-only mutations');
   check(errors.length===0,'no browser runtime errors: '+errors.join('; '));
-  check(rejectedRequests.every(r=>r.status===403&&r.url===origin+'/api/order-pool/commands'),'only the intentionally denied permission requests failed: '+JSON.stringify(rejectedRequests));
-  check(consoleErrors.every(message=>message.includes('403')&&message.includes('Failed to load resource')),'console errors are limited to the intentional permission denials: '+JSON.stringify(consoleErrors));
+  const expectedDenial=r=>(r.status===403&&r.url===origin+'/api/order-pool/commands')||(r.status===409&&r.url===origin+'/api/planning/orders/'+f.first.id+'/batches');
+  check(rejectedRequests.every(expectedDenial)&&rejectedRequests.filter(r=>r.status===403).length===2&&rejectedRequests.filter(r=>r.status===409).length===1,'exactly the two permission denials and one concurrent-allocation conflict are observed: '+JSON.stringify(rejectedRequests));
+  check(consoleErrors.every(message=>message.includes('Failed to load resource')&&/\b(?:403|409)\b/.test(message)),'console errors are limited to the verified permission and concurrency denials: '+JSON.stringify(consoleErrors));
   return{passed:true,checks,consoleErrors,rejectedRequests};
  }catch(e){await shot('failure');throw Error(String(e)+'; browser errors: '+errors.join('; '));}
 }
