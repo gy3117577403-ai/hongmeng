@@ -2994,7 +2994,7 @@ export default function PlanningCenterShell({
     </div>}
 
     {importDialog && <div ref={dialogRef} className={`planning-dialog import-dialog production-bulk-import import-workbench import-step-${importDialog.step}`} role="dialog" aria-modal="true" aria-labelledby="planning-import-title">
-      <header><div><h2 id="planning-import-title">{importDialog.step === 'upload' ? '批量导入量产计划' : importDialog.step === 'preview' ? '批量导入量产计划' : importDialog.step === 'complete' ? '批量导入完成' : '最近导入记录'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
+      <header><div><h2 id="planning-import-title"><FileSpreadsheet size={25}/>{importDialog.step === 'upload' ? '批量导入量产计划' : importDialog.step === 'preview' ? '批量导入量产计划' : importDialog.step === 'complete' ? '批量导入完成' : '最近导入记录'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
       <nav className="planning-import-steps" aria-label="导入步骤">
         <span className={importDialog.step === 'upload' ? 'active' : importDialog.preview ? 'done' : ''}><b>1</b>上传模板</span>
         <i />
@@ -3003,6 +3003,7 @@ export default function PlanningCenterShell({
         <span className={importDialog.step === 'complete' ? 'active' : ''}><b>3</b>导入完成</span>
       </nav>
       <div className="planning-dialog-body">
+        <div className="planning-import-source">
         {importDialog.step !== 'history' && <section className="planning-import-target">
           <CalendarCheck2 />
           <div><span>导入到</span><strong>{importDialog.targetWeekStartDate} 至 {importDialog.targetWeekEndDate}</strong></div>
@@ -3019,6 +3020,7 @@ export default function PlanningCenterShell({
           {importDialog.step === 'upload' && <label className="planning-import-new-order"><input type="checkbox" checked={importDialog.importAsNew === true} disabled={importDialog.loading} onChange={event => setImportDialog(current => current ? { ...current, importAsNew: event.target.checked } : current)} />同一文件作为另一笔新订单导入</label>}
           {importDialog.step === 'upload' && <div className="planning-import-tools"><a href="/api/planning/import/template"><FileSpreadsheet size={15} />下载简版 Excel 模板</a><button type="button" onClick={() => { void openPlanningImportHistory(); }}>导入记录</button></div>}
         </>}
+        </div>
 
         {importDialog.loading && <div className="planning-loading compact">{importDialog.step === 'history' ? '正在读取导入记录...' : '正在生成产品匹配与排产预览...'}</div>}
         {importDialog.step === 'preview' && importDialog.preview && <PlanningImportReview

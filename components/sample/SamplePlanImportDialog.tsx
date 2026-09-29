@@ -20,7 +20,8 @@ export default function SamplePlanImportDialog({week,type,onClose,onCommitted,on
   const [plans,setPlans]=useState<Record<string,PlanChoice>>({}),[products,setProducts]=useState<Record<string,ProductChoice>>({});
   const [filter,setFilter]=useState('all'),[search,setSearch]=useState('');
   const mutation=useRef(crypto.randomUUID());
-  const pending=(row:SamplePlanImportRow)=>row.matchStatus!=='BLOCKED'&&plans[row.rowNumber]?.mode!=='skip'&&((row.matchStatus==='CONFIRM'&&!products[row.rowNumber])||!!((row.existingPlans?.length||row.duplicateInFile)&&!plans[row.rowNumber]));
+  const originalArchive=(row:SamplePlanImportRow)=>plans[row.rowNumber]?.mode==='update'?row.existingPlans?.find(p=>p.id===plans[row.rowNumber].taskId)?.drawingLibraryItemId:null;
+  const pending=(row:SamplePlanImportRow)=>row.matchStatus!=='BLOCKED'&&plans[row.rowNumber]?.mode!=='skip'&&((row.matchStatus==='CONFIRM'&&!products[row.rowNumber]&&!originalArchive(row))||!!((row.existingPlans?.length||row.duplicateInFile)&&!plans[row.rowNumber]));
   const selectedRows=rows?.filter(row=>row.matchStatus!=='BLOCKED'&&plans[row.rowNumber]?.mode!=='skip')||[];
   const needsReason=Object.values(plans).some(p=>p.mode==='update');
   const visibleRows=rows?.filter(row=>(filter!=='pending'||pending(row)||row.matchStatus==='BLOCKED')&&(filter!=='linked'||row.matchStatus==='REUSE'||products[row.rowNumber]?.mode==='reuse')&&(filter!=='create'||row.matchStatus==='CREATE')&&(!search||[row.specification,row.customerName].some(v=>v.toLowerCase().includes(search.toLowerCase()))))||[];
@@ -40,7 +41,8 @@ export default function SamplePlanImportDialog({week,type,onClose,onCommitted,on
     if(unconfirmed.length){setError(`请先处理第 ${unconfirmed.map(r=>r.rowNumber).join('、')} 行的资料或批次选择`);return;}
     if(Object.values(plans).some(p=>p.mode==='update')&&!reason.trim()){setError('请填写更新已有计划的原因');return;}
     setBusy(true);setError('');
-    try {const body=await sampleRequest('/api/sample-tasks/import/commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientMutationId:mutation.current,fileName:file?.name,rows,decisions:products,planDecisions:Object.fromEntries(Object.entries(plans).map(([key,value])=>[key,{...value,reason}]))})});setResult(body);}
+    const effectiveProducts={...products};for(const row of rows){const id=originalArchive(row);if(id)effectiveProducts[row.rowNumber]={mode:'reuse',drawingLibraryItemId:id};}
+    try {const body=await sampleRequest('/api/sample-tasks/import/commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientMutationId:mutation.current,fileName:file?.name,rows,decisions:effectiveProducts,planDecisions:Object.fromEntries(Object.entries(plans).map(([key,value])=>[key,{...value,reason}]))})});setResult(body);}
     catch(e){setError(e instanceof Error?e.message:'导入失败，同一请求可安全重试');}finally{setBusy(false);}
   }
   function exportResults(){if(!result)return;const cell=(v:unknown)=>`"${String(v??'').replace(/^[\s]*([=+@-])/,'\'$1').replace(/"/g,'""')}"`;const csv='\uFEFF'+[['源文件', 'Excel 行','结果','说明','样品计划编号'],...result.rows.map(row=>[file?.name,row.rowNumber,row.status,row.message,row.taskCode])].map(row=>row.map(cell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='样品计划导入逐行结果.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}

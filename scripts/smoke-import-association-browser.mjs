@@ -28,7 +28,7 @@ try{
    let picker=page.getByRole('dialog',{name:'预览图纸资料',exact:true});await picker.waitFor();
    await picker.locator('canvas').first().waitFor();check(await picker.locator('canvas').first().evaluate(c=>c.width>100&&c.height>100),'actual stored PDF renders for plan-only account');
    await picker.getByRole('button',{name:'SOP 2',exact:true}).click();await picker.getByRole('combobox',{name:'预览资料文件'}).selectOption(f.files[2].id);await picker.locator('canvas').first().waitFor();
-   await shot('02-drawing-preview-1366');await picker.getByRole('button',{name:'返回导入',exact:true}).click();await picker.waitFor({state:'hidden'});
+   await shot('02-drawing-preview-1366');await page.setViewportSize({width:1536,height:1024});await shot('02b-drawing-preview-reference-size');await page.setViewportSize({width:1366,height:1024});await picker.getByRole('button',{name:'返回导入',exact:true}).click();await picker.waitFor({state:'hidden'});
    check(await dialog.locator('tbody tr').count()===16,'closing preview preserves import rows');
    await dialog.locator('tbody tr').first().getByRole('button',{name:'更换',exact:true}).click();picker=page.getByRole('dialog',{name:'关联图纸资料库',exact:true});await picker.waitFor();
    const searchResponse=page.waitForResponse(r=>r.url().includes('/api/planning/import/drawings?')&&r.url().includes('q=D010240&')&&r.ok());await picker.getByRole('textbox',{name:'搜索图纸资料规格'}).fill('D010240');await searchResponse;
