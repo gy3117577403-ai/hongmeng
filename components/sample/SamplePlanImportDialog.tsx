@@ -24,7 +24,9 @@ export default function SamplePlanImportDialog({week,type,onClose,onCommitted,on
   const pending=(row:SamplePlanImportRow)=>row.matchStatus!=='BLOCKED'&&plans[row.rowNumber]?.mode!=='skip'&&((row.matchStatus==='CONFIRM'&&!products[row.rowNumber]&&!originalArchive(row))||!!((row.existingPlans?.length||row.duplicateInFile)&&!plans[row.rowNumber]));
   const selectedRows=rows?.filter(row=>row.matchStatus!=='BLOCKED'&&plans[row.rowNumber]?.mode!=='skip')||[];
   const needsReason=Object.values(plans).some(p=>p.mode==='update');
-  const visibleRows=rows?.filter(row=>(filter!=='pending'||pending(row)||row.matchStatus==='BLOCKED')&&(filter!=='linked'||row.matchStatus==='REUSE'||products[row.rowNumber]?.mode==='reuse')&&(filter!=='create'||row.matchStatus==='CREATE')&&(!search||[row.specification,row.customerName].some(v=>v.toLowerCase().includes(search.toLowerCase()))))||[];
+  const linked=(row:SamplePlanImportRow)=>!!originalArchive(row)||row.matchStatus==='REUSE'||products[row.rowNumber]?.mode==='reuse';
+  const creating=(row:SamplePlanImportRow)=>row.matchStatus==='CREATE'&&!linked(row);
+  const visibleRows=rows?.filter(row=>(filter!=='pending'||pending(row)||row.matchStatus==='BLOCKED')&&(filter!=='linked'||linked(row))&&(filter!=='create'||creating(row))&&(!search||[row.specification,row.customerName].some(v=>v.toLowerCase().includes(search.toLowerCase()))))||[];
   function pickArchive(row:SamplePlanImportRow,item:ImportDrawingArchive){setProducts(v=>({...v,[row.rowNumber]:{mode:'reuse',drawingLibraryItemId:item.id}}));setRows(v=>v?.map(r=>r.rowNumber===row.rowNumber?{...r,candidates:[...r.candidates.filter(c=>c.id!==item.id),item]}:r)||null);}
   function retryBlocked(){if(!result)return;const blocked=new Set(result.rows.filter(r=>r.status==='BLOCKED').map(r=>r.rowNumber));setRows(v=>v?.filter(r=>blocked.has(r.rowNumber))||null);setPlans({});setProducts({});setResult(null);setError('');setFilter('all');mutation.current=crypto.randomUUID();}
   const successful=result?.rows.filter(r=>['CREATED','UPDATED'].includes(r.status)) || [];
@@ -47,7 +49,7 @@ export default function SamplePlanImportDialog({week,type,onClose,onCommitted,on
   }
   function exportResults(){if(!result)return;const cell=(v:unknown)=>`"${String(v??'').replace(/^[\s]*([=+@-])/,'\'$1').replace(/"/g,'""')}"`;const csv='\uFEFF'+[['源文件', 'Excel 行','结果','说明','样品计划编号'],...result.rows.map(row=>[file?.name,row.rowNumber,row.status,row.message,row.taskCode])].map(row=>row.map(cell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='样品计划导入逐行结果.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
   if(suspended)return null;
-  return <SampleDialog title={result?'样品计划导入结果':'批量导入样品计划'} className={`import-workbench sample-import-workbench ${rows?'import-step-preview':'import-step-upload'}`} wide busy={busy} onClose={onClose}>
+  return <SampleDialog title={result?'样品计划导入结果':'批量导入样品计划'} titleIcon={<FileSpreadsheet size={23}/>} className={`import-workbench sample-import-workbench ${rows?'import-step-preview':'import-step-upload'}`} wide busy={busy} onClose={onClose}>
     <nav className="planning-import-steps" aria-label="导入步骤"><span className={!rows?'active':'done'}><b>1</b>上传模板</span><i/><span className={rows&&!result?'active':result?'done':''}><b>2</b>核对与确认</span><i/><span className={result?'active':''}><b>3</b>导入完成</span></nav>
     <div className="import-workbench-body">
       {!rows&&!result&&<>
@@ -57,7 +59,7 @@ export default function SamplePlanImportDialog({week,type,onClose,onCommitted,on
       {rows&&!result&&<>
         <div className={styles.summary}><FileSpreadsheet size={17}/><strong>{file?.name}</strong><span>{targetWeek==='unplanned'?'待排期':`计划周 ${targetWeek}`} · {targetType==='NEW'?'新品试制':'老产品制作'}</span></div>
         <section className={styles.review} aria-label="样品导入核对"><div className={styles.toolbar}>
-          {([['all','全部',rows.length],['linked','已匹配资料',rows.filter(r=>r.matchStatus==='REUSE'||products[r.rowNumber]?.mode==='reuse').length],['create','待建档',rows.filter(r=>r.matchStatus==='CREATE').length],['pending','待处理',rows.filter(r=>pending(r)||r.matchStatus==='BLOCKED').length]] as const).map(([key,label,count])=><button key={key} type="button" aria-pressed={filter===key} onClick={()=>setFilter(key)}>{label} {count}</button>)}
+          {([['all','全部',rows.length],['linked','已匹配资料',rows.filter(linked).length],['create','待建档',rows.filter(creating).length],['pending','待处理',rows.filter(r=>pending(r)||r.matchStatus==='BLOCKED').length]] as const).map(([key,label,count])=><button key={key} type="button" aria-pressed={filter===key} onClick={()=>setFilter(key)}>{label} {count}</button>)}
           <label><Search size={17}/><input aria-label="搜索导入样品" placeholder="搜索客户 / 产品规格" value={search} onChange={e=>setSearch(e.target.value)}/></label>
         </div><div className={styles.tableScroll}><table className={styles.table}><colgroup><col style={{width:'4%'}}/><col style={{width:'19%'}}/><col style={{width:'6%'}}/><col style={{width:'13%'}}/><col style={{width:'9%'}}/><col style={{width:'22%'}}/><col style={{width:'17%'}}/><col style={{width:'10%'}}/></colgroup><thead><tr><th>行</th><th>客户 / 产品规格</th><th>数量</th><th>单套 / 总工时</th><th>计划周 / 交期</th><th>关联图纸资料库</th><th>计划处理</th><th>校验</th></tr></thead><tbody>{visibleRows.map(row=>{
           const choice=plans[row.rowNumber],target=choice?.mode==='update'?row.existingPlans?.find(p=>p.id===choice.taskId):null;
