@@ -161,7 +161,7 @@ export async function loadDocumentReturns(libraryItemId: string, actor?: PcActor
     prisma.workOrder.findMany({ where: { drawingLibraryItemId: libraryItemId, deletedAt: null }, select: { id: true, code: true, status: true, qrTicket: { select: { prints: { select: { id: true } } } } }, take: 100 }),
     // Keep lineage metadata for replaced files; only live current files can be selected.
     prisma.drawingLibraryFile.findMany({ where: { libraryItemId, category: { code: { in: ["drawing", "sop"] } } },
-      select: { id: true, originalName: true, displayName: true, version: true, mimeType: true, deletedAt: true, categoryId: true, category: { select: { code: true } }, supersedesFileId: true, isCurrent: true } }),
+      select: { id: true, originalName: true, displayName: true, version: true, mimeType: true, deletedAt: true, createdAt: true, uploadedBy: { select: { displayName: true, username: true } }, categoryId: true, category: { select: { code: true } }, supersedesFileId: true, isCurrent: true } }),
   ]);
   const currentPackage = await prisma.qfPackage.findFirst({ where: { libraryItemId }, orderBy: { sequence: 'desc' } });
   const review = documentReviewDecision(currentPackage, issues, files.filter(f => f.isCurrent && !f.deletedAt).map(f => f.id));
@@ -192,5 +192,5 @@ export type ReturnData = {
   attachments: Array<{ id: string; name: string; createdAt: string; mimeType: string }>;
   events: Array<{ id: string; action: string; actorName: string; reason: string; createdAt: string; snapshot: unknown }>;
   orders: Array<{ id: string; code: string; status: string; printCount: number }>;
-  files: Array<{ id: string; originalName: string; displayName: string | null; version: string; mimeType: string; deletedAt: string | null; categoryId: string; category: { code: string }; supersedesFileId: string | null; isCurrent: boolean }>;
+  files: Array<{ id: string; originalName: string; displayName: string | null; version: string; mimeType: string; deletedAt: string | null; createdAt: string; uploadedBy: { displayName: string | null; username: string } | null; categoryId: string; category: { code: string }; supersedesFileId: string | null; isCurrent: boolean }>;
 };

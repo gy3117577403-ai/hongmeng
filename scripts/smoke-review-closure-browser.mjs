@@ -24,7 +24,8 @@ try {
     const f=${JSON.stringify(fixture)}, origin=${JSON.stringify(origin)}, dir=${JSON.stringify(dir)}, checks=[], errors=[];
     const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label)};
     let targetProduct=f.product.id;let route=origin+'/workspace/quality-fixtures?product='+f.product.id+'&q='+f.marker+'&week=2026-09-28';
-    page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(String(e)));
+    page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push({message:String(e),stack:e.stack,url:page.url(),after:checks.at(-1)}));
+    const capture=async name=>{await page.mouse.move(0,0);await page.evaluate(async()=>{await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));await Promise.all(document.getAnimations().filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})));});await page.screenshot({path:dir+'/'+name+'.png'});};
     let apiCookie='';
     const get=async path=>{const r=await page.request.get(origin+path,{headers:{Cookie:apiCookie}});if(!r.ok())throw Error('GET '+path+' returned '+r.status()+': '+await r.text());return r.json();};
     const api=async()=>{const r=await get('/api/quality-fixtures?product='+targetProduct);check(r.ok,'current review HTTP');return r.data;};
@@ -71,7 +72,7 @@ try {
       targetProduct=f.detailProduct.id;route=origin+'/workspace/quality-fixtures?product='+targetProduct+'&q='+f.marker+'&week=2026-09-28';
       await login('tech');await page.getByRole('button',{name:'处理剩余 1 项',exact:true}).waitFor();
       const summary=page.getByRole('region',{name:'退回处理摘要'});check((await summary.innerText()).includes('待提交 2'),'summary includes saved responses alongside the remaining issue');
-      await page.screenshot({path:dir+'/04-return-workbench.png'});
+      await page.waitForFunction(()=>!document.querySelector('.qf-return-summary-actions button:disabled'));await capture('04-return-workbench');
       await page.getByRole('button',{name:'处理剩余 1 项',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});
       const issueList=drawer.getByLabel('退回事项列表');await drawer.getByLabel('技术解释',{exact:true}).waitFor();
       check((await drawer.getByRole('region',{name:'原退回意见'}).innerText()).includes('图纸缺少插针孔位与方向标注'),'unhandled issue opens first');
@@ -87,9 +88,9 @@ try {
       await drawer.getByRole('button',{name:'关闭退回处理',exact:true}).click();await drawer.getByText('有未保存的处理内容',{exact:true}).waitFor();await drawer.getByRole('button',{name:'继续处理',exact:true}).click();
       check(true,'closing protects unsaved work on another issue');
       await drawer.getByRole('button',{name:'处理剩余 1 项',exact:true}).click();
-      await page.screenshot({path:dir+'/05-technical-treatment.png'});
+      await capture('05-technical-treatment');
       await page.setViewportSize({width:1366,height:768});check(await drawer.locator('footer').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight),'short tablet keeps primary action visible');
-      await page.screenshot({path:dir+'/06-short-tablet-treatment.png'});await page.setViewportSize({width:1366,height:1024});
+      await capture('06-short-tablet-treatment');await page.setViewportSize({width:1366,height:1024});
       await page.route('**/api/quality-fixtures',async route=>{const req=route.request();if(req.method()==='POST'&&req.postDataJSON()?.action==='RESUBMIT_RETURNS'){await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'验收模拟：提交暂不可用'})});}else await route.continue();});
       await drawer.getByRole('button',{name:'保存并提交复核',exact:true}).click();await drawer.getByRole('alert').filter({hasText:'处理已保存，提交复核未成功'}).waitFor();
       check((await get('/api/quality-fixtures?returns='+targetProduct)).data.issues.every(i=>i.status==='READY'),'failed submission retains all saved responses');
@@ -99,7 +100,7 @@ try {
       await login('quality');await page.getByRole('button',{name:'查看处理并复核',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.locator('canvas[data-rendered-page="1"]').waitFor();
       check(await drawer.getByRole('button',{name:'确认品质通过',exact:true}).isDisabled(),'approval requires explicit evidence confirmation');
       check(await drawer.getByRole('button',{name:'确认主管通过',exact:true}).count()===0,'quality reviewer cannot use supervisor action');
-      await page.screenshot({path:dir+'/07-review-with-document.png'});
+      await drawer.getByLabel('复核预览文件',{exact:true}).selectOption(f.detailFiles.sop.id);await drawer.locator('canvas[data-rendered-page="1"]').waitFor();await capture('07-review-with-document');
       await drawer.getByRole('button',{name:'退回技术',exact:true}).click();await drawer.getByLabel('退回原因',{exact:true}).fill('请在 SOP 中明确插针方向');
       await drawer.getByRole('button',{name:'确认退回技术',exact:true}).click();await drawer.getByRole('status').filter({hasText:'已退回技术处理'}).waitFor();
       const rejected=(await get('/api/quality-fixtures?returns='+targetProduct)).data;
@@ -110,8 +111,10 @@ try {
       await sign('SUPERVISOR');const closed=(await get('/api/quality-fixtures?returns='+targetProduct)).data;check(closed.issues.every(i=>i.status==='RESOLVED'),'all issues close after both actual reviewers approve');
       await page.getByRole('button',{name:'退回履历',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.getByRole('button',{name:'查看已关闭 4 项'}).click();await drawer.getByRole('region',{name:'本次复核结果'}).waitFor();await page.screenshot({path:dir+'/08-closed-history.png'});
       await drawer.getByRole('button',{name:'关闭退回处理',exact:true}).click();await login('reader');await page.getByRole('button',{name:'退回履历',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});check(await drawer.getByRole('button',{name:/确认.*通过|修改处理|提交双方复核/}).count()===0,'readonly history exposes no write controls');
+      targetProduct=f.product.id;route=origin+'/workspace/quality-fixtures?product='+targetProduct+'&q='+f.marker+'&week=2026-09-28';await login('quality');await page.getByRole('button',{name:'退回履历',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.getByRole('button',{name:'查看已关闭 1 项'}).click();
+      check(await drawer.getByRole('button',{name:/确认.*通过/}).count()===0,'historical return selection never exposes current round approval');
       check(errors.length===0,'no uncaught browser errors');return {passed:true,checks,errors};
-    }catch(error){await page.screenshot({path:dir+'/failure.png'});throw Error(String(error)+'; completed checks: '+checks.join(' | '));}
+    }catch(error){await page.screenshot({path:dir+'/failure.png'});throw Error(String(error)+'; browser errors: '+JSON.stringify(errors)+'; completed checks: '+checks.join(' | '));}
   }`;
   const file = dir + '/browser.generated.cjs'; writeFileSync(file, code);
   const output = cli(['run-code', '--filename', file]);
