@@ -5,6 +5,8 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const { randomUUID, createHash } = require('node:crypto');
 const bcrypt = require('bcryptjs');
 if (process.env.REVIEW_QA_ALLOW !== 'disposable-review-runtime') throw Error('Disposable runtime required');
+if (!['127.0.0.1', 'localhost'].includes(new URL(process.env.DATABASE_URL).hostname)) throw Error('Loopback database required');
+if (!['127.0.0.1', 'localhost'].includes(new URL(process.env.S3_ENDPOINT).hostname)) throw Error('Loopback storage required');
 const db = new PrismaClient();
 async function main() {
   const marker = 'review-qa-' + randomUUID().slice(0, 8), password = 'Review-Smoke-2026!Z', users = {};

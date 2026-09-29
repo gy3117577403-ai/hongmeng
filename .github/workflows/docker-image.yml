@@ -463,8 +463,9 @@ jobs:
             TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/release-browser \
             node scripts/smoke-terminal-tooling-browser.mjs
           mkdir -p output/playwright/review-closure-release
-          docker exec -i -e REVIEW_QA_ALLOW=disposable-review-runtime hongmeng-release-smoke node \
-            < scripts/seed-review-closure-smoke.cjs > output/playwright/review-closure-release/fixture.json
+          REVIEW_QA_ALLOW=disposable-review-runtime \
+            S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources \
+            node scripts/seed-review-closure-smoke.cjs > output/playwright/review-closure-release/fixture.json
           REVIEW_QA_ALLOW=disposable-review-runtime \
             REVIEW_QA_BASE=http://127.0.0.1:3000 \
             REVIEW_QA_FIXTURE=output/playwright/review-closure-release/fixture.json \
@@ -943,8 +944,10 @@ jobs:
             TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/hangzhou-browser \
             node scripts/smoke-terminal-tooling-browser.mjs
           mkdir -p output/playwright/review-closure-hangzhou
-          docker exec -i -e REVIEW_QA_ALLOW=disposable-review-runtime "$app_name" node \
-            < scripts/seed-review-closure-smoke.cjs > output/playwright/review-closure-hangzhou/fixture.json
+          REVIEW_QA_ALLOW=disposable-review-runtime \
+            DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources \
+            node scripts/seed-review-closure-smoke.cjs > output/playwright/review-closure-hangzhou/fixture.json
           REVIEW_QA_ALLOW=disposable-review-runtime \
             REVIEW_QA_BASE=http://127.0.0.1:3300 \
             REVIEW_QA_FIXTURE=output/playwright/review-closure-hangzhou/fixture.json \
