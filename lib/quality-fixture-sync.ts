@@ -6,6 +6,7 @@ import { fixturePlanScope } from "@/lib/quality-fixture-scope";
 import { documentFingerprint, lockFixtureBusiness, qfJson, submitPackage, assertPackageFiles, pendingReviewers } from "@/lib/quality-fixture-service";
 import type { PcActor } from "@/lib/purchasing-service";
 import { FixtureError } from "@/lib/quality-fixture-domain";
+import { reconcileDocumentReview } from "@/lib/quality-review-reconciliation";
 
 type Tx = Prisma.TransactionClient;
 export function documentEvidenceSignature(p: { drawingFiles: unknown; sopFiles: unknown }) {
@@ -34,10 +35,13 @@ export async function syncProductDocuments(tx: Tx, libraryItemId: string, actor?
   const source = await currentDocumentSource(tx, libraryItemId);
   const last = await tx.qfPackage.findFirst({ where: { libraryItemId }, orderBy: { sequence: "desc" } });
   const sameDocuments = !!last && documentEvidenceSignature(last) === source.signature;
-  if (sameDocuments && (last.status !== "DRAFT" || last.needFixture === source.needFixture)) return last;
   const ownerId = actor?.id || [...source.files].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).find(f => f.uploadedById)?.uploadedById || last?.createdById;
   const owner = ownerId ? await tx.user.findUnique({ where: { id: ownerId }, select: { id: true, username: true, displayName: true } }) : null;
   const a = actor || owner || { id: "system:document-sync", username: "计划资料同步", displayName: "计划资料同步" };
+  if (sameDocuments && (last.status !== "DRAFT" || last.needFixture === source.needFixture)) {
+    await reconcileDocumentReview(tx, libraryItemId, a);
+    return tx.qfPackage.findUnique({ where: { id: last.id } });
+  }
   const hasBom = source.needFixture === true && last?.needFixture === true;
   const values = {
     revision: last?.revision || source.drawingFiles[0]?.version || source.sopFiles[0]?.version || "A", needFixture: source.needFixture,
@@ -54,11 +58,12 @@ export async function syncProductDocuments(tx: Tx, libraryItemId: string, actor?
     : await tx.qfPackage.create({ data: { ...values, fingerprint, libraryItemId, sequence: (last?.sequence || 0) + 1, createdById: a.id } });
   await tx.qfEvent.create({ data: { entityType: "PACKAGE", entityId: p.id, action: "SYNC_PLAN_DOCUMENTS", actorId: a.id,
     actorName: a.displayName || a.username, snapshot: qfJson({ signature: source.signature, drawingCount: source.drawingFiles.length, sopCount: source.sopFiles.length }) } });
+  const reconciled = await reconcileDocumentReview(tx, libraryItemId, a);
   let complete = fixtureSubmissionIssues(p).length === 0;
   try { await assertPackageFiles(tx, p); } catch { complete = false; }
   const recipients = complete && owner ? await pendingReviewers(tx, { ...p, status: "REVIEWING", submittedById: a.id }) : [];
   const unresolvedReturns = await tx.qfDocumentReturn.count({ where: { libraryItemId, status: { not: "RESOLVED" } } });
-  if (!unresolvedReturns && complete && owner && ["SUPERVISOR", "QUALITY"].every(role => recipients.some(r => r.roles.some(v => v === role))))
+  if (!reconciled.retired && !unresolvedReturns && complete && owner && ["SUPERVISOR", "QUALITY"].every(role => recipients.some(r => r.roles.some(v => v === role))))
     await submitPackage(tx, { id: p.id, version: p.version }, a);
   return await tx.qfPackage.findUnique({ where: { id: p.id } });
 }

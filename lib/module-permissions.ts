@@ -113,7 +113,7 @@ export function moduleFixtureActionAllowed(access: ModuleAccessCarrier, action: 
   if (access.modulePermissions == null) return true;
   if (action === 'SAVE_SETTINGS') return false;
   const owners: BusinessAccessModule[] = ['APPROVE', 'RETURN'].includes(action) ? ['quality', 'production']
-    : ['RESPOND_RETURN', 'RESUBMIT_RETURNS'].includes(action) ? ['technology']
+    : ['RESPOND_RETURN', 'RESUBMIT_RETURNS', 'RECONCILE_REVIEW'].includes(action) ? ['technology']
     : ['CREATE_FIXTURE_PURCHASE', 'STOCK', 'SAVE_PREPARATION', 'SET_QUANTITY'].includes(action) ? ['quality', 'materials']
     : ['quality', 'technology', 'production'];
   return moduleAllows(access, owners, true) === true;

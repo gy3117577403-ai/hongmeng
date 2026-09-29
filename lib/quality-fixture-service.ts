@@ -175,6 +175,7 @@ export async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   if (!product) throw new FixtureError("产品图纸档案不存在");
   const old = input.id ? await getPackage(tx, input.id, input.version) : null;
   if (old && old.libraryItemId !== libraryItemId) conflict("不能变更资料包所属产品");
+  if (old && await tx.qfPackage.count({ where: { libraryItemId, sequence: { gt: old.sequence } } })) conflict("已有更新的资料，请切换当前资料后编辑");
   const ids = Array.isArray(input.drawingFileIds) && input.drawingFileIds.length ? pcIds(input.drawingFileIds, "图纸") : [];
   const files = await tx.drawingLibraryFile.findMany({ where: { id: { in: ids }, libraryItemId, deletedAt: null, category: { code: "drawing" } }, orderBy: { id: "asc" } });
   if (files.length !== ids.length) throw new FixtureError("所选图纸不存在或不属于该产品");
@@ -200,7 +201,7 @@ export async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
   const fingerprint = documentFingerprint({ ...values, bomMapping: mapping });
   // Compatibility for existing clients: preparation-only edits never replace signed documents.
   if (need && input.bomFileId) await saveFixturePreparation(tx, { ...input, libraryItemId }, a, true);
-  if (old && old.status !== "DRAFT" && old.status !== "RETURNED" && old.status !== "REVOKED" &&
+  if (old && !["DRAFT", "RETURNED", "REVOKED", "STALE"].includes(old.status) &&
     old.revision === values.revision && JSON.stringify(canonical([old.drawingFiles, old.sopFiles])) === JSON.stringify(canonical([values.drawingFiles, values.sopFiles]))) return old;
   let p: QfPackage;
   if (old?.status === "DRAFT") p = await tx.qfPackage.update({ where: { id: old.id }, data: { ...values, fingerprint, version: { increment: 1 } } });
@@ -209,11 +210,14 @@ export async function savePackage(tx: Tx, input: PcInput, a: PcActor) {
     p = await tx.qfPackage.create({ data: { ...values, fingerprint, libraryItemId, sequence: (last?.sequence || 0) + 1, createdById: a.id } });
   }
   await event(tx, a, "PACKAGE", p.id, "SAVE", { before: old, after: p });
+  await (await import("@/lib/quality-review-reconciliation")).reconcileDocumentReview(tx, libraryItemId, a);
   return p;
 }
 export async function submitPackage(tx: Tx, input: PcInput, a: PcActor, returnSubmission = false) {
   const p = await getPackage(tx, input.id, input.version);
   if (p.status !== "DRAFT") conflict("请先建立资料修订草稿，再提交双方审核");
+  if (await tx.qfPackage.count({ where: { libraryItemId: p.libraryItemId, sequence: { gt: p.sequence } } })) conflict("已有更新的资料，请切换当前资料后提交");
+  if (!await (await import("@/lib/quality-fixture-sync")).packageMatchesCurrentDocuments(tx, p)) conflict("当前图纸或 SOP 已变化，请刷新并核对当前资料后提交");
   if (!returnSubmission && await tx.qfDocumentReturn.count({ where: { libraryItemId: p.libraryItemId, status: { not: "RESOLVED" } } }))
     conflict("存在未关闭的退回事项，请在图纸资料库完成技术处理并重新提交，不能直接送审");
   const issues = fixtureSubmissionIssues({ ...p, needFixture: p.libraryItem.fixtureRequired });
@@ -226,12 +230,20 @@ export async function submitPackage(tx: Tx, input: PcInput, a: PcActor, returnSu
     supervisorId: null, supervisorName: "", supervisorAt: null, supervisorAsAdmin: false, qualityId: null, qualityName: "", qualityAt: null, qualityAsAdmin: false } });
   await event(tx, a, "PACKAGE", p.id, "SUBMIT", result);
   await closeTodos(tx, p.id);
+  await tx.systemNotificationRecipient.updateMany({ where: { notification: { sourceType: 'QUALITY_REVIEW_REWORK', sourceId: p.libraryItemId }, completedAt: null },
+    data: { completedAt: new Date(), completionKind: 'SOURCE_RESOLVED', completionReason: '当前资料已重新送审' } });
   await notifyPendingReviews(tx, a, result, p.libraryItem.specification);
   return { id: result.id, version: result.version };
 }
 async function review(tx: Tx, input: PcInput, a: PcActor) {
   const p = await getPackage(tx, input.id, input.version);
   if (!QF_REVIEW_STATUSES.includes(p.status)) conflict("该版本当前不在待审核状态");
+  if (await tx.qfPackage.count({ where: { libraryItemId: p.libraryItemId, sequence: { gt: p.sequence } } }) ||
+    !await (await import("@/lib/quality-fixture-sync")).packageMatchesCurrentDocuments(tx, p))
+    conflict("图纸或 SOP 已发生变化（已有更新），旧轮次不可审核。请刷新并查看当前资料");
+  if (await tx.qfDocumentReturn.count({ where: { libraryItemId: p.libraryItemId, status: { not: 'RESOLVED' },
+    OR: [{ status: { not: 'REVIEWING' } }, { submittedPackageId: null }, { submittedPackageId: { not: p.id } }] } }))
+    conflict("退回事项尚未全部关联本轮，请先核对审核关联并重新提交");
   const s = await settings(tx), admin = a.laborRole === "ADMIN";
   const ids = [...p.drawingFiles as unknown as DrawingEvidence[], ...p.sopFiles as unknown as DrawingEvidence[]].map(f => f.id);
   const ownsDrawing = !admin && await tx.drawingLibraryFile.count({ where: { id: { in: ids }, uploadedById: a.id } });
@@ -354,6 +366,14 @@ export async function mutateQualityFixture(input: PcInput, a: PcActor, key: unkn
     } else if (action === "SAVE_PACKAGE") result = await savePackage(tx, input, a);
     else if (action === "RESPOND_RETURN") result = await (await import("@/lib/quality-document-returns")).saveDocumentReturnResponse(tx, input, a);
     else if (action === "RESUBMIT_RETURNS") result = await (await import("@/lib/quality-document-returns")).resubmitDocumentReturns(tx, input, a);
+    else if (action === "RECONCILE_REVIEW") {
+      const libraryItemId = pcText(input.libraryItemId, '产品', 100);
+      const current = await tx.qfPackage.findFirst({ where: { libraryItemId }, orderBy: { sequence: 'desc' } });
+      if (input.id && current?.id !== input.id) conflict('当前资料已变化，请刷新后核对');
+      if (current && input.version !== undefined) pcVersion(current.version, input.version);
+      await (await import("@/lib/quality-fixture-sync")).syncProductDocuments(tx, libraryItemId, a);
+      result = await (await import("@/lib/quality-review-reconciliation")).reconcileDocumentReview(tx, libraryItemId, a);
+    }
     else if (action === "SAVE_PREPARATION") result = await saveFixturePreparation(tx, input, a);
     else if (action === "SET_REQUIREMENT") {
       if (typeof input.needFixture !== "boolean") throw new FixtureError("请选择需要或无需治具");

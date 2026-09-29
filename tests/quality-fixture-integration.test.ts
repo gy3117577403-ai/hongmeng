@@ -134,13 +134,14 @@ test("fixture documents, independent review, procurement and physical inventory 
     await qf({ action: "SUBMIT", ...await versionInput(older.id) }); await review(older.id, supervisor);
     const newer = await draft("D-current");
     await qf({ action: "SUBMIT", ...await versionInput(newer.id) }); await review(newer.id, supervisor); await review(newer.id, quality);
-    await assert.rejects(() => review(older.id, quality), /更新的资料版本/);
+    await assert.rejects(() => review(older.id, quality), /不在待审核/);
     await qf({ action: "BIND_WORK_ORDERS", packageId: newer.id, workOrderIds: [order.id] });
     assert.equal((await assertFixturePrintReady(prisma, order.id))!.packageId, newer.id);
     await qf({ action: "REVOKE", ...await versionInput(newer.id), reason: "核对新版本适用范围" }, quality);
-    await assert.rejects(() => review(older.id, quality), /更新的资料版本/);
-    await qf({ action: "RETURN", ...await versionInput(older.id), reason: "已有更新版本，旧稿停止审批", fileIds: [product.files[0].id] }, quality);
-    assert.equal((await packageRow(older.id)).status, "RETURNED");
+    await assert.rejects(() => review(older.id, quality), /不在待审核/);
+    await assert.rejects(async () => qf({ action: "RETURN", ...await versionInput(older.id), reason: "已有更新版本，旧稿停止审批", fileIds: [product.files[0].id] }, quality), /不在待审核/);
+    assert.equal((await packageRow(older.id)).status, "STALE");
+    assert.ok((await packageRow(older.id)).supervisorAt, 'stopped review retains the old signed history');
   });
   await t.test("library replenishment and repair retain SKU identity and immutable reviewed drawings", async () => {
     await assert.rejects(() => prisma.$transaction(tx => assertFixtureDrawingMutable(tx, product.id, product.files[0].id)), /不能删除/);

@@ -8,7 +8,6 @@ import { mutatePurchasing } from "@/lib/purchasing-service";
 import { FixtureError, scanBom, type BomMapping, type BomSheet } from "@/lib/quality-fixture-domain";
 import { prisma } from "@/lib/prisma";
 import { processFixtureSyncQueue } from "@/lib/quality-fixture-sync";
-import { fixtureSubmissionIssues } from "@/lib/quality-fixture-documents";
 import { loadDocumentReturns } from "@/lib/quality-document-returns";
 import { moduleFixtureActionAllowed } from "@/lib/module-permissions";
 export const runtime = "nodejs";
@@ -22,7 +21,7 @@ export async function GET(req: NextRequest) {
       const [supervisor, quality, draft, purchasing] = await Promise.all([
         latest.filter(p => roles.get(p.id)?.includes("SUPERVISOR")).length,
         latest.filter(p => roles.get(p.id)?.includes("QUALITY")).length,
-        latest.filter(p => p.status === "RETURNED" || p.status === "DRAFT" && fixtureSubmissionIssues(p).length > 0).length,
+        latest.filter(p => ['RETURNED', 'DRAFT', 'STALE'].includes(p.status)).length,
         prisma.pcLine.count({ where: { request: { source: "FIXTURE", deletedAt: null }, completedAt: null, status: { in: ["PENDING", "APPROVED", "ORDERED"] } } }),
       ]);
       return NextResponse.json({ ok: true, data: { supervisor, quality, draft, purchasing } });
@@ -37,7 +36,7 @@ export async function POST(req: NextRequest) {
     if (Number(req.headers.get("content-length") || 0) > 4 * 1024 * 1024) throw new FixtureError("资料内容过大");
     const input = pcRecord(await req.json());
     if (!moduleFixtureActionAllowed(actor.access, String(input.action))) throw new FixtureError('当前模块权限不能执行此操作', 'FIXTURE_FORBIDDEN', 403);
-    if (["RESPOND_RETURN", "RESUBMIT_RETURNS"].includes(String(input.action)) && actor.laborRole !== "ADMIN" &&
+    if (["RESPOND_RETURN", "RESUBMIT_RETURNS", "RECONCILE_REVIEW"].includes(String(input.action)) && actor.laborRole !== "ADMIN" &&
       !actor.access.capabilities.some(c => ["ENGINEERING:CREATE", "ENGINEERING:UPDATE", "DRAWING_LIBRARY:CREATE", "DRAWING_LIBRARY:UPDATE"].includes(c)))
       throw new FixtureError("请由有图纸资料维护权限的技术人员处理", "FIXTURE_FORBIDDEN", 403);
     if (input.action === "SYNC_DOCUMENTS") return NextResponse.json({ ok: true, data: await processFixtureSyncQueue(60) });

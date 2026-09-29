@@ -5,6 +5,7 @@ export class FixtureError extends PurchasingError {
   constructor(message: string, code = "FIXTURE_INVALID", status = 400) { super(message, code, status); }
 }
 export const QF_STATUS: Record<string, string> = {
+  STALE: "资料已变更 · 本轮已停止",
   DRAFT: "待完善", REVIEWING: "待双方审核", SUPERVISOR: "待主管审核", QUALITY: "待品质审核",
   APPROVED: "资料已审核", RETURNED: "已退回", REVOKED: "已撤销", SUPERSEDED: "已替代",
 };

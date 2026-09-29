@@ -1,0 +1,82 @@
+name: Document review closure candidate
+on:
+  push:
+    branches: ['codex/quality-review-closure-v134253']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: review-closure-candidate
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: review_candidate
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/review_candidate?schema=public
+      SESSION_SECRET: disposable-review-session-secret-20260929
+      APP_BASE_URL: http://127.0.0.1:3000
+      S3_ENDPOINT: http://127.0.0.1:19000
+      S3_REGION: auto
+      S3_BUCKET: review-candidate
+      S3_ACCESS_KEY_ID: reviewqa
+      S3_SECRET_ACCESS_KEY: DisposableReviewStorage2026
+      S3_FORCE_PATH_STYLE: 'true'
+      SMOKE_STORAGE_ALLOW: disposable-ci-storage
+      SEED_ADMIN_USERNAME: review-bootstrap
+      SEED_ADMIN_PASSWORD: DisposableReviewSeed2026!Z
+      CI_MINIO_IMAGE: hongmeng-ci-minio:verified-a1a8bd4ac40a
+      REVIEW_QA_ALLOW: disposable-review-runtime
+      REVIEW_QA_BASE: http://127.0.0.1:3000
+      REVIEW_QA_FIXTURE: output/playwright/review-candidate/fixture.json
+      REVIEW_QA_OUTPUT: output/playwright/review-candidate/browser
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare pinned storage
+        run: bash scripts/pull-ci-minio.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate && npx prisma generate && npx prisma migrate deploy
+      - name: Review state and PostgreSQL regressions
+        run: |
+          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/quality-review-state.test.ts tests/quality-review-closure-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/drawing-replacement-integration.test.ts
+          npm run lint
+      - name: Prepare actual files and build application
+        run: |
+          mkdir -p output/playwright/review-candidate
+          docker run -d --name review-storage -p 127.0.0.1:19000:9000 -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" "$CI_MINIO_IMAGE" server /data
+          node scripts/prepare-smoke-storage.mjs
+          node prisma/seed.cjs
+          node scripts/seed-review-closure-smoke.cjs > "$REVIEW_QA_FIXTURE"
+          npm run build
+          npm start > output/playwright/review-candidate/app.log 2>&1 &
+          for i in $(seq 1 90); do if curl -fsS "$APP_BASE_URL/api/ready" > output/playwright/review-candidate/ready.json; then break; fi; sleep 2; done
+          curl -fsS "$APP_BASE_URL/api/ready"
+      - name: Actual tablet return resubmission and independent approval
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          node scripts/smoke-review-closure-browser.mjs
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-candidate-${{ github.sha }}
+          path: |
+            output/playwright/review-candidate/ready.json
+            output/playwright/review-candidate/app.log
+            output/playwright/review-candidate/browser/*runtime.txt
+            output/playwright/review-candidate/browser/*.png
+          if-no-files-found: warn
