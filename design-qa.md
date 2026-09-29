@@ -1,193 +1,65 @@
-# Sample unified workbench v1.34.222 — 2026-09-22
+# Document return treatment and joint review — v1.34.256
 
-Final result: passed for requested UI and browser interactions. Production data counts and Sealos deployment are outside this UI acceptance.
+Final result: passed
 
-## Source, implementation, and intentional changes
+This report covers the approved return-treatment UI and its actual application workflow. It does not assert production cutover or production data repair. Previous QA content is preserved in output/review-v134256/previous-design-qa.md and Git history.
 
-- Source: output/sample-plan-ui-next/01-user-sample-plan.png (2557 x 1368). This is the user-marked starting screen, not a target to reproduce unchanged. Approved direction: one plan page, overlay trial workbench, no owner controls, completed history visible, deferred duplicate-parameter handling.
-- Implementation: actual React application components bundled in a local fixture harness at http://127.0.0.1:3396. API responses in this browser harness are synthetic and are not database verification or production counts. Real HTTP/PostgreSQL/S3 acceptance passed separately in run 35720273401; final commit reruns the same acceptance.
-- Target tablet: 1366 x 1024 CSS pixels, device ratio approximately 1. Screenshots 01-plan-1366.png, 02-trial-modal-1366.png, 03-completed-history-1366.png, 04-parameter-comparison-1366.png, 05-capture-form-1366.png, 06-drawing-modal-1366.png under output/sample-unified-v134221.
-- Combined comparison: source-normalized.png and 08-plan-reference-aspect.png were opened together, followed by detail-source-toolbar-table.png and detail-toolbar-table.png. Source was downsampled to 1366 x 731 for composition comparison; its original CSS density is unknown, so no pixel-exact font claim is made. Runtime used 1366 x 731 for this comparison and 1366 x 1024 for tablet acceptance. Screenshot transport is JPEG despite local .png suffixes.
-- Wide layout DOM checked at 2557 x 1368: body scrollWidth equals viewport width. Wide screenshot transport produced a stale-scale/cropped image and is excluded from visual acceptance; the normalized comparison was recaptured after reload.
+## Source and implementation evidence
 
-## Findings resolved and post-fix evidence
+Approved image sources are under C:/Users/31175/.codex/generated_images/01a0b0a4-7f03-7f10-8cb8-39e12c3eb52f/:
 
-- P1: global app header covered the parameter comparison dialog. Raised the direct body overlay above app chrome, retained photo overlay ordering, and recaptured 04-parameter-comparison-1366.png. Header, close control, comparison and confirmation remain visible.
-- P2: embedded capture retained the phone-only 430 px layout. Scoped desktop override expands it to 1120 px inside the trial modal, uses static form header and sticky form footer. Measured width 1120, body width 1366; screenshot 05 confirms three measurement inputs on one row.
-- P2: underlying trial modal could receive Escape while a photo viewer was open. Hide the base modal while its higher-order photo viewer is active, matching existing edit/QR/return handling.
-- P2: a REPEAT fixture carrying stale pending-submission counts could open an unavailable review tab. Main row action now branches on task type before pending count. Post-fix old-product dialog shows only overview, drawing review, completion/warehouse; no capture or package review.
-- P2: final item on a paged conflict queue could leave an empty page after resolution. API clamps page after count and UI applies the returned page.
+- Main review page: exec-0c1a3212-6c1c-496d-9f48-661be4cb06a0.png.
+- Technical treatment: exec-71bddfe8-18f3-4d98-8816-78c96f890eb6.png.
+- Joint review: exec-e7e0f8a2-7429-4b80-9f55-eb36c6b19a49.png.
 
-Final route compatibility check also preserves the former production/business audience for the samples branch only. Bulk planning remains restricted as before; regression assertions cover both boundaries.
+Implementation evidence is the real Next application, PostgreSQL records, S3-compatible object storage and authenticated document viewer in candidate run 36541762968, commit 4cc014df4cb90e8bf3dd0be222076030b09911b3. QA users, issues and documents are isolated fixtures; they are not customer production records. The final release repeats these checks against the built image and the published Hangzhou mirror.
 
-No remaining actionable P0/P1/P2 visual findings in tested states.
+Screenshots are in output/review-v134256/candidate-36541762968/review-candidate-4cc014df4cb90e8bf3dd0be222076030b09911b3/browser/:
 
-## Required fidelity surfaces
+- 09-main-reference-aspect.png, 10-treatment-reference-aspect.png and 11-review-reference-aspect.png: approximately the approved source aspect ratio, captured at 1715 x 917 CSS pixels, scale 1.
+- 04-return-workbench.png, 05-technical-treatment.png, 07-review-with-document.png and 08-closed-history.png: target landscape tablet, 1366 x 1024 CSS pixels, scale 1.
+- 06-short-tablet-treatment.png: 1366 x 768 CSS pixels, scale 1, lower-height regression.
+- 01-recovered-current-review.png, 02-resubmitted-return.png and 03-dual-review-complete.png: recovery and review closure states.
 
-- Typography: existing Chinese application stack retained; distinct product title, operational labels, and quieter metadata. Long connector and product names remain readable through appropriate wrapping/title hints. Owner column and member-based search copy removed. Snapshot transport softness is not treated as font-rendering evidence.
-- Layout: compact title, primary task-status tabs, week strip, filters, then a continuous data table. Tablet shows eight full rows; footer remains in view. Trial dialog approximately 94vw x 92vh, inner content scrolls; header/tabs/actions remain separate. Intentional deviation from old page: no separate execution window, expanded record work area.
-- Colors/tokens: orange primary action and selected state, pale cool surface, restrained warm gradient and shallow shadow for 2.5D depth. Blue in-progress, green approved, amber attention, red returned retained. Glass applied to overlay/backdrop, not document text.
-- Assets/image quality: original application mark and Lucide icons reused. No generated UI raster substituted for components. Document viewer uses a synthetic labelled PDF for QA only; it fits the available canvas.
-- Copy/content: completed tab explicitly means all historical records of the current sample type, including no-week and archived samples. Candidate comparison says current and sample values, replacement scope, and no second warehouse transfer. Historical comparison retains original baseline instead of relabelling the new current value as the old one.
+Source and implementation were opened together in the same comparison inputs for all three screens, including the final reference-aspect captures. The original source main page is 1715 x 917 pixels; technical and review sources are each 1713 x 918 pixels. Source CSS density is unspecified; implementations are each 1715 x 917 physical pixels at scale 1, so no density downsampling is needed. This is a composition and usability comparison, not a pixel-identical claim. Important labels, original reason, technical result and fixed actions are readable in the full-resolution inputs, so separate crops were unnecessary.
 
-## Browser evidence
+## Findings resolved and comparison history
 
-- Completed tab shows 8 seeded historical completed NEW samples, including no-week and archived rows. Week/search/date constraints clear for direct history access. This does not assert the production count.
-- Trial opens as a dialog without leaving the plan route. Close/reopen at the last row preserves scrollTop 324 and one selected checkbox.
-- New plan/edit flow has no owner selector. REPEAT dialog has no capture/photo/SOP requirement.
-- Actual embedded capture component supports sections, multi-row stripping parameters and retained local draft. Switching tab or closing with unsaved data displays a leave/retain-draft decision; leave then opens the requested drawing tab.
-- Drawing preview fits the modal; version, fixture choice, review controls and close control do not overlap.
-- Candidate deletion moves one seeded item out of pending. Replacement similarly updates the queue; processed-history comparison is read-only. Real transaction/idempotency behavior is covered by PostgreSQL and HTTP tests, not inferred from the fixture UI.
-- Browser console: no captured warnings/errors during the final tablet interaction checks.
+- P1, history navigation: starting a new review round removed the return-history entry because its visibility used only the current round's evidence. Added a separate product-wide documentReturnCount while retaining current-round filtering for approval. A database regression and browser check now prove that closed history opens immediately and cannot expose approval actions for a different current round. Evidence: 08-closed-history.png and browser-runtime.txt.
+- P1, concurrent review state: current joint-review actions must depend on the selected issue belonging to the current review package. Separated historical selected-round signatures from current pending-review availability; preserved an explicit entry to the current review. The browser checks old history, changed files, stopped rounds and independent supervisor/quality signatures.
+- P2, action clarity: saved responses now display an explicit result receipt rather than leaving the user inside an undifferentiated form. The primary action becomes Save and process next, Save and submit review, Submit joint review or role-specific confirmation. A failed submit after a successful save preserves the saved result and exposes retry. Evidence: 05-technical-treatment.png, 07-review-with-document.png and real browser checks.
+- P2, state continuity: per-issue drafts survive issue changes; an uploaded replacement is selected from the original file's lineage; dirty close requires a leave decision. A newly replaced file cannot be incorrectly saved as retaining its superseded original. Evidence: actual storage upload, response/version assertions and browser draft checks.
+- P2, constrained viewport: technical and review content scroll inside the wide dialog while header, close control and action footer remain visible. Evidence: 06-short-tablet-treatment.png and measured fixed-control assertions.
+- Capture-only issue: an earlier screenshot caught an in-progress CSS transition and a hover on another issue. Stable recapture moves the pointer away and waits for finite animations. Final 05 and 10 show a single selected issue and an orange primary action; no product styling fix was inferred from the intermediate frame.
 
-## Implementation checklist
+Final small guards remove a non-functional return-to-saved-result link when that issue has unsaved edits, align the optional location field with the server's 200-character limit, and remove a redundant completion action when the current-review entry is present. Lint and whitespace checks pass; exact release-image acceptance repeats the workflow.
 
-- [x] Preserve completed/no-week/archived records in history query.
-- [x] Remove owner-facing UI while preserving stored audit/source data.
-- [x] Use a single desktop trial modal with draft protection and context retention.
-- [x] Complete samples independently of deferred parameter differences; preserve evidence/history.
-- [x] Verify tablet composition, focus/close, old-product branch, and real HTTP/storage workflow separately.
+No remaining actionable P0/P1/P2 findings in the reviewed states.
 
----
+## Required fidelity surfaces and intentional differences
 
-## Prior QA history retained below
+- Typography: retain the application's Chinese sans-serif stack and actual brand mark. Product, issue, reason and action hierarchy is clear; actor, role, timestamp and version are secondary. The implementation retains compact operational font sizes rather than copying the larger text in the generated proposal. Long filenames wrap without covering actions. No claim of identical antialiasing is made across image generation and browser rendering.
+- Layout and rhythm: preserve left product list, right document preview and compact task summary. The technical dialog uses a narrower issue list to reserve space for treatment; the reviewer gets issue list, treatment evidence and document side by side. Rounded surfaces, shallow elevation and fixed action areas follow the approved direction. The existing version/fixture controls and two-signature main-page footer remain because they operate real product state. They replace the proposal's decorative process strip rather than adding another strip.
+- Color and tokens: orange primary action and selected controls, warm original-return evidence, green saved treatment, blue submission state and muted metadata. Glass blur is confined to the backdrop; document and form text sit on readable surfaces. Disabled buttons reflect actual missing confirmation, not a rendering failure.
+- Images and assets: existing application mark and Lucide icons are reused; no UI is a generated raster. The preview is a labelled fixture PDF served through the real authenticated storage endpoint. Its portrait content differs from the reference landscape customer drawing, so document scale/content is not used as a fidelity claim. No decorative substitute asset is introduced.
+- Copy and content: original return identity includes role, name, time, reason and source file/version. Technical treatment includes actual responder, time, explanation and replacement. Review shows the selected round's two signatures; old history remains distinct. Repeated instructional paragraphs and large empty workflow cards are removed. Progress counts and action labels are derived from actual server state.
 
-# Sample planning and manual warehouse kitting - v1.34.220
+State differences in the three comparison pairs are intentional: technical capture shows the explanation mode while the proposal illustrates replacement; replacement is exercised separately through real upload. Reviewer capture shows both signatures pending and an unchecked review confirmation; the proposal shows one signer complete. Both signing orders and final closure are tested. These are not represented as pixel-matched states.
 
-Final result: passed for the changed pages and interactions. No remaining actionable P0/P1/P2 findings.
+## Workflow and runtime acceptance
 
-## Scope and evidence boundaries
+Candidate run 36541762968 passes 61 related unit/PostgreSQL integration tests, full lint, migration/build and the real browser flow. browser-runtime.txt reports passed: true with errors: [].
 
-The accepted source visuals are the two generated UI references in C:/Users/31175/.codex/generated_images/01a0b0a4-7f03-7f10-8cb8-39e12c3eb52f/ (exec-8c62c6ab-062d-4047-aa7c-2b5c21428d31.png and exec-39150c62-8e42-4ab9-a62b-9f59ba64a2f4.png). They express layout, not live business totals.
-
-The browser loaded the actual React components and application styles using an isolated local fixture harness. All example models, counts, drawings and actions in screenshots are synthetic QA data; no production business data was changed. Separate real HTTP, PostgreSQL, Prisma migration and S3 tests passed in preflight run 35700228903 at eabbf27. The final release pipeline additionally tests the immutable image.
-
-Artifacts: output/sample-planning-warehouse-v134220/ui/.
-
-## Visual comparison
-
-Full-page reference and implementation were opened together at 1672 x 941. Tablet acceptance used 1366 x 1024. Body measurements were exactly viewport size with no outer horizontal or vertical overflow. The planning table begins at y=257 at tablet size and shows eight complete rows; the table owns scrolling and keeps its header and selection footer visible.
-
-Preserved composition: compact title and NEW/REPEAT switch, week navigation, filters, inline counts/status filters, full-width plan table. Warehouse is a separate queue/detail page; it shows only manually reported shortages, with no inferred BOM or full-material requirements list.
-
-Intentional differences from generated previews:
-- Existing application Chinese fonts, Lucide icons, permission-aware navigation, approved status vocabulary and import/export actions are retained.
-- The warehouse queue uses 260 px at tablet size / 290 px desktop to give shortage details more room.
-- The glass shortage form is a centered, focus-trapped modal rather than a fixed side card. This supports multiple shortage lines with internal scrolling while keeping the 1366 px viewport usable.
-- The table separates internal planned-completion and customer due dates into distinct columns; there is no implied quantity-based material demand calculation.
-
-Visual issues resolved during review: title switch drifting away from title, redundant status strip consuming table height, clipped native date field, required-field asterisks wrapping onto separate lines, misleading empty-shortage text after all shortages were resolved. The final form keeps labels and required marks together. Glass dialogs overlay the page without changing the main layout.
-
-## Interaction acceptance
-
-- NEW and REPEAT planning tables render separate data; REPEAT has no capture/photo/package-review requirements.
-- A REPEAT row opens the wide drawing dialog. The drawing defaults to fit, the PDF preview has the main area, and supervisor/quality review actions remain visible. Closing with Escape restores the table.
-- Selecting plans exposes batch scheduling. An empty adjustment reason disables submission. The next-week shortcut changed 10 sample fixtures from current week to next week; current-week count became 0 and next-week count 12. Internal completion date 09-24 and customer due date 09-25 were preserved.
-- Warehouse links open the independent sample-kitting page focused on the selected sample.
-- A multi-line shortage report accepted PURCHASED and CUSTOMER sources, including a blank optional quantity. The new records appeared in the shortage table; completing kitting stayed disabled while any shortage remained open.
-- Warehouse arrival confirmation resolves one shortage at a time. Resolving the last row returns to pending; an explicit Confirm complete action marks kitting completed and records actor/time.
-- Operation history displays creation, individual arrivals and final kitting confirmation.
-- Floating notifications do not move content. Modals support Escape, focus containment and disabled duplicate-submit controls.
-- Browser console showed no errors during the exercised flows.
-
-## Validation
-
-- TypeScript: passed.
-- Lint: passed with pre-existing warnings.
-- Full local unit suite: 1442 tests, 1229 passed, 213 database-gated skipped, 0 failed.
-- Core preflight: passed PostgreSQL integration, actual HTTP/object-storage flows and build.
-- Final release image and anonymous Hangzhou pull acceptance are recorded separately in the release delivery report.
-
----
-
-# Planning Center compact scroll acceptance
-
-- source visual truth: C:/Users/31175/.codex/generated_images/01a09c04-b600-7040-a09d-8b14cee44d09/exec-f9ac2963-b235-4c97-b474-73ea56f192ba.png
-- implementation: output/planning-v189/planning-source-size.png
-- target tablet capture: output/planning-v189/planning-1366.png
-- detail capture: output/planning-v189/hours-drawer.png
-- source and comparison capture: 1448 x 1086 pixels; implementation viewport 1448 x 1086 CSS px, device scale approximately 1. Target viewport also tested at 1366 x 1024, captured at matching pixels. No device chrome in either comparison.
-- state: authenticated isolated PostgreSQL test environment with 96 current batches, 55 next-week batches, 12 historical unfinished drafts; fixture totals are not production totals.
-
-## Findings and comparison history
-
-P1 resolved: the inherited production-control stylesheet fixed the notes column at right 140 px, overlapping flow status after the action column was narrowed. Added a more specific compact-table override (notes right 78 px and actions width 78 px). Post-fix DOM measurement confirms right 78 px; final full capture shows separate flow, notes and operation columns.
-
-P2 resolved: first-load failure needed to remain distinct from an empty plan after removing the former summary. Summary now shows loading or unavailable as appropriate; existing resilience regression passes. The old WIP banner assertion now points to the independent WIP drawer, preserving the branch contract.
-
-No remaining actionable P0/P1/P2 findings.
-
-## Full-view and focused comparison
-
-The selected structure is preserved: compact title/navigation, week navigation and context actions, search/tools, inline workload strip, then a continuous table and a slim count/selection footer. At 1366 x 1024 the table starts at y=208.67 and 12 complete 60 px rows fit before the footer. There are no page numbers or page-size controls. At the exact source size, 13 complete rows fit; this extra density is intentional.
-
-Focused review covered the toolbar labels, workload strip, full specification text, independent SOP availability/lifecycle chips, and the three rightmost columns. Native existing brand and Lucide icons were retained. Source screenshot uses example data; implementation uses isolated fixture records and existing live status semantics.
-
-- Fonts / typography: existing application Chinese font stack retained; 21 px title, 13 px wrapping specification, 12 px operational fields and 10–11 px supporting metadata. Full specification wraps; quantity and date remain readable. More compact type than the generated reference is intentional for the tablet data density.
-- Spacing / layout: 6 px section gaps, 48 / 48 / 44 / 42 px top rows, fixed table header, 60 px rows, 32 px footer. Detail panels overlay from the right and do not change table height.
-- Colors / tokens: original orange action palette, pale blue table/header, green ready, amber attention, purple WIP retained. Selection and hover are visibly distinct.
-- Image quality: reused existing logo and icon assets; no new placeholder or reconstructed raster assets. Browser screenshots are the rendered app, not generated UI previews.
-- Copy / content: original plan and current process standard remain separately labelled; unknown standard keeps partial-known notice and suppresses total numeric difference. Hidden verbose information remains available in details. Actual context and counts follow selected filters.
-
-## Functional evidence
-
-- 96 DOM batch rows available in one scroll region. Wheel scroll reaches row 96; final row bottom and footer boundary both y=928 with the selection bar present. Header remains y=208.67.
-- Open/close the final batch drawer: scrollTop stays 5074.6665; prior checkbox selection remains.
-- Nested production-control note edited and saved in the isolated DB; updated note appeared in the row and drawer.
-- Product-time navigation and Return to original planning position: selection restored (1 batch), scrollTop restored exactly 2373.3333.
-- Customer filter: 16 rows and matching 16-batch workload subset; switching weeks shows 55 next-week rows and restores current week.
-- Workload drawer shows missing-standard count and calculation details; reconciliation drawer shows 96 / 96 / 96; historical drawer lists all 12 historical drafts.
-- Export menu opens the existing full export preview; UI request returned 200. Independent download was parsed with ExcelJS and contains both the first and last source orders; artifact output/planning-v189/weekly-plan.xlsx. The browser download-event listener did not report an event, so acceptance relies on the successful response and parsed file.
-- Browser console: no error messages captured after interactions.
-- Type check passed; lint has only existing unrelated warnings. Unit suite: 1212 pass, 199 database-gated skip, 0 fail. Planning PostgreSQL integration: 6 pass, 0 skip.
+The browser verifies legacy stranded-round recovery; one-time resubmission; replacement during pending review; preservation of the prior signature; rejection of stale approval; real PDF access and S3 upload; draft retention; multi-issue editing and save receipts; close-context preservation; short-height fixed actions; failed-submit retry; original return role/name/time; repeated return history; both joint-review signing orders; closure reflected in plan/print state; read-only boundaries; and history availability across newer rounds. One deliberate HTTP 503 is injected only to test submit retry; successful business operations use real application endpoints.
 
 ## Implementation checklist
 
-- [x] Replace stacked banners with four compact rows.
-- [x] Keep entire selected-week table continuously scrollable.
-- [x] Preserve detail, print, production controls, import/export, readiness and navigation.
-- [x] Verify scroll, focus return, selection restore, filtering, and real data export.
-- [x] Compare full view and focused regions against selected reference.
+- [x] Make original return and the next permitted action visible together.
+- [x] Keep treatment, saved result, submission and joint review distinguishable.
+- [x] Preserve response drafts, original evidence, replacement lineage and previous signatures.
+- [x] Retain the originating product/filter context when closing.
+- [x] Keep main controls visible at target tablet and short desktop heights.
+- [x] Validate actual application screenshots and database/storage/browser behavior separately.
+- [x] Preserve history independently from current review authorization.
 
-final result: passed
-
-
-# Terminal tooling v1.34.250 — implementation QA
-
-Source: the user's four-position editor screenshot and the approved terminal-tooling previews. Implemented in the existing application and existing permissions, with no separate product scaffold.
-
-## Visual and interaction acceptance
-
-- Desktop: 1366 × 1024; document dimensions exactly 1366 × 1024. Records and detail scroll internally. Sticky action controls remain visible.
-- Mobile: 390 × 844; separate mobile route with no desktop sidebar. Home, timer, blade lookup, records and account navigation tested.
-- Start dialog: selecting terminal 10023 loads its published combination and box 007. Replacing upper-inner blade with another model selects box 008 independently.
-- Timing: start on desktop, pause, open mobile, resume and finish all persisted. Work and pause durations remain separate. A discovered final-second display discrepancy was fixed by using the closed server timestamp.
-- Finish dialog: each blade can return home, return to another box, remain on equipment or enter maintenance. The upper-inner blade retained on equipment stays in use after job completion.
-- Inventory: registered two sets in box 017, yielding eight physical components. Unknown stock is displayed as pending count. Mobile rows were changed to cards so box numbers appear directly.
-- Blade editor: four independent positions remain visible above desktop footer. Changing dimension A updates only that position's specification; custom specification is explicitly selectable. Original leading zeros retained.
-- Navigation: mobile detail back returns to the prior work screen. Closing dialogs restores the underlying page.
-- Export: downloaded an actual weekly CSV and checked its two work records and exact formatted durations.
-- Browser console: no uncaught errors observed.
-
-## Data and access acceptance
-
-- PostgreSQL integration covers replayed commands, last-kit concurrency, active-task uniqueness, blade replacement, device retention, return location, historical snapshots, cross-day correction, precise shared-hours reconciliation, assembly/disassembly/movement/retirement and invalid box rejection.
-- Local HTTP acceptance: 34 checks, including actual persisted image-contract workflows.
-- Anonymous endpoints return 401. Technology READ can view the mobile page/catalog; both mutation endpoints return 403. COLLABORATE reaches business validation and can operate.
-- Full local unit suite: 1,306 passed, 222 database/runtime-gated cases skipped, zero failures. Database cases for the changed module run separately.
-- Reference screenshots and HTTP evidence are under output/terminal-worklog-v134250. All depicted records are disposable QA fixtures.
-
-## Verification boundary
-
-Real iOS and Android WeChat hardware is unavailable in this environment. Mobile layout and workflows were verified in Chromium at phone size; no physical-WeChat certification is claimed. Published image acceptance is recorded separately by the release workflow, including clean PostgreSQL/MinIO startup and anonymous Hangzhou image pull.
-
-### v1.34.251 散刀入口复核
-- 单独上内刀型号自动使用散刀与实际可用刀位，不允许误登记整套。浏览器完成 2 把上内刀登记到 023 号盒并核对实物记录。
-- 在端子资料新增型号后直接切换刀片库存，自动刷新可见，无需另点刷新。
-- 截图：output/terminal-worklog-v134250/desktop-loose-inventory-v251.png。
-- v1.34.250 在镜像发布前主动停止，修正用独立 v1.34.251 标签交付。
-
-### v1.34.252 镜像验收修正
-- v1.34.251 的 34 项调模 HTTP 检查通过；浏览器验收因 select 的隐式标签包括 option 文本而定位超时。改用弹窗内唯一 combobox，保留实际刀位与库存数量断言。
-- 登记/补充小弹窗改为 fit-content，避免原生 modal 的上下 inset 将 auto 高度拉满；720 高度视口中实测弹窗 597 高度。增加紧凑高度验收。
-- 截图：output/terminal-worklog-v134250/desktop-compact-stock-dialog-v252.png。
+Release handoff must still name the immutable image, digest, final release workflow and mirror runtime result. A passed design review or candidate build alone is not that handoff.
