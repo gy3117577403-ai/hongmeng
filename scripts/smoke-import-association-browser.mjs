@@ -17,7 +17,9 @@ try{
   const login=async role=>{await page.context().clearCookies();apiCookie='';const r=await page.request.post(origin+'/api/auth/login',{headers:{Origin:origin},data:{username:f.users[role].username,password:f.password}});check(r.status()===200,role+' login');apiCookie=(r.headers()['set-cookie']||'').match(/hm_session=[^;]+/)?.[0]||'';check(!!apiCookie,role+' session issued');};
   const geometry=async dialog=>{const r=await dialog.boundingBox(),footer=await dialog.locator(':scope > footer').boundingBox();check(r&&footer&&r.height<=page.viewportSize().height&&footer.y+footer.height<=page.viewportSize().height,'dialog and fixed actions fit viewport');check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'no page horizontal overflow');};
   try{
-   await page.setViewportSize({width:1366,height:1024});await login('plan');await page.goto(origin+'/weekly-plan-center');await page.getByText('数据已对齐',{exact:true}).waitFor();
+   // Reconciliation may legitimately report differences in the shared release fixture.
+   // The import entry's enabled state is the loading guard; click waits for it.
+   await page.setViewportSize({width:1366,height:1024});await login('plan');await page.goto(origin+'/weekly-plan-center');
    await page.locator('summary').filter({hasText:'导入/导出'}).click();await page.getByRole('button',{name:'导入本周清单',exact:true}).click();
    let dialog=page.getByRole('dialog',{name:'批量导入量产计划',exact:true});await dialog.waitFor();await dialog.locator('input[type=file]').setInputFiles(f.massPath);
    await dialog.locator('tbody tr').nth(15).waitFor();check(await dialog.locator('tbody tr').count()===16,'all mass rows previewed');

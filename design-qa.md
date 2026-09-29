@@ -1,4 +1,4 @@
-# Production and sample bulk import — v1.34.258
+# Production and sample bulk import — v1.34.259
 
 Final result: passed
 
@@ -21,6 +21,7 @@ Sources are 1536 × 1024 pixels. Source pixel density is unspecified. Final impl
 3. The first mass screenshot was compared together with the approved source. At 1366 × 1024 the extra file/target row and five-line archive cells limited visible table content. This P2 density issue is fixed by a single source/target strip and a three-line archive cell with counts and actions on the same row. Metadata was enlarged and an orange header icon added. Post-fix same-viewport comparison passed.
 4. Sample detail styles overrode the import title with 13px metadata styling. An import-specific selector and matching document icon restore the 23px heading. The revised sample screenshot was recaptured and compared with the approved source; P2 resolved.
 5. Candidate API assertions initially omitted the Secure session cookie on loopback HTTP; the browser imports succeeded. The test now forwards the issued cookie explicitly and waits for the result table to finish loading. No application authentication was weakened. Candidate 36596539002 passed all import and existing regression steps.
+6. Formal run 36597585079 reached import browser acceptance after earlier shared-fixture regressions. It correctly displayed “关联差异 4”, but the browser script incorrectly waited for “数据已对齐” as a loading signal. The screenshot confirms the plan table and import menu were already loaded. The test now waits for the import action's existing enabled state through Playwright actionability. Reconciliation is not a prerequisite for importing. Application behavior is unchanged. A new immutable release tag v1.34.259 records this test correction.
 
 ## Required fidelity surfaces
 
