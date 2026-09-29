@@ -35,7 +35,7 @@ const db=new PrismaClient();
     files.push(await db.drawingLibraryFile.create({data:{libraryItemId:products[0].id,categoryId:category.id,originalName:`${specs[0]}-${code}-${files.length}.pdf`,version:'V1.0',mimeType:'application/pdf',size:bytes.length,sha256:sha,objectKey:key,uploadedById:users.tech.id}}));
   }
   const now=new Date(Date.now()+8*3600000),day=now.toISOString().slice(0,10),weekDate=new Date(day);weekDate.setUTCDate(weekDate.getUTCDate()-(weekDate.getUTCDay()+6)%7);const week=weekDate.toISOString().slice(0,10),due=new Date(now.getTime()+20*86400000).toISOString().slice(0,10);
-  const oldOrder=await db.productionPlanOrder.create({data:{sourceOrderNo:marker+'-old',sourceLineNo:1,customerName:customer,productName:'原订单',specification:specs[0],drawingLibraryItemId:products[0].id,orderQuantity:100,planningUnitMilliseconds:90000,orderDate:new Date('2026-01-01'),customerDueDate:new Date(due),status:'open',createdById:users.plan.id}});
+  const oldOrder=await db.productionPlanOrder.create({data:{sourceOrderNo:marker+'-old',sourceLineNo:1,customerName:customer,productName:'原订单',specification:specs[0],drawingLibraryItemId:products[0].id,orderQuantity:100,planningUnitMilliseconds:90000,orderDate:new Date('2026-01-01'),customerDueDate:new Date(due),status:'pending',createdById:users.plan.id}});
   const dir=process.env.IMPORT_QA_OUTPUT||'output/playwright/import-association';mkdirSync(dir,{recursive:true});
   const mass=new ExcelJS.Workbook(),tab=mass.addWorksheet('量产计划');tab.addRow(['订单日期','客户名称','产品名称','型号/规格','订单总量','本周排产量','单件计划工时（分钟）','客户交期']);
   for(let i=0;i<16;i++)tab.addRow([day,customer,'验收线束',specs[i]||'QA-CABLE-'+(i+1),30,30,i===2?'':10,due]);

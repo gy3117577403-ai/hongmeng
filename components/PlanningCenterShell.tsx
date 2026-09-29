@@ -1437,6 +1437,7 @@ export default function PlanningCenterShell({
   }
 
   function closeDialog(): void {
+    if (importDialog && saving) return;
     if (historicalDeleteTarget) {
       closeHistoricalDeleteDialog();
       return;
@@ -3010,7 +3011,7 @@ export default function PlanningCenterShell({
 
         {(importDialog.step === 'upload' || importDialog.step === 'preview') && <>
           <label className="planning-import-picker">
-            <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" onChange={event => { const file = event.target.files?.[0]; if (file) void previewPlanningImport(file); }} />
+            <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" disabled={saving || importDialog.loading} onChange={event => { const file = event.target.files?.[0]; if (file) void previewPlanningImport(file); }} />
             <FileSpreadsheet />
             <span><strong>{importDialog.fileName || '选择已填写的量产计划模板'}</strong><small>{importDialog.loading ? '正在核对资料…' : importDialog.step === 'preview' ? '更换文件' : 'Excel / CSV · 单件工时单位为分钟'}</small></span>
             <b>{importDialog.fileName ? '重新选择' : '选择文件'}</b>

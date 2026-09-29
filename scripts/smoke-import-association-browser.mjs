@@ -41,7 +41,7 @@ try{
    const committedPromise=page.waitForResponse(r=>r.url().endsWith('/api/planning/import/commit')&&r.request().method()==='POST');await dialog.getByRole('button',{name:'确认导入 16 行',exact:true}).click();
    const committed=await(await committedPromise).json();check(committed.summary?.created===16,'mass UI commits 16 batches');
    dialog=page.getByRole('dialog',{name:'批量导入完成',exact:true});await dialog.waitFor();await dialog.getByRole('button',{name:'完成并查看计划',exact:true}).click();await dialog.waitFor({state:'hidden'});
-   check(await page.getByText(f.specs[0],{exact:true}).count()>0,'mass completion shows imported plan');
+   await page.getByText(f.specs[0],{exact:true}).first().waitFor();check(await page.getByText(f.specs[0],{exact:true}).count()>0,'mass completion shows imported plan');
    const fresh=await api('/api/planning/import/drawings?customer='+encodeURIComponent(f.customer)+'&q='+encodeURIComponent(f.specs[1]));check(fresh.status===200&&fresh.body.items.length===1,'new plan creates one connected archive');
    await page.goto(origin+'/weekly-plan-center?branch=samples');await page.getByRole('region',{name:'样品计划表'}).waitFor();
    await page.locator('summary').filter({hasText:'导入 / 导出'}).click();await page.getByRole('button',{name:'批量导入',exact:true}).click();

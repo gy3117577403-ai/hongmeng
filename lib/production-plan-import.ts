@@ -357,7 +357,7 @@ export function buildProductionPlanImportRows(options: {
       ? options.existingOrders.filter(order => !order.deletedAt
         && sameDrawingProduct({ customerName: order.customerName || '', specification: order.specification || '' }, { customerName, specification }))
       : [];
-    const businessKey = JSON.stringify([orderDate, customerName, specification, orderQuantity, plannedQuantity, customerDueDate]);
+    const businessKey = JSON.stringify([orderDate, customerName, specification, orderQuantity, customerDueDate]);
     const possibleDuplicate = !suppliedOrderNo && (businessRows.has(businessKey) || sameProductOrders.some(order =>
       order.orderDate === orderDate && order.orderQuantity === orderQuantity && order.customerDueDate === customerDueDate));
     const orderCandidates = sameProductOrders.filter(order => !['completed', 'cancelled'].includes(order.status)
