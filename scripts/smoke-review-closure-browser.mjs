@@ -73,6 +73,7 @@ try {
       await login('tech');await page.getByRole('button',{name:'处理剩余 1 项',exact:true}).waitFor();
       const summary=page.getByRole('region',{name:'退回处理摘要'});check((await summary.innerText()).includes('待提交 2'),'summary includes saved responses alongside the remaining issue');
       await page.waitForFunction(()=>!document.querySelector('.qf-return-summary-actions button:disabled'));await capture('04-return-workbench');
+      await page.setViewportSize({width:1715,height:917});await capture('09-main-reference-aspect');await page.setViewportSize({width:1366,height:1024});
       await page.getByRole('button',{name:'处理剩余 1 项',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});
       const issueList=drawer.getByLabel('退回事项列表');await drawer.getByLabel('技术解释',{exact:true}).waitFor();
       check((await drawer.getByRole('region',{name:'原退回意见'}).innerText()).includes('图纸缺少插针孔位与方向标注'),'unhandled issue opens first');
@@ -89,6 +90,7 @@ try {
       check(true,'closing protects unsaved work on another issue');
       await drawer.getByRole('button',{name:'处理剩余 1 项',exact:true}).click();
       await capture('05-technical-treatment');
+      await page.setViewportSize({width:1715,height:917});await capture('10-treatment-reference-aspect');
       await page.setViewportSize({width:1366,height:768});check(await drawer.locator('footer').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight),'short tablet keeps primary action visible');
       await capture('06-short-tablet-treatment');await page.setViewportSize({width:1366,height:1024});
       await page.route('**/api/quality-fixtures',async route=>{const req=route.request();if(req.method()==='POST'&&req.postDataJSON()?.action==='RESUBMIT_RETURNS'){await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'验收模拟：提交暂不可用'})});}else await route.continue();});
@@ -101,6 +103,7 @@ try {
       check(await drawer.getByRole('button',{name:'确认品质通过',exact:true}).isDisabled(),'approval requires explicit evidence confirmation');
       check(await drawer.getByRole('button',{name:'确认主管通过',exact:true}).count()===0,'quality reviewer cannot use supervisor action');
       await drawer.getByLabel('复核预览文件',{exact:true}).selectOption(f.detailFiles.sop.id);await drawer.locator('canvas[data-rendered-page="1"]').waitFor();await capture('07-review-with-document');
+      await page.setViewportSize({width:1715,height:917});await capture('11-review-reference-aspect');await page.setViewportSize({width:1366,height:1024});
       await drawer.getByRole('button',{name:'退回技术',exact:true}).click();await drawer.getByLabel('退回原因',{exact:true}).fill('请在 SOP 中明确插针方向');
       await drawer.getByRole('button',{name:'确认退回技术',exact:true}).click();await drawer.getByRole('status').filter({hasText:'已退回技术处理'}).waitFor();
       const rejected=(await get('/api/quality-fixtures?returns='+targetProduct)).data;
@@ -109,9 +112,9 @@ try {
       await drawer.getByRole('button',{name:'关闭退回处理',exact:true}).click();await login('tech');await page.getByRole('button',{name:'处理剩余 1 项',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.getByLabel('技术解释',{exact:true}).fill('已明确插针方向并与品质核对');await drawer.getByRole('button',{name:'保存并提交复核',exact:true}).click();await drawer.getByRole('status').filter({hasText:'已提交双方复核'}).waitFor();await drawer.getByRole('button',{name:'关闭退回处理',exact:true}).click();
       await sign('QUALITY');check((await get('/api/quality-fixtures?returns='+targetProduct)).data.issues.every(i=>i.status==='REVIEWING'),'one signer does not close any returned issue');
       await sign('SUPERVISOR');const closed=(await get('/api/quality-fixtures?returns='+targetProduct)).data;check(closed.issues.every(i=>i.status==='RESOLVED'),'all issues close after both actual reviewers approve');
-      await page.getByRole('button',{name:'退回履历',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.getByRole('button',{name:'查看已关闭 4 项'}).click();await drawer.getByRole('region',{name:'本次复核结果'}).waitFor();await page.screenshot({path:dir+'/08-closed-history.png'});
+      await page.getByRole('button',{name:'退回履历',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.getByLabel('退回事项列表').getByRole('button').filter({hasText:'已关闭'}).nth(3).waitFor();check(await drawer.getByLabel('退回事项列表').getByRole('button').filter({hasText:'已关闭'}).count()===4,'closed history opens directly without an empty intermediate view');await drawer.getByRole('region',{name:'本次复核结果'}).waitFor();await page.screenshot({path:dir+'/08-closed-history.png'});
       await drawer.getByRole('button',{name:'关闭退回处理',exact:true}).click();await login('reader');await page.getByRole('button',{name:'退回履历',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});check(await drawer.getByRole('button',{name:/确认.*通过|修改处理|提交双方复核/}).count()===0,'readonly history exposes no write controls');
-      targetProduct=f.product.id;route=origin+'/workspace/quality-fixtures?product='+targetProduct+'&q='+f.marker+'&week=2026-09-28';await login('quality');await page.getByRole('button',{name:'退回履历',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.getByRole('button',{name:'查看已关闭 1 项'}).click();
+      targetProduct=f.product.id;route=origin+'/workspace/quality-fixtures?product='+targetProduct+'&q='+f.marker+'&week=2026-09-28';await login('quality');await page.getByRole('button',{name:'退回履历',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.getByRole('region',{name:'技术处理结果'}).waitFor();
       check(await drawer.getByRole('button',{name:/确认.*通过/}).count()===0,'historical return selection never exposes current round approval');
       check(errors.length===0,'no uncaught browser errors');return {passed:true,checks,errors};
     }catch(error){await page.screenshot({path:dir+'/failure.png'});throw Error(String(error)+'; browser errors: '+JSON.stringify(errors)+'; completed checks: '+checks.join(' | '));}

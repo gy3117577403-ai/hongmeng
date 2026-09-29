@@ -70,6 +70,13 @@ test('document review stays actionable across pending replacement and legacy ret
     assert.ok(await assertFixturePrintReady(prisma, f.order.id));
     const badge = (await qualityFixtureBadges([f.order.id], 'orders'))[0]; assert.equal(badge.reviewLabel, '资料已审核'); assert.equal(badge.printAllowed, true);
     const board = await loadQualityFixtures(new URLSearchParams({ product: f.product.id }), tech); assert.equal(board.reviewDecision.state, 'APPROVED');
+    const fresh = await cmd({ action: 'SAVE_PACKAGE', libraryItemId: f.product.id, id: third.id, version: (await pack(third.id)).version,
+      revision: 'V1.1', needFixture: false, drawingFileIds: f.product.files.filter(file => file.categoryId === cats[0].id).map(file => file.id), sopFileIds: [newFile.id] });
+    await cmd({ action: 'SUBMIT', id: fresh.id, version: fresh.version });
+    const newerBoard = await loadQualityFixtures(new URLSearchParams({ product: f.product.id }), quality);
+    assert.equal(newerBoard.documentReturnCount, 1, 'a new round keeps the historical return entry available');
+    assert.equal(newerBoard.documentReturns.length, 0, 'the old resolved issue is not presented as current review evidence');
+    assert.equal(newerBoard.reviewDecision.action, 'REVIEW');
   });
   await t.test('legacy whole-package REVIEWING + newer draft repairs without fake approval or duplicate rounds', async () => {
     const f = await create(), r = await reject(f);

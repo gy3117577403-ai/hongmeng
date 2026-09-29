@@ -87,7 +87,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
   const approved = product?.fixturePackages.find(p => p.status === "APPROVED") || null;
   const newerReviewed = chosen ? product?.fixturePackages.find(p => p.sequence > chosen.sequence && p.supervisorAt !== null && p.qualityAt !== null)?.revision || null : null;
   const preparation = product ? await getFixturePreparation(prisma, product.id) : null;
-  const [readiness, packageEvents, workOrders, bom, preparationEvents, documentReturns] = await Promise.all([
+  const [readiness, packageEvents, workOrders, bom, preparationEvents, documentReturns, documentReturnCount] = await Promise.all([
     fixtureReadiness(prisma, product ? { libraryItemId: product.id } : null),
     chosen ? prisma.qfEvent.findMany({ where: { entityType: "PACKAGE", entityId: chosen.id }, orderBy: { createdAt: "desc" } }) : [],
     product ? prisma.workOrder.findMany({ where: { drawingLibraryItemId: product.id, deletedAt: null }, select: { id: true, code: true, status: true, fixtureBinding: true }, orderBy: { createdAt: "desc" }, take: 100 }) : [],
@@ -96,6 +96,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
     product ? prisma.qfDocumentReturn.findMany({ where: { libraryItemId: product.id,
       OR: [{ status: { not: "RESOLVED" } }, ...(chosen ? [{ submittedPackageId: chosen.id }] : [])] }, orderBy: { createdAt: "desc" },
       include: { responseFile: { select: { id: true, originalName: true, displayName: true, version: true } } } }) : [],
+    product ? prisma.qfDocumentReturn.count({ where: { libraryItemId: product.id } }) : 0,
   ]);
   const ownsEvidence = chosen ? await prisma.drawingLibraryFile.count({where:{id:{in:[...(chosen.drawingFiles as unknown as {id:string}[]),...(chosen.sopFiles as unknown as {id:string}[])].map(f=>f.id)},uploadedById:actor.id}}) > 0 : false;
   const reviewDecision = documentReviewDecision(chosen && { ...chosen, needFixture: product?.fixtureRequired ?? null }, documentReturns, product?.files.map(f => f.id), product?.fixturePackages[0]?.id);
@@ -104,7 +105,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
     preparationRows, preparationCounts, fixtures: fixtures.map(f => ({ ...f, available: f.item.balances.reduce((n, b) => n + fixtureAvailable(b), 0),
       onHand: f.item.balances.reduce((n, b) => n + b.onHand, 0), held: f.item.balances.reduce((n, b) => n + b.held, 0),
       reserved: f.item.balances.reduce((n, b) => n + b.reserved, 0), issued: f.item.balances.reduce((n, b) => n + b.issued, 0) })),
-    fixtureTotal, eventRows, product, chosen, approved, newerReviewed, readiness, packageEvents, workOrders, bom, preparation, preparationEvents, documentReturns,
+    fixtureTotal, eventRows, product, chosen, approved, newerReviewed, readiness, packageEvents, workOrders, bom, preparation, preparationEvents, documentReturns, documentReturnCount,
     canConfigure: actor.access?.modulePermissions == null && (!settings || settings.ownerId === actor.id || actor.laborRole === "ADMIN"),
     reviewDecision,
     canEditDocuments: !actor.access || moduleFixtureActionAllowed(actor.access, 'SAVE_PACKAGE'),
