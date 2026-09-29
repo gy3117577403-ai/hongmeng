@@ -64,16 +64,19 @@ jobs:
           for i in $(seq 1 90); do if curl -fsS "$APP_BASE_URL/api/ready" > "$IMPORT_QA_OUTPUT/ready.json"; then break; fi; sleep 2; done
           curl -fsS "$APP_BASE_URL/api/ready"
       - name: Actual Excel import and drawing preview on tablet
+        id: import_browser
         run: |
           sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
           npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
           node scripts/smoke-import-association-browser.mjs
       - name: Existing import workflow regressions
+        if: success() || steps.import_browser.outcome == 'failure'
         run: |
           QUALITY_DATA_QA_ALLOW=disposable-quality-runtime node scripts/seed-quality-data-smoke.cjs > "$IMPORT_QA_OUTPUT/quality-fixture.json"
           QUALITY_DATA_QA_ALLOW=disposable-quality-runtime node scripts/seed-planning-import-smoke.cjs > "$IMPORT_QA_OUTPUT/time-reference.json"
           QUALITY_DATA_QA_BASE="$APP_BASE_URL" QUALITY_DATA_QA_ALLOW=disposable-quality-runtime QUALITY_DATA_QA_FIXTURE="$IMPORT_QA_OUTPUT/quality-fixture.json" PLANNING_IMPORT_QA_REFERENCE="$IMPORT_QA_OUTPUT/time-reference.json" PLANNING_IMPORT_QA_OUTPUT="$IMPORT_QA_OUTPUT/import-runtime.json" node scripts/smoke-planning-import.mjs
       - name: Existing sample import and result navigation
+        if: success() || steps.import_browser.outcome == 'failure'
         env:
           SAMPLE_BRANCH_QA_ALLOW: disposable-sample-branches
           SAMPLE_BRANCH_QA_BASE: http://127.0.0.1:3000

@@ -9,8 +9,8 @@ function cli(args){const r=spawnSync('npx',['--yes','--package','@playwright/cli
 try{
  cli(['open',origin+'/login']);
  const code=`async page=>{
-  const f=${JSON.stringify(fixture)},origin=${JSON.stringify(origin)},dir=${JSON.stringify(dir)},checks=[],errors=[];
-  const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label)};page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(String(e)));
+  const f=${JSON.stringify(fixture)},origin=${JSON.stringify(origin)},dir=${JSON.stringify(dir)},checks=[],errors=[],failures=[];
+  const check=(ok,label)=>{if(!ok)failures.push(label);else checks.push(label)};page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(String(e)));
   const shot=async name=>{await page.mouse.move(0,0);await page.screenshot({path:dir+'/'+name+'.png',animations:'disabled'});};
   const api=async(path,method='GET',data)=>{const r=await page.request.fetch(origin+path,{method,headers:{Origin:origin},data});return {status:r.status(),body:await r.json().catch(()=>null)};};
   const login=async role=>{await page.context().clearCookies();const r=await api('/api/auth/login','POST',{username:f.users[role].username,password:f.password});check(r.status===200,role+' login');};
@@ -42,7 +42,7 @@ try{
    const committed=await(await committedPromise).json();check(committed.summary?.created===16,'mass UI commits 16 batches');
    dialog=page.getByRole('dialog',{name:'批量导入完成',exact:true});await dialog.waitFor();await dialog.getByRole('button',{name:'完成并查看计划',exact:true}).click();await dialog.waitFor({state:'hidden'});
    await page.getByText(f.specs[0],{exact:true}).first().waitFor();check(await page.getByText(f.specs[0],{exact:true}).count()>0,'mass completion shows imported plan');
-   const fresh=await api('/api/planning/import/drawings?customer='+encodeURIComponent(f.customer)+'&q='+encodeURIComponent(f.specs[1]));check(fresh.status===200&&fresh.body.items.length===1,'new plan creates one connected archive');
+   const fresh=await api('/api/planning/import/drawings?customer='+encodeURIComponent(f.customer)+'&q='+encodeURIComponent(f.specs[1]));check(fresh.status===200&&fresh.body?.items?.length===1,'new plan creates one connected archive: '+JSON.stringify(fresh));
    await page.goto(origin+'/weekly-plan-center?branch=samples');await page.getByRole('region',{name:'样品计划表'}).waitFor();
    await page.locator('summary').filter({hasText:'导入 / 导出'}).click();await page.getByRole('button',{name:'批量导入',exact:true}).click();
    dialog=page.getByRole('dialog',{name:'批量导入样品计划',exact:true});await dialog.waitFor();await dialog.getByLabel('选择样品计划文件').setInputFiles(f.samplePath);await dialog.getByRole('button',{name:'读取并预览',exact:true}).click();
@@ -53,8 +53,8 @@ try{
    await login('reader');const read=await api('/api/planning/import/drawings?customer='+encodeURIComponent(f.customer));check(read.status===200,'readonly can inspect archives');const denied=await api('/api/planning/import/commit','POST',{batchId:'forbidden'});check(denied.status===403,'readonly cannot import');
    await login('tech');const techRead=await api('/api/planning/import/drawings?customer='+encodeURIComponent(f.customer));check(techRead.status===200,'sample technical account can inspect import archives');
    const foreign=techRead.body.items.find(i=>i.id===f.foreign.id);check(!foreign,'other customer archive excluded');const removed=await page.request.get(origin+'/api/planning/import/drawings/files/missing/content');check(removed.status()===404,'missing file rejected');
-   check(errors.length===0,'no uncaught browser errors');return {ok:true,checks,committed,sample};
-  }catch(e){await shot('failure').catch(()=>{});const state=await page.locator('body').innerText();throw Error(String(e)+'\\n'+state.slice(-6500));}
+   check(errors.length===0,'no uncaught browser errors');if(failures.length)throw Error(JSON.stringify({failures,checks}));return {ok:true,checks,committed,sample};
+  }catch(e){await shot('failure').catch(()=>{});const state=await page.locator('body').innerText();throw Error(String(e)+'\\n'+JSON.stringify({checks,failures})+'\\n'+state.slice(-6500));}
  }`;
  writeFileSync(dir+'/browser.generated.cjs',code);const out=cli(['run-code','--filename',dir+'/browser.generated.cjs']);const match=out.match(/### Result\r?\n([\s\S]*?)(?:\r?\n### |$)/),result=match&&JSON.parse(match[1].trim());if(!result?.ok)throw Error(out);writeFileSync(dir+'/browser-result.json',JSON.stringify(result,null,2));console.log(JSON.stringify({passed:result.checks.length,checks:result.checks}));
 }finally{try{cli(['close']);}catch{}}
