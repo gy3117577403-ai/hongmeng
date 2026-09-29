@@ -3,6 +3,7 @@ import test from 'node:test';
 import { matchImportDrawing, sameImportCustomer, type ImportDrawingArchive } from '../lib/import-drawing-association';
 import { buildProductionPlanImportRows, type ProductionPlanImportExistingOrder } from '../lib/production-plan-import';
 import { apiRouteAccessRule } from '../lib/api-route-access';
+import { moduleApiDecision } from '../lib/module-permissions';
 
 const item:ImportDrawingArchive={id:'drawing-1',libraryKey:'archive-1',customerName:'客户甲(10001)',specification:'D010240-8417-V01',productName:'线束',drawingFileCount:2,sopFileCount:1};
 const row={customerName:'客户甲',specification:item.specification};
@@ -41,4 +42,13 @@ test('import archive and file previews are read-only for plan and sample busines
   for(const path of ['/api/planning/import/drawings','/api/planning/import/drawings/files/123/content','/api/planning/import/drawings/files/123/download']) {
     const rule=apiRouteAccessRule(path);assert.equal(rule?.action,'READ');assert.ok(rule?.anyOf.includes('PLANNING'));assert.ok(rule?.anyOf.includes('BUSINESS'));assert.deepEqual(rule?.allowedMethods,['GET','HEAD']);
   }
+});
+
+test('only production and technical read dependencies permit archive lookup',()=>{
+  for(const module of ['production','technology'] as const) {
+    const user={modulePermissions:{[module]:'READ' as const},workbenchEnabled:true};
+    assert.equal(moduleApiDecision(user,'/api/planning/import/drawings/files/123/content','GET'),true);
+    assert.equal(moduleApiDecision(user,'/api/planning/import/commit','POST'),false);
+  }
+  assert.equal(moduleApiDecision({modulePermissions:{people:'COLLABORATE'},workbenchEnabled:true},'/api/planning/import/drawings','GET'),false);
 });

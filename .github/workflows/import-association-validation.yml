@@ -73,12 +73,25 @@ jobs:
           QUALITY_DATA_QA_ALLOW=disposable-quality-runtime node scripts/seed-quality-data-smoke.cjs > "$IMPORT_QA_OUTPUT/quality-fixture.json"
           QUALITY_DATA_QA_ALLOW=disposable-quality-runtime node scripts/seed-planning-import-smoke.cjs > "$IMPORT_QA_OUTPUT/time-reference.json"
           QUALITY_DATA_QA_BASE="$APP_BASE_URL" QUALITY_DATA_QA_ALLOW=disposable-quality-runtime QUALITY_DATA_QA_FIXTURE="$IMPORT_QA_OUTPUT/quality-fixture.json" PLANNING_IMPORT_QA_REFERENCE="$IMPORT_QA_OUTPUT/time-reference.json" PLANNING_IMPORT_QA_OUTPUT="$IMPORT_QA_OUTPUT/import-runtime.json" node scripts/smoke-planning-import.mjs
+      - name: Existing sample import and result navigation
+        env:
+          SAMPLE_BRANCH_QA_ALLOW: disposable-sample-branches
+          SAMPLE_BRANCH_QA_BASE: http://127.0.0.1:3000
+          SAMPLE_BRANCH_INITIAL_PASSWORD: DisposableSeedStorage2026!Z
+          SMOKE_ADMIN_CHANGED_PASSWORD: DisposableImportChanged2026!Z
+          SAMPLE_BRANCH_QA_OUTPUT: output/playwright/import-association-candidate/sample-runtime.json
+          SAMPLE_PLAN_BROWSER_FIXTURE: /tmp/import-sample-fixture.json
+          SAMPLE_PLAN_BROWSER_OUTPUT: output/playwright/import-association-candidate/sample-regression
+        run: |
+          node scripts/smoke-sample-branches.mjs
+          node scripts/smoke-sample-planning-browser.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: import-association-candidate-${{ github.sha }}
           path: |
-            output/playwright/import-association-candidate/*.png
+            output/playwright/import-association-candidate/**/*.png
+            output/playwright/import-association-candidate/sample-regression/browser-result.txt
             output/playwright/import-association-candidate/*runtime*.json
             output/playwright/import-association-candidate/browser-result.json
             output/playwright/import-association-candidate/data-invariants.json

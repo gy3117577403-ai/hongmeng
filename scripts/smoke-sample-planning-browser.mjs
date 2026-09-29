@@ -27,7 +27,7 @@ try{
   check(await dialog.locator('input[type=date]').inputValue()===f.week,'import inherits active planning week');
   await dialog.getByLabel('选择样品计划文件').setInputFiles(f.excelPath);await dialog.getByRole('button',{name:'读取并预览'}).click();
   dialog=page.getByRole('dialog',{name:'批量导入样品计划',exact:true});await dialog.waitFor();
-  check(await dialog.locator('tbody tr').count()===24,'all spreadsheet rows shown before commit');
+  await dialog.locator('tbody tr').nth(23).waitFor();check(await dialog.locator('tbody tr').count()===24,'all spreadsheet rows shown before commit');
   check((await dialog.locator('tbody tr').first().textContent()).includes('5 h'),'12.5 minutes x 24 equals 5 hours in preview');
   check((await dialog.locator('tbody tr').last().textContent()).includes('老产品制作'),'explicit row branch wins');
   await shot('import-preview-1366');

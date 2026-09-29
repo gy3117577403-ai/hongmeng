@@ -2406,7 +2406,7 @@ export default function PlanningCenterShell({
             {view === 'schedule' && <>
               <button ref={orderPoolTriggerRef} className="planning-secondary-action pool" type="button" onClick={() => selectView('orders')}><PanelLeftOpen size={15} />订单池 <b>{metadataReady ? globalCounts.orderPool : '—'}</b></button>
               <details className="planning-transfer-menu" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary><Upload size={15} />导入/导出<ChevronDown size={13} /></summary><div>
-                <button type="button" disabled={moduleReadOnly} onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); openPlanningImport(menu?.querySelector('summary') || event.currentTarget); }}>导入{editableWeekLabel(selectedWeekKey)}清单</button>
+                <button type="button" disabled={moduleReadOnly || !selectedWeek || loading} onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); openPlanningImport(menu?.querySelector('summary') || event.currentTarget); }}>导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); void openWeeklyPlanExport(menu?.querySelector('summary') || event.currentTarget); }}>导出计划 Excel</button>
               </div></details>
             </>}

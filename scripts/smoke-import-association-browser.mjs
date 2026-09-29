@@ -16,7 +16,7 @@ try{
   const login=async role=>{await page.context().clearCookies();const r=await api('/api/auth/login','POST',{username:f.users[role].username,password:f.password});check(r.status===200,role+' login');};
   const geometry=async dialog=>{const r=await dialog.boundingBox(),footer=await dialog.locator(':scope > footer').boundingBox();check(r&&footer&&r.height<=page.viewportSize().height&&footer.y+footer.height<=page.viewportSize().height,'dialog and fixed actions fit viewport');check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2),'no page horizontal overflow');};
   try{
-   await page.setViewportSize({width:1366,height:1024});await login('plan');await page.goto(origin+'/weekly-plan-center');
+   await page.setViewportSize({width:1366,height:1024});await login('plan');await page.goto(origin+'/weekly-plan-center');await page.getByText('数据已对齐',{exact:true}).waitFor();
    await page.locator('summary').filter({hasText:'导入/导出'}).click();await page.getByRole('button',{name:'导入本周清单',exact:true}).click();
    let dialog=page.getByRole('dialog',{name:'批量导入量产计划',exact:true});await dialog.waitFor();await dialog.locator('input[type=file]').setInputFiles(f.massPath);
    await dialog.locator('tbody tr').nth(15).waitFor();check(await dialog.locator('tbody tr').count()===16,'all mass rows previewed');
@@ -54,7 +54,7 @@ try{
    await login('tech');const techRead=await api('/api/planning/import/drawings?customer='+encodeURIComponent(f.customer));check(techRead.status===200,'sample technical account can inspect import archives');
    const foreign=techRead.body.items.find(i=>i.id===f.foreign.id);check(!foreign,'other customer archive excluded');const removed=await page.request.get(origin+'/api/planning/import/drawings/files/missing/content');check(removed.status()===404,'missing file rejected');
    check(errors.length===0,'no uncaught browser errors');return {ok:true,checks,committed,sample};
-  }catch(e){await shot('failure').catch(()=>{});throw e;}
+  }catch(e){await shot('failure').catch(()=>{});const state=await page.locator('body').innerText();throw Error(String(e)+'\\n'+state.slice(-6500));}
  }`;
  writeFileSync(dir+'/browser.generated.cjs',code);const out=cli(['run-code','--filename',dir+'/browser.generated.cjs']);const match=out.match(/### Result\r?\n([\s\S]*?)(?:\r?\n### |$)/),result=match&&JSON.parse(match[1].trim());if(!result?.ok)throw Error(out);writeFileSync(dir+'/browser-result.json',JSON.stringify(result,null,2));console.log(JSON.stringify({passed:result.checks.length,checks:result.checks}));
 }finally{try{cli(['close']);}catch{}}

@@ -565,6 +565,16 @@ jobs:
             SAMPLE_PLAN_BROWSER_OUTPUT=output/playwright/sample-planning-release \
             node scripts/smoke-sample-planning-browser.mjs
 
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public" \
+            S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources \
+            IMPORT_QA_ALLOW=disposable-import-runtime \
+            IMPORT_QA_OUTPUT=output/playwright/import-association-release \
+            node scripts/seed-import-association-smoke.cjs
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public" \
+            IMPORT_QA_ALLOW=disposable-import-runtime IMPORT_QA_BASE=http://127.0.0.1:3000 \
+            IMPORT_QA_OUTPUT=output/playwright/import-association-release \
+            node scripts/smoke-import-association-browser.mjs
+
           ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
             ACCOUNT_ACCESS_QA_BASE=http://127.0.0.1:3000 \
             ACCOUNT_ACCESS_QA_OUTPUT=artifacts/account-access/release-http.json \
@@ -865,6 +875,16 @@ jobs:
             SAMPLE_PLAN_BROWSER_FIXTURE="$RUNNER_TEMP/sample-planning-hangzhou.json" \
             SAMPLE_PLAN_BROWSER_OUTPUT=output/playwright/sample-planning-hangzhou \
             node scripts/smoke-sample-planning-browser.mjs
+
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources \
+            IMPORT_QA_ALLOW=disposable-import-runtime \
+            IMPORT_QA_OUTPUT=output/playwright/import-association-hangzhou \
+            node scripts/seed-import-association-smoke.cjs
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
+            IMPORT_QA_ALLOW=disposable-import-runtime IMPORT_QA_BASE=http://127.0.0.1:3300 \
+            IMPORT_QA_OUTPUT=output/playwright/import-association-hangzhou \
+            node scripts/smoke-import-association-browser.mjs
 
           DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
             ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
@@ -1229,4 +1249,16 @@ jobs:
           path: |
             output/playwright/review-closure-*/browser/*runtime.txt
             output/playwright/review-closure-*/browser/*.png
+          if-no-files-found: warn
+
+      - name: Upload import drawing association acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: import-association-${{ github.ref_name }}
+          path: |
+            output/playwright/import-association-*/*.png
+            output/playwright/import-association-*/browser-result.json
+            output/playwright/import-association-*/data-invariants.json
+            output/playwright/import-association-*/browser-runtime.txt
           if-no-files-found: warn

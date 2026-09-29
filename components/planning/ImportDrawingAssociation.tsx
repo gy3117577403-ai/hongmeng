@@ -10,8 +10,8 @@ import { sameDrawingProduct } from '@/lib/drawing-product-identity';
 import type { ImportDrawingArchive } from '@/lib/import-drawing-association';
 import styles from './ImportReview.module.css';
 
-export function DrawingAssociationCell({ customerName, specification, archive, locked = false, pending = false, onPick, onOpenChange }: {
-  customerName: string; specification: string; archive?: ImportDrawingArchive | null; locked?: boolean; pending?: boolean;
+export function DrawingAssociationCell({ customerName, specification, archive, locked = false, pending = false, disabled = false, onPick, onOpenChange }: {
+  customerName: string; specification: string; archive?: ImportDrawingArchive | null; locked?: boolean; pending?: boolean; disabled?: boolean;
   onPick: (item: ImportDrawingArchive) => void; onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -20,7 +20,7 @@ export function DrawingAssociationCell({ customerName, specification, archive, l
   return <><div className={`${styles.archiveCell} ${!archive ? styles.unlinked : ''}`}>
     <div className={styles.archiveIdentity}><FileText size={19}/><div><strong>{archive?.specification || (pending ? '选择图纸资料档案' : '本次新建资料档案')}</strong><small>{archive?.customerName || customerName}</small></div></div>
     {archive ? <div className={styles.fileCounts}><span className={!archive.drawingFileCount ? styles.warn : ''}>图纸 {archive.drawingFileCount ?? '—'}</span><span className={!archive.sopFileCount ? styles.warn : ''}>SOP {archive.sopFileCount ?? '—'}</span></div> : <small className={styles.warn}>{pending ? '存在多个同规格档案' : '图纸待上传'}</small>}
-    <div className={styles.cellLinks}>{archive && <button type="button" onClick={() => { setReadOnly(true); changeOpen(true); }}>预览</button>}{!locked && <button type="button" onClick={() => { setReadOnly(false); changeOpen(true); }}>{archive ? '更换' : '选择已有资料'}</button>}{locked && <small><LockKeyhole size={12}/>沿用原订单资料</small>}</div>
+    <div className={styles.cellLinks}>{archive && <button type="button" disabled={disabled} onClick={() => { setReadOnly(true); changeOpen(true); }}>预览</button>}{!locked && <button type="button" disabled={disabled} onClick={() => { setReadOnly(false); changeOpen(true); }}>{archive ? '更换' : '选择已有资料'}</button>}{locked && <small><LockKeyhole size={12}/>沿用原订单资料</small>}</div>
   </div>{open && <DrawingArchivePicker customerName={customerName} specification={specification} selected={archive || null} readOnly={readOnly || locked} onClose={() => changeOpen(false)} onPick={item => { onPick(item); changeOpen(false); }}/>}</>;
 }
 
