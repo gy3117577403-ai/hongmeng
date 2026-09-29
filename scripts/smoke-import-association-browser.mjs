@@ -53,7 +53,7 @@ try{
    await dialog.locator('tbody tr').first().getByRole('button',{name:'预览',exact:true}).click();picker=page.getByRole('dialog',{name:'预览图纸资料',exact:true});await picker.locator('canvas').first().waitFor();await page.keyboard.press('Escape');await picker.waitFor({state:'hidden'});check(await dialog.isVisible(),'Escape closes only archive preview');
    await geometry(dialog);await shot('05-sample-reference-size');const samplePromise=page.waitForResponse(r=>r.url().endsWith('/api/sample-tasks/import/commit')&&r.request().method()==='POST');await dialog.getByRole('button',{name:'确认导入 2 行',exact:true}).click();const sample=await(await samplePromise).json();check(sample.createdTaskCount===2&&sample.blockedCount===0,'sample UI imports both branches');
    dialog=page.getByRole('dialog',{name:'样品计划导入结果',exact:true});
-   const receiptPromise=page.waitForResponse(r=>{const u=new URL(r.url());return u.pathname==='/api/sample-tasks'&&u.searchParams.get('importBatch')===sample.batchId&&r.ok();});
+   const receiptPromise=page.waitForResponse(r=>r.url().startsWith(origin+'/api/sample-tasks?')&&r.url().split('?')[1].split('&').includes('importBatch='+sample.batchId)&&r.ok());
    await dialog.getByRole('button',{name:'查看本次导入 2 项',exact:true}).click();await page.locator('.spr-batch-banner').waitFor();
    const receipt=await(await receiptPromise).json(),expectedIds=sample.rows.map(r=>r.taskId).sort(),receiptIds=(receipt.tasks||[]).map(t=>t.id).sort();
    const expectedTitles=(receipt.tasks||[]).map(t=>t.specification+' · '+(t.sourceOrderNo||t.code));
