@@ -51,7 +51,7 @@ jobs:
       - run: npx prisma validate && npx prisma generate && npx prisma migrate deploy
       - name: Review state and PostgreSQL regressions
         run: |
-          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/quality-review-state.test.ts tests/quality-return-workbench.test.ts tests/quality-review-closure-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/drawing-replacement-integration.test.ts
+          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/pdf-loading-lifecycle.test.ts tests/quality-review-state.test.ts tests/quality-return-workbench.test.ts tests/quality-review-closure-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/drawing-replacement-integration.test.ts
           npm run lint
       - name: Prepare actual files and build application
         run: |

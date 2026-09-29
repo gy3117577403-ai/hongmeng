@@ -71,6 +71,16 @@ try {
       check((await api()).chosen.status==='REVIEWING','upload followed by save uses synchronized package version');
       targetProduct=f.detailProduct.id;route=origin+'/workspace/quality-fixtures?product='+targetProduct+'&q='+f.marker+'&week=2026-09-28';
       await login('tech');await page.getByRole('button',{name:'处理剩余 1 项',exact:true}).waitFor();
+      const documentTabs=page.getByRole('group',{name:'受审资料切换'}), delayedPdf=origin+'/api/drawing-library/files/'+f.detailFiles.sop.id+'/content';
+      for(let attempt=0;attempt<3;attempt++){
+        let release;const gate=new Promise(resolve=>{release=resolve;});
+        await page.route(delayedPdf,async route=>{await gate;await route.continue();});
+        try{const requested=page.waitForRequest(delayedPdf);await documentTabs.getByRole('button',{name:/^SOP/}).click();await requested;
+          await documentTabs.getByRole('button',{name:/^图纸/}).click();const returned=page.waitForResponse(delayedPdf);release();await returned;
+          await page.locator('.qf-document-canvas canvas[data-rendered-page="1"]').waitFor();
+        }finally{release();await page.unroute(delayedPdf);}
+      }
+      check(true,'switching away from three initializing PDFs keeps the current preview usable');
       const summary=page.getByRole('region',{name:'退回处理摘要'});check((await summary.innerText()).includes('待提交 2'),'summary includes saved responses alongside the remaining issue');
       await page.waitForFunction(()=>!document.querySelector('.qf-return-summary-actions button:disabled'));await capture('04-return-workbench');
       await page.setViewportSize({width:1715,height:917});await capture('09-main-reference-aspect');await page.setViewportSize({width:1366,height:1024});

@@ -52,6 +52,7 @@ import type {
   RenderTask,
 } from 'pdfjs-dist';
 import { createPdfJsAssetOptions } from '@/lib/pdfjs-assets';
+import { releasePdfLoadingTask } from '@/lib/pdf-loading-lifecycle';
 import { documentDisplaySettingsUrl, type PageRotations } from '@/lib/document-orientation';
 import styles from './PdfOverlayEditorModal.module.css';
 import { exportPdfOverlayPngs } from './pdf-overlay-export';
@@ -568,6 +569,7 @@ export function PdfOverlayEditorModal({
     if (!open || !stableSourceKey) return undefined;
     let alive = true;
     let loadedDocument: PDFDocumentProxy | null = null;
+    let ownedLoadingTask: PDFDocumentLoadingTask | null = null;
     setLoading(true);
     setLoadError('');
     setPdfDocument(null);
@@ -576,6 +578,7 @@ export function PdfOverlayEditorModal({
     void (async () => {
       try {
         const pdfjs = await loadPdfJs();
+        if (!alive) return;
         pdfjs.GlobalWorkerOptions.workerSrc = '/api/pdf-worker';
         const assetOptions = createPdfJsAssetOptions();
         const params = sourceFile
@@ -584,7 +587,9 @@ export function PdfOverlayEditorModal({
             ? { url: sourceUrl, withCredentials: true, ...assetOptions }
             : null;
         if (!params) throw new Error('没有可加载的 PDF 文件');
+        if (!alive) return;
         const loadingTask = pdfjs.getDocument(params);
+        ownedLoadingTask = loadingTask;
         loadingTaskRef.current = loadingTask;
         loadedDocument = await loadingTask.promise;
         if (!alive) return;
@@ -600,9 +605,8 @@ export function PdfOverlayEditorModal({
     return () => {
       alive = false;
       renderTaskRef.current?.cancel();
-      loadingTaskRef.current?.destroy?.();
-      loadedDocument?.destroy?.();
-      loadingTaskRef.current = null;
+      if (ownedLoadingTask) void releasePdfLoadingTask(ownedLoadingTask).catch(error => console.warn('PDF editor cleanup failed', error));
+      if (loadingTaskRef.current === ownedLoadingTask) loadingTaskRef.current = null;
     };
   }, [open, sourceFile, sourceUrl, stableSourceKey]);
 

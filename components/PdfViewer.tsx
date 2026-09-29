@@ -8,6 +8,7 @@ import { usePreviewGestures } from '@/components/usePreviewGestures';
 import { extractManualPageTitleCandidates, extractManualTocSuggestions } from '@/lib/connector-manual-toc';
 import type { ConnectorManualTocSuggestion } from '@/lib/connector-manual-toc';
 import { createPdfJsAssetOptions } from '@/lib/pdfjs-assets';
+import { releasePdfLoadingTask } from '@/lib/pdf-loading-lifecycle';
 import { DocumentOrientationControls, DocumentPreviewFrame, requestPreviewLeave, useDocumentOrientation, type DocumentOrientationController } from '@/components/DocumentOrientation';
 import { normalizePreviewRotation, PREVIEW_FIT_PADDING } from '@/lib/preview-gestures';
 
@@ -142,6 +143,7 @@ function PdfCanvas({
   const [tocSaving, setTocSaving] = useState(false);
   const [pageTitleCandidates, setPageTitleCandidates] = useState<string[]>([]);
   const tocSuggestionsCallbackRef = useRef(onTocSuggestions);
+  const hasTocEditor = !!onAddToToc;
   const gestures = usePreviewGestures({
     stageRef: shellRef,
     contentSize: baseSize,
@@ -203,10 +205,12 @@ function PdfCanvas({
       try {
         ensurePromiseWithResolvers();
         const pdfjs = await loadPdfJs();
+        if (!alive) return;
         pdfjs.GlobalWorkerOptions.workerSrc = '/api/pdf-worker';
         const assetOptions = createPdfJsAssetOptions();
         if (isTabletWebView()) {
           const data = await loadPdfArrayBuffer(source);
+          if (!alive) return;
           loadingTask = pdfjs.getDocument({ data, ...assetOptions, useWorkerFetch: false, isEvalSupported: false });
         } else {
           loadingTask = pdfjs.getDocument({ url: source, withCredentials: true, ...assetOptions });
@@ -215,9 +219,11 @@ function PdfCanvas({
         if (!alive) return;
         setDoc(loadedDoc);
         setPageCount(loadedDoc.numPages);
-        void collectPdfTocSuggestions(loadedDoc).then(items => {
-          if (alive) tocSuggestionsCallbackRef.current?.(items);
-        });
+        if (tocSuggestionsCallbackRef.current) {
+          void collectPdfTocSuggestions(loadedDoc, () => alive).then(items => {
+            if (alive) tocSuggestionsCallbackRef.current?.(items);
+          });
+        }
       } catch (e) {
         if (alive) setError(pdfError(e));
       } finally {
@@ -228,8 +234,7 @@ function PdfCanvas({
     return () => {
       alive = false;
       renderTaskRef.current?.cancel();
-      loadingTask?.destroy?.();
-      loadedDoc?.destroy?.();
+      if (loadingTask) void releasePdfLoadingTask(loadingTask).catch(error => console.warn('PDF preview cleanup failed', error));
     };
   }, [source, reloadKey]);
 
@@ -247,14 +252,14 @@ function PdfCanvas({
       if (!alive) return;
       const viewport = page.getViewport({ scale: 1 });
       setBaseSize(current => current.width === viewport.width && current.height === viewport.height ? current : { width: viewport.width, height: viewport.height });
-      return extractPdfPageLines(page);
+      return hasTocEditor ? extractPdfPageLines(page) : undefined;
     }).then(lines => {
       if (alive && lines) setPageTitleCandidates(extractManualPageTitleCandidates(lines));
     }).catch(() => {
       if (alive) setPageTitleCandidates([]);
     });
     return () => { alive = false; };
-  }, [doc, pageNo]);
+  }, [doc, pageNo, hasTocEditor]);
 
   useEffect(() => {
     setTocOpen(false);
@@ -489,28 +494,30 @@ async function resolveOutlinePage(doc: PdfDocument, destination: string | unknow
   }
 }
 
-async function collectOutlineSuggestions(doc: PdfDocument, nodes: PdfOutlineNode[], output: PdfTocSuggestion[]): Promise<void> {
+async function collectOutlineSuggestions(doc: PdfDocument, nodes: PdfOutlineNode[], output: PdfTocSuggestion[], isActive: () => boolean): Promise<void> {
   for (const node of nodes) {
+    if (!isActive()) return;
     const title = String(node.title || '').trim().slice(0, 160);
     const page = await resolveOutlinePage(doc, node.dest);
     if (title && page && !output.some(item => item.title === title && item.pageStart === page)) {
       output.push({ title, pageStart: page, pageEnd: page, source: 'outline' });
     }
-    if (node.items?.length) await collectOutlineSuggestions(doc, node.items, output);
+    if (node.items?.length) await collectOutlineSuggestions(doc, node.items, output, isActive);
   }
 }
 
-async function collectPdfTocSuggestions(doc: PdfDocument): Promise<PdfTocSuggestion[]> {
+async function collectPdfTocSuggestions(doc: PdfDocument, isActive: () => boolean): Promise<PdfTocSuggestion[]> {
   const suggestions: PdfTocSuggestion[] = [];
   try {
     const outline = await doc.getOutline() as unknown as PdfOutlineNode[] | null;
-    if (outline?.length) await collectOutlineSuggestions(doc, outline, suggestions);
+    if (outline?.length && isActive()) await collectOutlineSuggestions(doc, outline, suggestions, isActive);
   } catch {
     // Outline support is optional; text extraction remains available.
   }
   const documentLines: string[] = [];
   const inspectedPages = Math.min(3, doc.numPages);
   for (let pageNo = 1; pageNo <= inspectedPages; pageNo += 1) {
+    if (!isActive()) return [];
     try {
       documentLines.push(...await extractPdfPageLines(await doc.getPage(pageNo)));
     } catch {
