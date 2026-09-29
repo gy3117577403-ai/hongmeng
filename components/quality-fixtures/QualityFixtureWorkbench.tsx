@@ -43,27 +43,30 @@ export default function QualityFixtureWorkbench({ user, initialData, initialView
   const busyRef = useRef(false), requestRef = useRef<{ body: string; key: string } | null>(null), modalRef = useRef<HTMLElement>(null), priorFocus = useRef<HTMLElement | null>(null);
   const closeMessage = useCallback(() => setMessage(""), []), closeError = useCallback(() => setError(""), []);
   const currentQuery = useRef("");
+  const canSyncDocuments = moduleFixtureActionAllowed(user.access, 'SYNC_DOCUMENTS');
   const query = useCallback(() => new URLSearchParams({ view, product: productId, package: packageId, q: search, page: String(page), status, week, prepStatus, mine: mine ? "1" : "" }), [view, productId, packageId, search, page, status, week, prepStatus, mine]);
   currentQuery.current = query().toString();
   const refresh = useCallback(async () => {
     const key = query().toString();
-    const synced = await fetch("/api/quality-fixtures", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "SYNC_DOCUMENTS" }) });
-    if (!synced.ok) throw new Error("资料同步失败，请重试");
+    if (canSyncDocuments) {
+      const synced = await fetch("/api/quality-fixtures", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "SYNC_DOCUMENTS" }) });
+      if (!synced.ok) throw new Error("资料同步失败，请重试");
+    }
     const d = await fetch("/api/quality-fixtures?" + key, { cache: "no-store" }).then(response<QfWorkbench>);
     if (currentQuery.current === key) { setData(d); setChecked(false); }
     return d;
-  }, [query]);
+  }, [query, canSyncDocuments]);
   useEffect(() => {
     const abort = new AbortController(), key = query().toString();
     const t = setTimeout(() => {
       setLoading(true);
-      fetch("/api/quality-fixtures", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "SYNC_DOCUMENTS" }), signal: abort.signal })
+      (canSyncDocuments ? fetch("/api/quality-fixtures", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "SYNC_DOCUMENTS" }), signal: abort.signal }) : Promise.resolve({ ok: true }))
         .then(r => { if (!r.ok) throw new Error("资料同步失败，请重试"); return fetch("/api/quality-fixtures?" + key, { signal: abort.signal }); })
         .then(response<QfWorkbench>).then(d => { if (!abort.signal.aborted && currentQuery.current === key) { setData(d); setChecked(false); } })
         .catch(e => { if (!abort.signal.aborted) setError(e.message); }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
     }, 150);
     return () => { clearTimeout(t); abort.abort(); };
-  }, [query]);
+  }, [query, canSyncDocuments]);
   useEffect(() => {
     const url = new URL(window.location.href);
     for (const [key, value] of query()) { if (value) url.searchParams.set(key, value); else url.searchParams.delete(key); }
@@ -240,9 +243,9 @@ export default function QualityFixtureWorkbench({ user, initialData, initialView
         <div className="qf-reading-product">
           <div className="qf-reading-identity"><button className="qf-icon-button" aria-label={listCollapsed ? "展开型号列表" : "收起型号列表"} title={listCollapsed ? "展开型号列表" : "收起型号列表"} onClick={() => setListCollapsed(v => !v)}>{listCollapsed ? <PanelLeftOpen size={17}/> : <PanelLeftClose size={17}/>}</button><h2 title={product.specification}>{product.specification}</h2><span className="qf-customer" title={product.customerName + " · " + (product.productName || "产品资料")}>{product.customerName} · {product.productName || "产品资料"}</span><div className="qf-actions"><Link className="qf-text-link" href={"/drawing-library?itemId=" + product.id + (week ? "&week=" + week : "")}>图纸资料库 ↗</Link><button disabled={busy || loading || !data.canEditDocuments} title={!data.canEditDocuments ? "当前账号只可查看资料" : "编辑当前图纸与 SOP"} onClick={() => edit()}><Upload size={14}/><span>{chosen ? "编辑资料" : "准备资料"}</span></button></div></div>
           <div className="qf-reading-meta"><label>版本 <select aria-label="资料版本" value={chosen?.id || ""} disabled={busy || loading} onChange={e => requestPreviewLeave(() => { setChecked(false); setPreviewFile(""); setPackageId(e.target.value); })}>{product.fixturePackages.map(p => <option key={p.id} value={p.id}>{p.revision} · 资料 #{p.sequence}{p.submittedAt ? " · 已送审" : " · 草稿"}{p.id !== product.fixturePackages[0]?.id ? " · 历史" : ""}</option>)}{!chosen && <option>待建立</option>}</select></label><Badge status={chosen?.status || "UNSET"} label={decision.label}/><span className="qf-review-round">{chosen?.submittedAt ? "审核第 " + product.fixturePackages.filter(p => p.submittedAt && p.sequence <= chosen.sequence).length + " 轮" : "尚未送审"}</span>
-            <FixtureRequirementControl key={product.id} productId={product.id} initialValue={product.fixtureRequired} initialStatus={product.fixturePackages[0]?.status} disabled={historical || busy || loading} inline week={week} onSaved={async need => { setError(""); setMessage(need ? "已选择需要治具，资料可先审核，BOM 可后补" : "已选择无需治具，已有资料审核与打印状态保持不变"); setTab(need && view === "plans" ? "bom" : "docs"); setPackageId(""); if (!packageId) await refresh(); }} />
+            <FixtureRequirementControl key={product.id} productId={product.id} initialValue={product.fixtureRequired} initialStatus={product.fixturePackages[0]?.status} disabled={historical || busy || loading || !data.canEditDocuments} inline week={week} onSaved={async need => { setError(""); setMessage(need ? "已选择需要治具，资料可先审核，BOM 可后补" : "已选择无需治具，已有资料审核与打印状态保持不变"); setTab(need && view === "plans" ? "bom" : "docs"); setPackageId(""); if (!packageId) await refresh(); }} />
             {product.fixtureRequired && <button className="qf-readiness-link" onClick={() => setTab("readiness")}>{data.readiness.label} ↗</button>}
-            {!!data.documentReturns.length && <button className={"qf-badge " + (openReturns.some(r => r.status === "OPEN" || r.status === "READY") ? "bad" : "warn")} onClick={() => setReturnsOpen(true)}>{openReturns.some(r => r.status === "OPEN" || r.status === "READY") ? "审核不通过 · 处理退回" : "查看技术回复与退回履历"}</button>}
+            {!!data.documentReturns.length && <button className={"qf-badge " + (openReturns.some(r => r.status === "OPEN" || r.status === "READY") ? "bad" : "warn")} onClick={() => setReturnsOpen(true)}>{openReturns.length ? "退回事项 " + openReturns.length : "退回履历"}</button>}
             {data.newerReviewed && pendingReview && <button className="qf-badge bad" onClick={() => open("history")}>新版已通过，本版不可批准</button>}
             <div className="qf-meta-links"><button onClick={() => open("history")}><History size={14}/>审核履历</button><button onClick={() => requestPreviewLeave(() => setTab(tab === "orders" ? "docs" : "orders"))}>{tab === "orders" ? "返回图纸" : "关联工单"}</button></div>
           </div>
