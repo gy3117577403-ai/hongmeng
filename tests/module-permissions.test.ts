@@ -78,3 +78,20 @@ test('planning can read the shared material detail but cannot write it without m
   assert.equal(canAccessApiRoute(access({ materials: 'READ' }), path, 'PATCH'), false);
   assert.equal(canAccessApiRoute(access({ materials: 'COLLABORATE' }), path, 'PATCH'), true);
 });
+
+test('review and downstream modules can preview linked documents without gaining library write access', () => {
+  for (const module of ['quality', 'production', 'materials'] as const) for (const level of ['READ', 'COLLABORATE'] as const) {
+    const context = access({ [module]: level });
+    for (const path of ['/api/drawing-library/files/file/content', '/api/drawing-library/files/file/display-settings']) {
+      for (const method of ['GET', 'HEAD']) assert.equal(canAccessApiRoute(context, path, method), true, `${module} ${level} ${method} ${path}`);
+      for (const method of ['POST', 'PATCH', 'DELETE']) assert.equal(canAccessApiRoute(context, path, method), false, `${module} ${level} ${method} ${path}`);
+    }
+    assert.equal(canAccessApiRoute(context, '/api/drawing-library', 'GET'), false);
+    assert.equal(canAccessApiRoute(context, '/api/drawing-library/item/files/upload', 'POST'), false);
+  }
+  for (const module of ['people', 'reports', 'collaboration'] as const) {
+    const context = access({ [module]: 'COLLABORATE' });
+    assert.equal(canAccessApiRoute(context, '/api/drawing-library/files/file/content', 'GET'), false);
+    assert.equal(canAccessApiRoute(context, '/api/drawing-library/files/file/display-settings', 'GET'), false);
+  }
+});

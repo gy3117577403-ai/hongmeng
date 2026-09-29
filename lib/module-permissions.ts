@@ -100,6 +100,9 @@ export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string,
   if (read && /^\/api\/warehouse\/material-orders(?:\/|$)/.test(path)) return moduleAllows(access, ['materials', 'production']);
   if (read && /^\/api\/reports\/employee-attainment(?:\/|$)/.test(path)) return moduleAllows(access, ['people', 'reports']);
   if (read && /^\/api\/quality-fixtures(?:\/|$)/.test(path)) return moduleAllows(access, ['quality', 'technology', 'production', 'materials']);
+  // Shared review/plan/warehouse screens must be able to render their linked documents.
+  // Grant only content and orientation reads; library browsing and every mutation retain their owners.
+  if (read && /^\/api\/drawing-library\/files\/[^/]+\/(?:content|display-settings)$/.test(path)) return moduleAllows(access, ['quality', 'technology', 'production', 'materials']);
   const owners = API_OWNERS.find(([prefix]) => prefixMatch(path, prefix))?.[1];
   if (owners) return moduleAllows(access, owners, write);
   const mapped = BUSINESS_ACCESS_MODULES.filter(module => ruleModules.some(capability => (module.capabilities as readonly string[]).includes(capability))).map(module => module.key);
