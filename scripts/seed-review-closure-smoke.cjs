@@ -49,6 +49,21 @@ async function main() {
     returnedByName: users.quality.name, status: 'REVIEWING', responseMode: 'EXPLAIN', responseText: '已补充技术说明并核对流程', respondedById: users.tech.id, respondedByName: users.tech.name, respondedAt: new Date() } });
   const order = await db.workOrder.create({ data: { code: marker + '-WO', specification: product.specification, customerName: product.customerName, productName: product.productName,
     stage: 'frontend', drawingLibraryItemId: product.id, documentReviewRequired: true, planActive: true, weekStartDate: new Date('2026-09-28T00:00:00+08:00') } });
-  return { marker, password, users, product, files, oldPackageId: second.id, draftId: draft.id, issueId: issue.id, orderId: order.id, pdfBase64: bytes.toString('base64') };
+  // A separate three-issue fixture exercises the actual UI state shown in the user's screenshots.
+  const detailProduct = await db.drawingLibraryItem.create({ data: { libraryKey: marker + '-detail', specification: '01XC010152', customerName: '杭州微分智飞 · ' + marker, productName: '主板 GPS 高散线', fixtureRequired: false } });
+  const detailFiles = {};
+  for (const code of ['drawing', 'sop']) {
+    const old = files[code];
+    detailFiles[code] = await db.drawingLibraryFile.create({ data: { libraryItemId: detailProduct.id, categoryId: old.categoryId, originalName: '01XC010152-' + code + '.pdf', version: 'V1.0', mimeType: old.mimeType, size: old.size, objectKey: old.objectKey, sha256: old.sha256, uploadedById: users.tech.id } });
+  }
+  const detailValues = { ...values, libraryItemId: detailProduct.id, drawingFiles: [evidence(detailFiles.drawing)], sopFiles: [evidence(detailFiles.sop)] };
+  const detailOld = await db.qfPackage.create({ data: { ...detailValues, sequence: 1, status: 'RETURNED', submittedById: users.tech.id, submittedByName: users.tech.name, submittedAt: new Date(), supervisorId: users.supervisor.id, supervisorName: users.supervisor.name, supervisorAt: new Date(), reason: '品质退回：插针孔位与尺寸标注需核对' } });
+  await db.qfPackage.create({ data: { ...detailValues, sequence: 2 } });
+  const detailIssues = {};
+  for (const [code, status, reason, reply] of [ ['drawing', 'OPEN', '图纸缺少插针孔位与方向标注', ''], ['sop', 'READY', 'SOP 插件步骤未标明孔位', '已补充孔位示意及装配步骤，复核文件内容一致'], ['package', 'READY', '历史整包：工艺流程需说明', '已与现场核对流程，保留原资料并补充技术依据'] ]) {
+    detailIssues[code] = await db.qfDocumentReturn.create({ data: { libraryItemId: detailProduct.id, sourcePackageId: detailOld.id, fileId: detailFiles[code]?.id || null, kind: code, fileSnapshot: detailFiles[code] ? evidence(detailFiles[code]) : { name: '历史整包退回', version: 'V1.0' }, reason, location: code === 'drawing' ? '第 1 页 · 插件示意' : '', reviewRole: 'QUALITY', returnedById: users.quality.id, returnedByName: users.quality.name, status, ...(reply ? { responseMode: 'EXPLAIN', responseFileId: detailFiles[code]?.id || null, responseText: reply, respondedById: users.tech.id, respondedByName: users.tech.name, respondedAt: new Date() } : {}) } });
+  }
+  await db.workOrder.create({ data: { code: marker + '-DETAIL-WO', specification: detailProduct.specification, customerName: detailProduct.customerName, productName: detailProduct.productName, stage: 'frontend', drawingLibraryItemId: detailProduct.id, documentReviewRequired: true, planActive: true, weekStartDate: new Date('2026-09-28T00:00:00+08:00') } });
+  return { marker, password, users, product, files, oldPackageId: second.id, draftId: draft.id, issueId: issue.id, orderId: order.id, detailProduct, detailFiles, detailIssues, pdfBase64: bytes.toString('base64') };
 }
 main().then(result => console.log(JSON.stringify(result))).finally(() => db.$disconnect());

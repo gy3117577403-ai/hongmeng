@@ -2,7 +2,7 @@ import { Prisma, type QfPackage } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { pcChoice, pcIds, pcRecord, pcText, pcVersion, type PcInput } from "@/lib/purchasing-domain";
 import type { PcActor } from "@/lib/purchasing-service";
-import { FixtureError, type DrawingEvidence } from "@/lib/quality-fixture-domain";
+import { FixtureError, fixtureReviewRoles, type QfReviewRole, type DrawingEvidence } from "@/lib/quality-fixture-domain";
 import { qfJson, savePackage, submitPackage } from "@/lib/quality-fixture-service";
 import { currentDocumentSource } from "@/lib/quality-fixture-sync";
 import { createSystemNotification } from "@/lib/system-notifications";
@@ -151,7 +151,7 @@ export async function closeReviewedReturns(tx: Tx, p: QfPackage, actor: PcActor)
   await recordResponseEvent(tx, actor, p.libraryItemId, "RETURNS_RESOLVED", { packageId: p.id, issueIds: issues.map(i => i.id) });
 }
 
-export async function loadDocumentReturns(libraryItemId: string) {
+export async function loadDocumentReturns(libraryItemId: string, actor?: PcActor) {
   const [issues, attachments, events, orders, files] = await Promise.all([
     prisma.qfDocumentReturn.findMany({ where: { libraryItemId, libraryItem: { deletedAt: null } }, orderBy: { createdAt: "desc" },
       include: { sourcePackage: { select: { revision: true, sequence: true } }, submittedPackage: { select: { id: true, status: true, revision: true, sequence: true } },
@@ -159,19 +159,30 @@ export async function loadDocumentReturns(libraryItemId: string) {
     prisma.qfReviewAttachment.findMany({ where: { libraryItemId }, select: { id: true, name: true, createdAt: true, mimeType: true } }),
     prisma.qfEvent.findMany({ where: { entityType: "DOCUMENT_RETURN", entityId: libraryItemId }, orderBy: { createdAt: "desc" }, take: 100 }),
     prisma.workOrder.findMany({ where: { drawingLibraryItemId: libraryItemId, deletedAt: null }, select: { id: true, code: true, status: true, qrTicket: { select: { prints: { select: { id: true } } } } }, take: 100 }),
-    prisma.drawingLibraryFile.findMany({ where: { libraryItemId, deletedAt: null, category: { code: { in: ["drawing", "sop"] } } },
-      select: { id: true, originalName: true, displayName: true, version: true, categoryId: true, category: { select: { code: true } }, supersedesFileId: true, isCurrent: true } }),
+    // Keep lineage metadata for replaced files; only live current files can be selected.
+    prisma.drawingLibraryFile.findMany({ where: { libraryItemId, category: { code: { in: ["drawing", "sop"] } } },
+      select: { id: true, originalName: true, displayName: true, version: true, mimeType: true, deletedAt: true, categoryId: true, category: { select: { code: true } }, supersedesFileId: true, isCurrent: true } }),
   ]);
   const currentPackage = await prisma.qfPackage.findFirst({ where: { libraryItemId }, orderBy: { sequence: 'desc' } });
-  const review = documentReviewDecision(currentPackage, issues, files.filter(f => f.isCurrent).map(f => f.id));
-  return JSON.parse(JSON.stringify({ issues, attachments, events, files, review, currentPackage,
+  const review = documentReviewDecision(currentPackage, issues, files.filter(f => f.isCurrent && !f.deletedAt).map(f => f.id));
+  const [rounds, settings, ownsEvidence] = await Promise.all([
+    prisma.qfPackage.findMany({ where: { libraryItemId, submittedAt: { not: null } }, orderBy: { sequence: 'desc' },
+      select: { id: true, sequence: true, status: true, revision: true, submittedAt: true, submittedByName: true, supervisorName: true, supervisorAt: true, qualityName: true, qualityAt: true, reason: true } }),
+    actor ? prisma.qfSettings.findUnique({ where: { id: 'quality-fixtures' } }) : null,
+    actor && currentPackage ? prisma.drawingLibraryFile.count({ where: { id: { in: [...currentPackage.drawingFiles as unknown as DrawingEvidence[], ...currentPackage.sopFiles as unknown as DrawingEvidence[]].map(f => f.id) }, uploadedById: actor.id } }) : 0,
+  ]);
+  const reviewRoles = actor && review.action === 'REVIEW' ? fixtureReviewRoles(currentPackage, actor, settings, ownsEvidence > 0) : [];
+  return JSON.parse(JSON.stringify({ issues, attachments, events, files, review, currentPackage, rounds, reviewRoles,
     orders: orders.map(o => ({ id: o.id, code: o.code, status: o.status, printCount: o.qrTicket?.prints.length || 0 })) })) as ReturnData;
 }
 
 // DTO is kept independent of the Prisma runtime for client components.
 export type ReturnData = {
   review: ReviewDecision;
-  currentPackage: { id: string; version: number; revision: string; sequence: number; status: string; submittedAt: string | null } | null;
+  currentPackage: { id: string; version: number; revision: string; sequence: number; status: string; submittedAt: string | null; submittedByName: string;
+    supervisorName: string; supervisorAt: string | null; qualityName: string; qualityAt: string | null; drawingFiles: DrawingEvidence[]; sopFiles: DrawingEvidence[] } | null;
+  reviewRoles: QfReviewRole[];
+  rounds: Array<{ id: string; sequence: number; revision: string; status: string; submittedAt: string | null; submittedByName: string; supervisorName: string; supervisorAt: string | null; qualityName: string; qualityAt: string | null; reason: string }>;
   issues: Array<{ id: string; fileId: string | null; fileSnapshot: DrawingEvidence; kind: string; reason: string; location: string; attachmentIds: string[];
     reviewRole: string; returnedByName: string; status: string; version: number; createdAt: string; respondedAt: string | null; resolvedAt: string | null;
     responseMode: string | null; responseText: string; responseFileId: string | null; responseAttachmentIds: string[]; respondedByName: string;
@@ -181,5 +192,5 @@ export type ReturnData = {
   attachments: Array<{ id: string; name: string; createdAt: string; mimeType: string }>;
   events: Array<{ id: string; action: string; actorName: string; reason: string; createdAt: string; snapshot: unknown }>;
   orders: Array<{ id: string; code: string; status: string; printCount: number }>;
-  files: Array<{ id: string; originalName: string; displayName: string | null; version: string; categoryId: string; category: { code: string }; supersedesFileId: string | null; isCurrent: boolean }>;
+  files: Array<{ id: string; originalName: string; displayName: string | null; version: string; mimeType: string; deletedAt: string | null; categoryId: string; category: { code: string }; supersedesFileId: string | null; isCurrent: boolean }>;
 };

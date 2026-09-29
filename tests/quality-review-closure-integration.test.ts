@@ -56,8 +56,17 @@ test('document review stays actionable across pending replacement and legacy ret
     await reply(r.id, { mode: 'REPLACE', fileId: newFile.id, reason: '修订 SOP 后重新核对' });
     const third = await resubmit(f.product.id);
     assert.equal((await pack(third.id)).supervisorAt, null); assert.equal((await pack(third.id)).qualityAt, null);
+    const technicalView = await loadDocumentReturns(f.product.id, tech);
+    assert.deepEqual(technicalView.reviewRoles, [], 'the submitter cannot sign their own evidence');
+    const qualityView = await loadDocumentReturns(f.product.id, quality);
+    assert.deepEqual(qualityView.reviewRoles, ['QUALITY']);
+    assert.equal(qualityView.rounds.find(p => p.id === second.id)?.supervisorName, supervisor.displayName, 'stopped rounds keep named signatures');
+    assert.equal(qualityView.currentPackage?.supervisorAt, null, 'old signatures do not become current signatures');
+    assert.equal(qualityView.issues[0].respondedByName, tech.displayName);
+    assert.ok(qualityView.issues[0].respondedAt);
     await sign(third.id, 'QUALITY'); await assert.rejects(() => assertFixturePrintReady(prisma, f.order.id), /双方审核/);
     await sign(third.id, 'SUPERVISOR'); assert.equal((await issue(r.id)).status, 'RESOLVED');
+    assert.deepEqual((await loadDocumentReturns(f.product.id, quality)).reviewRoles, [], 'closed returns cannot be approved twice');
     assert.ok(await assertFixturePrintReady(prisma, f.order.id));
     const badge = (await qualityFixtureBadges([f.order.id], 'orders'))[0]; assert.equal(badge.reviewLabel, '资料已审核'); assert.equal(badge.printAllowed, true);
     const board = await loadQualityFixtures(new URLSearchParams({ product: f.product.id }), tech); assert.equal(board.reviewDecision.state, 'APPROVED');

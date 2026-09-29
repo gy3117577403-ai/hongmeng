@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
   try {
     const actor = await requireUser(), q = req.nextUrl.searchParams;
-    if (q.has("returns")) return NextResponse.json({ ok: true, data: await loadDocumentReturns(q.get("returns") || "") });
+    if (q.has("returns")) return NextResponse.json({ ok: true, data: await loadDocumentReturns(q.get("returns") || "", actor) });
     if (q.has("summary")) {
       const { latest, roles } = await loadFixtureReviewQueue(actor);
       const [supervisor, quality, draft, purchasing] = await Promise.all([
