@@ -21,9 +21,11 @@ try {
     const check=(ok,label)=>{if(!ok)throw Error(label);checks.push(label)};
     const route=origin+'/workspace/quality-fixtures?product='+f.product.id+'&q='+f.marker+'&week=2026-09-28';
     page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(String(e)));
-    const api=async()=>{const r=await page.request.get(origin+'/api/quality-fixtures?product='+f.product.id);check(r.ok(),'current review HTTP');return (await r.json()).data;};
-    const login=async role=>{await page.context().clearCookies();const r=await page.request.post(origin+'/api/auth/login',{headers:{Origin:origin},data:{username:f.users[role].username,password:f.password}});check(r.status()===200,role+' login');await page.goto(route);await page.locator('.qf-reading-identity h2').waitFor();};
-    const mutate=async data=>page.request.post(origin+'/api/quality-fixtures',{headers:{Origin:origin,'Idempotency-Key':crypto.randomUUID()},data});
+    let apiCookie='';
+    const get=async path=>{const r=await page.request.get(origin+path,{headers:{Cookie:apiCookie}});if(!r.ok())throw Error('GET '+path+' returned '+r.status()+': '+await r.text());return r.json();};
+    const api=async()=>{const r=await get('/api/quality-fixtures?product='+f.product.id);check(r.ok,'current review HTTP');return r.data;};
+    const login=async role=>{await page.context().clearCookies();const r=await page.request.post(origin+'/api/auth/login',{headers:{Origin:origin},data:{username:f.users[role].username,password:f.password}});check(r.status()===200,role+' login');apiCookie=(r.headers()['set-cookie']||'').match(/hm_session=[^;]+/)?.[0]||'';check(!!apiCookie,'session issued '+role);await page.goto(route);await page.locator('.qf-reading-identity h2').waitFor();};
+    const mutate=async data=>page.request.post(origin+'/api/quality-fixtures',{headers:{Origin:origin,Cookie:apiCookie,'Idempotency-Key':crypto.randomUUID()},data});
     const sign=async role=>{await login(role==='SUPERVISOR'?'supervisor':'quality');const name=role==='SUPERVISOR'?'主管':'品质';await page.getByRole('button',{name:name+'审核',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByLabel('已核对审核资料').check();await dialog.getByRole('button',{name:'确认'+name+'通过',exact:true}).click();await dialog.waitFor({state:'hidden'});};
     try {
       await page.setViewportSize({width:1366,height:1024});await login('tech');
@@ -39,8 +41,8 @@ try {
       check(new URL(page.url()).searchParams.get('q')===f.marker && new URL(page.url()).searchParams.get('week')==='2026-09-28','closing review drawer preserves origin filters');
       const submitted=await api();check(submitted.chosen.status==='REVIEWING' && submitted.chosen.id===f.draftId,'resubmission uses current draft once');
       await sign('SUPERVISOR');
-      await login('tech');const replacement=await page.request.post(origin+'/api/drawing-library/'+f.product.id+'/files/upload',{headers:{Origin:origin},multipart:{categoryId:f.files.sop.categoryId,replaceFileId:f.files.sop.id,discardPrevious:'true',file:{name:'SOP-V2.pdf',mimeType:'application/pdf',buffer:Buffer.from(f.pdfBase64,'base64')}}});
-      check(replacement.ok(),'pending-review SOP replacement uploads to real storage');const replacementId=(await replacement.json()).file.id;
+      await login('tech');const replacement=await page.request.post(origin+'/api/drawing-library/'+f.product.id+'/files/upload',{headers:{Origin:origin,Cookie:apiCookie},multipart:{categoryId:f.files.sop.categoryId,replaceFileId:f.files.sop.id,discardPrevious:'true',file:{name:'SOP-V2.pdf',mimeType:'application/pdf',buffer:Buffer.from(f.pdfBase64,'base64')}}});
+      if(!replacement.ok())throw Error('SOP replacement returned '+replacement.status()+': '+await replacement.text());check(true,'pending-review SOP replacement uploads to real storage');const replacementId=(await replacement.json()).file.id;
       await page.reload();await page.getByRole('button',{name:'处理退回',exact:true}).waitFor();const replaced=await api();
       const stopped=replaced.product.fixturePackages.find(p=>p.id===submitted.chosen.id);check(stopped.status==='STALE' && stopped.supervisorId===f.users.supervisor.id,'old round stops while preserving supervisor signature');
       await login('quality');const stale=await mutate({action:'APPROVE',id:stopped.id,version:stopped.version,reviewRole:'QUALITY',confirmed:true});check(stale.status()===409,'stopped round cannot approve with a valid reviewer');await login('tech');
@@ -53,8 +55,8 @@ try {
       await drawer.getByRole('button',{name:'保存并重新提交审核',exact:true}).click();await drawer.getByRole('button',{name:'进入当前审核',exact:true}).waitFor();await drawer.getByRole('button',{name:'进入当前审核',exact:true}).click();
       await sign('QUALITY');let pending=await api();check(pending.chosen.status==='SUPERVISOR' && pending.reviewDecision.label==='待主管审核','quality first waits for the other independent signer');
       await sign('SUPERVISOR');const approved=await api();check(approved.chosen.status==='APPROVED' && approved.reviewDecision.label==='资料已审核','both reviewers finish current round');
-      const returns=await (await page.request.get(origin+'/api/quality-fixtures?returns='+f.product.id)).json();check(returns.data.issues.every(i=>i.status==='RESOLVED'),'returned issues close only after both approvals');
-      const badges=await (await page.request.get(origin+'/api/quality-fixtures?badges='+f.orderId+'&kind=orders')).json();check(badges.data[0].reviewLabel==='资料已审核' && badges.data[0].printAllowed,'plan badge and print readiness match completed review');
+      const returns=await get('/api/quality-fixtures?returns='+f.product.id);check(returns.data.issues.every(i=>i.status==='RESOLVED'),'returned issues close only after both approvals');
+      const badges=await get('/api/quality-fixtures?badges='+f.orderId+'&kind=orders');check(badges.data[0].reviewLabel==='资料已审核' && badges.data[0].printAllowed,'plan badge and print readiness match completed review');
       await page.screenshot({path:dir+'/03-dual-review-complete.png'});
       await login('reader');check(await page.getByRole('button',{name:'编辑资料',exact:true}).isDisabled(),'readonly account cannot edit documents');check(!(await page.locator('body').innerText()).includes('资料同步失败'),'readonly browsing does not send forbidden synchronization writes');
       const denied=await mutate({action:'RECONCILE_REVIEW',libraryItemId:f.product.id});check(denied.status()===403,'readonly cannot invoke repair API');
@@ -62,7 +64,7 @@ try {
       await uploaded;await edit.getByRole('button',{name:'保存并提交审核',exact:true}).click();await edit.waitFor({state:'hidden'});
       check((await api()).chosen.status==='REVIEWING','upload followed by save uses synchronized package version');
       check(errors.length===0,'no uncaught browser errors');return {passed:true,checks,errors};
-    }catch(error){await page.screenshot({path:dir+'/failure.png'});throw error;}
+    }catch(error){await page.screenshot({path:dir+'/failure.png'});throw Error(String(error)+'; completed checks: '+checks.join(' | '));}
   }`;
   const file = dir + '/browser.generated.cjs'; writeFileSync(file, code);
   const output = cli(['run-code', '--filename', file]);
