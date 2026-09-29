@@ -17,7 +17,8 @@ test('13-column template accepts an optional time and generates stable distinct 
   assert.notEqual(rows[0].input?.sourceOrderNo,rows[1].input?.sourceOrderNo);
   assert.equal(rows[0].input?.sourceOrderNo,build()[0].input?.sourceOrderNo);
   assert.notEqual(rows[0].input?.sourceOrderNo,build('','new-order')[0].input?.sourceOrderNo);
-  assert.match(rows[1].warning||'',/独立订单/);
+  assert.equal(rows[1].requiresOrderDecision,true);
+  assert.match(rows[1].warning||'',/另一笔订单/);
 });
 test('minutes are converted precisely and invalid supplied times are rejected',()=>{
   for(const [input,ms] of [['0.001',60],['2.125',127500],['1440',86400000]] as const) {

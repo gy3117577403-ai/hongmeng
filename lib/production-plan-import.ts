@@ -74,6 +74,7 @@ export type ProductionPlanImportRow = {
   input: ProductionPlanImportInput | null;
   orderCandidates?: ProductionPlanImportExistingOrder[];
   requiresOrderDecision?: boolean;
+  possibleDuplicate?: boolean;
   timePreview?: PlanningImportTime;
 };
 
@@ -352,21 +353,24 @@ export function buildProductionPlanImportRows(options: {
     }
 
     const match = productMatch(input, existing, catalog);
-    const orderCandidates = !suppliedOrderNo && !existing
-      ? options.existingOrders.filter(order => !order.deletedAt && !['completed', 'cancelled'].includes(order.status)
+    const sameProductOrders = !suppliedOrderNo && !existing
+      ? options.existingOrders.filter(order => !order.deletedAt
         && sameDrawingProduct({ customerName: order.customerName || '', specification: order.specification || '' }, { customerName, specification }))
       : [];
     const businessKey = JSON.stringify([orderDate, customerName, specification, orderQuantity, plannedQuantity, customerDueDate]);
+    const possibleDuplicate = !suppliedOrderNo && (businessRows.has(businessKey) || sameProductOrders.some(order =>
+      order.orderDate === orderDate && order.orderQuantity === orderQuantity && order.customerDueDate === customerDueDate));
+    const orderCandidates = sameProductOrders.filter(order => !['completed', 'cancelled'].includes(order.status)
+      && !order.batchWeekStartDates.includes(options.targetWeekStartDate) && (order.remainingQuantity ?? 0) >= plannedQuantity);
     const warnings = [
       existing && existing.customerDueDate !== customerDueDate ? `导入交期 ${customerDueDate} 与现有交期 ${existing.customerDueDate} 不同，将保留现有交期` : '',
-      !suppliedOrderNo && businessRows.has(businessKey) ? '文件内有相同业务内容，本行仍作为独立订单，请核对' : '',
-      orderCandidates.length ? '发现同客户同型号订单，请选择新订单、关联已有订单或跳过' : '',
+      possibleDuplicate ? '发现客户、规格、订单日期、总量及交期相同的记录，请确认是否为另一笔订单' : '',
     ].filter(Boolean);
     businessRows.add(businessKey);
     const selectedProduct = match.candidates.find(item => item.id === match.matchedDrawingLibraryItemId);
     return {
       rowNo, ...match, warning: warnings.join('；') || null, existingPlanOrderId: existing?.id || null, input,
-      orderCandidates, requiresOrderDecision: orderCandidates.length > 0,
+      orderCandidates, requiresOrderDecision: possibleDuplicate, possibleDuplicate,
       timePreview: resolvePlanningImportTime({ imported: planningUnitMilliseconds, published: selectedProduct?.productUnitMilliseconds, order: existing?.planningUnitMilliseconds, quantity: plannedQuantity }),
     };
   });

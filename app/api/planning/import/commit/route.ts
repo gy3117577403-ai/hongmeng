@@ -1,4 +1,3 @@
-import { DOCUMENT_REVIEW_START } from '@/lib/quality-fixture-scope';
 import { lockOrderPool, ensurePoolPreparation, distributePoolCoverage } from '@/lib/order-pool-material';
 import { lockFixtureBusiness } from '@/lib/quality-fixture-service';
 import { Prisma } from '@prisma/client';
@@ -34,7 +33,6 @@ type CommitBody = {
   previewToken?: string;
   decisions?: Record<string, string>;
   orderDecisions?: Record<string, string>;
-  fixtureDecisions?: Record<string, boolean>;
 };
 
 type ImportResult = {
@@ -84,7 +82,7 @@ async function loadCandidate(
     select: {
       fixtureRequired: true, id: true, libraryKey: true, customerName: true, customerCode: true, productName: true, specification: true, deletedAt: true,
       _count: { select: { files: { where: { deletedAt: null, isCurrent: true, category: { code: 'drawing' } } } } },
-      files: { where: { deletedAt: null, isCurrent: true, category: { code: 'sop' } }, select: { id: true }, take: 1 },
+      files: { where: { deletedAt: null, isCurrent: true, category: { code: 'sop' } }, select: { id: true } },
       productTimeProfiles: {
         where: { status: 'published' }, orderBy: { version: 'desc' }, select: { version: true }, take: 1,
       },
@@ -127,12 +125,8 @@ async function resolveProduct(
   await lockDrawingProduct(tx, row.input);
 
   const selectedId = clean(decisionId, 80) || row.matchedDrawingLibraryItemId || '';
-  if (row.status === 'conflict') {
-    const allowedIds = new Set(row.candidates.map(candidate => candidate.id));
-    if (!selectedId || !allowedIds.has(selectedId)) throw new Error(`第 ${row.rowNo} 行需要选择已有图纸库`);
-  }
+  if (row.status === 'conflict' && !selectedId) throw new Error(`第 ${row.rowNo} 行需要选择已有图纸库`);
   if (selectedId) {
-    if (!row.candidates.some(item => item.id === selectedId)) throw new Error(`第 ${row.rowNo} 行选择不属于本次预检候选，请重新预检`);
     const selected = await loadCandidate(tx, selectedId);
     if (!selected) throw new Error(`第 ${row.rowNo} 行选择的图纸库已不存在，请重新预检`);
     if (!sameDrawingProduct(selected, row.input)) throw new Error(`第 ${row.rowNo} 行图纸库客户或型号不一致，请重新预检`);
@@ -172,12 +166,10 @@ async function commitBatch(
   decisions: Record<string, string>,
   orderDecisions: Record<string, string>,
   userId: string,
-  fixtureDecisions: Record<string, boolean>,
 ): Promise<CommitResult> {
   return prisma.$transaction(async tx => {
     await lockOrderPool(tx);
     await lockFixtureBusiness(tx);
-    const fixtureChoices = new Map<string, boolean>();
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-plan-import:${batchId}`}))`;
     const importBatch = await tx.productionPlanImportBatch.findUnique({ where: { id: batchId } });
     if (!importBatch) throw new Error('导入预检记录不存在，请重新上传文件');
@@ -195,8 +187,8 @@ async function commitBatch(
     const unresolved = rows.find(row => productionPlanImportNeedsProductDecision(row, orderDecisions[String(row.rowNo)]) && !clean(decisions[String(row.rowNo)], 80));
     if (unresolved) throw new Error(`第 ${unresolved.rowNo} 行存在多个图纸库，请先选择后再确认`);
     for (const row of rows) {
-      if (!row.requiresOrderDecision) continue;
       const choice = orderDecisions[String(row.rowNo)];
+      if (!row.requiresOrderDecision && !choice) continue;
       if (choice !== 'new' && choice !== 'skip' && !row.orderCandidates?.some(order => order.id === choice)) {
         throw new Error(`第 ${row.rowNo} 行需要确认新订单、关联已有订单或跳过`);
       }
@@ -214,7 +206,7 @@ async function commitBatch(
     let automaticallyPrepared = 0;
 
     for (const row of rows) {
-      const orderChoice = row.requiresOrderDecision ? orderDecisions[String(row.rowNo)] : '';
+      const orderChoice = orderDecisions[String(row.rowNo)] || '';
       if (!row.input || row.status === 'skipped' || row.status === 'duplicate' || orderChoice === 'skip') {
         skipped += 1;
         results.push({
@@ -242,6 +234,16 @@ async function commitBatch(
       if (existing && !sameDrawingProduct(existing, row.input)) throw new Error(`第 ${row.rowNo} 行原订单客户或型号不一致`);
       if (explicitOrderId && (!existing || existing.deletedAt || !sameDrawingProduct(existing, row.input))) {
         throw new Error(`第 ${row.rowNo} 行关联订单已变化，请重新预检`);
+      }
+      if (!existing && !orderChoice && row.input.sourceIdentity === 'generated') {
+        const start = new Date(`${row.input.orderDate}T00:00:00+08:00`);
+        const due = new Date(`${row.input.customerDueDate}T00:00:00+08:00`);
+        const concurrent = await tx.productionPlanOrder.findMany({ where: {
+          deletedAt: null, orderQuantity: row.input.orderQuantity,
+          orderDate: { gte: start, lt: new Date(start.getTime() + 86400000) },
+          customerDueDate: { gte: due, lt: new Date(due.getTime() + 86400000) },
+        }, select: { id: true, customerName: true, specification: true } });
+        if (concurrent.some(item => sameDrawingProduct(item, row.input!))) throw new Error(`第 ${row.rowNo} 行出现相同业务订单，请重新预检并确认订单处理`);
       }
       const activeBatches = existing?.batches.filter(batch => !batch.deletedAt) || [];
       if (activeBatches.some(batch => chinaDate(batch.weekStartDate) === targetWeekStartDate)) {
@@ -272,17 +274,6 @@ async function commitBatch(
         product = { item: requireActiveDrawing(linked), action: 'reuse' };
       } else {
         product = await resolveProduct(tx, row, decisions[String(row.rowNo)]);
-      }
-      if (targetWeekStartDate >= DOCUMENT_REVIEW_START) {
-        const saved = await tx.drawingLibraryItem.findUniqueOrThrow({ where: { id: product.item.id }, select: { fixtureRequired: true } });
-        const choice = fixtureDecisions[String(row.rowNo)] ?? saved.fixtureRequired;
-        if (typeof choice !== "boolean") throw new Error(`第 ${row.rowNo} 行请选择是否需要治具；无需治具不需填写理由`);
-        if (fixtureChoices.has(product.item.id) && fixtureChoices.get(product.item.id) !== choice) throw new Error(`第 ${row.rowNo} 行与同产品其他行的治具选择不一致`);
-        fixtureChoices.set(product.item.id, choice);
-        if (saved.fixtureRequired !== choice) {
-          await tx.drawingLibraryItem.update({ where: { id: product.item.id }, data: { fixtureRequired: choice } });
-          await tx.qfEvent.create({ data: { entityType: "PRODUCT", entityId: product.item.id, action: "SET_FIXTURE_REQUIREMENT", actorId: userId, actorName: "计划导入", snapshot: { before: saved.fixtureRequired, after: choice } } });
-        }
       }
       if (product.action === 'reuse') reusedProducts += 1;
       if (product.action === 'restore') restoredProducts += 1;
@@ -435,7 +426,7 @@ async function commitBatch(
       where: { id: importBatch.id },
       data: {
         status: 'completed',
-        decisions: { products: decisions, orders: orderDecisions, fixtures: fixtureDecisions } as unknown as Prisma.InputJsonValue,
+        decisions: { products: decisions, orders: orderDecisions } as unknown as Prisma.InputJsonValue,
         resultData: result as unknown as Prisma.InputJsonValue,
         errorMessage: null,
         committedAt: new Date(),
@@ -475,7 +466,7 @@ export async function POST(req: NextRequest) {
     }
     const decisions = body.decisions && typeof body.decisions === 'object' ? body.decisions : {};
     const orderDecisions = body.orderDecisions && typeof body.orderDecisions === 'object' ? body.orderDecisions : {};
-    const result = await commitBatch(batchId, previewToken, decisions, orderDecisions, user.id, body.fixtureDecisions || {});
+    const result = await commitBatch(batchId, previewToken, decisions, orderDecisions, user.id);
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

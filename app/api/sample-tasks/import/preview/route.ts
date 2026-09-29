@@ -1,3 +1,6 @@
+import { Prisma } from '@prisma/client';
+import { matchImportDrawing } from '@/lib/import-drawing-association';
+import { normalizeProductText } from '@/lib/drawing-product-identity';
 import { NextRequest, NextResponse } from 'next/server';
 import * as XLSX from 'xlsx';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -12,7 +15,6 @@ import {
   parseSamplePlanDate,
   parseSamplePlanRow,
   samplePlanFingerprint,
-  sampleSpecificationSimilarity,
   type SamplePlanImportRow,
 } from '@/lib/sample-plan-import';
 import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
@@ -80,20 +82,18 @@ export async function POST(req: NextRequest) {
 
     const requestedKeys = candidatesForMatch.map(row => row.libraryKey).filter(Boolean);
     const exactKeys = candidatesForMatch.map(row => drawingLibraryKey(row.customerName, row.specification));
-    const customerNames = [...new Set(candidatesForMatch.map(row => row.customerName))];
-    const drawingItems = await prisma.drawingLibraryItem.findMany({
-      where: {
-        OR: [
-          { id: { in: requestedKeys } },
-          { libraryKey: { in: [...requestedKeys, ...exactKeys] } },
-          { customerName: { in: customerNames }, deletedAt: null },
-        ],
-      },
-      select: { id: true, libraryKey: true, customerName: true, productName: true, specification: true, deletedAt: true },
-      take: 3000,
+    const specs = [...new Set(candidatesForMatch.map(row => normalizeProductText(row.specification)))];
+    const normalized = specs.length ? await prisma.$queryRaw<{id:string}[]>(Prisma.sql`
+      SELECT id FROM drawing_library_items WHERE lower(trim(regexp_replace(normalize(specification, NFKC), '[[:space:]]+', ' ', 'g'))) IN (${Prisma.join(specs)})
+    `) : [];
+    const records = await prisma.drawingLibraryItem.findMany({
+      where: { OR: [{ id: { in: [...requestedKeys, ...normalized.map(item => item.id)] } }, { libraryKey: { in: [...requestedKeys, ...exactKeys] } }] },
+      select: { id: true, libraryKey: true, customerName: true, customerCode: true, productName: true, specification: true, deletedAt: true,
+        files: { where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } }, select: { category: { select: { code: true } } } } },
     });
-    const byId = new Map(drawingItems.map(item => [item.id, item]));
-    const byKey = new Map(drawingItems.map(item => [item.libraryKey.toLocaleLowerCase('zh-CN'), item]));
+    const drawingItems = records.map(item => ({ ...item, files: undefined, deletedAt: item.deletedAt?.toISOString() || null,
+      drawingFileCount: item.files.filter(file => file.category.code === 'drawing').length,
+      sopFileCount: item.files.filter(file => file.category.code === 'sop').length }));
     const duplicateFingerprints = new Map<string,number>();
     const matchedRows: SamplePlanImportRow[] = [];
 
@@ -103,35 +103,13 @@ export async function POST(req: NextRequest) {
         row.duplicateInFile = duplicateFingerprints.get(fingerprint);
       }
       else duplicateFingerprints.set(fingerprint,row.rowNumber);
-      if (row.libraryKey) {
-        const precise = byId.get(row.libraryKey) || byKey.get(row.libraryKey.toLocaleLowerCase('zh-CN'));
-        matchedRows.push(precise
-          ? { ...row, matchStatus: 'REUSE', message: precise.deletedAt ? '精确匹配到已归档图纸库，导入时将恢复并复用' : '已按图纸库编号精确匹配', matchedItemId: precise.id, candidates: [] }
-          : { ...row, matchStatus: 'BLOCKED', message: '填写的图纸库编号不存在，请清空后自动匹配或改为正确编号', matchedItemId: null, candidates: [] });
-        continue;
-      }
-      const exactKey = drawingLibraryKey(row.customerName, row.specification).toLocaleLowerCase('zh-CN');
-      const exact = byKey.get(exactKey);
-      if (exact) {
-        matchedRows.push({ ...row, matchStatus: 'REUSE', message: exact.deletedAt ? '匹配到已归档图纸库，导入时将恢复并复用' : '客户与型号/规格唯一匹配，直接复用图纸库', matchedItemId: exact.id, candidates: [] });
-        continue;
-      }
-      const similar = drawingItems
-        .filter(item => !item.deletedAt && item.customerName.trim().toLocaleLowerCase('zh-CN') === row.customerName.trim().toLocaleLowerCase('zh-CN'))
-        .map(item => ({ ...item, score: sampleSpecificationSimilarity(row.specification, item.specification) }))
-        .filter(item => item.score >= 0.56)
-        .sort((left, right) => right.score - left.score)
-        .slice(0, 3)
-        .map(({ deletedAt: _deletedAt, ...item }) => item);
-      matchedRows.push(similar.length
-        ? { ...row, matchStatus: 'CONFIRM', message: '发现相似图纸库，请人工选择复用或明确新建', matchedItemId: null, candidates: similar }
-        : { ...row, matchStatus: 'CREATE', message: '未匹配到图纸库，导入时自动新建', matchedItemId: null, candidates: [] });
+      matchedRows.push({ ...row, ...matchImportDrawing(row, drawingItems) });
     }
 
     const matchedItemIds = matchedRows.map(row => row.matchedItemId).filter((value): value is string => Boolean(value));
     const existingTasks = await prisma.sampleTask.findMany({
       where: { OR:[{drawingLibraryItemId:{in:matchedItemIds}},{code:{in:matchedRows.map(r=>r.planCode||'').filter(Boolean)}}], deletedAt:null },
-      select: { id: true, code: true, version:true, status:true, sourceOrderNo:true, sourceOrderLine:true, drawingLibraryItemId: true, customerLevelCode: true, sampleQuantity: true, dueDate: true, taskType: true, planWeekStartDate: true },
+      select: { id: true, code: true, version:true, status:true, unitPlannedMilliseconds:true, sourceOrderNo:true, sourceOrderLine:true, drawingLibraryItemId: true, customerLevelCode: true, sampleQuantity: true, dueDate: true, taskType: true, planWeekStartDate: true },
     });
     const finalRows = [...parsedRows, ...matchedRows.map(row => {
       if (row.matchStatus === 'BLOCKED') return row;
@@ -143,7 +121,7 @@ export async function POST(req: NextRequest) {
         && (task.planWeekStartDate?.toISOString().slice(0, 10) || null) === (row.planWeekStartDate || null)
         && !!task.dueDate && chinaDateKey(task.dueDate) === row.dueDate));
       if (row.planCode && !plans.length) return {...row,matchStatus:'BLOCKED' as const,message:'指定的样品计划编号不存在，请核对编号'};
-      return {...row, existingPlans:plans.map(({id,code,version,status,sampleQuantity,sourceOrderNo})=>({id,code,version,status,sampleQuantity,sourceOrderNo}))};
+      return {...row, existingPlans:plans.map(({drawingLibraryItemId,id,code,version,status,sampleQuantity,sourceOrderNo,unitPlannedMilliseconds,planWeekStartDate,dueDate})=>({drawingLibraryItemId,id,code,version,status,sampleQuantity,sourceOrderNo,unitPlannedMinutes:unitPlannedMilliseconds==null?null:unitPlannedMilliseconds/60000,planWeekStartDate:planWeekStartDate?.toISOString().slice(0,10)||null,dueDate:dueDate?chinaDateKey(dueDate):null}))};
     })].sort((left, right) => left.rowNumber - right.rowNumber);
     const summary = {
       total: finalRows.length,

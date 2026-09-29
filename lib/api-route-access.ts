@@ -173,6 +173,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
 
   // The export preview may reconcile carryovers for writable planners, but it
   // remains a read-only preview for GM and other read-only Planning viewers.
+  { prefix: '/api/planning/import/drawings', allowedMethods: ['GET', 'HEAD'], anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'], action: 'READ', productionMinimumScope: 'WORKSHOP' },
   { prefix: '/api/planning/weekly-plan-export/preview', anyOf: ['PLANNING'], action: 'READ' },
   { prefix: '/api/planning', anyOf: ['PLANNING'] },
   {

@@ -96,6 +96,7 @@ export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string,
   if (path.startsWith('/api/order-pool')) return moduleAllows(access, ['production', 'materials', 'technology'], write);
   const dependencies = /^\/api\/(?:work-orders|departments|customers|resource-categories|categories)(?:\/|$)/.test(path);
   if (read && dependencies && Object.keys(access.modulePermissions).length) return true;
+  if (read && /^\/api\/planning\/import\/drawings(?:\/|$)/.test(path)) return moduleAllows(access, ['production', 'technology']);
   // Only read dependencies needed by selected business screens, never their mutations.
   if (read && /^\/api\/warehouse\/material-orders(?:\/|$)/.test(path)) return moduleAllows(access, ['materials', 'production']);
   if (read && /^\/api\/reports\/employee-attainment(?:\/|$)/.test(path)) return moduleAllows(access, ['people', 'reports']);

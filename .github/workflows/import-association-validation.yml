@@ -1,0 +1,87 @@
+name: Import drawing association candidate
+on:
+  push:
+    branches: ['codex/import-drawing-link-v134258']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: import-association-candidate
+  cancel-in-progress: true
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: import_candidate
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/import_candidate?schema=public
+      SESSION_SECRET: disposable-import-session-secret-20260929
+      APP_BASE_URL: http://127.0.0.1:3000
+      S3_ENDPOINT: http://127.0.0.1:19000
+      S3_REGION: auto
+      S3_BUCKET: import-candidate
+      S3_ACCESS_KEY_ID: importqa
+      S3_SECRET_ACCESS_KEY: DisposableImportStorage2026
+      S3_FORCE_PATH_STYLE: 'true'
+      SMOKE_STORAGE_ALLOW: disposable-ci-storage
+      SEED_ADMIN_USERNAME: import-bootstrap
+      SEED_ADMIN_PASSWORD: DisposableSeedStorage2026!Z
+      CI_MINIO_IMAGE: hongmeng-ci-minio:verified-a1a8bd4ac40a
+      IMPORT_QA_ALLOW: disposable-import-runtime
+      IMPORT_QA_BASE: http://127.0.0.1:3000
+      IMPORT_QA_OUTPUT: output/playwright/import-association-candidate
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare pinned storage
+        run: bash scripts/pull-ci-minio.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx prisma validate && npx prisma generate && npx prisma migrate deploy
+      - name: Import matching and access regressions
+        run: |
+          npx tsx --test tests/import-drawing-association.test.ts tests/production-plan-import.test.ts tests/planning-import-time.test.ts tests/sample-plan-import.test.ts tests/drawing-product-identity.test.ts
+          npm run lint
+      - name: Build and start isolated application
+        run: |
+          mkdir -p "$IMPORT_QA_OUTPUT"
+          docker run -d --name import-storage -p 127.0.0.1:19000:9000 -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" "$CI_MINIO_IMAGE" server /data
+          node scripts/prepare-smoke-storage.mjs
+          node prisma/seed.cjs
+          node scripts/seed-import-association-smoke.cjs
+          npm run build
+          npm start > "$IMPORT_QA_OUTPUT/app.log" 2>&1 &
+          for i in $(seq 1 90); do if curl -fsS "$APP_BASE_URL/api/ready" > "$IMPORT_QA_OUTPUT/ready.json"; then break; fi; sleep 2; done
+          curl -fsS "$APP_BASE_URL/api/ready"
+      - name: Actual Excel import and drawing preview on tablet
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y fonts-noto-cjk
+          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          node scripts/smoke-import-association-browser.mjs
+      - name: Existing import workflow regressions
+        run: |
+          QUALITY_DATA_QA_ALLOW=disposable-quality-runtime node scripts/seed-quality-data-smoke.cjs > "$IMPORT_QA_OUTPUT/quality-fixture.json"
+          QUALITY_DATA_QA_ALLOW=disposable-quality-runtime node scripts/seed-planning-import-smoke.cjs > "$IMPORT_QA_OUTPUT/time-reference.json"
+          QUALITY_DATA_QA_BASE="$APP_BASE_URL" QUALITY_DATA_QA_ALLOW=disposable-quality-runtime QUALITY_DATA_QA_FIXTURE="$IMPORT_QA_OUTPUT/quality-fixture.json" PLANNING_IMPORT_QA_REFERENCE="$IMPORT_QA_OUTPUT/time-reference.json" PLANNING_IMPORT_QA_OUTPUT="$IMPORT_QA_OUTPUT/import-runtime.json" node scripts/smoke-planning-import.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: import-association-candidate-${{ github.sha }}
+          path: |
+            output/playwright/import-association-candidate/*.png
+            output/playwright/import-association-candidate/*runtime*.json
+            output/playwright/import-association-candidate/browser-result.json
+            output/playwright/import-association-candidate/data-invariants.json
+            output/playwright/import-association-candidate/browser-runtime.txt
+            output/playwright/import-association-candidate/app.log
+            output/playwright/import-association-candidate/ready.json

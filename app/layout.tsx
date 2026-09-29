@@ -9,6 +9,7 @@ import './account.css';
 import './styles/quality-related-surfaces.css';
 import './styles/hm-platform-navigation.css';
 import './styles/account-access.css';
+import './styles/planning-import-workbench.css';
 export const metadata:Metadata={
   title:'杭连协同平台',
   description:'计划、技术、生产高效闭环协同平台',

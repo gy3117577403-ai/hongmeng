@@ -26,6 +26,10 @@ export const SAMPLE_PLAN_IMPORT_HEADERS = [
 export type SamplePlanImportStatus = 'REUSE' | 'CREATE' | 'CONFIRM' | 'BLOCKED';
 
 export type SamplePlanImportCandidate = {
+  drawingFileCount?: number;
+  sopFileCount?: number;
+  customerCode?: string | null;
+  deletedAt?: string | null;
   id: string;
   libraryKey: string;
   customerName: string;
@@ -40,7 +44,7 @@ export type SamplePlanImportRow = {
   sourceOrderLine?: string;
   planCode?: string;
   planRemark?: string;
-  existingPlans?: Array<{id:string;code:string;version:number;status:string;sampleQuantity:number|null;sourceOrderNo:string|null}>;
+  existingPlans?: Array<{drawingLibraryItemId?:string;id:string;code:string;version:number;status:string;sampleQuantity:number|null;sourceOrderNo:string|null;unitPlannedMinutes?:number|null;planWeekStartDate?:string|null;dueDate?:string|null}>;
   duplicateInFile?: number;
   rowNumber: number;
   customerName: string;

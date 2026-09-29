@@ -35,14 +35,8 @@ async function preview(rows,week=date(14),old=false){
 const row=(spec,time,quantity=40)=>[date(0),prefix,'验收线束',spec,100,quantity,time,date(70),'','','','',''];
 const uploaded=await preview([row(prefix,2.125),row(`${prefix}-EMPTY`,'')]);
 assert.equal(uploaded.body.summary.invalidCount,0);assert.equal(uploaded.body.rows[0].timePreview.unitMilliseconds,127500);assert.equal(uploaded.body.rows[0].timePreview.totalMilliseconds,'5100000');assert.equal(uploaded.body.rows[1].timePreview.source,'missing');
-async function commit(preview,orders={},expected=200){return (await request('/api/planning/import/commit','POST',{batchId:preview.batchId,previewToken:preview.previewToken,orderDecisions:orders,fixtureDecisions:Object.fromEntries(preview.rows.map(row=>[row.rowNo,false]))},expected)).body;}
-if(uploaded.body.targetWeekStartDate>='2026-09-21'){
-  const missingChoice=await request('/api/planning/import/commit','POST',{batchId:uploaded.body.batchId,previewToken:uploaded.body.previewToken},409);
-  assert.match(missingChoice.body.error,/请选择是否需要治具/);
-  assert.equal((await request('/api/planning/orders?keyword='+encodeURIComponent(prefix))).body.orders.length,0);
-  checks.push('governed plan import requires fixture choice and a rejected commit leaves no partial orders');
-}
-const committed=await commit(uploaded.body);assert.equal(committed.summary.created,2);assert.deepEqual(await commit(uploaded.body),committed);
+async function commit(preview,orders={},expected=200){return (await request('/api/planning/import/commit','POST',{batchId:preview.batchId,previewToken:preview.previewToken,orderDecisions:orders},expected)).body;}
+const committed=await commit(uploaded.body);checks.push('new plans import without fixture selection; review owns fixture decision');assert.equal(committed.summary.created,2);assert.deepEqual(await commit(uploaded.body),committed);
 const orders=(await request('/api/planning/orders?keyword='+encodeURIComponent(prefix))).body.orders;
 const order=orders.find(order=>order.specification===prefix);assert.ok(order);
 assert.equal(order.planningUnitMilliseconds,127500);assert.equal(order.batches[0].unitMillisecondsSnapshot,127500);assert.equal(order.batches[0].totalMillisecondsSnapshot,'5100000');
@@ -63,7 +57,7 @@ if(process.env.PLANNING_IMPORT_QA_REFERENCE){
   const makeReferenceRow=time=>{const value=row(reference.specification,time,20);value[1]=reference.customerName;return value;};
   const referencePreview=await preview([makeReferenceRow(''),makeReferenceRow(2.125)],date(14));
   assert.equal(referencePreview.body.rows[0].timePreview.source,'published');assert.equal(referencePreview.body.rows[0].timePreview.unitMilliseconds,60000);
-  assert.equal(referencePreview.body.rows[1].timePreview.source,'import');assert.equal((await commit(referencePreview.body)).summary.created,2);
+  assert.equal(referencePreview.body.rows[1].timePreview.source,'import');assert.equal((await commit(referencePreview.body,{'3':'new'})).summary.created,2);
   const saved=(await request('/api/planning/orders?keyword='+encodeURIComponent(reference.specification))).body.orders;
   assert.deepEqual(saved.flatMap(order=>order.batches.map(batch=>batch.unitMillisecondsSnapshot)).sort((a,b)=>a-b),[60000,127500]);
   const normalized=makeReferenceRow('');normalized[3]='  '+reference.specification.toLowerCase()+'  ';

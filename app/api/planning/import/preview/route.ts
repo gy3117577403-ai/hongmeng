@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
           },
           files: {
             where: { deletedAt: null, isCurrent: true, category: { code: 'sop' } },
-            select: { id: true }, take: 1,
+            select: { id: true },
           },
           productTimeProfiles: {
             where: { status: 'published' }, orderBy: { version: 'desc' }, select: { version: true, entries: { select: { unitMilliseconds: true } } }, take: 1,

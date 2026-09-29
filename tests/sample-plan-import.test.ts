@@ -58,7 +58,7 @@ test('bulk import routes require preview, idempotent commit, drawing reuse, and 
   const migration = readFileSync('prisma/migrations/202609020006_sample_plan_bulk_import/migration.sql', 'utf8');
   assert.match(template, /SAMPLE_PLAN_IMPORT_HEADERS/);
   assert.match(template, /dataValidation/);
-  assert.match(preview, /matchStatus: 'CONFIRM'/);
+  assert.match(preview, /matchImportDrawing/);
   assert.match(preview, /existingPlans/);
   assert.match(commit, /planChoice\?\.mode === 'update'/);
   assert.match(commit, /target.version !== planChoice.expectedVersion/);

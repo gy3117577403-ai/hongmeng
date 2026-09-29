@@ -164,21 +164,21 @@ export async function POST(req: NextRequest) {
         const decision = normalizeDecision(rawDecisions[String(row.rowNumber)]);
         await lockDrawingProduct(tx, row);
         let item = null;
-        if (row.libraryKey) {
-          item = await tx.drawingLibraryItem.findFirst({ where: { OR: [{ id: row.libraryKey }, { libraryKey: row.libraryKey }] } });
-          if (!item) {
-            results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: '图纸库编号不存在' });
-            continue;
-          }
-        } else if (decision?.mode === 'reuse') {
+        if (decision?.mode === 'reuse') {
           item = await tx.drawingLibraryItem.findFirst({ where: { id: decision.drawingLibraryItemId, deletedAt: null } });
           if (!item) {
             results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: '选择的图纸库已不存在，请重新预览' });
             continue;
           }
+        } else if (row.libraryKey) {
+          item = await tx.drawingLibraryItem.findFirst({ where: { OR: [{ id: row.libraryKey }, { libraryKey: row.libraryKey }] } });
+          if (!item) {
+            results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: '图纸库编号不存在' });
+            continue;
+          }
         } else {
           if (row.matchStatus === 'CONFIRM' && decision?.mode !== 'create') {
-            results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: '相似图纸库尚未确认' });
+            results.push({ rowNumber: row.rowNumber, status: 'BLOCKED', message: '同客户同规格存在多个图纸档案，请明确选择' });
             continue;
           }
           try { item = await resolveOrCreateDrawingProduct(tx, row); }
@@ -216,7 +216,7 @@ export async function POST(req: NextRequest) {
           }
           const changes = {
             sampleQuantity:row.sampleQuantity,dueDate,
-            plannedCompletionDate:row.plannedCompletionDate?new Date(row.plannedCompletionDate):null,
+            plannedCompletionDate:row.plannedCompletionDate?new Date(row.plannedCompletionDate):target.plannedCompletionDate,
             issuedDate:row.issuedDate?new Date(row.issuedDate):target.issuedDate,
             planWeekStartDate:row.planWeekStartDate?new Date(row.planWeekStartDate):null,
             sourceOrderNo:row.sourceOrderNo || target.sourceOrderNo,sourceOrderLine:row.sourceOrderLine || target.sourceOrderLine,
