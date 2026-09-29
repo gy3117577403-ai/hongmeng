@@ -27,9 +27,9 @@ try {
     const sign=async role=>{await login(role==='SUPERVISOR'?'supervisor':'quality');const name=role==='SUPERVISOR'?'主管':'品质';await page.getByRole('button',{name:name+'审核',exact:true}).click();const dialog=page.getByRole('dialog');await dialog.getByLabel('已核对审核资料').check();await dialog.getByRole('button',{name:'确认'+name+'通过',exact:true}).click();await dialog.waitFor({state:'hidden'});};
     try {
       await page.setViewportSize({width:1366,height:1024});await login('tech');
-      await page.getByRole('button',{name:'核对审核关联',exact:true}).click();
       const entry=page.getByRole('button',{name:'重新提交审核',exact:true});await entry.waitFor();
       check(await entry.isEnabled(),'legacy stranded return has an enabled resubmit entry');
+      const recovered=await api();check(recovered.chosen.id===f.draftId && recovered.reviewDecision.state==='RETURN_READY','opening the page reconciles the stranded review automatically');
       check(await page.locator('.qf-audit-footer').evaluate(e=>e.getBoundingClientRect().bottom<=innerHeight),'tablet primary controls stay visible');
       await page.screenshot({path:dir+'/01-recovered-current-review.png'});
       await entry.click();let drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.waitFor();
