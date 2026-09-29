@@ -415,7 +415,11 @@ jobs:
           mkdir -p artifacts/production-collaboration
           docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime hongmeng-release-smoke node \
             < scripts/seed-production-board-smoke.cjs > artifacts/production-collaboration/fixture.json
-          npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          if command -v google-chrome >/dev/null 2>&1; then
+            google-chrome --version
+          else
+            npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          fi
           PRODUCTION_BOARD_QA_BASE=http://127.0.0.1:3000 \
             PRODUCTION_BOARD_QA_FIXTURE=artifacts/production-collaboration/fixture.json \
             node scripts/smoke-production-board-browser.mjs
