@@ -43,7 +43,7 @@ try {
       check(replacement.ok(),'pending-review SOP replacement uploads to real storage');const replacementId=(await replacement.json()).file.id;
       await page.reload();await page.getByRole('button',{name:'处理退回',exact:true}).waitFor();const replaced=await api();
       const stopped=replaced.product.fixturePackages.find(p=>p.id===submitted.chosen.id);check(stopped.status==='STALE' && stopped.supervisorId===f.users.supervisor.id,'old round stops while preserving supervisor signature');
-      const stale=await mutate({action:'APPROVE',id:stopped.id,version:stopped.version,reviewRole:'QUALITY',confirmed:true});check(!stale.ok(),'stopped round cannot approve');
+      await login('quality');const stale=await mutate({action:'APPROVE',id:stopped.id,version:stopped.version,reviewRole:'QUALITY',confirmed:true});check(stale.status()===409,'stopped round cannot approve with a valid reviewer');await login('tech');
       await page.getByRole('button',{name:'处理退回',exact:true}).click();drawer=page.getByRole('dialog',{name:'退回处理与复核'});await drawer.getByRole('button',{name:'更换文件',exact:true}).click();
       await drawer.getByLabel('更换后的版本',{exact:true}).selectOption(replacementId);
       await drawer.getByLabel('修改说明',{exact:true}).fill('已修订 SOP 并逐项核对退回意见');
@@ -56,7 +56,7 @@ try {
       const returns=await (await page.request.get(origin+'/api/quality-fixtures?returns='+f.product.id)).json();check(returns.data.issues.every(i=>i.status==='RESOLVED'),'returned issues close only after both approvals');
       const badges=await (await page.request.get(origin+'/api/quality-fixtures?badges='+f.orderId+'&kind=orders')).json();check(badges.data[0].reviewLabel==='资料已审核' && badges.data[0].printAllowed,'plan badge and print readiness match completed review');
       await page.screenshot({path:dir+'/03-dual-review-complete.png'});
-      await login('reader');check(await page.getByRole('button',{name:'编辑资料',exact:true}).isDisabled(),'readonly account cannot edit documents');
+      await login('reader');check(await page.getByRole('button',{name:'编辑资料',exact:true}).isDisabled(),'readonly account cannot edit documents');check(!(await page.locator('body').innerText()).includes('资料同步失败'),'readonly browsing does not send forbidden synchronization writes');
       const denied=await mutate({action:'RECONCILE_REVIEW',libraryItemId:f.product.id});check(denied.status()===403,'readonly cannot invoke repair API');
       await login('tech');await page.getByRole('button',{name:'编辑资料',exact:true}).click();const edit=page.getByRole('dialog',{name:'生产资料准备'});const uploaded=page.waitForResponse(r=>r.url().includes('/api/quality-fixtures?view=') && r.ok());await edit.getByLabel('上传 SOP',{exact:true}).setInputFiles({name:'additional-SOP.pdf',mimeType:'application/pdf',buffer:Buffer.from(f.pdfBase64,'base64')});
       await uploaded;await edit.getByRole('button',{name:'保存并提交审核',exact:true}).click();await edit.waitFor({state:'hidden'});

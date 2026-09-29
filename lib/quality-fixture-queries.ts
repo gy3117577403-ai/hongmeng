@@ -138,7 +138,7 @@ export async function qualityFixtureBadges(ids: string[], kind: string) {
     const readiness = await fixtureReadiness(prisma, productId ? { libraryItemId: productId } : null, kind === "orders" ? id : "");
     const decision = documentReviewDecision(p && { ...p, needFixture: products.find(v => v.id === productId)?.fixtureRequired ?? null }, returns.filter(i => i.libraryItemId === productId));
     return { id, productId, packageId: p?.id, revision: p?.revision, legacy, status: legacy ? "LEGACY" : p?.status === "APPROVED" && !printAllowed ? "DRAFT" : p?.status || "UNSET", needFixture: products.find(p => p.id === productId)?.fixtureRequired ?? null,
-      reviewLabel: p?.status === "APPROVED" && !printAllowed ? "资料已变更 · 待重新提交" : decision.label, reviewAction: decision.actionLabel,
+      reviewLabel: printAllowed ? (p?.id === available[0]?.id ? '资料已审核' : '指定版本已审核') : p?.status === "APPROVED" ? "资料已变更 · 待重新提交" : decision.label, reviewAction: decision.actionLabel,
       pendingRevision: available[0]?.id !== p?.id ? available[0]?.revision : null, printAllowed: legacy || printAllowed,
       submissionIssues: p ? fixtureSubmissionIssues(p) : ["请准备生产资料"], fixtureLabel: legacy ? "" : readiness.label, supervisor: p?.supervisorName, quality: p?.qualityName, supervisorAt:p?.supervisorAt?.toISOString(), qualityAt:p?.qualityAt?.toISOString(), groups:readiness.groups.map(g=>({model:g.model,required:g.required,available:g.available,incoming:g.incoming,shortage:g.shortage})), sopFiles: p?.sopFiles || [], drawingFiles: p?.drawingFiles || [] };
   }));

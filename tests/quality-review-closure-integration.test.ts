@@ -74,6 +74,9 @@ test('document review stays actionable across pending replacement and legacy ret
     assert.equal((await issue(r.id)).status, 'READY'); assert.equal((await pack(draft.id)).status, 'DRAFT');
     assert.equal((await loadDocumentReturns(f.product.id)).review.actionLabel, '重新提交审核');
     const third = await resubmit(f.product.id); assert.equal(third.id, draft.id);
+    const filtered = await loadQualityFixtures(new URLSearchParams({ product: f.product.id, status: 'RETURNED' }), tech);
+    assert.equal(filtered.product?.id, f.product.id, 'submitted product stays open after leaving the returned filter');
+    assert.equal(filtered.reviewDecision.action, 'REVIEW');
     const before = await issue(r.id); await cmd({ action: 'RECONCILE_REVIEW', libraryItemId: f.product.id });
     assert.equal((await issue(r.id)).version, before.version, 'valid pending review is unchanged');
     assert.equal((await loadDocumentReturns(f.product.id)).review.action, 'REVIEW');

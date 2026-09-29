@@ -47,14 +47,14 @@ export default function DocumentReturnPanel({ productId, title, canManage, onClo
   const readyToSubmit = data?.review.state === 'RETURN_READY';
   const editable = !!issue && canManage && ["OPEN", "READY"].includes(issue.status);
   const currentFiles = data?.files.filter(f => f.isCurrent && (issue?.kind === "package" || f.category.code === issue?.kind)) || [];
-  const replacementTarget = currentFiles.find(f => {
+  const replacementTarget = currentFiles.find(f => f.id === fileId) || currentFiles.find(f => {
     let cursor: typeof f | undefined = f; const seen = new Set<string>();
     while (cursor && !seen.has(cursor.id)) {
-      if (cursor.id === issue?.fileId) return true;
+      if (cursor.id === issue?.fileId || cursor.supersedesFileId === issue?.fileId) return true;
       seen.add(cursor.id); cursor = data?.files.find(v => v.id === cursor?.supersedesFileId);
     }
     return issue?.kind === "package" && f.id === (fileId || currentFiles[0]?.id);
-  });
+  }) || (currentFiles.length === 1 ? currentFiles[0] : undefined);
   async function command(body: Record<string, unknown>) {
     const text = JSON.stringify(body);
     if (request.current?.body !== text) request.current = { body: text, key: crypto.randomUUID() };
@@ -82,6 +82,7 @@ export default function DocumentReturnPanel({ productId, title, canManage, onClo
     await act(async () => {
       if (!replacementTarget) throw new Error("找不到可替换的当前文件，请刷新后选择");
       const body = new FormData(); body.set("categoryId", replacementTarget.categoryId); body.set("replaceFileId", replacementTarget.id); body.set("file", file);
+      body.set("discardPrevious", "true");
       if (reason.trim()) body.set("remark", reason);
       const r = await fetch(`/api/drawing-library/${productId}/files/upload`, { method: "POST", body });
       const result = await r.json(); if (!r.ok) throw new Error(result.error || "更换文件失败");
@@ -106,7 +107,7 @@ export default function DocumentReturnPanel({ productId, title, canManage, onClo
             <div className={styles.reason}><strong>{issue.reviewRole === "SUPERVISOR" ? "主管" : issue.reviewRole === "QUALITY" ? "品质" : "历史审核"}退回意见</strong><p>{issue.reason}</p>{issue.location && <p>位置：{issue.location}</p>}<small className={styles.muted}>{issue.returnedByName} · {time(issue.createdAt)}</small><ReviewAttachmentLinks ids={issue.attachmentIds} files={data.attachments}/></div>
             {editable ? <>
               <div className={styles.mode}><button disabled={busy || uploading} aria-pressed={mode === "EXPLAIN"} onClick={() => setMode("EXPLAIN")}>说明原因，保留原文件</button><button disabled={busy || uploading} aria-pressed={mode === "REPLACE"} onClick={() => setMode("REPLACE")}>更换文件</button></div>
-              {mode === "REPLACE" && <><label className={styles.field}>更换后的版本<select aria-label="更换后的版本" value={fileId} disabled={busy || uploading} onChange={e => { dirty.current = true; setFileId(e.target.value); }}><option value="">上传新版本或选择已经替换的版本</option>{currentFiles.filter(f => f.id !== issue.fileId).map(f => <option key={f.id} value={f.id}>{f.displayName || f.originalName} · {f.version}</option>)}</select></label><label className={styles.upload}>上传并替换问题文件<small>{replacementTarget ? `将替换 ${replacementTarget.displayName || replacementTarget.originalName} · ${replacementTarget.version}，原文件保留` : "请选择对应的当前文件"}</small><input aria-label="上传替换文件" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" disabled={busy || uploading || !replacementTarget} onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void upload(f); }}/></label></>}
+              {mode === "REPLACE" && <><label className={styles.field}>更换后的版本<select aria-label="更换后的版本" value={fileId} disabled={busy || uploading} onChange={e => { dirty.current = true; setFileId(e.target.value); }}><option value="">上传新版本或选择已经替换的版本</option>{currentFiles.filter(f => f.id !== issue.fileId).map(f => <option key={f.id} value={f.id}>{f.displayName || f.originalName} · {f.version}</option>)}</select></label><label className={styles.upload}>上传并替换问题文件<small>{replacementTarget ? `将替换 ${replacementTarget.displayName || replacementTarget.originalName} · ${replacementTarget.version}，旧文件移除，处理记录保留` : "请选择对应的当前文件"}</small><input aria-label="上传替换文件" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" disabled={busy || uploading || !replacementTarget} onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void upload(f); }}/></label></>}
               <label className={styles.field}>{mode === "EXPLAIN" ? "技术解释（必填）" : "修改说明（必填）"}<textarea aria-label={mode === "EXPLAIN" ? "技术解释" : "修改说明"} maxLength={2000} disabled={busy || uploading} value={reason} placeholder={mode === "EXPLAIN" ? "说明为什么保留原文件，可注明客户要求、页码或确认依据" : "说明更改了哪里，如何解决退回问题"} onChange={e => { dirty.current = true; setReason(e.target.value); }}/></label>
               <ReviewAttachments productId={productId} files={attachments} onChange={v => { dirty.current = true; setAttachments(v); }} onError={setError} disabled={busy} onBusy={setUploading}/>
               <p className={styles.muted}>解释不等于通过。重新提交后，主管与品质均需重新确认，BOM 和治具准备不影响送审。</p>

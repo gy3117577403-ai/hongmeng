@@ -219,7 +219,7 @@ export async function submitPackage(tx: Tx, input: PcInput, a: PcActor, returnSu
   if (await tx.qfPackage.count({ where: { libraryItemId: p.libraryItemId, sequence: { gt: p.sequence } } })) conflict("已有更新的资料，请切换当前资料后提交");
   if (!await (await import("@/lib/quality-fixture-sync")).packageMatchesCurrentDocuments(tx, p)) conflict("当前图纸或 SOP 已变化，请刷新并核对当前资料后提交");
   if (!returnSubmission && await tx.qfDocumentReturn.count({ where: { libraryItemId: p.libraryItemId, status: { not: "RESOLVED" } } }))
-    conflict("存在未关闭的退回事项，请在图纸资料库完成技术处理并重新提交，不能直接送审");
+    conflict("存在未关闭的退回事项，请点击“处理退回”，完成技术回复后重新提交审核");
   const issues = fixtureSubmissionIssues({ ...p, needFixture: p.libraryItem.fixtureRequired });
   if (issues.length) conflict(issues.join("；"));
   await assertPackageFiles(tx, p);
