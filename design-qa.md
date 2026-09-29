@@ -1,4 +1,4 @@
-# Document return treatment and joint review — v1.34.256
+# Document return treatment and joint review — v1.34.257
 
 Final result: passed
 
@@ -34,7 +34,17 @@ Source and implementation were opened together in the same comparison inputs for
 
 Final small guards remove a non-functional return-to-saved-result link when that issue has unsaved edits, align the optional location field with the server's 200-character limit, and remove a redundant completion action when the current-review entry is present. Lint and whitespace checks pass; exact release-image acceptance repeats the workflow.
 
-No remaining actionable P0/P1/P2 findings in the reviewed states.
+Visual states have no remaining actionable P0/P1/P2 findings. The PDF cleanup correction below has also passed the updated real application browser acceptance.
+
+## Runtime finding from the v1.34.256 mirror
+
+The exact source image passed, but the second, Hangzhou runtime caught an intermittent P1 during file replacement: `Worker was terminated` from PDF.js initialization. All business assertions had completed, but the uncaught-error gate correctly failed; v1.34.256 is not the accepted handoff.
+
+Inspection found both loadingTask.destroy() and document.destroy() on the same owner, plus cleanup during an unfinished loading task. The installed PDF.js document destroy delegates to that loading task. A standalone local HTTP/PDF.js control, output/review-v134256/reproduce-old-pdf-cleanup.mjs, reproduced the exact unhandled error with the original early-destroy behavior.
+
+The fix releases each owner once after its load promise settles, prevents initialization after unmount, and stops unnecessary TOC extraction in ordinary document previews. The same ownership correction applies to the SOP PDF editor. Four local regressions pass, including real delayed HTTP 200 and 404 PDF sources; cleanup failures still reach the caller. Browser acceptance now switches away from three intentionally delayed real PDF requests, keeps the active drawing usable, and retains the strict zero-uncaught-error assertion. No global exception filter or weakened assertion was added.
+
+Candidate 36547889072, commit f87e2329ecc5a115cc4786f1d7b2e99e66b20030, passes 65 related unit/PostgreSQL regressions (0 failures, 0 skips) and 92 browser checks with errors: []. It includes the three delayed PDF switches and the entire treatment/review/history flow. New screenshots and browser-runtime.txt are in output/review-v134257/candidate/browser/. The existing composition is unchanged; post-fix screenshots show the same target controls and a rendered document. This resolves the runtime finding for design acceptance. The immutable v1.34.257 image and its Hangzhou runtime must still independently pass before image handoff.
 
 ## Required fidelity surfaces and intentional differences
 
