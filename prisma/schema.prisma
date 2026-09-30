@@ -6546,6 +6546,8 @@ model ToolingJob {
   actorName        String                 @map("actor_name")
   employeeNo       String                 @map("employee_no")
   kind             String
+  toolingMode      String                   @default("BLADE") @map("tooling_mode")
+  recordSource     String                   @default("REALTIME") @map("record_source")
   status           String
   activeEmployee   String?                @unique @map("active_employee")
   terminalId       String?                @map("terminal_id")
@@ -6570,10 +6572,45 @@ model ToolingJob {
   heldStock        ToolingStock[]
   events           ToolingEvent[]
   ledger           OtherWorkTimeRequest[]
+  moldUsage        ToolingMoldUsage?
+  heldMolds        ToolingMold[]
   @@index([employeeId, startedAt], map: "tooling_jobs_employee_started_idx")
   @@index([status, startedAt], map: "tooling_jobs_status_started_idx")
   @@index([terminalId], map: "tooling_jobs_terminal_idx")
   @@map("tooling_jobs")
+}
+
+model ToolingMold {
+  id              String    @id @default(cuid())
+  model           String
+  normalizedKey   String    @unique @map("normalized_key")
+  manufacturer    String    @default("")
+  note            String    @default("")
+  homePosition    Int       @map("home_position")
+  currentPosition Int?      @map("current_position")
+  state           String    @default("AVAILABLE")
+  version         Int       @default(1)
+  inUseJobId      String?   @map("in_use_job_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  inUseJob        ToolingJob? @relation(fields: [inUseJobId], references: [id], onDelete: Restrict)
+  usages          ToolingMoldUsage[]
+  @@index([state, homePosition])
+  @@map("tooling_molds")
+}
+
+model ToolingMoldUsage {
+  id          String    @id @default(cuid())
+  jobId       String    @unique @map("job_id")
+  moldId      String    @map("mold_id")
+  snapshot    Json
+  disposition String?
+  startedAt   DateTime  @default(now()) @map("started_at")
+  endedAt     DateTime? @map("ended_at")
+  job         ToolingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  mold        ToolingMold @relation(fields: [moldId], references: [id], onDelete: Restrict)
+  @@index([moldId])
+  @@map("tooling_mold_usages")
 }
 
 model ToolingSegment {

@@ -5,8 +5,13 @@ export const TOOLING_POSITION_NAMES: Record<ToolingPosition, string> = {
 };
 export const TOOLING_STATES: Record<string, string> = {
   RUNNING: '调模中', PAUSED: '已暂停', COMPLETED: '已完成', INCOMPLETE: '需继续',
-  AVAILABLE: '在库', IN_USE: '使用中', MAINTENANCE: '待处理', RETIRED: '已停用',
+  AVAILABLE: '可用', IN_USE: '使用中', RESTORE: '待恢复原配', MAINTENANCE: '待维修', RETIRED: '已停用',
 };
+export const TOOLING_MODES = { BLADE: '刀片调模', MOLD: '专模调模', COMBINATION: '组合调模' } as const;
+export type ToolingMode = keyof typeof TOOLING_MODES;
+export const TOOLING_SOURCES: Record<string, string> = { REALTIME: '实时', BACKFILL: '补录', BACKSTART: '补记开始' };
+export const moldPositionName = (position: number | null | undefined) => position == null ? '未归位' : '专模位 ' + String(position).padStart(2, '0');
+export type ToolingMoldDTO = { id: string; model: string; manufacturer: string; note: string; homePosition: number; currentPosition: number | null; state: string; version: number; inUseJobId: string | null; inUseJob?: { actorName: string; status: string; employeeId: string } | null };
 export const ASSIST_CATEGORIES = ['生产协助', '设备维护', '刀片整理', '异常处理', '其他协助'];
 export const boxName = (box: number | null | undefined) => box == null ? '不在盒内' : String(box).padStart(3, '0') + ' 号盒';
 export function durationText(ms: number) {
@@ -69,6 +74,7 @@ export function stockSummary(units: StockUnit[]) {
   return { registered: units.length > 0, total: live.length, available: live.filter(u => u.state === 'AVAILABLE').length,
     inUse: live.filter(u => u.state === 'IN_USE').length, maintenance: live.filter(u => u.state === 'MAINTENANCE').length,
     completeKits, incompleteKits, loose: live.filter(u => !u.kitId).length,
+    availableLoose: live.filter(u => !u.kitId && u.state === 'AVAILABLE').length,
     boxes: [...new Set(live.filter(u => u.currentBox != null).map(u => u.currentBox!))].sort((a, b) => a - b) };
 }
 export type ToolingUsageDTO = {
@@ -77,6 +83,8 @@ export type ToolingUsageDTO = {
   disposition: string | null; startedAt: string; endedAt: string | null;
 };
 export type ToolingJobDTO = {
+  toolingMode: ToolingMode; recordSource: string;
+  moldUsage: { id: string; moldId: string; snapshot: { model: string; homePosition: number; pickedPosition: number | null }; disposition: string | null; startedAt: string; endedAt: string | null } | null;
   id: string; actorId: string; employeeId: string; actorName: string; employeeNo: string; kind: string; status: string;
   terminalId: string | null; setupId: string | null; terminalSnapshot: { specification?: string; manufacturer?: string | null };
   contextSnapshot: { wireRange?: string; equipment?: string; mold?: string };

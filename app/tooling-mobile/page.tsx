@@ -2,6 +2,7 @@ import { requireMobileSession } from '@/lib/page-access';
 import { hasCapability } from '@/lib/department-access';
 import ToolingOperations from '@/components/tooling/ToolingOperations';
 import '../workspace/terminal-tooling/tooling-operations.css';
+import '../workspace/terminal-tooling/tooling-molds.css';
 import '../workspace/terminal-tooling/terminal-blade-editor.css';
 export const dynamic = 'force-dynamic';
 export const metadata = {title:'手机端子调模 · 杭连',description:'查刀片位置，记录调模与协助工时'};

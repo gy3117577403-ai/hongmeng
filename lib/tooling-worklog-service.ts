@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { employeePolicyOnDate } from '@/lib/employee-attainment-policy-service';
 import { terminalToolingTerminalKey, terminalToolingContextKey, terminalToolingBladeInclude, serializeTerminalToolingBlade } from '@/lib/terminal-tooling';
-import { TOOLING_POSITIONS, type ToolingPosition, segmentDays, segmentTotals, shanghaiDay, worklogRange, stockSummary } from '@/lib/tooling-worklog-domain';
+import { TOOLING_POSITIONS, TOOLING_MODES, type ToolingMode, type ToolingPosition, segmentDays, segmentTotals, shanghaiDay, worklogRange, stockSummary } from '@/lib/tooling-worklog-domain';
 
 type Tx = Prisma.TransactionClient;
 export type ToolingActor = { id: string; employeeId: string | null; username: string; displayName?: string | null; laborRole?: string };
@@ -14,7 +14,7 @@ const text = (value: unknown, max = 500) => { if (value == null) return ''; if (
 const box = (value: unknown) => { if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 100) throw new ToolingError('盒子编号为 1–100'); return Number(value); };
 const pos = (value: unknown): ToolingPosition => { if (!TOOLING_POSITIONS.includes(value as ToolingPosition)) throw new ToolingError('请选择刀位'); return value as ToolingPosition; };
 async function lock(tx: Tx, key: string) { await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`; }
-export const toolingJobInclude = { segments: { orderBy: { startedAt: 'asc' as const } }, usages: { orderBy: { startedAt: 'asc' as const } }, events: { orderBy: { createdAt: 'desc' as const }, take: 80 }, ledger: { select: { id: true, workDate: true, requestedMinutes: true, reportedMilliseconds: true, status: true } } } satisfies Prisma.ToolingJobInclude;
+export const toolingJobInclude = { moldUsage: true, segments: { orderBy: { startedAt: 'asc' as const } }, usages: { orderBy: { startedAt: 'asc' as const } }, events: { orderBy: { createdAt: 'desc' as const }, take: 80 }, ledger: { select: { id: true, workDate: true, requestedMinutes: true, reportedMilliseconds: true, status: true } } } satisfies Prisma.ToolingJobInclude;
 type Job = Prisma.ToolingJobGetPayload<{ include: typeof toolingJobInclude }>;
 const serialize = (job: Job, now = new Date()) => ({ ...job, ...segmentTotals(job.segments, now) });
 const event = (tx: Tx, a: ToolingActor, action: string, detail: unknown, jobId?: string) => tx.toolingEvent.create({ data: { actorId: a.id, actorName: name(a), action, detail: json(detail), jobId } });
@@ -42,9 +42,68 @@ export async function getToolingInventory() {
   const blades = await prisma.terminalToolingBlade.findMany({ include: { ...terminalToolingBladeInclude, stockUnits: { include: { kit: { select: { code: true } }, inUseJob: { select: { actorName: true, status: true, contextSnapshot: true, employeeId: true } } }, orderBy: [{ homeBox: 'asc' }, { createdAt: 'asc' }] } }, orderBy: { model: 'asc' } });
   return blades.map(b => ({ ...serializeTerminalToolingBlade(b), countedAt: b.inventoryCountedAt, units: b.stockUnits, stock: { ...stockSummary(b.stockUnits), registered: b.inventoryCountedAt !== null } }));
 }
+export async function getToolingMolds() {
+  return prisma.toolingMold.findMany({ include: { inUseJob: { select: { actorName: true, status: true, employeeId: true } } }, orderBy: { model: 'asc' } });
+}
+const moldPosition = (value: unknown) => { if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 20) throw new ToolingError('专模位置编号为 1–20'); return Number(value); };
+async function moldInventoryCommand(tx: Tx, a: ToolingActor, data: Record<string, unknown>) {
+  const action = text(data.action), reason = text(data.reason);
+  if (action === 'MOLD_CREATE') {
+    const model = text(data.model, 100), homePosition = moldPosition(data.position);
+    if (!model) throw new ToolingError('请填写专模型号');
+    const normalizedKey = model.normalize('NFKC').replace(/\s+/g, '').toUpperCase();
+    if (await tx.toolingMold.findUnique({ where: { normalizedKey } })) throw new ToolingError('此专模型号已建档；每型号一套，请搜索已有记录', 409);
+    const mold = await tx.toolingMold.create({ data: { model, normalizedKey, manufacturer: text(data.manufacturer, 100), note: text(data.note), homePosition, currentPosition: homePosition } });
+    await event(tx, a, action, { moldId: mold.id, model, position: homePosition });
+    return { moldId: mold.id };
+  }
+  const mold = await tx.toolingMold.findUnique({ where: { id: text(data.moldId) }, include: { inUseJob: true } });
+  if (!mold) throw new ToolingError('专模不存在', 404);
+  if (mold.version !== data.version) throw new ToolingError('专模状态已变化，请刷新后操作', 409);
+  if (!['MOLD_EDIT','MOLD_MOVE','MOLD_RETURN','MOLD_MAINTENANCE','MOLD_RETIRE'].includes(action)) throw new ToolingError('操作不支持');
+  if (mold.state === 'RETIRED') throw new ToolingError('此专模已停用');
+  if (mold.inUseJob && ['RUNNING','PAUSED'].includes(mold.inUseJob.status)) throw new ToolingError('专模正在调模，请先结束作业', 409);
+  if (action === 'MOLD_EDIT') {
+    await tx.toolingMold.update({ where: { id: mold.id }, data: { manufacturer: text(data.manufacturer, 100), note: text(data.note), version: { increment: 1 } } });
+  } else {
+    if (action === 'MOLD_MOVE' && mold.state !== 'AVAILABLE') throw new ToolingError('只能移动可用专模');
+    if (['MOLD_MAINTENANCE','MOLD_RETIRE'].includes(action) && !reason) throw new ToolingError('请填写处理原因');
+    if (action === 'MOLD_RETURN' && mold.inUseJob?.toolingMode === 'COMBINATION') {
+      if (data.restored !== true) throw new ToolingError('请确认专模已恢复原配刀片');
+      if (await tx.toolingUsage.count({ where: { jobId: mold.inUseJob.id, disposition: 'DEVICE' } })) throw new ToolingError('还有外借刀片留在设备，请先在刀片库归还');
+    }
+    const position = ['MOLD_MOVE','MOLD_RETURN'].includes(action) ? moldPosition(data.position) : null;
+    const state = action === 'MOLD_MAINTENANCE' ? 'MAINTENANCE' : action === 'MOLD_RETIRE' ? 'RETIRED' : 'AVAILABLE';
+    await tx.toolingMold.update({ where: { id: mold.id }, data: { state, currentPosition: position, ...(action === 'MOLD_MOVE' ? { homePosition: position! } : {}), inUseJobId: state === 'AVAILABLE' ? null : mold.inUseJobId, version: { increment: 1 } } });
+    if (action === 'MOLD_RETURN' && mold.inUseJobId) await tx.toolingMoldUsage.updateMany({ where: { moldId: mold.id, jobId: mold.inUseJobId }, data: { disposition: 'RETURNED', endedAt: new Date() } });
+  }
+  await event(tx, a, action, { moldId: mold.id, before: mold, position: data.position, reason, restored: data.restored });
+  return { moldId: mold.id };
+}
+async function releaseMold(tx: Tx, a: ToolingActor, job: Job, data: Record<string, unknown>, now: Date) {
+  const usage = job.moldUsage!;
+  const mold = await tx.toolingMold.findUniqueOrThrow({ where: { id: usage.moldId } });
+  if (mold.inUseJobId !== job.id || usage.disposition === 'HISTORICAL') throw new ToolingError('专模使用状态已变化', 409);
+  const disposition = text(data.moldDisposition);
+  if (!['HOME','BOX','DEVICE','MAINTENANCE'].includes(disposition)) throw new ToolingError('请确认专模去向');
+  const combined = job.toolingMode === 'COMBINATION';
+  const restored = !combined || data.moldRestored === true;
+  if (combined && disposition !== 'DEVICE' && await tx.toolingUsage.count({ where: { jobId: job.id, disposition: 'DEVICE' } })) throw new ToolingError('外借刀片仍在设备上，请一同归还或保留专模在设备上');
+  if (combined && disposition === 'DEVICE' && data.moldRestored === true) throw new ToolingError('组合仍留在设备时，请取消恢复原配确认');
+  const position = disposition === 'BOX' ? moldPosition(data.moldPosition) : disposition === 'HOME' ? mold.homePosition : null;
+  const state = disposition === 'DEVICE' ? 'IN_USE' : disposition === 'MAINTENANCE' ? 'MAINTENANCE' : restored ? 'AVAILABLE' : 'RESTORE';
+  await tx.toolingMold.update({ where: { id: mold.id }, data: { state, currentPosition: position, inUseJobId: state === 'AVAILABLE' ? null : job.id, version: { increment: 1 } } });
+  await tx.toolingMoldUsage.update({ where: { id: usage.id }, data: { disposition: state === 'RESTORE' ? 'RESTORE' : disposition, endedAt: now } });
+  await event(tx, a, 'MOLD_RELEASE', { moldId: mold.id, disposition, state, restored, position }, job.id);
+}
+export async function getToolingInventoryHistory(moldId?: string, bladeId?: string) {
+  if (!moldId && !bladeId) return [];
+  return prisma.toolingEvent.findMany({ where: moldId ? { OR: [{ detail: { path: ['moldId'], equals: moldId } }, { job: { moldUsage: { moldId } } }] } : { OR: [{ detail: { path: ['bladeId'], equals: bladeId } }, { detail: { path: ['before'], array_contains: [{ bladeId }] } }, { job: { usages: { some: { bladeId } } } }] }, orderBy: { createdAt: 'desc' }, take: 40 });
+}
 export async function inventoryCommand(a: ToolingActor, data: Record<string, unknown>) {
   return command(a, data, async tx => {
     const action = text(data.action), reason = text(data.reason);
+    if (action.startsWith('MOLD_')) return moldInventoryCommand(tx, a, data);
     if (action === 'REGISTER' || action === 'ADD') {
       const bladeId = text(data.bladeId), blade = await tx.terminalToolingBlade.findUnique({ where: { id: bladeId } });
       if (!blade?.isActive) throw new ToolingError('刀片型号不存在或已停用');
@@ -101,7 +160,7 @@ async function employeeFor(tx: Tx, a: ToolingActor) {
   return employee;
 }
 function ownJob(a: ToolingActor, job: Job) { if (job.employeeId !== a.employeeId && a.laborRole !== 'ADMIN') throw new ToolingError('只能操作本人的作业', 403); }
-async function allocate(tx: Tx, a: ToolingActor, jobId: string, raw: unknown, now: Date) {
+async function allocate(tx: Tx, a: ToolingActor, jobId: string, raw: unknown, now: Date, historicalEnd?: Date) {
   const choices = Array.isArray(raw) ? raw as Array<Record<string, unknown>> : [];
   if (choices.length > 4 || new Set(choices.map(c => c.position)).size !== choices.length) throw new ToolingError('每个刀位只能选择一把刀片');
   for (const choice of choices) {
@@ -110,15 +169,15 @@ async function allocate(tx: Tx, a: ToolingActor, jobId: string, raw: unknown, no
     if (!blade?.isActive || !blade.compatiblePositions.includes(position)) throw new ToolingError('刀片型号或刀位已变化，请重新选择');
     const stock = stockId ? await tx.toolingStock.findUnique({ where: { id: stockId }, include: { kit: true, inUseJob: true } }) : null;
     if (stockId && (!stock || stock.bladeId !== bladeId || stock.position !== position)) throw new ToolingError('库存实物与刀位不匹配');
-    if (!stockId && blade.inventoryCountedAt) throw new ToolingError(blade.model + ' 已管理库存，请选择可用实物；缺刀时可先不选该刀位');
-    if (stock) {
+    if (!historicalEnd && !stockId && blade.inventoryCountedAt) throw new ToolingError(blade.model + ' 已管理库存，请选择可用实物；缺刀时可先不选该刀位');
+    if (stock && !historicalEnd) {
       const reuse = choice.reuse === true && stock.state === 'IN_USE' && stock.inUseJob?.employeeId === a.employeeId && !['RUNNING', 'PAUSED'].includes(stock.inUseJob.status);
       if (stock.state !== 'AVAILABLE' && !reuse) throw new ToolingError('刀片已被使用或待处理，请重新选择', 409);
       if (reuse) await tx.toolingUsage.updateMany({ where: { stockId, disposition: 'DEVICE' }, data: { disposition: 'REUSED', endedAt: now } });
       await tx.toolingStock.update({ where: { id: stock.id }, data: { state: 'IN_USE', currentBox: null, inUseJobId: jobId, version: { increment: 1 } } });
     }
     const spec = blade.positionSpecs.find(s => s.position === position);
-    await tx.toolingUsage.create({ data: { jobId, bladeId, stockId, position, startedAt: now, snapshot: json({ model: blade.model, manufacturer: blade.manufacturer, specification: spec?.specification || blade.specification, dimensionA: spec?.dimensionA, dimensionB: spec?.dimensionB, homeBox: stock?.homeBox ?? null, pickedBox: stock?.currentBox ?? null, kitCode: stock?.kit?.code ?? null, inventoryUncounted: !blade.inventoryCountedAt }) } });
+    await tx.toolingUsage.create({ data: { jobId, bladeId, stockId, position, startedAt: now, ...(historicalEnd ? { endedAt: historicalEnd, disposition: 'HISTORICAL' } : {}), snapshot: json({ model: blade.model, manufacturer: blade.manufacturer, specification: spec?.specification || blade.specification, dimensionA: spec?.dimensionA, dimensionB: spec?.dimensionB, homeBox: stock?.homeBox ?? null, pickedBox: stock?.currentBox ?? null, kitCode: stock?.kit?.code ?? null, inventoryUncounted: !blade.inventoryCountedAt }) } });
   }
 }
 async function releaseUsage(tx: Tx, usage: Job['usages'][number], raw: Record<string, unknown>, now: Date) {
@@ -171,9 +230,9 @@ async function assertNoOverlap(tx: Tx, employeeId: string, start: Date, end: Dat
 export async function worklogCommand(a: ToolingActor, data: Record<string, unknown>) {
   return command(a, data, async tx => {
     const action = text(data.action), now = new Date();
-    if (['START', 'BACKFILL'].includes(action)) {
+    if (['START', 'BACKFILL', 'BACKSTART'].includes(action)) {
       const employee = await employeeFor(tx, a), kind = data.kind === 'ASSIST' ? 'ASSIST' : 'TUNING';
-      if (await tx.toolingJob.findUnique({ where: { activeEmployee: employee.id } })) throw new ToolingError('你已有进行中的作业，请先完成或继续该作业', 409);
+      if (action !== 'BACKFILL' && await tx.toolingJob.findUnique({ where: { activeEmployee: employee.id } })) throw new ToolingError('你已有进行中的作业，请先完成或继续该作业', 409);
       let terminal = null;
       if (kind === 'TUNING') {
         const id = text(data.terminalId), specification = text(data.specification, 300), manufacturer = text(data.manufacturer, 100) || null;
@@ -184,19 +243,33 @@ export async function worklogCommand(a: ToolingActor, data: Record<string, unkno
       const description = text(data.description), category = text(data.category, 100);
       if (kind === 'ASSIST' && (!description || !category)) throw new ToolingError('请选择协助类型并填写工作内容');
       const backfill = action === 'BACKFILL';
-      if (backfill && kind !== 'ASSIST') throw new ToolingError('补报用于协助工时，调模请扫码计时');
-      const startedAt = backfill ? new Date(String(data.startedAt)) : now, endedAt = backfill ? new Date(String(data.endedAt)) : null;
-      if (!Number.isFinite(startedAt.getTime()) || (endedAt && (!Number.isFinite(endedAt.getTime()) || endedAt <= startedAt || endedAt > now || endedAt.getTime() - startedAt.getTime() > 86400000))) throw new ToolingError('起止时间无效，单次协助最多 24 小时');
+      const adjusted = backfill || action === 'BACKSTART';
+      const startedAt = adjusted ? new Date(String(data.startedAt)) : now, endedAt = backfill ? new Date(String(data.endedAt)) : null;
+      if (!Number.isFinite(startedAt.getTime()) || startedAt > now || (adjusted && +(endedAt || now) - +startedAt > 86400000) || (endedAt && (!Number.isFinite(endedAt.getTime()) || endedAt <= startedAt || endedAt > now || endedAt.getTime() - startedAt.getTime() > 86400000))) throw new ToolingError('起止时间无效；结束须晚于开始，且不能超过当前时间，单次最多 24 小时');
       const reason = text(data.reason);
-      if (backfill && !reason) throw new ToolingError('请填写补报原因');
-      if (backfill && a.laborRole !== 'ADMIN' && now.getTime() - startedAt.getTime() > 7 * 86400000) throw new ToolingError('仅可补报近 7 天；更早记录请管理员处理');
+      if (adjusted && !reason) throw new ToolingError('请填写补报原因');
+      if (adjusted && a.laborRole !== 'ADMIN' && now.getTime() - startedAt.getTime() > 7 * 86400000) throw new ToolingError('仅可补报近 7 天；更早记录请管理员处理');
       if ((employee.hireDate && shanghaiDay(startedAt) < employee.hireDate.toISOString().slice(0, 10)) || (employee.resignedAt && shanghaiDay(startedAt) > employee.resignedAt.toISOString().slice(0, 10))) throw new ToolingError('日期不在员工任职期间');
       await assertNoOverlap(tx, employee.id, startedAt, endedAt || new Date(now.getTime() + 1));
       const setupId = text(data.setupId) || null;
       if (setupId) { const setup = await tx.terminalToolingSetup.findUnique({ where: { id: setupId } }); if (setup?.terminalId !== terminal?.id) throw new ToolingError('参考方案与端子不一致'); }
-      const job = await tx.toolingJob.create({ data: { actorId: a.id, employeeId: employee.id, employeeNo: employee.employeeNo, actorName: employee.name, kind, status: backfill ? 'COMPLETED' : 'RUNNING', activeEmployee: backfill ? null : employee.id, terminalId: terminal?.id, setupId, terminalSnapshot: json(terminal ? { specification: terminal.specification, manufacturer: terminal.manufacturer } : {}), contextSnapshot: json({ wireRange: text(data.wireRange, 100), equipment: text(data.equipment, 100), mold: text(data.mold, 100) }), description, category, backfillReason: backfill ? reason : null, startedAt, endedAt, segments: { create: { kind: 'WORK', startedAt, endedAt } } } });
-      if (kind === 'TUNING') await allocate(tx, a, job.id, data.choices, now);
-      await event(tx, a, action, { kind, description, reason }, job.id);
+      const toolingMode = kind === 'TUNING' ? String(data.toolingMode || 'BLADE') as ToolingMode : 'BLADE';
+      if (!Object.hasOwn(TOOLING_MODES, toolingMode)) throw new ToolingError('请选择有效的调模方式');
+      const choices = Array.isArray(data.choices) ? data.choices as Array<Record<string, unknown>> : [];
+      const moldId = text(data.moldId);
+      if (kind === 'ASSIST' && (moldId || choices.length)) throw new ToolingError('协助报工不能占用调模工装');
+      if (toolingMode === 'BLADE' && moldId) throw new ToolingError('刀片调模请勿选择专模');
+      if (toolingMode === 'MOLD' && choices.length) throw new ToolingError('专模使用原配刀片；替换刀片请选择组合调模');
+      if (toolingMode === 'COMBINATION' && !choices.length) throw new ToolingError('组合调模至少选择一个替换刀位');
+      const mold = toolingMode !== 'BLADE' ? await tx.toolingMold.findUnique({ where: { id: moldId } }) : null;
+      if (toolingMode !== 'BLADE' && (!mold || (!backfill && mold.state !== 'AVAILABLE'))) throw new ToolingError(mold ? '专模不可用，请先归还、恢复原配或维修后再使用' : '请选择专模型号', 409);
+      const job = await tx.toolingJob.create({ data: { toolingMode, recordSource: action === 'START' ? 'REALTIME' : action, actorId: a.id, employeeId: employee.id, employeeNo: employee.employeeNo, actorName: employee.name, kind, status: backfill ? 'COMPLETED' : 'RUNNING', activeEmployee: backfill ? null : employee.id, terminalId: terminal?.id, setupId, terminalSnapshot: json(terminal ? { specification: terminal.specification, manufacturer: terminal.manufacturer } : {}), contextSnapshot: json({ wireRange: text(data.wireRange, 100), equipment: text(data.equipment, 100), mold: mold?.model || text(data.mold, 100) }), description, category, backfillReason: adjusted ? reason : null, startedAt, endedAt, segments: { create: { kind: 'WORK', startedAt, endedAt } } } });
+      if (kind === 'TUNING') await allocate(tx, a, job.id, choices, backfill ? startedAt : now, endedAt || undefined);
+      if (mold) {
+        if (!backfill) await tx.toolingMold.update({ where: { id: mold.id }, data: { state: 'IN_USE', inUseJobId: job.id, currentPosition: null, version: { increment: 1 } } });
+        await tx.toolingMoldUsage.create({ data: { jobId: job.id, moldId: mold.id, snapshot: json({ model: mold.model, homePosition: mold.homePosition, pickedPosition: mold.currentPosition }), startedAt: backfill ? startedAt : now, endedAt, disposition: backfill ? 'HISTORICAL' : null } });
+      }
+      await event(tx, a, action, { kind, toolingMode, description, reason, historicalInventory: backfill }, job.id);
       if (backfill) await syncLedger(tx, a, await tx.toolingJob.findUniqueOrThrow({ where: { id: job.id }, include: toolingJobInclude }), now);
       return { jobId: job.id };
     }
@@ -225,14 +298,16 @@ export async function worklogCommand(a: ToolingActor, data: Record<string, unkno
         if (usage.stockId && !item) throw new ToolingError('请确认每个刀位的去向');
         await releaseUsage(tx, usage, item || { disposition: 'DEVICE' }, now);
       }
+      if (job.moldUsage) await releaseMold(tx, a, job, data, now);
       await tx.toolingJob.update({ where: { id: jobId }, data: { status, activeEmployee: null, endedAt: now, resultNote, version: { increment: 1 } } });
       await event(tx, a, action, { status, resultNote, dispositions }, jobId);
       await syncLedger(tx, a, await tx.toolingJob.findUniqueOrThrow({ where: { id: jobId }, include: toolingJobInclude }), now);
     } else if (action === 'SWAP') {
+      if (job.recordSource === 'BACKFILL' || job.kind !== 'TUNING') throw new ToolingError('此作业不能更换刀片');
       const position = pos(data.position), old = job.usages.find(u => u.isCurrent && u.position === position);
       if (old) { await releaseUsage(tx, old, data, now); await tx.toolingUsage.update({ where: { id: old.id }, data: { isCurrent: false } }); }
       await allocate(tx, a, jobId, [{ position, bladeId: data.bladeId, stockId: data.stockId, reuse: data.reuse }], now);
-      await tx.toolingJob.update({ where: { id: jobId }, data: { version: { increment: 1 } } });
+      await tx.toolingJob.update({ where: { id: jobId }, data: { ...(job.moldUsage ? { toolingMode: 'COMBINATION' } : {}), version: { increment: 1 } } });
       await event(tx, a, action, { position, before: old?.snapshot, bladeId: data.bladeId, stockId: data.stockId }, jobId);
     } else if (action === 'CORRECT') {
       if (active) throw new ToolingError('结束作业后再修正时间');
@@ -251,6 +326,7 @@ export async function worklogCommand(a: ToolingActor, data: Record<string, unkno
       await syncLedger(tx, a, await tx.toolingJob.findUniqueOrThrow({ where: { id: jobId }, include: toolingJobInclude }), now);
     } else if (action === 'SAVE_RECIPE') {
       if (active || !job.terminalId) throw new ToolingError('请先完成调模');
+      if (job.toolingMode !== 'BLADE') throw new ToolingError('专模与组合记录已进入端子历史，下次选择端子可直接复用');
       const context = job.contextSnapshot as { wireRange?: string; equipment?: string; mold?: string };
       const contextKey = terminalToolingContextKey(context);
       const last = await tx.terminalToolingSetup.aggregate({ where: { terminalId: job.terminalId, contextKey }, _max: { version: true } });
@@ -266,7 +342,10 @@ export async function worklogCommand(a: ToolingActor, data: Record<string, unkno
 export async function listToolingWork(a: ToolingActor, params: URLSearchParams) {
   const now = new Date(), range = worklogRange(params.get('period') || 'day', params.get('date') || shanghaiDay(now));
   const mine = params.get('mine') === '1', employeeId = mine ? a.employeeId || '__unbound__' : params.get('employeeId') || undefined;
-  const rows = await prisma.toolingJob.findMany({ where: { employeeId, startedAt: { lt: range.end }, OR: [{ endedAt: { gte: range.start } }, { endedAt: null }] }, include: toolingJobInclude, orderBy: { startedAt: 'desc' } });
+  const mode = params.get('mode'), source = params.get('source');
+  if (mode && !['BLADE','MOLD','COMBINATION','ASSIST'].includes(mode)) throw new ToolingError('调模方式筛选无效');
+  if (source && !['REALTIME','BACKFILL','BACKSTART'].includes(source)) throw new ToolingError('记录来源筛选无效');
+  const rows = await prisma.toolingJob.findMany({ where: { employeeId, ...(mode === 'ASSIST' ? { kind: 'ASSIST' } : mode ? { kind: 'TUNING', toolingMode: mode } : {}), ...(source ? { recordSource: source } : {}), startedAt: { lt: range.end }, OR: [{ endedAt: { gte: range.start } }, { endedAt: null }] }, include: toolingJobInclude, orderBy: { startedAt: 'desc' } });
   const active = a.employeeId ? await prisma.toolingJob.findUnique({ where: { activeEmployee: a.employeeId }, include: toolingJobInclude }) : null;
   const days: Record<string, { date: string; workMs: number; waitMs: number; tuningMs: number; assistMs: number }> = {};
   const people: Record<string, { employeeId: string; name: string; employeeNo: string; tuningMs: number; assistMs: number; waitMs: number; count: number }> = {};
@@ -281,7 +360,9 @@ export async function listToolingWork(a: ToolingActor, params: URLSearchParams) 
   }
   const daily = Object.values(days).sort((x, y) => x.date.localeCompare(y.date)), employees = Object.values(people);
   return { serverNow: now, range, jobs: rows.map(r => ({ ...serialize(r, now), period: Object.values(segmentDays(r.segments, now, range)).reduce((s, d) => ({ workMs: s.workMs + d.workMs, waitMs: s.waitMs + d.waitMs }), { workMs: 0, waitMs: 0 }) })), active: active ? serialize(active, now) : null,
-    daily, employees, summary: { count: employees.reduce((s, p) => s + p.count, 0), tuningMs: employees.reduce((s, p) => s + p.tuningMs, 0), assistMs: employees.reduce((s, p) => s + p.assistMs, 0), waitMs: employees.reduce((s, p) => s + p.waitMs, 0), ongoing: rows.filter(r => !r.endedAt).length } };
+    daily, employees, summary: { count: employees.reduce((s, p) => s + p.count, 0), tuningMs: employees.reduce((s, p) => s + p.tuningMs, 0), assistMs: employees.reduce((s, p) => s + p.assistMs, 0), waitMs: employees.reduce((s, p) => s + p.waitMs, 0), backfillCount: rows.filter(r => r.recordSource !== 'REALTIME').length,
+      modes: rows.reduce<Record<string, number>>((sum, row) => { const key = row.kind === 'ASSIST' ? 'ASSIST' : row.toolingMode; sum[key] = (sum[key] || 0) + Object.values(segmentDays(row.segments, now, range)).reduce((n,d) => n+d.workMs,0); return sum; }, {}),
+      ongoing: rows.filter(r => !r.endedAt).length } };
 }
 export async function getToolingJob(id: string) { const job = await prisma.toolingJob.findUnique({ where: { id }, include: toolingJobInclude }); if (!job) throw new ToolingError('作业记录不存在', 404); return serialize(job); }
-export async function getToolingReferences(terminalId: string) { const rows = await prisma.toolingJob.findMany({ where: { terminalId, kind: 'TUNING', status: 'COMPLETED', usages: { some: { isCurrent: true } } }, include: toolingJobInclude, orderBy: { endedAt: 'desc' }, take: 8 }); return rows.map(row => serialize(row)); }
+export async function getToolingReferences(terminalId: string) { const rows = await prisma.toolingJob.findMany({ where: { terminalId, kind: 'TUNING', status: 'COMPLETED', OR: [{ usages: { some: { isCurrent: true } } }, { moldUsage: { isNot: null } }] }, include: toolingJobInclude, orderBy: { endedAt: 'desc' }, take: 8 }); return rows.map(row => serialize(row)); }

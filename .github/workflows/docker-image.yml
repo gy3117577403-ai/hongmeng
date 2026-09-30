@@ -207,7 +207,7 @@ jobs:
       - name: Terminal tooling PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/terminal-tooling-integration.test.ts tests/terminal-tooling-four-specs-integration.test.ts tests/tooling-worklog.test.ts tests/tooling-worklog-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/terminal-tooling-integration.test.ts tests/terminal-tooling-four-specs-integration.test.ts tests/tooling-worklog.test.ts tests/tooling-worklog-integration.test.ts tests/tooling-molds-integration.test.ts
       - name: Sample team PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -466,6 +466,11 @@ jobs:
             TOOLING_QA_FIXTURE=artifacts/terminal-tooling/release-fixture.json \
             TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/release-browser \
             node scripts/smoke-terminal-tooling-browser.mjs
+          TOOLING_QA_ALLOW=disposable-tooling-runtime \
+            TOOLING_QA_BASE=http://127.0.0.1:3000 \
+            TOOLING_QA_FIXTURE=artifacts/terminal-tooling/release-fixture.json \
+            TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/release-molds-browser \
+            node scripts/smoke-tooling-molds-browser.mjs
           mkdir -p output/playwright/review-closure-release
           REVIEW_QA_ALLOW=disposable-review-runtime \
             S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources \
@@ -967,6 +972,11 @@ jobs:
             TOOLING_QA_FIXTURE=artifacts/terminal-tooling/hangzhou-fixture.json \
             TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/hangzhou-browser \
             node scripts/smoke-terminal-tooling-browser.mjs
+          TOOLING_QA_ALLOW=disposable-tooling-runtime \
+            TOOLING_QA_BASE=http://127.0.0.1:3300 \
+            TOOLING_QA_FIXTURE=artifacts/terminal-tooling/hangzhou-fixture.json \
+            TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/hangzhou-molds-browser \
+            node scripts/smoke-tooling-molds-browser.mjs
           mkdir -p output/playwright/review-closure-hangzhou
           REVIEW_QA_ALLOW=disposable-review-runtime \
             DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
