@@ -11,7 +11,7 @@ async function scenario(page,origin,f,dir){
  const key=()=>f.marker+'-'+Math.random().toString(36).slice(2);
  const shot=name=>page.screenshot({path:dir+'/'+name+'.png',fullPage:false,animations:'disabled'});
  const login=async(role,target)=>{
-  await page.context().clearCookies();await page.goto(origin+'/login?next='+encodeURIComponent(target));
+  await page.goto('about:blank');await page.context().clearCookies();await page.goto(origin+'/login?next='+encodeURIComponent(target));
   await page.getByLabel('员工编号 / 管理账号').fill(f.users[role].username);
   await page.getByLabel('密码',{exact:true}).fill(f.password);
   await page.getByRole('button',{name:'登录',exact:true}).click();

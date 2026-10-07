@@ -26,7 +26,9 @@ function cli(args) {
 
 try {
   const scenario = readFileSync(new URL('./order-pool-browser-scenario.cjs', import.meta.url), 'utf8');
-  const code = `async page => { ${scenario}; return scenario(page, ${JSON.stringify(origin)}, ${JSON.stringify(fixture)}, ${JSON.stringify(dir)}); }`;
+  const association = readFileSync(new URL('./order-pool-drawing-browser-scenario.cjs', import.meta.url), 'utf8');
+  const baseline = process.argv.includes('--drawing-only') ? '{passed:true}' : `await scenario(page, ${JSON.stringify(origin)}, ${JSON.stringify(fixture)}, ${JSON.stringify(dir)})`;
+  const code = `async page => { ${scenario}; ${association}; const baseline = ${baseline}; const drawing = await drawingAssociationScenario(page, ${JSON.stringify(origin)}, ${JSON.stringify(fixture)}, ${JSON.stringify(dir)}); return { ...baseline, drawing }; }`;
   // Parse the generated browser program before invoking the CLI.
   new Function(`return (${code})`);
   if(process.argv.includes('--parse-only')) { console.log('Generated browser program parses'); process.exit(0); }

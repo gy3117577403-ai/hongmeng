@@ -19,3 +19,6 @@
 
 /* Keep source identity legible without stacking five rows of metadata. */
 .table{font-size:14px}.table strong{font-size:14px}.table td{padding:13px 10px}.table td small{font-size:12px}.archiveCell{display:grid;grid-template-columns:1fr auto;gap:6px 9px;align-items:center}.archiveIdentity{grid-column:1/-1}.archiveIdentity strong{font-size:13px!important}.archiveIdentity small{font-size:11px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.archiveCell>.warn{font-size:12px}.archiveCell .fileCounts span{font-size:11px}.cellLinks{gap:10px;justify-self:end}.cellLinks button{font-size:12px!important;min-height:30px}.toolbar button{font-size:14px}.toolbar button[aria-pressed=true]{background:#ff7a16;border-color:#ff7a16;color:white}
+.archiveKey{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#74889e;font-size:11px}.archiveCell>.archiveKey{grid-column:1/-1}.archiveList .archiveKey{font-variant-numeric:tabular-nums}.documentHeading .archiveKey{margin-top:6px}
+
+.archiveIdentity strong,.archiveIdentity small{display:block}

@@ -6,6 +6,8 @@ import { lockOrderPool, ensurePoolPreparation, distributePoolCoverage } from './
 import { chinaDate, chinaWeekRange, parseProductionPlanOrderInput, resolveOrCreatePlanningProduct } from './production-planning';
 import { fixtureSignaturesValid } from './quality-fixture-domain';
 import { assertPackageFiles } from './quality-fixture-service';
+import { matchPoolDrawing, PoolDrawingError } from './order-pool-drawings';
+import { DrawingLibraryResolutionError } from './drawing-library-resolution';
 
 const include = Prisma.validator<Prisma.ProductionPlanOrderInclude>()({
   batches: { where: { deletedAt: null }, select: { id: true, quantity: true, poolPreparedQuantity: true, scheduleState: true, weekStartDate: true } },
@@ -93,8 +95,13 @@ export async function previewPoolRows(rows: PoolInputRow[], fingerprint: string)
       if (existing?.deletedAt || existing && ['cancelled','completed'].includes(existing.status)) throw new PoolError('该订单已取消、删除或完成，请核对订单号');
       if (existing && (existing.customerName !== row.customerName || existing.specification !== row.specification)) throw new PoolError('同一订单行的客户或规格不一致，请核对，不能覆盖为其他产品');
       const same = existing && existing.orderQuantity === row.orderQuantity && existing.planningUnitMilliseconds === row.planningUnitMilliseconds && existing.customerDueDateConfirmed === row.customerDueDateConfirmed && (!row.customerDueDateConfirmed || chinaDate(existing.customerDueDate) === chinaDate(row.customerDueDate)) && (existing.preparationQuantity ?? existing.orderQuantity) === row.preparationQuantity && (existing.preparationDueAt?.getTime() || 0) === (row.preparationDueAt?.getTime() || 0);
-      return { line:index+2, input, action:existing ? same ? 'skip' : 'update' : 'create', id:existing?.id || '', version:existing ? revision(existing) : '', error:'' };
-    } catch(e) { return { line:index+2, input, action:'error', id:'', version:'', error:e instanceof Error ? e.message : '行数据不正确' }; }
+      const drawing = await matchPoolDrawing({ ...row, drawingLibraryItemId: existing ? existing.drawingLibraryItemId : row.drawingLibraryItemId });
+      return { line:index+2, input:{ ...input, drawingLibraryItemId:existing?.drawingLibraryItemId || drawing.matchedItemId || '' }, drawing, drawingLocked:!!existing,
+        action:existing ? same ? 'skip' : 'update' : 'create', id:existing?.id || '', version:existing ? revision(existing) : '', error:'' };
+    } catch(e) {
+      if (!(e instanceof PoolError)) throw e;
+      return { line:index+2, input, action:'error', id:'', version:'', error:e.message };
+    }
   }));
 }
 export async function poolCommand(input: { [key: string]: unknown }, actorId: string) {
@@ -119,6 +126,7 @@ export async function poolCommand(input: { [key: string]: unknown }, actorId: st
           if (existing.deletedAt || ['cancelled','completed'].includes(existing.status)) throw new PoolError(`第 ${i+2} 行订单已结束，请重新预览`,409);
           if (existing.customerName !== parsed.customerName || existing.specification !== parsed.specification) throw new PoolError('订单身份冲突，请重新预览',409);
           if (action === 'create') throw new PoolError('订单号与行号已存在',409);
+          if (parsed.drawingLibraryItemId && parsed.drawingLibraryItemId !== existing.drawingLibraryItemId) throw new PoolDrawingError(new DrawingLibraryResolutionError('原订单的图纸资料关联不能通过导入更换，请保留原档案', 'DRAWING_LIBRARY_ORDER_LOCKED', existing.drawingLibraryItemId ? [existing.drawingLibraryItemId] : []), i+2);
           if (entry.action === 'skip' || input.updateExisting !== true) { skipped++; ids.push(existing.id); continue; }
           if (entry.version !== revision(existing)) throw new PoolError('订单已更新，请重新预览导入文件',409);
           const batches = await tx.productionPlanBatch.aggregate({ where: { planOrderId:existing.id, deletedAt:null }, _sum:{quantity:true} });
@@ -129,7 +137,10 @@ export async function poolCommand(input: { [key: string]: unknown }, actorId: st
           await tx.productionPlanOrder.update({ where:{id:existing.id}, data:{orderQuantity:parsed.orderQuantity, preparationQuantity:parsed.preparationQuantity, preparationDueAt:parsed.preparationDueAt, planningUnitMilliseconds:parsed.planningUnitMilliseconds, customerDueDate:parsed.customerDueDate, customerDueDateConfirmed:parsed.customerDueDateConfirmed, updatedById:actorId, preparationVersion:{increment:1}} });
           await ensurePoolPreparation(tx,existing.id,actorId); await resetPoolTargetStatus(tx,existing.id,actorId); ids.push(existing.id); updated++;
         } else {
-          const product = await resolveOrCreatePlanningProduct(tx,parsed,{createIfMissing:true,restoreIfDeleted:false});
+          const product = await resolveOrCreatePlanningProduct(tx,parsed,{createIfMissing:true,restoreIfDeleted:false}).catch(error => {
+            if (error instanceof DrawingLibraryResolutionError) throw new PoolDrawingError(error, action === 'import' ? i+2 : undefined);
+            throw error;
+          });
           if (product.status !== 'resolved' || !product.references.drawingLibraryItemId) throw new PoolError(`第 ${i+2} 行产品档案无法关联，请核对同名档案或回收站`,409);
           const order = await tx.productionPlanOrder.create({ data:{...parsed,drawingLibraryItemId:product.references.drawingLibraryItemId, createdById:actorId, updatedById:actorId} });
           await ensurePoolPreparation(tx,order.id,actorId); ids.push(order.id); created++;
