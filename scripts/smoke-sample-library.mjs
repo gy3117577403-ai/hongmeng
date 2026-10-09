@@ -99,7 +99,8 @@ try {
  const oldCaptureCookie=cookie;cookie=adminCookie;
  const latestCapture=(await req('refresh capture account','/api/users')).users.find(u=>u.id===captureAccount.id);
  const granted=(await req('independent capture grant preserves business modules','/api/users/module-access',{id:latestCapture.id,displayName:latestCapture.displayName,accountStatus:'ACTIVE',sampleCaptureEnabled:true,preserveBusinessGrants:true,expectedUpdatedAt:latestCapture.updatedAt})).user;
- check(granted.accessMethods.sampleCapture&&granted.moduleAccess.permissions.production==='READ','capture grant never promotes production READ');
+ assert.deepEqual(granted.moduleAccess.permissions,captureAccount.moduleAccess.permissions);
+ check(granted.accessMethods.sampleCapture&&granted.moduleAccess.permissions['sample-planning']==='READ'&&granted.moduleAccess.permissions.planning==='READ','capture grant preserves every submodule and never promotes planning READ');
  cookie=oldCaptureCookie;await req('old capture session expires after permission change','/api/sample-tasks/code/'+current.qrCode,undefined,401);
  await login(captureAccount.username,password);
  const captureProduct=await product('CAPTURE-QA-001',tag+' · 采集验收客户');

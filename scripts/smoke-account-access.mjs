@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url); require('tsx/cjs');
+const { expandModulePermissions } = require('../lib/module-permissions.ts');
 assert.equal(process.env.ACCOUNT_ACCESS_QA_ALLOW, 'disposable-account-access');
 const base = process.env.ACCOUNT_ACCESS_QA_BASE || 'http://127.0.0.1:3000';
 assert.ok(['localhost', '127.0.0.1'].includes(new URL(base).hostname), 'Loopback only');
@@ -34,7 +37,7 @@ const createEmployee = async label => (await req('create isolated employee ' + l
 const createAccount = async (label, modulePermissions) => {
   const employee = await createEmployee(label);
   const result = await req('save new module account ' + label, '/api/users/module-access', { employeeId: employee.id, username: employee.employeeNo, displayName: employee.name, password: initial, accountStatus: 'ACTIVE', modulePermissions, workbenchEnabled: true, fieldReportEnabled: false });
-  assert.deepEqual(result.user.moduleAccess.permissions, modulePermissions);
+  assert.deepEqual(result.user.moduleAccess.permissions, expandModulePermissions(modulePermissions));
   return { ...result.user, employee };
 };
 const reader = await createAccount('只读验收', allRead);
@@ -55,7 +58,7 @@ for (const account of [reader, mixed, hr]) {
   assert.equal(me.access.capabilities.some(cap => cap.startsWith('ACCOUNT_ADMIN:')), false);
 }
 cookie = reader.cookie;
-for (const url of ['/api/sample-tasks?view=ALL&summary=true', '/api/quality-fixtures?summary=1', '/api/material-follow-ups', '/api/drawing-library', '/api/employees', '/api/other-work-times?scope=manage', '/api/reports/overview', '/api/knowledge/search']) await req('read selected module ' + url, url);
+for (const url of ['/api/sample-tasks?view=ALL&summary=true', '/api/quality-fixtures?summary=1', '/api/material-follow-ups', '/api/drawing-library', '/api/employees', '/api/other-work-times?scope=manage', '/api/reports/overview?reportBranch=process-bottlenecks&mode=mass', '/api/knowledge/search']) await req('read selected module ' + url, url);
 for (const [url, method] of [['/api/sample-tasks', 'POST'], ['/api/quality-fixtures', 'POST'], ['/api/material-follow-ups/missing', 'PATCH'], ['/api/drawing-library/missing/files/upload', 'POST'], ['/api/employees', 'POST'], ['/api/changes', 'POST'], ['/api/knowledge/articles', 'POST'], ['/api/users/module-access', 'POST']]) await req('read-only direct mutation blocked ' + url, url, {}, 403, method);
 cookie = mixed.cookie;
 await req('mixed account can read technology', '/api/knowledge/search');
@@ -71,7 +74,7 @@ const freshReader = (await req('reload account version after logins', '/api/user
 const changed = (await req('atomic read-only permission update', '/api/users/module-access', saveBody(freshReader, { materials: 'READ' }))).user;
 await req('stale editor is rejected without overwriting', '/api/users/module-access', saveBody(freshReader, { people: 'COLLABORATE' }), 409);
 const confirmed = (await req('verify stale save changed nothing', '/api/users')).users.find(user => user.id === reader.id);
-assert.deepEqual(confirmed.moduleAccess.permissions, { materials: 'READ' });
+assert.deepEqual(confirmed.moduleAccess.permissions, expandModulePermissions({ materials: 'READ' }));
 cookie = reader.cookie;
 const expiredSession = await req('permission update invalidates previous session', '/api/me', undefined, 401);
 assert.equal(expiredSession.code, 'SESSION_EXPIRED');
@@ -106,7 +109,7 @@ const delegatedList=await req('delegated manager sees manageable employees','/ap
 assert.equal(delegatedList.canManagePermissions,true);
 assert.ok(!delegatedList.users.some(u=>[admin.id,delegate.id,secondManager.id].includes(u.id)));
 const delegatedChange=(await req('HR grants multiple business modules and mobile access atomically','/api/users/module-access',{...saveBody(ordinary,{technology:'COLLABORATE',quality:'READ'}),sampleLibraryEnabled:true})).user;
-assert.deepEqual(delegatedChange.moduleAccess.permissions,{technology:'COLLABORATE',quality:'READ'});
+assert.deepEqual(delegatedChange.moduleAccess.permissions,expandModulePermissions({technology:'COLLABORATE',quality:'READ'}));
 assert.equal(delegatedChange.accessMethods.sampleLibrary,true);
 await req('HR stale save cannot overwrite','/api/users/module-access',{...saveBody(ordinary,{people:'COLLABORATE'})},409);
 for(const protectedUser of [admin,delegate,secondManager]){
@@ -130,7 +133,7 @@ const grantIds=legacyNow.accessGrants.filter(g=>g.isActive).map(g=>g.id).sort();
 const legacySaved=(await req('legacy account settings preserve grants in single transaction','/api/users/module-access',{id:preserveLegacy.id,displayName:preserveLegacy.displayName,accountStatus:'ACTIVE',preserveBusinessGrants:true,sampleLibraryEnabled:true,password:password,expectedUpdatedAt:legacyNow.updatedAt})).user;
 assert.deepEqual(legacySaved.accessGrants.filter(g=>g.isActive&&g.profileKey!=='SAMPLE_LIBRARY_READER').map(g=>g.id).sort(),grantIds);
 const {PrismaClient}=await import('@prisma/client');const auditDb=new PrismaClient();
-try { const log=await auditDb.operationLog.findFirst({where:{userId:delegate.id,targetId:ordinary.id,action:'ACCOUNT_MODULE_ACCESS_UPDATED'},orderBy:{createdAt:'desc'}});assert.equal(log.detail.delegated,true);assert.deepEqual(log.detail.after.permissions,{technology:'COLLABORATE',quality:'READ'});checks.push({label:'authorization audit contains actor and saved permissions'}); } finally {await auditDb.$disconnect();}
+try { const log=await auditDb.operationLog.findFirst({where:{userId:delegate.id,targetId:ordinary.id,action:'ACCOUNT_MODULE_ACCESS_UPDATED'},orderBy:{createdAt:'desc'}});assert.equal(log.detail.delegated,true);assert.deepEqual(log.detail.after.permissions,expandModulePermissions({technology:'COLLABORATE',quality:'READ'}));checks.push({label:'authorization audit contains actor and saved permissions'}); } finally {await auditDb.$disconnect();}
 cookie=adminCookie;
 const delegateNow=(await req('admin load delegate version','/api/users')).users.find(u=>u.id===delegate.id);
 const disabledDelegate=(await req('administrator revokes delegated management','/api/users/module-access',{...saveBody(delegateNow,{people:'COLLABORATE'}),employeeAccountManager:false})).user;
