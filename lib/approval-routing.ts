@@ -25,6 +25,11 @@ export async function routeBusinessRecipients(tx: Prisma.TransactionClient, inpu
   const required = /PROCESS_ROUTE_CHANGE_/.test(input.eventType || '') ? 'workflows' : /other_work_/i.test(input.eventType || '') ? 'other-hours-approval' : /PROCESS_(?:REPORT|COMPLETION)/.test(input.eventType || '') ? 'reporting-recovery' : 'major-approval';
   const targets = new Set(activeTargets.filter(row => row.accessGrants.some(grant => grant.profile === 'MODULE_ACCESS' && grant.scopeKey === 'MODULES:ON') && row.accessGrants.some(grant => grant.profile === 'MODULE_ACCESS' && grant.scopeKey === `MODULE:${required}:COLLABORATE`)).map(row => row.id));
   const independentFrom = new Set([input.actorId].filter(Boolean));
+  const independentEmployees = new Set<string>();
+  if (/^other_work_(?:submit|policy_change|correction)$/i.test(input.eventType || '') && input.sourceId) {
+    const request = await tx.otherWorkTimeRequest.findUnique({ where: { id: input.sourceId }, select: { employeeId: true, createdById: true } });
+    if (request) { independentFrom.add(request.createdById); independentEmployees.add(request.employeeId); }
+  }
   if (input.eventType === 'MAJOR_QUALITY_FINAL_APPROVAL_REQUESTED' && input.sourceId) {
     const approval = await tx.issueMajorApproval.findUnique({ where: { id: input.sourceId }, select: { submittedById: true, qualityReviewedById: true } });
     if (approval?.submittedById) independentFrom.add(approval.submittedById);
@@ -37,7 +42,7 @@ export async function routeBusinessRecipients(tx: Prisma.TransactionClient, inpu
   const result = new Set(ids);
   for (const policy of policies) {
     if (excludedAdminNotice(input)) result.delete(policy.fromUserId);
-    else if (supportedHandoffApproval(input) && targets.has(policy.toUserId) && !independentFrom.has(policy.toUserId)) {
+    else if (supportedHandoffApproval(input) && targets.has(policy.toUserId) && !independentFrom.has(policy.toUserId) && !independentEmployees.has(activeTargets.find(target => target.id === policy.toUserId)?.employeeId || '')) {
       result.delete(policy.fromUserId);
       result.add(policy.toUserId);
     }

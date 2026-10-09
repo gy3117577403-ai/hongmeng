@@ -35,7 +35,9 @@ async function prepare(tx: Prisma.TransactionClient, fromUserId: string, toUserI
   const independent = await tx.issueMajorApproval.findMany({ where: { id: { in: majorIds }, OR: [{ submittedById: target.id }, { qualityReviewedById: target.id }] }, select: { id: true } });
   const routeIds = approvals.filter(row => /^PROCESS_ROUTE_CHANGE_(?:SUBMITTED|REEVALUATED)$/.test(row.notification.eventType)).map(row => row.notification.sourceId).filter((id): id is string => Boolean(id));
   const ownChanges = await tx.processRouteChange.findMany({ where: { id: { in: routeIds }, createdById: target.id }, select: { id: true } });
-  const selfIds = new Set([...independent, ...ownChanges].map(row => row.id));
+  const otherIds = approvals.filter(row => /^other_work_(?:submit|policy_change|correction)$/i.test(row.notification.eventType)).map(row => row.notification.sourceId).filter((id): id is string => Boolean(id));
+  const ownWork = await tx.otherWorkTimeRequest.findMany({ where: { id: { in: otherIds }, OR: [{ createdById: target.id }, { employeeId: target.employee!.id }] }, select: { id: true } });
+  const selfIds = new Set([...independent, ...ownChanges, ...ownWork].map(row => row.id));
   const isSelf = (row: typeof approvals[number]) => row.notification.actorId === target.id || Boolean(row.notification.sourceId && selfIds.has(row.notification.sourceId));
   const self = approvals.filter(isSelf);
   const transfer = approvals.filter(row => !isSelf(row) && supportedHandoffApproval(row.notification));

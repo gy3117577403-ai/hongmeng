@@ -15,13 +15,16 @@ test('handoff changes pending and future approvals, not original business review
  const people=await Promise.all(['delegate','submitter'].map(n=>prisma.employee.create({data:{employeeNo:key+n,name:key+n,department:'生产部'}})));
  const [admin,target,reporter,business]=await Promise.all(['admin','delegate','submitter','business'].map((n,i)=>prisma.user.create({data:{username:key+n,displayName:n,passwordHash:'not-a-login',laborRole:i===0?'ADMIN':'EMPLOYEE',employeeId:i===1?people[0].id:i===2?people[1].id:undefined}})));
  await prisma.userAccessGrant.createMany({data:[{userId:target.id,profile:'MODULE_ACCESS',grantType:'PRIMARY',scopeKey:'MODULES:ON'},{userId:target.id,profile:'MODULE_ACCESS',grantType:'CONCURRENT',scopeKey:'MODULE:planning:READ'}]});
- let otherId='';
+ let otherId='', ownId='';
  try{
  const category=await prisma.otherWorkTimeCategory.upsert({where:{id:'other-sample'},update:{},create:{id:'other-sample',name:'样品协助',code:'sample',sortOrder:0}});
  const request=await prisma.otherWorkTimeRequest.create({data:{employeeId:people[1].id,createdById:reporter.id,employeeNameSnapshot:people[1].name,employeeNoSnapshot:people[1].employeeNo,attainmentEligibleSnapshot:true,attainmentStreamSnapshot:'batch',workDate:new Date(),categoryId:category.id,categoryNameSnapshot:category.name,requestedMinutes:15,description:key,status:'PENDING',idempotencyKey:key,requestHash:key}});otherId=request.id;
  const approval=await createSystemNotification(prisma,{eventType:'other_work_submit',dedupeKey:key+'approve',category:'APPROVAL',title:key+'审批',sourceType:'other_work_time',sourceId:request.id,actorId:reporter.id,recipientUserIds:[admin.id],targetRoute:'/workspace/other-hours/approvals?id='+request.id});
  const excluded=await createSystemNotification(prisma,{eventType:'QUALITY_REVIEW_REWORK',dedupeKey:key+'drawing',category:'TODO',title:key+'资料',sourceType:'QUALITY_REVIEW_REWORK',actorId:reporter.id,recipientUserIds:[admin.id,business.id]});
+ const own=await prisma.otherWorkTimeRequest.create({data:{...request,id:undefined,employeeId:people[0].id,employeeNameSnapshot:people[0].name,employeeNoSnapshot:people[0].employeeNo,createdById:admin.id,idempotencyKey:key+'own',requestHash:key+'own'}});ownId=own.id;
+ const ownNotice=await createSystemNotification(prisma,{eventType:'other_work_policy_change',dedupeKey:key+'own',category:'APPROVAL',title:key+'代报',sourceType:'other_work_time',sourceId:own.id,actorId:admin.id,recipientUserIds:[admin.id]});
  const preview=await previewBusinessApprovalHandoff(admin.id,target.id);assert.equal(preview.transferCount,1);assert.equal(preview.mutedCount,1);assert.equal(preview.blockers.length,0);
+ assert.equal(preview.selfApprovalFallbackCount,1,'proxy submission is identified by the actual employee, not the notification actor');
  await assert.rejects(applyBusinessApprovalHandoff(admin.id,admin.id,target.id,'stale'),/变化/);
  assert.equal(await prisma.businessApprovalHandoff.count({where:{fromUserId:admin.id}}),0);
  const hash=await bcrypt.hash('qa-only-Handoff-264!',4);
@@ -32,6 +35,9 @@ test('handoff changes pending and future approvals, not original business review
  assert.equal(await prisma.systemNotificationRecipient.count({where:{notificationId:approval!.notificationId,userId:target.id}}),1);
  assert.equal(await prisma.systemNotificationRecipient.count({where:{notificationId:excluded!.notificationId,userId:business.id,routedAwayAt:null}}),1);
  assert.equal(await prisma.systemNotificationRecipient.count({where:{notificationId:excluded!.notificationId,userId:target.id}}),0);
+ assert.equal(await prisma.systemNotificationRecipient.count({where:{notificationId:ownNotice!.notificationId,userId:admin.id,routedAwayAt:null}}),1);
+ assert.equal(await prisma.systemNotificationRecipient.count({where:{notificationId:ownNotice!.notificationId,userId:target.id}}),0);
+ assert.deepEqual(await routeBusinessRecipients(prisma,{eventType:'other_work_policy_change',sourceId:own.id,actorId:admin.id},[admin.id]),[admin.id]);
  assert.deepEqual(await routeBusinessRecipients(prisma,{eventType:'other_work_submit',actorId:reporter.id},[admin.id,target.id]),[target.id]);
  assert.deepEqual(await routeBusinessRecipients(prisma,{eventType:'other_work_submit',actorId:target.id},[admin.id]),[admin.id]);
  const actor={...target,access,dailyPlanningTeamIds:[]} as any;
@@ -45,7 +51,7 @@ test('handoff changes pending and future approvals, not original business review
  } finally {
  await prisma.businessApprovalHandoff.deleteMany({where:{fromUserId:admin.id}});
  await prisma.systemNotification.deleteMany({where:{OR:[{dedupeKey:{startsWith:key}},{sourceType:'other_work_time',sourceId:otherId}]}});
- await prisma.otherWorkTimeReview.deleteMany({where:{requestId:otherId}});await prisma.otherWorkTimeRequest.deleteMany({where:{id:otherId}});
+ await prisma.otherWorkTimeReview.deleteMany({where:{requestId:{in:[otherId,ownId]}}});await prisma.otherWorkTimeRequest.deleteMany({where:{id:{in:[otherId,ownId]}}});
  await prisma.operationLog.deleteMany({where:{userId:{in:[admin.id,target.id,reporter.id,business.id]}}});
  await prisma.userAccessGrant.deleteMany({where:{userId:target.id}});await prisma.user.deleteMany({where:{id:{in:[admin.id,target.id,reporter.id,business.id]}}});await prisma.employee.deleteMany({where:{id:{in:people.map(p=>p.id)}}});await prisma.$disconnect();
  }
