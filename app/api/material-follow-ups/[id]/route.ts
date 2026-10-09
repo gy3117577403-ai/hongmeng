@@ -1,3 +1,5 @@
+
+import { moduleReadOnly as isModuleReadOnly } from '@/lib/module-permissions';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError, forbidden } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -18,7 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const user = await requireUser();
     const body = await req.json();
-    if (user.access.modulePermissions?.materials === 'READ') return forbidden();
+    if (isModuleReadOnly(user.access, 'material-follow-up')) return forbidden();
     // Anyone signed in may append a traceable progress note. Changes to the
     // material source, owner, ETA, arrival quantity or workflow state still
     // require procurement access and are validated by the service layer.

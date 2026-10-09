@@ -1,11 +1,12 @@
 import { hasCapability, resolveAccessContext, type AccessGrant } from '@/lib/department-access';
 import type { CurrentUserDTO } from '@/types';
+import { moduleAllows } from '@/lib/module-permissions';
 export type OtherWorkActor = Pick<CurrentUserDTO, 'id' | 'displayName' | 'username' | 'employeeId' | 'laborRole' | 'access' | 'dailyPlanningTeamIds'>;
 export type OtherWorkRecordScope = { createdById: string; employeeId: string; teamIdSnapshot: string | null; teamSnapshot: string | null };
 
 export function otherWorkScope(actor: Pick<OtherWorkActor, 'laborRole' | 'access'>) {
   if (actor.laborRole === 'ADMIN') return { manage: true, global: true, teams: [] as string[] };
-  if (actor.access.modulePermissions != null) return { manage: actor.access.modulePermissions.collaboration === 'COLLABORATE', global: Boolean(actor.access.modulePermissions.people || actor.access.modulePermissions.collaboration), teams: [] as string[] };
+  if (actor.access.modulePermissions != null) return { manage: moduleAllows(actor.access, ['other-hours-approval'], true) === true, global: moduleAllows(actor.access, ['other-hours', 'other-hours-approval']) === true, teams: [] as string[] };
   // Resolve only review profiles: a concurrent global read grant must not widen a team writer.
   const access = resolveAccessContext((actor.access.effectiveGrants || []).filter(g =>
     g.profile === 'WORKSHOP_SUPERVISOR' || g.profile === 'WORKSHOP_TEAM_LEADER').map(g => ({
@@ -23,6 +24,6 @@ export function canReviewOtherWork(actor: OtherWorkActor, row: OtherWorkRecordSc
     && (scope.global || scope.teams.some(key => [row.teamIdSnapshot, row.teamSnapshot].some(v => v?.toLowerCase() === key.toLowerCase())));
 }
 export function canReadOtherWork(actor: OtherWorkActor, row: OtherWorkRecordScope) {
-  if (actor.access.modulePermissions != null) return Boolean(actor.access.modulePermissions.people || actor.access.modulePermissions.collaboration);
+  if (actor.access.modulePermissions != null) return moduleAllows(actor.access, ['other-hours', 'other-hours-approval']) === true;
   return row.createdById === actor.id || row.employeeId === actor.employeeId || canReviewOtherWork(actor, row) || actor.laborRole === 'ADMIN';
 }

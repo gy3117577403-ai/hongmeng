@@ -1,5 +1,7 @@
 'use client';
 
+import { moduleReadOnly as isModuleReadOnly } from '@/lib/module-permissions';
+
 import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
@@ -29,7 +31,7 @@ function defaultDraft(row: FgRow): Draft { return { quantity: String(row.quantit
 function parseResponse(response: Response): Promise<{ ok: boolean; error?: string; code?: string; data?: unknown }> { return response.json(); }
 
 export default function FinishedGoodsWorkbench({ user, initialData, initialQuery, initialSampleTaskId = '' }: { user: CurrentUserDTO; initialData: FgWorkbench; initialQuery: string; initialSampleTaskId?: string }) {
-  const moduleReadOnly = user.access.modulePermissions?.materials === 'READ';
+  const moduleReadOnly = isModuleReadOnly(user.access, 'finished-goods');
   const [data, setData] = useState(initialData); const [view, setView] = useState('queue'); const [filter, setFilter] = useState(initialSampleTaskId ? 'all' : 'processing');
   const [query, setQuery] = useState(initialQuery); const [search, setSearch] = useState(initialQuery); const [date, setDate] = useState(initialData.date);
   const [batchId, setBatchId] = useState(''); const [workingBatchId, setWorkingBatchId] = useState(''); const [scope, setScope] = useState(initialSampleTaskId ? 'all' : 'day'); const [dateTo, setDateTo] = useState('');

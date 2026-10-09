@@ -1,0 +1,52 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import bcrypt from 'bcryptjs';
+import { prisma } from '../lib/prisma';
+import { previewBusinessApprovalHandoff, applyBusinessApprovalHandoff } from '../lib/business-approval-handoff';
+import { createSystemNotification, loadNotificationInbox } from '../lib/system-notifications';
+import { routeBusinessRecipients } from '../lib/approval-routing';
+import { resolveAccessContext } from '../lib/department-access';
+import { commandOtherWork, serializeOtherWork } from '../lib/other-work-time-service';
+const enabled=process.env.RUN_DB_INTEGRATION==='1';
+test('handoff changes pending and future approvals, not original business reviewers; permission and password changes are atomic', {skip:!enabled},async()=>{
+ const url=new URL(process.env.DATABASE_URL!);assert.ok(['localhost','127.0.0.1'].includes(url.hostname));assert.ok(url.pathname==='/access264'||url.pathname==='/hongmeng_ci');
+ const key='HANDOFF-'+randomUUID();
+ const people=await Promise.all(['delegate','submitter'].map(n=>prisma.employee.create({data:{employeeNo:key+n,name:key+n,department:'生产部'}})));
+ const [admin,target,reporter,business]=await Promise.all(['admin','delegate','submitter','business'].map((n,i)=>prisma.user.create({data:{username:key+n,displayName:n,passwordHash:'not-a-login',laborRole:i===0?'ADMIN':'EMPLOYEE',employeeId:i===1?people[0].id:i===2?people[1].id:undefined}})));
+ await prisma.userAccessGrant.createMany({data:[{userId:target.id,profile:'MODULE_ACCESS',grantType:'PRIMARY',scopeKey:'MODULES:ON'},{userId:target.id,profile:'MODULE_ACCESS',grantType:'CONCURRENT',scopeKey:'MODULE:planning:READ'}]});
+ let otherId='';
+ try{
+ const category=await prisma.otherWorkTimeCategory.upsert({where:{id:'other-sample'},update:{},create:{id:'other-sample',name:'样品协助',code:'sample',sortOrder:0}});
+ const request=await prisma.otherWorkTimeRequest.create({data:{employeeId:people[1].id,createdById:reporter.id,employeeNameSnapshot:people[1].name,employeeNoSnapshot:people[1].employeeNo,attainmentEligibleSnapshot:true,attainmentStreamSnapshot:'batch',workDate:new Date(),categoryId:category.id,categoryNameSnapshot:category.name,requestedMinutes:15,description:key,status:'PENDING',idempotencyKey:key,requestHash:key}});otherId=request.id;
+ const approval=await createSystemNotification(prisma,{eventType:'other_work_submit',dedupeKey:key+'approve',category:'APPROVAL',title:key+'审批',sourceType:'other_work_time',sourceId:request.id,actorId:reporter.id,recipientUserIds:[admin.id],targetRoute:'/workspace/other-hours/approvals?id='+request.id});
+ const excluded=await createSystemNotification(prisma,{eventType:'QUALITY_REVIEW_REWORK',dedupeKey:key+'drawing',category:'TODO',title:key+'资料',sourceType:'QUALITY_REVIEW_REWORK',actorId:reporter.id,recipientUserIds:[admin.id,business.id]});
+ const preview=await previewBusinessApprovalHandoff(admin.id,target.id);assert.equal(preview.transferCount,1);assert.equal(preview.mutedCount,1);assert.equal(preview.blockers.length,0);
+ await assert.rejects(applyBusinessApprovalHandoff(admin.id,admin.id,target.id,'stale'),/变化/);
+ assert.equal(await prisma.businessApprovalHandoff.count({where:{fromUserId:admin.id}}),0);
+ const hash=await bcrypt.hash('qa-only-Handoff-264!',4);
+ await applyBusinessApprovalHandoff(admin.id,admin.id,target.id,preview.fingerprint,hash);
+ const updated=await prisma.user.findUniqueOrThrow({where:{id:admin.id}});assert.ok(await bcrypt.compare('qa-only-Handoff-264!',updated.passwordHash));assert.equal(updated.sessionVersion,1);
+ const targetGrants=await prisma.userAccessGrant.findMany({where:{userId:target.id,isActive:true}});
+ const access=resolveAccessContext(targetGrants);assert.ok(access.capabilities.includes('MAJOR_APPROVAL:APPROVE'));assert.ok(!access.capabilities.includes('ACCOUNT_ADMIN:MANAGE'));assert.equal(access.modulePermissions?.planning,'READ');
+ assert.equal(await prisma.systemNotificationRecipient.count({where:{notificationId:approval!.notificationId,userId:target.id}}),1);
+ assert.equal(await prisma.systemNotificationRecipient.count({where:{notificationId:excluded!.notificationId,userId:business.id,routedAwayAt:null}}),1);
+ assert.equal(await prisma.systemNotificationRecipient.count({where:{notificationId:excluded!.notificationId,userId:target.id}}),0);
+ assert.deepEqual(await routeBusinessRecipients(prisma,{eventType:'other_work_submit',actorId:reporter.id},[admin.id,target.id]),[target.id]);
+ assert.deepEqual(await routeBusinessRecipients(prisma,{eventType:'other_work_submit',actorId:target.id},[admin.id]),[admin.id]);
+ const actor={...target,access,dailyPlanningTeamIds:[]} as any;
+ const approved=await commandOtherWork(actor,request.id,{action:'APPROVE',version:0});assert.equal(approved.status,'APPROVED');
+ await prisma.otherWorkTimeRequest.update({where:{id:request.id},data:{correctionRequestedAt:new Date(),correctionReason:'更正'}});
+ const current=await prisma.otherWorkTimeRequest.findUniqueOrThrow({where:{id:request.id}});
+ const corrected=await commandOtherWork(actor,request.id,{action:'VOID',version:current.version,reason:'已核对更正申请'});assert.equal(corrected.status,'VOIDED');
+ await prisma.userAccessGrant.updateMany({where:{userId:target.id,scopeKey:'MODULE:other-hours-approval:COLLABORATE'},data:{isActive:false}});
+ assert.deepEqual(await routeBusinessRecipients(prisma,{eventType:'other_work_submit',actorId:reporter.id},[admin.id]),[admin.id]);
+ await assert.rejects(applyBusinessApprovalHandoff(admin.id,admin.id,target.id,preview.fingerprint),/变化/);
+ } finally {
+ await prisma.businessApprovalHandoff.deleteMany({where:{fromUserId:admin.id}});
+ await prisma.systemNotification.deleteMany({where:{OR:[{dedupeKey:{startsWith:key}},{sourceType:'other_work_time',sourceId:otherId}]}});
+ await prisma.otherWorkTimeReview.deleteMany({where:{requestId:otherId}});await prisma.otherWorkTimeRequest.deleteMany({where:{id:otherId}});
+ await prisma.operationLog.deleteMany({where:{userId:{in:[admin.id,target.id,reporter.id,business.id]}}});
+ await prisma.userAccessGrant.deleteMany({where:{userId:target.id}});await prisma.user.deleteMany({where:{id:{in:[admin.id,target.id,reporter.id,business.id]}}});await prisma.employee.deleteMany({where:{id:{in:people.map(p=>p.id)}}});await prisma.$disconnect();
+ }
+});

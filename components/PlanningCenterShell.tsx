@@ -1,4 +1,6 @@
 'use client';
+
+import { moduleAllows, moduleReadOnly as isModuleReadOnly } from '@/lib/module-permissions';
 import PlanningImportReview, { importRowPending } from '@/components/planning/PlanningImportReview';
 import FixtureRequirementControl from '@/components/quality-fixtures/FixtureRequirementControl';
 import { QualityFixtureStatus, type QualityFixtureBadge } from '@/components/quality-fixtures/QualityFixtureStatus';
@@ -680,7 +682,7 @@ export default function PlanningCenterShell({
   user: CurrentUserDTO;
   modeDrawerInitiallyOpen?: boolean;
 }) {
-  const moduleReadOnly = user.access.modulePermissions?.production === 'READ';
+  const moduleReadOnly = isModuleReadOnly(user.access, 'planning');
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [materialOrderId, setMaterialOrderId] = useState<string | null>(null);
@@ -971,7 +973,8 @@ export default function PlanningCenterShell({
       if (stored) {
         try {
           const state = JSON.parse(stored) as PlanningReturnState;
-          setView(search.get('view') === 'pool' ? 'orders' : state.view);
+          const requestedView = search.get('view') === 'pool' ? 'orders' : state.view;
+          setView(requestedView === 'orders' && moduleAllows(user.access, ['order-pool']) === false ? 'schedule' : requestedView);
           setKeyword(state.keyword);
           setCustomer(state.customer);
           setPriority(state.priority);
@@ -995,7 +998,7 @@ export default function PlanningCenterShell({
         }
       }
     }
-    if (search.get('view') === 'pool') setView('orders');
+    if (search.get('view') === 'pool' && moduleAllows(user.access, ['order-pool']) !== false) setView('orders');
     const requestedWeekStartDate = String(search.get('week') || '').trim();
     requestedWeekStartRef.current = requestedWeekStartDate;
     if (/^\d{4}-\d{2}-\d{2}$/.test(requestedWeekStartDate)) {
@@ -2303,7 +2306,7 @@ export default function PlanningCenterShell({
           <div className="planning-navigation-trigger" id="planning-navigation-trigger" aria-label="平台导航入口" />
           <div className="planning-title-copy"><div className="planning-heading-line"><h1>计划中心</h1><ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={toggleModeDrawer} controls="planning-mode-drawer" compact /></div></div>
           <nav aria-label="计划中心视图">
-            {views.map(item => {
+            {views.filter(item => item.id !== 'orders' || moduleAllows(user.access, ['order-pool']) !== false).map(item => {
               const Icon = item.icon;
               return <button className={view === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => selectView(item.id)}><Icon size={16} aria-hidden="true" /><span>{item.label}</span>{item.count !== undefined && <b>{item.count}</b>}</button>;
             })}
@@ -2404,7 +2407,7 @@ export default function PlanningCenterShell({
           </div>
           <div className="planning-toolbar-actions">
             {view === 'schedule' && <>
-              <button ref={orderPoolTriggerRef} className="planning-secondary-action pool" type="button" onClick={() => selectView('orders')}><PanelLeftOpen size={15} />订单池 <b>{metadataReady ? globalCounts.orderPool : '—'}</b></button>
+              <button hidden={moduleAllows(user.access, ['order-pool']) === false} ref={orderPoolTriggerRef} className="planning-secondary-action pool" type="button" onClick={() => selectView('orders')}><PanelLeftOpen size={15} />订单池 <b>{metadataReady ? globalCounts.orderPool : '—'}</b></button>
               <details className="planning-transfer-menu" onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary><Upload size={15} />导入/导出<ChevronDown size={13} /></summary><div>
                 <button type="button" disabled={moduleReadOnly || !selectedWeek || loading} onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); openPlanningImport(menu?.querySelector('summary') || event.currentTarget); }}>导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={event => { const menu = event.currentTarget.closest('details'); menu?.removeAttribute('open'); void openWeeklyPlanExport(menu?.querySelector('summary') || event.currentTarget); }}>导出计划 Excel</button>

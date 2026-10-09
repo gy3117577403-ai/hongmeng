@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { validateNewPassword } from '@/lib/password-policy';
-import { moduleConfiguration, parseModulePermissions, MODULE_MARKER_ON, MODULE_MARKER_OFF } from '@/lib/module-permissions';
+import { moduleConfiguration, parseModulePermissions, expandModulePermissions, moduleAllows, MODULE_MARKER_ON, MODULE_MARKER_OFF } from '@/lib/module-permissions';
 import { AccessGrantInputError, adminUserInclude, serializeAdminUser, reconcileFieldReportPinEligibility } from '@/lib/user-access-admin';
 import { canAuthorizeEmployeeAccounts, canManageEmployeeAccountTarget, isGlobalAccountManager, type EmployeeAccountActor } from '@/lib/employee-account-access';
 import { resolveAccessContext, hasCapability, type DepartmentCode } from '@/lib/department-access';
@@ -20,7 +20,7 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
   const preserve = input.preserveBusinessGrants === true;
   if (preserve && !id) throw new AccessGrantInputError('新账号请选择业务模块');
   let permissions;
-  try { permissions = preserve ? {} : parseModulePermissions(input.modulePermissions); } catch (error) { throw new AccessGrantInputError((error as Error).message); }
+  try { permissions = preserve ? {} : expandModulePermissions(parseModulePermissions(input.modulePermissions)); } catch (error) { throw new AccessGrantInputError((error as Error).message); }
   if (!preserve) {
     if (typeof input.workbenchEnabled !== 'boolean' || typeof input.fieldReportEnabled !== 'boolean') throw new AccessGrantInputError('请选择后台与扫码访问方式');
     if (!input.workbenchEnabled && Object.keys(permissions).length) throw new AccessGrantInputError('关闭后台时请清空后台模块');
@@ -50,8 +50,8 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
     if (!workbenchEnabled && !fieldReportEnabled && !sampleLibraryEnabled && !sampleCaptureEnabled) throw new AccessGrantInputError('请至少保留一种访问方式；暂停访问请停用账号');
     if (employeeAccountManager) {
       const legacyAccess = resolveAccessContext(activeGrants.map(grant => ({ ...grant, departmentCode: grant.department?.code as DepartmentCode | null })));
-      const hrCollaborator = preserve ? hasCapability(legacyAccess, 'HR', 'READ') && hasCapability(legacyAccess, 'HR', 'UPDATE') : workbenchEnabled && permissions.people === 'COLLABORATE';
-      if (!hrCollaborator) throw new AccessGrantInputError('请先开通“人事与工时 · 协同”，或关闭员工业务授权管理');
+      const hrCollaborator = preserve ? hasCapability(legacyAccess, 'HR', 'READ') && hasCapability(legacyAccess, 'HR', 'UPDATE') : moduleAllows({ modulePermissions: permissions, workbenchEnabled }, ['employee-accounts'], true);
+      if (!hrCollaborator) throw new AccessGrantInputError('请先开通“员工账号管理 · 协同”，或关闭员工业务授权管理');
     }
     const employeeId = previous?.employeeId || String(input.employeeId || '');
     if (previous && input.employeeId && input.employeeId !== previous.employeeId) throw new AccessGrantInputError('不能通过权限配置更换员工绑定');

@@ -261,8 +261,14 @@ test('manual restore is allowed only for the stage proven current by status and 
     }));
     assert.ok(notification);
     const completed = await setNotificationCompletedState(user.id, notification!.notificationId, true);
-    assert.equal(completed.status, 'updated');
-    if (completed.status === 'updated') assert.equal(completed.completionKind, 'MANUAL');
+    if (['PROCESS_ROUTE_CHANGE_SUBMITTED', 'PROCESS_ROUTE_CHANGE_REEVALUATED'].includes(eventType)) {
+      assert.equal(completed.status, 'source_pending');
+      // Preserve a legacy manually dismissed record to exercise upgrade-time restoration.
+      await prisma.systemNotificationRecipient.update({ where: { notificationId_userId: { notificationId: notification!.notificationId, userId: user.id } }, data: { completedAt: new Date(), completionKind: 'MANUAL' } });
+    } else {
+      assert.equal(completed.status, 'updated');
+      if (completed.status === 'updated') assert.equal(completed.completionKind, 'MANUAL');
+    }
     return notification!.notificationId;
   }
 

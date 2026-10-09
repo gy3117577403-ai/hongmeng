@@ -1,3 +1,4 @@
+import { canReadReportSource } from '@/lib/report-branch-access';
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { employeeAttainmentScope } from '@/lib/employee-attainment-access';
@@ -13,6 +14,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
     const actor = await requireUser();
+    if (!canReadReportSource(actor.access, 'employee-attainment', req.nextUrl.searchParams)) return NextResponse.json({ ok: false, error: '当前账号未开通这项报表' }, { status: 403 });
     const { period, date, start, end } = reportRangeQuery(req.nextUrl.searchParams);
     const requestedEmployeeId = String(req.nextUrl.searchParams.get('employeeId') || '').trim();
     const startDate = parseWorkDate(start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;

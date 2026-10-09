@@ -61,6 +61,10 @@ jobs:
         run: node scripts/check-hr-delegation-migration.mjs
       - name: Verify Prisma migration status
         run: npx prisma migrate status
+      - name: Submodule access and business approval handoff
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/submodule-permissions.test.ts tests/submodule-migration-integration.test.ts tests/business-approval-handoff-integration.test.ts
       - name: Process inspection reporting PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

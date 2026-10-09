@@ -1,5 +1,7 @@
 'use client';
 
+import { moduleReadOnly as isModuleReadOnly } from '@/lib/module-permissions';
+
 import { CircleUserRound, Hand, Loader2, UserRoundPlus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import MaterialActionDialog from './MaterialActionDialog';
@@ -18,7 +20,7 @@ export default function MaterialTaskActions({ task, user, users, busy, error, on
   const [ownerId, setOwnerId] = useState('');
   const [search, setSearch] = useState('');
   const [note, setNote] = useState('');
-  const readOnly = user.access.modulePermissions?.materials === 'READ';
+  const readOnly = isModuleReadOnly(user.access, 'material-follow-up');
   const canAssign = !readOnly && user.access.capabilities.includes('PROCUREMENT:UPDATE');
   const pending = task.status === 'PENDING';
   const ownerName = task.owner?.displayName || task.owner?.username || '';

@@ -1,3 +1,4 @@
+import { canReadReportSource } from '@/lib/report-branch-access';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
@@ -110,7 +111,8 @@ function finalizeLaborRow(row: ReportOperationsLaborRowDTO): ReportOperationsLab
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const actor = await requireUser();
+    if (!canReadReportSource(actor.access, 'operations', req.nextUrl.searchParams)) return NextResponse.json({ ok: false, error: '当前账号未开通这项报表' }, { status: 403 });
     const now = new Date();
     const currentDateKey = todayKey(now);
     const month = parseReportMonth(req.nextUrl.searchParams.get('month'), todayKey(now));

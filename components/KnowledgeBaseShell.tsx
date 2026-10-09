@@ -1,5 +1,7 @@
 'use client';
 
+import { moduleReadOnly as isModuleReadOnly } from '@/lib/module-permissions';
+
 import {
   BookOpen,
   Boxes,
@@ -347,7 +349,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   }
 
   function openCreate(trigger: HTMLElement, sourceItem?: KnowledgeSearchItemDTO | null): void {
-    if (user.access.modulePermissions?.technology === 'READ') return;
+    if (isModuleReadOnly(user.access, 'knowledge')) return;
     formTriggerRef.current = trigger;
     setEditing(null);
     const relation = sourceItem ? relationFromItem(sourceItem) : null;
@@ -364,7 +366,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   }
 
   function openEdit(trigger: HTMLElement, article: KnowledgeArticleDTO): void {
-    if (user.access.modulePermissions?.technology === 'READ') return;
+    if (isModuleReadOnly(user.access, 'knowledge')) return;
     formTriggerRef.current = trigger;
     setEditing(article);
     setForm(articleForm(article));
@@ -513,7 +515,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
           actions={(
             <>
               <button className="icon-only" type="button" aria-label="刷新知识库" title="刷新" onClick={() => { void Promise.all([loadOverview(), loadSearch()]); }}><RefreshCw size={16} /></button>
-              <button className="primary" type="button" disabled={user.access.modulePermissions?.technology === 'READ'} title={user.access.modulePermissions?.technology === 'READ' ? '当前为只读权限' : undefined} onClick={event => openCreate(event.currentTarget)}><Plus size={17} />新增知识</button>
+              <button className="primary" type="button" disabled={isModuleReadOnly(user.access, 'knowledge')} title={isModuleReadOnly(user.access, 'knowledge') ? '当前为只读权限' : undefined} onClick={event => openCreate(event.currentTarget)}><Plus size={17} />新增知识</button>
             </>
           )}
         />
@@ -615,7 +617,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
 
                   {selected.parameter && <section className="hm-knowledge-parameter-card"><h3>连接器参数</h3><div><span>外剥皮</span><strong>{selected.parameter.outerPeelMm || '未设置'}</strong></div><div><span>内剥皮</span><strong>{selected.parameter.innerPeelMm || '未设置'}</strong></div><div><span>入长</span><strong>{selected.parameter.insertionLengthMm || '未设置'}</strong></div>{selected.parameter.remark && <p>{selected.parameter.remark}</p>}</section>}
 
-                  {selected.article && <ArticleDetail readOnly={user.access.modulePermissions?.technology === 'READ'} article={selected.article} onUpload={() => fileInputRef.current?.click()} uploading={uploading} onEdit={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} onDelete={setDeleteArticle} onDeleteAttachment={setDeleteAttachment} />}
+                  {selected.article && <ArticleDetail readOnly={isModuleReadOnly(user.access, 'knowledge')} article={selected.article} onUpload={() => fileInputRef.current?.click()} uploading={uploading} onEdit={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} onDelete={setDeleteArticle} onDeleteAttachment={setDeleteAttachment} />}
 
                   {!selected.article && <section className="hm-knowledge-source-summary"><h3>内容摘要</h3><p>{selected.summary || '该资料暂无摘要，可进入来源模块查看完整内容。'}</p><a className="hm-workbench-button primary" href={selected.sourceHref}><ExternalLink size={16} />进入来源模块</a></section>}
                 </div>

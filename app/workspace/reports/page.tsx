@@ -1,3 +1,5 @@
+import { hasSubmoduleConfiguration } from '@/lib/module-permissions';
+import { firstAllowedReportPath } from '@/lib/report-branch-access';
 import { redirect } from 'next/navigation';
 import { legacyReportRoute } from '@/lib/report-center-navigation';
 import { requirePageAccess } from '@/lib/page-access';
@@ -22,6 +24,6 @@ function appendLegacyFilters(
 
 export default async function ReportsPage({ searchParams = {} }: ReportsPageProps) {
   const user = await requirePageAccess('/workspace/reports');
-  const path = legacyReportRoute(searchParams, user.access.modules);
+  const path = hasSubmoduleConfiguration(user.access) ? firstAllowedReportPath(user.access) : legacyReportRoute(searchParams, user.access.modules);
   redirect(appendLegacyFilters(path, searchParams));
 }

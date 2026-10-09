@@ -1,3 +1,4 @@
+import { canReadReportSource } from '@/lib/report-branch-access';
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -26,12 +27,13 @@ const include = {
 export async function GET(req: NextRequest) {
   try {
     const actor = await requireUser();
+    if (!canReadReportSource(actor.access, 'abnormal-time', req.nextUrl.searchParams)) return NextResponse.json({ ok: false, error: '当前账号未开通这项报表' }, { status: 403 });
     const range = reportRangeQuery(req.nextUrl.searchParams);
     const { period } = range;
     const start = parseWorkDate(range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const end = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     let scopedEmployeeIds: string[] | null = null;
-    const canReadGlobalReport = hasCapability(actor.access, 'BUSINESS', 'READ')
+    const canReadGlobalReport = hasCapability(actor.access, 'REPORT_CENTER', 'READ') || hasCapability(actor.access, 'BUSINESS', 'READ')
       || hasCapability(actor.access, 'HR', 'READ')
       || hasCapability(actor.access, 'PLANNING', 'READ')
       || hasCapability(actor.access, 'MAJOR_APPROVAL', 'READ')

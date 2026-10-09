@@ -1,3 +1,4 @@
+import { canReadReportSource } from '@/lib/report-branch-access';
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -20,7 +21,8 @@ function positiveInteger(value: string | null, fallback: number, maximum: number
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const actor = await requireUser();
+    if (!canReadReportSource(actor.access, 'completed-batches', req.nextUrl.searchParams)) return NextResponse.json({ ok: false, error: '当前账号未开通这项报表' }, { status: 403 });
     const { period, date, start, end } = reportRangeQuery(req.nextUrl.searchParams);
     const now = new Date();
     const cutoffAt = new Date(Math.min(now.getTime(), end.getTime() - 1));

@@ -7,7 +7,7 @@
  * belongs to a leader's team) must still apply the returned scope hints.
  */
 
-import { BUSINESS_ACCESS_MODULES, moduleConfiguration, type ModulePermissions } from '@/lib/module-permissions';
+import { BUSINESS_SUBMODULES, expandModulePermissions, moduleConfiguration, moduleAllows, type ModulePermissions } from '@/lib/module-permissions';
 
 export const DEPARTMENT_CODES = [
   'PRODUCTION',
@@ -416,15 +416,17 @@ export function resolveAccessContext(
   if (configuration) {
     addSelfService(capabilities);
     if (configuration.workbenchEnabled) addBasicSummary(capabilities);
-    for (const businessModule of BUSINESS_ACCESS_MODULES) {
-      const level = configuration.permissions[businessModule.key];
+    const expanded = expandModulePermissions(configuration.permissions);
+    for (const businessModule of BUSINESS_SUBMODULES) {
+      const level = expanded[businessModule.key];
       if (!level) continue;
-      const source = effectiveGrants.find(grant => grant.scopeKey === `MODULE:${businessModule.key}:${level}`)!;
+      const source = effectiveGrants.find(grant => grant.scopeKey.startsWith(`MODULE:${businessModule.key}:`) || grant.scopeKey.startsWith(`MODULE:${businessModule.group}:`))!;
       for (const capability of businessModule.capabilities) {
-        addModuleActions(capabilities, capability, level === 'READ' ? ['READ'] : MODULE_ACTION_MATRIX[capability]);
-        addScope(scopeForGrant(source, capability, 'GLOBAL', level === 'READ'));
+        const code = capability as AccessModuleCode;
+        addModuleActions(capabilities, code, level === 'READ' ? ['READ'] : MODULE_ACTION_MATRIX[code]);
+        addScope(scopeForGrant(source, code, 'GLOBAL', level === 'READ'));
       }
-      if (businessModule.key === 'production') productionScope = 'GLOBAL';
+      if (businessModule.group === 'production') productionScope = 'GLOBAL';
     }
   }
 
@@ -643,7 +645,7 @@ export function resolveAccessContext(
     accountActive: true,
     sampleCaptureEnabled: currentGrants.some(grant => grant.profile === 'SAMPLE_CAPTURE_COLLABORATOR'),
     sampleLibraryEnabled: currentGrants.some(grant => grant.profile === 'SAMPLE_LIBRARY_READER'),
-    employeeAccountManager: currentGrants.some(grant => grant.profile === 'EMPLOYEE_ACCESS_MANAGER') && capabilities.has('HR:READ') && capabilities.has('HR:UPDATE'),
+    employeeAccountManager: currentGrants.some(grant => grant.profile === 'EMPLOYEE_ACCESS_MANAGER') && capabilities.has('HR:READ') && capabilities.has('HR:UPDATE') && (!configuration || moduleAllows({ modulePermissions: configuration.permissions, workbenchEnabled: configuration.workbenchEnabled }, ['employee-accounts'], true) === true),
     ...(configuration ? { modulePermissions: configuration.permissions, workbenchEnabled: configuration.workbenchEnabled } : {}),
     effectiveGrants,
     capabilities: orderedCapabilities,

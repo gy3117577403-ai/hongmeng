@@ -1,4 +1,6 @@
 'use client';
+
+import { delegatedApprovalNotice } from '@/lib/approval-routing';
 import type { CurrentUserDTO } from '@/types';
 
 import {
@@ -629,19 +631,19 @@ export default function HomeNotificationCommandCenter({
                   <div className="hm-hcc-message-copy">
                     <div><span className={`hm-hcc-priority ${item.priority.toLowerCase()}`}>{item.completedAt ? completionLabel(item) : priorityLabel(item)}</span><small>{BUSINESS_LABELS[item.businessCategory]}</small><time dateTime={item.completedAt || item.createdAt}><Clock3 />{elapsedTime(item.completedAt || item.createdAt)}</time></div>
                     <h3>{item.title}</h3>
-                    <p>{item.body || `来源：${item.sourceType === 'PURCHASING' ? '杭连采购' : item.sourceType === 'QUALITY_FIXTURE' ? '资料与治具审核' : item.sourceType || '系统协同'}`}</p>
-                    {!item.completedAt && <p className="hm-inbox-message-origin">{item.requiresAction ? '需要你处理' : '协同进展 · 供你查看'}{item.actorName ? ` · ${item.actorName}` : ''}</p>}
+                    <p>{item.body || `来源：${item.sourceType === 'PURCHASING' ? '杭连采购' : item.sourceType === 'QUALITY_FIXTURE' ? '资料与治具审核' : item.sourceType === 'QUALITY_REVIEW_REWORK' ? '资料变更与重新送审' : BUSINESS_LABELS[item.businessCategory] || '系统协同'}`}</p>
+                    {!item.completedAt && <p className="hm-inbox-message-origin">{item.actorName ? `发起 / 更新：${item.actorName} · ` : ''}{item.requiresAction ? `当前接收：${user.displayName || user.username}` : '协同进展'}</p>}
                     {item.completedAt && <p className="hm-hcc-completion-note"><CheckCircle2 aria-hidden="true" />{completedTime(item.completedAt)} 完成 · {item.completionReason || completionLabel(item)}</p>}
                   </div>
                   <div className="hm-hcc-message-actions">
-                    {targetRoute && <Link href={targetRoute} prefetch={false}>{item.completedAt || !item.requiresAction ? '查看详情' : '去处理'}</Link>}
-                    {(!item.completedAt || canRestoreNotification(item)) ? <button className="hm-hcc-complete-action" type="button" disabled={isSaving} onClick={() => void updateCompletedState(item)}>
+                    {targetRoute && <Link href={targetRoute} prefetch={false}>{item.completedAt || !item.requiresAction ? '查看详情' : delegatedApprovalNotice(item) ? '去审批' : '去处理'}</Link>}
+                    {(!delegatedApprovalNotice(item) && (!item.completedAt || canRestoreNotification(item))) ? <button className="hm-hcc-complete-action" type="button" disabled={isSaving} onClick={() => void updateCompletedState(item)}>
                       {isSaving ? <LoaderCircle className="hm-hcc-spin" /> : item.completedAt ? <Undo2 /> : <CheckCircle2 />}
                       <span>{item.completedAt ? '恢复' : '完成'}</span>
-                    </button> : <span className="hm-hcc-locked-completion"><CheckCircle2 aria-hidden="true" />{completionLabel(item)}</span>}
+                    </button> : item.completedAt ? <span className="hm-hcc-locked-completion"><CheckCircle2 aria-hidden="true" />{completionLabel(item)}</span> : null}
                     <div className="hm-hcc-message-more" ref={menuId === item.id ? menuRef : undefined}>
                       <button type="button" aria-label={`更多操作：${item.title}`} aria-expanded={menuId === item.id} disabled={isSaving} onClick={() => setMenuId(current => current === item.id ? null : item.id)}>{isSaving ? <LoaderCircle className="hm-hcc-spin" /> : <MoreHorizontal />}</button>
-                      {menuId === item.id && <div role="menu">{!item.completedAt && <button type="button" role="menuitem" onClick={() => void snooze(item)}><BellRing />1小时后提醒</button>}{(!item.completedAt || canRestoreNotification(item)) && <button type="button" role="menuitem" onClick={() => void updateCompletedState(item)}>{item.completedAt ? <Undo2 /> : <CheckCircle2 />}{item.completedAt ? '恢复到待处理' : '设为已完成'}</button>}<button type="button" role="menuitem" onClick={() => void updateReadState(item)}>{isUnread ? <Check /> : <CircleUserRound />}{isUnread ? '标为已读' : '恢复未读'}</button></div>}
+                      {menuId === item.id && <div role="menu">{!item.completedAt && <button type="button" role="menuitem" onClick={() => void snooze(item)}><BellRing />1小时后提醒</button>}{!delegatedApprovalNotice(item) && (!item.completedAt || canRestoreNotification(item)) && <button type="button" role="menuitem" onClick={() => void updateCompletedState(item)}>{item.completedAt ? <Undo2 /> : <CheckCircle2 />}{item.completedAt ? '恢复到待处理' : '设为已完成'}</button>}<button type="button" role="menuitem" onClick={() => void updateReadState(item)}>{isUnread ? <Check /> : <CircleUserRound />}{isUnread ? '标为已读' : '恢复未读'}</button></div>}
                     </div>
                   </div>
                 </article>

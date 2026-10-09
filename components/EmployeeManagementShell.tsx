@@ -1,5 +1,7 @@
 'use client';
 
+import { moduleAllows, moduleReadOnly as isModuleReadOnly } from '@/lib/module-permissions';
+
 import AccountAccessDialog from './AccountAccessDialog';
 import EmployeeAttainmentChangeReview, { type AttainmentChangeConfirmation } from './EmployeeAttainmentChangeReview';
 import { sameEmployeeAttainmentPolicy } from '@/lib/employee-attainment-policy';
@@ -691,16 +693,16 @@ function EmptyPanel({
 }
 
 export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO }) {
-  const moduleReadOnly = user.access.modulePermissions?.people === 'READ';
   const canManageAccounts = canManageEmployeeAccounts(user);
   const [accountDialog, setAccountDialog] = useState<{ employeeId?: string; restoreRole: boolean } | null>(null);
   function openEmployeeAccount(employeeId?: string) { setAccountDialog({ employeeId, restoreRole: rolePanelOpen }); setRolePanelOpen(false); }
   const trainingOnly = user.access.modules.includes('TRAINING') && !user.access.modules.includes('HR');
   const availableNavigation = useMemo(
-    () => trainingOnly ? hrNavigation.filter(item => item.id === 'training') : hrNavigation,
-    [trainingOnly],
+    () => (trainingOnly ? hrNavigation.filter(item => item.id === 'training') : hrNavigation).filter(item => moduleAllows(user.access, item.id === 'recruiting' ? ['recruitment'] : ['performance','training'].includes(item.id) ? ['training'] : item.id === 'attendance' ? ['attendance'] : item.id === 'responsibilities' ? ['responsibilities'] : ['employees']) !== false),
+    [trainingOnly, user.access],
   );
-  const [view, setView] = useState<HrView>(trainingOnly ? 'training' : 'overview');
+  const [view, setView] = useState<HrView>(availableNavigation[0]?.id || 'directory');
+  const moduleReadOnly = isModuleReadOnly(user.access, view === 'recruiting' ? 'recruitment' : ['performance','training'].includes(view) ? 'training' : view === 'attendance' ? 'attendance' : view === 'responsibilities' ? 'responsibilities' : 'employees');
   useEffect(() => { const url = new URL(window.location.href); if (url.searchParams.get('accountAccess') === '1') { setAccountDialog({ employeeId: url.searchParams.get('accountEmployee') || undefined, restoreRole: false }); url.searchParams.delete('accountAccess'); url.searchParams.delete('accountEmployee'); window.history.replaceState(window.history.state, '', url); } }, []);
   const [employees, setEmployees] = useState<EmployeeDTO[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecordDTO[]>([]);
@@ -825,10 +827,10 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     try {
       const [employeeResult, attendanceResult, abnormalResult, attainmentResult, recruitmentResult, accountResult] = await Promise.allSettled([
         fetch('/api/employees', { cache: 'no-store' }),
-        fetch('/api/attendance/records?period=month', { cache: 'no-store' }),
+        moduleAllows(user.access, ['attendance','employees']) === false ? Promise.resolve(new Response(JSON.stringify({ok:true,records:[]}))) : fetch('/api/attendance/records?period=month', { cache: 'no-store' }),
         fetch('/api/abnormal-time-events?period=month', { cache: 'no-store' }),
         fetch('/api/reports/employee-attainment?period=month', { cache: 'no-store' }),
-        fetch('/api/recruitment/demands', { cache: 'no-store' }),
+        moduleAllows(user.access, ['recruitment']) === false ? Promise.resolve(new Response(JSON.stringify({ok:true,demands:[]}))) : fetch('/api/recruitment/demands', { cache: 'no-store' }),
         canManageAccounts ? fetch('/api/users', { cache: 'no-store' }) : Promise.resolve(null),
       ]);
 

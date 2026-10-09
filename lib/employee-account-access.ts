@@ -1,9 +1,10 @@
 import { hasCapability, type AccessContext } from '@/lib/department-access';
+import { moduleAllows, type ModuleAccessCarrier } from '@/lib/module-permissions';
 
 export type EmployeeAccountActor = {
   id: string;
   laborRole: string;
-  access: Pick<AccessContext, 'capabilities' | 'employeeAccountManager'>;
+  access: Pick<AccessContext, 'capabilities' | 'employeeAccountManager'> & ModuleAccessCarrier;
 };
 
 export function isGlobalAccountManager(actor: EmployeeAccountActor): boolean {
@@ -17,7 +18,7 @@ export function canAuthorizeEmployeeAccounts(actor: EmployeeAccountActor): boole
 
 export function canManageEmployeeAccounts(actor: EmployeeAccountActor): boolean {
   return isGlobalAccountManager(actor)
-    || (hasCapability(actor.access, 'HR', 'READ') && hasCapability(actor.access, 'HR', 'UPDATE'));
+    || (hasCapability(actor.access, 'HR', 'READ') && hasCapability(actor.access, 'HR', 'UPDATE') && moduleAllows(actor.access, ['employee-accounts'], true) !== false);
 }
 
 export function canManageEmployeeAccountTarget(actor: EmployeeAccountActor, target: {

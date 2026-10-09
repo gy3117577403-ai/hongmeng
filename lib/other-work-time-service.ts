@@ -1,3 +1,4 @@
+import { moduleAllows } from '@/lib/module-permissions';
 import { createHash } from 'node:crypto';
 import { Prisma, OtherWorkTimeStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
@@ -23,7 +24,7 @@ type RecordScope = { createdById: string; employeeId: string; teamIdSnapshot: st
 
 function scopeWhere(actor: Actor): Prisma.OtherWorkTimeRequestWhereInput {
   const scope = otherWorkScope(actor);
-  if (!scope.manage && !(actor.access.modulePermissions?.people || actor.access.modulePermissions?.collaboration)) throw new OtherWorkError('当前账号没有其他工时管理权限', 403);
+  if (!scope.manage && moduleAllows(actor.access, ['other-hours', 'other-hours-approval']) !== true) throw new OtherWorkError('当前账号没有其他工时管理权限', 403);
   if (scope.global) return {};
   return { OR: [{ teamIdSnapshot: { in: scope.teams } }, { teamSnapshot: { in: scope.teams } }] };
 }
@@ -34,7 +35,7 @@ export function serializeOtherWork(row: RecordWithDetail, actor: Actor) {
       submit: row.createdById === actor.id && editable.includes(row.status),
       withdraw: !row.toolingJobId && row.createdById === actor.id && row.status === 'PENDING',
       review: canReviewOtherWork(actor, row) && row.status === 'PENDING',
-      void: !row.toolingJobId && actor.laborRole === 'ADMIN' && row.status === 'APPROVED',
+      void: !row.toolingJobId && (actor.laborRole === 'ADMIN' || Boolean(row.correctionRequestedAt && moduleAllows(actor.access, ['other-hours-approval'], true) === true && canReviewOtherWork(actor, row))) && row.status === 'APPROVED',
       requestCorrection: !row.toolingJobId && (row.createdById === actor.id || row.employeeId === actor.employeeId) && row.status === 'APPROVED' && !row.correctionRequestedAt } };
 }
 export function otherWorkToday(now = new Date()) {
@@ -237,7 +238,7 @@ export async function commandOtherWork(actor: Actor, id: string, data: Record<st
       if (action === 'REJECT' || (minutes && minutes < row.requestedMinutes)) requiredText(reason, '退回或核减原因', 1000);
       update = { status: action === 'APPROVE' ? 'APPROVED' : 'REJECTED', approvedMinutes: minutes, reviewedAt: new Date(), reviewedByName: actor.displayName || actor.username };
     } else if (action === 'VOID') {
-      if (actor.laborRole !== 'ADMIN') throw new OtherWorkError('仅管理员可作废已通过记录', 403);
+      if (actor.laborRole !== 'ADMIN' && !(row.correctionRequestedAt && moduleAllows(actor.access, ['other-hours-approval'], true) === true && canReviewOtherWork(actor, row))) throw new OtherWorkError('仅管理员或该更正申请的审批人可作废记录', 403);
       if (row.status !== 'APPROVED') throw new OtherWorkError('仅已通过记录可作废', 409);
       requiredText(reason, '作废原因', 1000);
       update = { status: 'VOIDED', voidedAt: new Date() };

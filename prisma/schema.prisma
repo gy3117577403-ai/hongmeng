@@ -4699,6 +4699,9 @@ model SystemNotificationRecipient {
   readAt           DateTime?          @map("read_at")
   snoozedUntil     DateTime?          @map("snoozed_until")
   completedAt      DateTime?          @map("completed_at")
+  routedAwayAt     DateTime?          @map("routed_away_at")
+  routedToUserId   String?            @map("routed_to_user_id")
+  routingReason   String?            @map("routing_reason")
   completionKind   String?            @map("completion_kind")
   completionReason String?            @map("completion_reason")
   createdAt        DateTime           @default(now()) @map("created_at")
@@ -6516,6 +6519,21 @@ model ToolingKit {
   createdAt DateTime       @default(now()) @map("created_at")
   units     ToolingStock[]
   @@map("tooling_kits")
+}
+
+// Business routing only; does not transfer administrator identity or historic signatures.
+model BusinessApprovalHandoff {
+  id                String   @id @default(uuid())
+  fromUserId        String   @unique @map("from_user_id")
+  toUserId          String   @map("to_user_id")
+  excludedSources   String[] @map("excluded_sources")
+  isActive          Boolean  @default(true) @map("is_active")
+  createdById       String   @map("created_by_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([toUserId, isActive])
+  @@map("business_approval_handoffs")
 }
 
 model ToolingStock {

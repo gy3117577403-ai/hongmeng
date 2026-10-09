@@ -1,3 +1,4 @@
+import { routeBusinessRecipients, delegatedApprovalNotice } from '@/lib/approval-routing';
 import { Prisma } from '@prisma/client';
 import { canAccessAppRoute } from '@/lib/app-route-access';
 import {
@@ -281,7 +282,7 @@ export async function createSystemNotification(
   tx: NotificationTx,
   input: CreateSystemNotificationInput,
 ): Promise<{ notificationId: string; recipientCount: number } | null> {
-  const recipientUserIds = [...new Set(input.recipientUserIds.filter(Boolean))];
+  const recipientUserIds = await routeBusinessRecipients(tx, input, input.recipientUserIds);
   if (!recipientUserIds.length) return null;
   const eventType = text(input.eventType, 100);
   const dedupeKey = text(input.dedupeKey, 240);
@@ -371,6 +372,7 @@ export async function loadNotificationInbox(
     };
   const where: Prisma.SystemNotificationRecipientWhereInput = {
     userId,
+    routedAwayAt: null,
     ...(query.unreadOnly ? { readAt: null } : {}),
     AND: [
       lifecycleWhere,
@@ -385,6 +387,7 @@ export async function loadNotificationInbox(
   };
   const activeSummaryWhere: Prisma.SystemNotificationRecipientWhereInput = {
     userId,
+    routedAwayAt: null,
     completedAt: null,
     OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }],
     notification: {
@@ -423,6 +426,7 @@ export async function loadNotificationInbox(
     prisma.systemNotificationRecipient.findMany({
       where: {
         userId,
+        routedAwayAt: null,
         completedAt: { not: null },
         notification: {
           is: { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
@@ -568,10 +572,12 @@ export async function setNotificationCompletedState(
       where: { notificationId_userId: { notificationId, userId } },
       select: {
         completedAt: true,
+        routedAwayAt: true,
         completionKind: true,
         notification: {
           select: {
             eventType: true,
+            category: true,
             sourceType: true,
             sourceId: true,
             dedupeKey: true,
@@ -579,7 +585,7 @@ export async function setNotificationCompletedState(
         },
       },
     });
-    if (!recipient) return { status: 'not_found' as const };
+    if (!recipient || recipient.routedAwayAt) return { status: 'not_found' as const };
 
     let sourceResolutionReason: string | null = null;
     if (recipient.notification.sourceType === 'process_reporting_submission') {
@@ -634,6 +640,7 @@ export async function setNotificationCompletedState(
         sourceResolutionReason = `工艺通知事件已处于明确终态：${recipient.notification.eventType}`;
       }
     }
+    if (!sourceResolutionReason && completed && !recipient.completedAt && delegatedApprovalNotice(recipient.notification)) return { status: 'source_pending' as const };
     if (sourceResolutionReason) {
       const completedAt = recipient.completedAt || new Date();
       await tx.systemNotificationRecipient.update({

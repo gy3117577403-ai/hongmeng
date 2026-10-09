@@ -1,4 +1,5 @@
 'use client';
+import { hasSubmoduleConfiguration, moduleAllows } from '@/lib/module-permissions';
 
 import {
   Activity,
@@ -504,11 +505,11 @@ export default function ReportCenterBranchDashboard({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const fullAccess = hasFullReportAccess(user.access.modules);
+  const fullAccess = hasSubmoduleConfiguration(user.access) || hasFullReportAccess(user.access.modules);
   const domain = reportDomain(initialDomain)!;
   const branch = reportBranch(initialDomain, initialBranch)!;
-  const allowedDomains = fullAccess ? REPORT_DOMAINS : REPORT_DOMAINS.filter(item => item.key === 'people');
-  const allowedBranches = fullAccess
+  const allowedDomains = hasSubmoduleConfiguration(user.access) ? REPORT_DOMAINS.map(item => ({...item, branches: item.branches.filter(b => moduleAllows(user.access, [`report-${b.key}`]) === true)})).filter(item => item.branches.length) : fullAccess ? REPORT_DOMAINS : REPORT_DOMAINS.filter(item => item.key === 'people');
+  const allowedBranches = hasSubmoduleConfiguration(user.access) ? domain.branches.filter(b => moduleAllows(user.access, [`report-${b.key}`]) === true) : fullAccess
     ? domain.branches
     : domain.branches.filter(item => item.key === 'employee-attainment');
 
@@ -557,7 +558,7 @@ export default function ReportCenterBranchDashboard({
     setSelectedEmployee(null);
     async function load() {
       const effectivePeriod = initialBranch === 'attendance-attainment' ? 'month' : period;
-      const rangeParams = new URLSearchParams({ period: effectivePeriod, date });
+      const rangeParams = new URLSearchParams({ period: effectivePeriod, date, reportBranch: initialBranch });
       if (effectivePeriod === 'custom') {
         rangeParams.set('startDate', startDate);
         rangeParams.set('endDate', endDate);
@@ -746,14 +747,14 @@ export default function ReportCenterBranchDashboard({
         [overview?.sample.taskCount || 0, overview?.sample.activeCount || 0, overview?.sample.completedCount || 0, overview?.sample.overdueCount || 0, overview?.sample.pendingReviewCount || 0, overview?.sample.reviewedItemCount || 0, overview?.sample.publishedItemCount || 0, percentText(overview?.sample.reviewBasisPoints)],
       ];
     } else if (initialBranch === 'completed-orders') {
-      const params = new URLSearchParams({ period, date, all: 'true' });
+      const params = new URLSearchParams({ period, date, reportBranch: initialBranch, all: 'true' });
       if (period === 'custom') {
         params.set('startDate', startDate);
         params.set('endDate', endDate);
       }
       if (customer) params.set('customer', customer);
       if (deferredKeyword) params.set('keyword', deferredKeyword);
-      const response = await fetch(`/api/reports/completed-batches?${params}`, { cache: 'no-store' });
+      const response = await fetch(`/api/reports/completed-batches?${params}&reportBranch=${initialBranch}`, { cache: 'no-store' });
       const body = await response.json() as ApiResponse<ReportCompletedBatchesDTO>;
       if (!response.ok || !body.report) {
         setToast(body.error || '批次达成明细导出失败');

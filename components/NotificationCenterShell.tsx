@@ -1,4 +1,5 @@
 'use client';
+import { delegatedApprovalNotice } from '@/lib/approval-routing';
 
 import {
   AlertTriangle,
@@ -545,21 +546,21 @@ export default function NotificationCenterShell({ user }: { user: CurrentUserDTO
                       {item.completedAt && <p className="nc-completion-note"><CheckCircle2 /><span><b>{completionLabel(item.completionKind)}</b> · {notificationTime(item.completedAt)} · 原因：{completionReason(item)}</span></p>}
                       <footer>
                         <div>
-                          {item.actorName && <span><CircleUserRound />{item.actorName}</span>}
+                          {item.actorName && <span><CircleUserRound />发起 / 更新：{item.actorName}</span>}
                           {item.sourceType && <span>来源：{item.sourceType}</span>}
                         </div>
                         <div>
-                          {!completed && item.sourceType !== 'process_reporting_submission' && <button type="button" disabled={saving} onClick={() => void updateCompletedState(item)}>
+                          {!completed && !delegatedApprovalNotice(item) && item.sourceType !== 'process_reporting_submission' && <button type="button" disabled={saving} onClick={() => void updateCompletedState(item)}>
                             {saving ? <LoaderCircle className="nc-spin" /> : <CheckCircle2 />}{saving ? '保存中' : '设为已完成'}
                           </button>}
-                          {canRestore && <button type="button" disabled={saving} onClick={() => void updateCompletedState(item)}>
+                          {canRestore && !delegatedApprovalNotice(item) && <button type="button" disabled={saving} onClick={() => void updateCompletedState(item)}>
                             {saving ? <LoaderCircle className="nc-spin" /> : <Undo2 />}{saving ? '保存中' : '恢复待处理'}
                           </button>}
                           {completed && !canRestore && <button type="button" disabled title="该消息由业务状态自动收口，不能手动恢复"><LockKeyhole />自动收口</button>}
                           <button type="button" disabled={saving} onClick={() => void toggleRead(item)}>
                             {saving ? <LoaderCircle className="nc-spin" /> : isUnread ? <Check /> : <Bell />}{saving ? '保存中' : isUnread ? '标记已读' : '恢复未读'}
                           </button>
-                          {targetRoute && <Link href={targetRoute} prefetch={false}>{completed ? '查看详情' : item.requiresAction ? '前往处理' : '查看详情'}<ChevronRight /></Link>}
+                          {targetRoute && <Link href={targetRoute} prefetch={false}>{completed ? '查看详情' : item.requiresAction ? delegatedApprovalNotice(item) ? '去审批' : '前往处理' : '查看详情'}<ChevronRight /></Link>}
                         </div>
                       </footer>
                     </div>

@@ -1,4 +1,5 @@
 'use client';
+import { moduleReadOnly } from '@/lib/module-permissions';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, History, Layers3, Package, PackageCheck, Plus, RefreshCw, Search, Send, Truck, Warehouse, X } from 'lucide-react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -36,8 +37,8 @@ export default function MaterialOrderWorkbench({ user, mode = 'warehouse', workO
   const [note, setNote] = useState(''), [noteFor, setNoteFor] = useState(''), [saving, setSaving] = useState(false), [edit, setEdit] = useState<Edit | null>(null), [form, setForm] = useState<Form>({});
   const panel = useRef<HTMLElement>(null), modal = useRef<HTMLElement>(null), main = useRef<HTMLElement>(null), queueScroll = useRef<HTMLDivElement>(null);
   const noteRequest = useRef(key()), listLoaded = useRef(false);
-  const canConfirm = mode === 'warehouse' && user.access.modulePermissions?.materials !== 'READ' && user.access.capabilities.includes('WAREHOUSE:UPDATE');
-  const canWrite = mode !== 'planning' && !order?.cancelled && user.access.modulePermissions?.materials !== 'READ' && (canConfirm || tracking && user.access.capabilities.includes('PROCUREMENT:UPDATE'));
+  const canConfirm = mode === 'warehouse' && !moduleReadOnly(user.access, mode === 'warehouse' ? 'warehouse' : 'material-follow-up') && user.access.capabilities.includes('WAREHOUSE:UPDATE');
+  const canWrite = mode !== 'planning' && !order?.cancelled && !moduleReadOnly(user.access, mode === 'warehouse' ? 'warehouse' : 'material-follow-up') && (canConfirm || tracking && user.access.capabilities.includes('PROCUREMENT:UPDATE'));
   useModalLayer({ open: !!edit, layerRef: modal, onClose: () => { if (!saving) setEdit(null); } });
   useEffect(() => { onEditorChange?.(!!edit); return () => onEditorChange?.(false); }, [edit, onEditorChange]);
   useEffect(() => {

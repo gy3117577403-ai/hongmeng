@@ -1,5 +1,7 @@
 'use client';
 
+import { moduleReadOnly as isModuleReadOnly } from '@/lib/module-permissions';
+
 import {
   AlertTriangle,
   ArrowRight,
@@ -240,7 +242,7 @@ export default function MaterialFollowUpShell({ user, embeddedTaskId, onClose, o
   useEffect(() => { onDraftState?.(progressDirty || assignmentDirty || Boolean(editMode), saving); }, [progressDirty, assignmentDirty, editMode, saving, onDraftState]);
   useEffect(() => { if (selected && selected.id === selectedId) { if(progressDirty) drafts.current[selected.id] = form; else delete drafts.current[selected.id]; } }, [form, selected, selectedId, progressDirty]);
   const canManage = user.access.capabilities.includes('PROCUREMENT:UPDATE');
-  const moduleReadOnly = user.access.modulePermissions?.materials === 'READ';
+  const moduleReadOnly = isModuleReadOnly(user.access, 'material-follow-up');
   const canUpdatePlan = user.access.capabilities.includes('PLANNING:UPDATE');
 
   useEffect(() => {

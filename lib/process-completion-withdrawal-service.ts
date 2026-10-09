@@ -1016,6 +1016,7 @@ async function withdrawalReviewerUserIds(
       grant.profile === 'ADMIN_GLOBAL'
       || grant.profile === 'WORKSHOP_SUPERVISOR'
       || grant.profile === 'PRODUCTION_COLLABORATOR'
+      || (grant.profile === 'MODULE_ACCESS' && ['MODULE:reporting-recovery:COLLABORATE', 'MODULE:production-execution:COLLABORATE', 'MODULE:production:COLLABORATE'].includes(grant.scopeKey))
       || (grant.profile === 'DEPARTMENT_FULL' && grant.department?.code === 'PRODUCTION')
     ))) return true;
     const teamKeys = [

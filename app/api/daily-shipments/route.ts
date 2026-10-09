@@ -1,3 +1,5 @@
+
+import { moduleReadOnly as isModuleReadOnly } from '@/lib/module-permissions';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   ForbiddenError,
@@ -94,7 +96,7 @@ export async function GET(request: NextRequest) {
     }
     const data = await loadDailyShipmentWorkbench({
       shipDate,
-      actorUserId: user.access.modulePermissions?.production === 'READ' ? undefined : user.id,
+      actorUserId: isModuleReadOnly(user.access, 'daily-shipment') ? undefined : user.id,
     });
     return NextResponse.json({ ok: true, data });
   } catch (error) {

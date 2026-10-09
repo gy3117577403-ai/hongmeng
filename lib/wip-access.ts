@@ -20,7 +20,7 @@ const WIP_MANAGER_PROFILES = new Set([
  * identities may make that planning decision.
  */
 export function canManageWipWarehouse(subject: WipAccessSubject): boolean {
-  const decision = moduleAllows(subject.access, ['materials'], true);
+  const decision = moduleAllows(subject.access, ['wip'], true);
   if (decision !== null) return decision;
   if (subject.laborRole === 'ADMIN' || subject.laborRole === 'TEAM_LEAD') return true;
   if (subject.dailyPlanningRoles.some(role => (

@@ -1,3 +1,5 @@
+import { routeBusinessRecipients } from '@/lib/approval-routing';
+import { moduleAllows } from '@/lib/module-permissions';
 import crypto from 'node:crypto';
 import { Prisma, ProcessCompletionSource, type ProcessReportSubmission } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
@@ -91,7 +93,7 @@ type Actor = NonNullable<Awaited<ReturnType<typeof loadActor>>>;
 
 function canResolveReason(actor: Actor, reasonCode: string) {
   if (reasonCode.startsWith('STANDARD_')) return hasCapability(actor.access, 'PROCESS', 'UPDATE');
-  return canManageWipWarehouse(actor) && resolveProductionEntityScope(actor).canWrite;
+  return (canManageWipWarehouse(actor) || moduleAllows(actor.access, ['reporting-recovery'], true) === true) && resolveProductionEntityScope(actor).canWrite;
 }
 async function assertOriginalActor(tx: Tx, command: CompleteProcessStepCommand) {
   const user = await loadActor(tx, command.userId);
@@ -291,6 +293,7 @@ async function createPending(tx: Tx, command: Input, reasonCode: string, message
     assigneeUserIds = admins.map(actor => actor.id);
   }
   if (!assigneeUserIds.length) fail('没有能处理此工单的有效账号，请管理员配置负责人', 'PROCESS_SUBMISSION_ASSIGNEE_REQUIRED');
+  assigneeUserIds = await routeBusinessRecipients(tx, { eventType: 'PROCESS_REPORT_SUBMISSION_PENDING', sourceType, actorId: command.userId }, assigneeUserIds);
   const targetWorkOrder = await tx.workOrder.findUniqueOrThrow({ where: { id: route.workOrderId }, select: { productionTargetQty: true } });
   const item = await tx.processReportSubmission.create({ data: {
     idempotencyKey: parsed.idempotencyKey, payloadFingerprint: fingerprint, status: 'PENDING', reasonCode,
@@ -499,7 +502,7 @@ async function reassignForCurrentRequirements(tx: Tx, item: ProcessReportSubmiss
     if (force) fail('当前没有可处理这笔申报全部条件的有效账号，请管理员配置处理权限', 'PROCESS_SUBMISSION_ASSIGNEE_REQUIRED');
     return item;
   }
-  const assigneeUserIds = selected.map(actor => actor.id);
+  const assigneeUserIds = await routeBusinessRecipients(tx, { eventType: 'PROCESS_REPORT_SUBMISSION_REASSIGNED', sourceType, actorId: item.createdById }, selected.map(actor => actor.id));
   if (assigneeUserIds.length === item.assigneeUserIds.length && assigneeUserIds.every(id => item.assigneeUserIds.includes(id))) return item;
   const updated = await tx.processReportSubmission.update({ where: { id: item.id }, data: { assigneeUserIds, version: { increment: 1 } } });
   if (notify) await notifyPending(tx, updated, true);

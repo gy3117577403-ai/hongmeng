@@ -1,3 +1,4 @@
+import { moduleReadOnly } from '@/lib/module-permissions';
 import DailyShipmentWorkbench, { type ShipmentView } from '@/components/daily-shipments/DailyShipmentWorkbench';
 import { chinaDateKey } from '@/lib/china-date';
 import { loadDailyShipmentWorkbench } from '@/lib/daily-shipment-service';
@@ -21,6 +22,6 @@ export default async function DailyPlansPage({ searchParams }: { searchParams?: 
     ? searchParams!.view as ShipmentView
     : 'today';
 
-  const initialData = await loadDailyShipmentWorkbench({ shipDate: initialDate, actorUserId: user.access.modulePermissions?.production === 'READ' ? undefined : user.id });
+  const initialData = await loadDailyShipmentWorkbench({ shipDate: initialDate, actorUserId: moduleReadOnly(user.access, 'daily-shipment') ? undefined : user.id });
   return <DailyShipmentWorkbench user={user} initialDate={initialDate} initialData={initialData} initialView={initialView} />;
 }

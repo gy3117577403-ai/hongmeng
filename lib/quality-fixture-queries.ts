@@ -1,14 +1,14 @@
 import { fixtureSubmissionIssues, type FixtureDocumentPackage } from "@/lib/quality-fixture-documents";
 import { prisma } from "@/lib/prisma";
 import { fixtureReadiness, assertPackageFiles } from "@/lib/quality-fixture-service";
-import { fixtureAvailable, fixtureReviewRoles, fixtureSignaturesValid, QF_REVIEW_STATUSES } from "@/lib/quality-fixture-domain";
+import { FixtureError, fixtureAvailable, fixtureReviewRoles, fixtureSignaturesValid, QF_REVIEW_STATUSES } from "@/lib/quality-fixture-domain";
 import type { PcActor } from "@/lib/purchasing-service";
 import type { Prisma } from "@prisma/client";
 import { fixturePlanScope, requiresDocumentReview } from "@/lib/quality-fixture-scope";
 import { drawingPlanWeekScope, planWeekStart } from "@/lib/drawing-plan-week";
 import { getFixturePreparation } from "@/lib/quality-fixture-preparation";
 import { documentReviewDecision, type ReviewDecision } from "@/lib/quality-review-state";
-import { moduleFixtureActionAllowed } from "@/lib/module-permissions";
+import { moduleFixtureActionAllowed, moduleAllows } from "@/lib/module-permissions";
 type Plain<T> = T extends Date ? string : T extends Array<infer U> ? Plain<U>[] : T extends object ? { [K in keyof T]: Plain<T[K]> } : T;
 const plain = <T>(v: T): Plain<T> => JSON.parse(JSON.stringify(v));
 
@@ -39,6 +39,7 @@ export function matchesFixtureReviewStatus(p: FixtureDocumentPackage & {status:s
 export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor) {
   const search = (query.get("q") || "").trim().slice(0, 120), page = Math.max(1, Math.floor(Number(query.get("page")) || 1));
   const view = query.get("view") || "review", status = query.get("status") || "";
+  if (actor.access && moduleAllows(actor.access, ['plans', 'fixtures', 'stock'].includes(view) ? ['fixture-management'] : ['quality-review', 'drawing-library']) === false) throw new FixtureError('未开通此功能', 'FIXTURE_FORBIDDEN', 403);
   const weekText = query.get("week") || "";
   const weekScope = weekText ? drawingPlanWeekScope(planWeekStart(weekText), true) : {};
   const searchScope: Prisma.DrawingLibraryItemWhereInput = search ? {OR:[{specification:{contains:search,mode:"insensitive"}},{customerName:{contains:search,mode:"insensitive"}},{libraryKey:{contains:search,mode:"insensitive"}}]} : {};
@@ -100,7 +101,7 @@ export async function loadQualityFixtures(query: URLSearchParams, actor: PcActor
   ]);
   const ownsEvidence = chosen ? await prisma.drawingLibraryFile.count({where:{id:{in:[...(chosen.drawingFiles as unknown as {id:string}[]),...(chosen.sopFiles as unknown as {id:string}[])].map(f=>f.id)},uploadedById:actor.id}}) > 0 : false;
   const reviewDecision = documentReviewDecision(chosen && { ...chosen, needFixture: product?.fixtureRequired ?? null }, documentReturns, product?.files.map(f => f.id), product?.fixturePackages[0]?.id);
-  const reviewRoles = reviewDecision.action === 'REVIEW' ? fixtureReviewRoles(chosen, actor, settings, ownsEvidence) : [];
+  const reviewRoles = reviewDecision.action === 'REVIEW' && (!actor.access || moduleFixtureActionAllowed(actor.access, 'APPROVE')) ? fixtureReviewRoles(chosen, actor, settings, ownsEvidence) : [];
   return plain({ actorId: actor.id, settings, users, templates, products: productRows, total, page, pageSize: 30, statusCounts,
     preparationRows, preparationCounts, fixtures: fixtures.map(f => ({ ...f, available: f.item.balances.reduce((n, b) => n + fixtureAvailable(b), 0),
       onHand: f.item.balances.reduce((n, b) => n + b.onHand, 0), held: f.item.balances.reduce((n, b) => n + b.held, 0),

@@ -1,3 +1,5 @@
+import { BUSINESS_SUBMODULES, submoduleDefinition, type SubmoduleKey } from './submodule-catalog';
+export { BUSINESS_SUBMODULES } from './submodule-catalog';
 /** Business-facing access contract. UI groups are stable; departments are not grants. */
 export const BUSINESS_ACCESS_MODULES = [
   { key: 'production', label: '生产与计划', description: '量产与样品计划、生产执行、日出货、周工序', capabilities: ['PLANNING', 'PRODUCTION', 'BUSINESS'] },
@@ -10,7 +12,8 @@ export const BUSINESS_ACCESS_MODULES = [
 ] as const;
 export type BusinessAccessModule = typeof BUSINESS_ACCESS_MODULES[number]['key'];
 export type ModuleAccessLevel = 'READ' | 'COLLABORATE';
-export type ModulePermissions = Partial<Record<BusinessAccessModule, ModuleAccessLevel>>;
+export type ModulePermissionKey = BusinessAccessModule | SubmoduleKey;
+export type ModulePermissions = Partial<Record<ModulePermissionKey, ModuleAccessLevel>>;
 export type ModuleAccessCarrier = { modulePermissions?: ModulePermissions | null; workbenchEnabled?: boolean; sampleLibraryEnabled?: boolean; sampleCaptureEnabled?: boolean; employeeAccountManager?: boolean };
 export const MODULE_ACCESS_PROFILE = 'MODULE_ACCESS';
 export const MODULE_MARKER_ON = 'MODULES:ON';
@@ -20,14 +23,38 @@ export function parseModulePermissions(value: unknown): ModulePermissions {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('请选择有效的模块权限');
   const result: ModulePermissions = {};
   for (const [key, level] of Object.entries(value)) {
-    if (!BUSINESS_ACCESS_MODULES.some(module => module.key === key) || !['READ', 'COLLABORATE'].includes(String(level))) throw new Error('模块或权限级别不正确');
-    result[key as BusinessAccessModule] = level as ModuleAccessLevel;
+    if (!BUSINESS_ACCESS_MODULES.some(module => module.key === key) && !submoduleDefinition(key) || !['READ', 'COLLABORATE'].includes(String(level))) throw new Error('模块或权限级别不正确');
+    result[key as ModulePermissionKey] = level as ModuleAccessLevel;
+  }
+  for (const item of BUSINESS_SUBMODULES) if (result[item.key] && result[item.group]) throw new Error('请按小模块保存，不能混用同组的大模块与小模块授权');
+  return result;
+}
+export function parseModuleScope(scope: string): { module: ModulePermissionKey; level: ModuleAccessLevel } | null {
+  const [, key, level] = /^MODULE:([^:]+):(READ|COLLABORATE)$/.exec(scope) || [];
+  return BUSINESS_ACCESS_MODULES.some(module => module.key === key) || submoduleDefinition(key) ? { module: key as ModulePermissionKey, level: level as ModuleAccessLevel } : null;
+}
+/** Explicit children are authoritative for their whole group; a stale parent never restores a removed sibling. */
+export function expandModulePermissions(permissions: ModulePermissions): ModulePermissions {
+  const result: ModulePermissions = {};
+  for (const group of BUSINESS_ACCESS_MODULES) {
+    const children = BUSINESS_SUBMODULES.filter(item => item.group === group.key);
+    const explicit = children.some(item => permissions[item.key] !== undefined);
+    for (const child of children) {
+      const level = explicit ? permissions[child.key] : permissions[group.key];
+      if (level) result[child.key] = child.readOnly ? 'READ' : level;
+    }
   }
   return result;
 }
-export function parseModuleScope(scope: string): { module: BusinessAccessModule; level: ModuleAccessLevel } | null {
-  const [, key, level] = /^MODULE:([^:]+):(READ|COLLABORATE)$/.exec(scope) || [];
-  return BUSINESS_ACCESS_MODULES.some(module => module.key === key) ? { module: key as BusinessAccessModule, level: level as ModuleAccessLevel } : null;
+export function moduleLevel(access: ModuleAccessCarrier, key: ModulePermissionKey): ModuleAccessLevel | undefined {
+  if (access.workbenchEnabled === false || access.modulePermissions == null) return undefined;
+  const expanded = expandModulePermissions(access.modulePermissions);
+  if (submoduleDefinition(key)) return expanded[key];
+  const levels = BUSINESS_SUBMODULES.filter(item => item.group === key).map(item => expanded[item.key]);
+  return levels.includes('COLLABORATE') ? 'COLLABORATE' : levels.includes('READ') ? 'READ' : undefined;
+}
+export function moduleReadOnly(access: ModuleAccessCarrier, key: ModulePermissionKey): boolean {
+  return access.modulePermissions != null && moduleLevel(access, key) !== 'COLLABORATE';
 }
 export function moduleConfiguration(grants: readonly { profile?: string; profileKey?: string; scopeKey: string }[]) {
   const selected = grants.filter(grant => (grant.profile || grant.profileKey) === MODULE_ACCESS_PROFILE);
@@ -40,13 +67,21 @@ export function moduleConfiguration(grants: readonly { profile?: string; profile
   }
   return { permissions, workbenchEnabled };
 }
-export function hasModuleCollaboration(access: ModuleAccessCarrier, module: BusinessAccessModule): boolean {
-  return access.modulePermissions?.[module] === 'COLLABORATE' && access.workbenchEnabled !== false;
+export function hasModuleCollaboration(access: ModuleAccessCarrier, module: ModulePermissionKey): boolean {
+  return moduleLevel(access, module) === 'COLLABORATE';
 }
-export function moduleAllows(access: ModuleAccessCarrier, owners: readonly BusinessAccessModule[], write = false): boolean | null {
+export function moduleAllows(access: ModuleAccessCarrier, owners: readonly ModulePermissionKey[], write = false): boolean | null {
   if (access.modulePermissions == null) return null;
   if (access.workbenchEnabled === false) return false;
-  return owners.some(owner => write ? access.modulePermissions?.[owner] === 'COLLABORATE' : Boolean(access.modulePermissions?.[owner]));
+  return owners.some(owner => write ? moduleLevel(access, owner) === 'COLLABORATE' : Boolean(moduleLevel(access, owner)));
+}
+export function hasSubmoduleConfiguration(access: ModuleAccessCarrier): boolean {
+  return Object.keys(access.modulePermissions || {}).some(key => Boolean(submoduleDefinition(key)));
+}
+function matchingSubmodules(path: string, kind: 'paths' | 'apis'): SubmoduleKey[] {
+  const matches = BUSINESS_SUBMODULES.flatMap(item => item[kind].filter(prefix => prefixMatch(path, prefix)).map(prefix => ({ key: item.key, length: prefix.length })));
+  const longest = Math.max(0, ...matches.map(item => item.length));
+  return matches.filter(item => item.length === longest).map(item => item.key);
 }
 const PAGE_OWNERS: Array<[string, BusinessAccessModule[]]> = [
   ['/tooling-mobile', ['technology']],
@@ -62,6 +97,16 @@ function prefixMatch(path: string, prefix: string): boolean { return path === pr
 export function modulePageDecision(access: ModuleAccessCarrier, pathname: string): boolean | null {
   if (access.modulePermissions == null) return null;
   const path = pathname.split('?')[0].replace(/\/+$/, '') || '/';
+  if (hasSubmoduleConfiguration(access)) {
+    const query = new URLSearchParams(pathname.split('?')[1] || '');
+    if (path === '/weekly-plan-center') return moduleAllows(access, query.get('branch') === 'samples' ? ['sample-planning'] : query.get('view') === 'pool' ? ['order-pool'] : ['planning', 'sample-planning', 'order-pool']);
+    if (path === '/workspace/quality-fixtures') return moduleAllows(access, ['plans', 'fixtures', 'stock'].includes(query.get('view') || '') ? ['fixture-management'] : ['quality-review', 'fixture-management', 'drawing-library']);
+    if (path === '/workspace/employees') return moduleAllows(access, ['employees', 'recruitment', 'training', 'employee-accounts']);
+    if (path === '/workspace/reports') return moduleAllows(access, ['reports']);
+    const keys = matchingSubmodules(path, 'paths');
+    if (keys.length) return moduleAllows(access, keys);
+    if (path.startsWith('/workspace/reports/')) return false;
+  }
   const owners = PAGE_OWNERS.find(([prefix]) => prefixMatch(path, prefix))?.[1];
   if (owners) return moduleAllows(access, owners);
   // Personal account and independently enabled field reporting use their existing checks.
@@ -92,6 +137,7 @@ export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string,
   // Read-only POSTs must be individually declared, never inferred from a UI button label.
   const readCommand = verb === 'POST' && /^\/api\/(?:reports\/[^/]+\/(?:preview|export)|drawing-library\/[^/]+\/print-preview|planning\/weekly-plan-export\/preview|finished-goods\/reports\/preview)$/.test(path);
   const write = !read && !readCommand;
+  if (hasSubmoduleConfiguration(access)) return submoduleApiDecision(access, path, write, ruleModules);
   if (path.startsWith('/api/order-pool/commands') || path.startsWith('/api/order-pool/import')) return moduleAllows(access, ['production'], write);
   if (path.startsWith('/api/order-pool')) return moduleAllows(access, ['production', 'materials', 'technology'], write);
   const dependencies = /^\/api\/(?:work-orders|departments|customers|resource-categories|categories)(?:\/|$)/.test(path);
@@ -116,9 +162,48 @@ export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string,
 export function moduleFixtureActionAllowed(access: ModuleAccessCarrier, action: string): boolean {
   if (access.modulePermissions == null) return true;
   if (action === 'SAVE_SETTINGS') return false;
+  if (hasSubmoduleConfiguration(access)) {
+    const owners: ModulePermissionKey[] = ['APPROVE', 'RETURN'].includes(action) ? ['quality-review']
+      : ['RESPOND_RETURN', 'RESUBMIT_RETURNS', 'RECONCILE_REVIEW'].includes(action) ? ['drawing-library']
+      : ['CREATE_FIXTURE_PURCHASE', 'STOCK', 'SAVE_PREPARATION', 'SET_QUANTITY', 'SAVE_MAPPING', 'DELETE_MAPPING', 'SAVE_TEMPLATE'].includes(action) ? ['fixture-management']
+      : ['quality-review', 'drawing-library'];
+    return moduleAllows(access, owners, true) === true;
+  }
   const owners: BusinessAccessModule[] = ['APPROVE', 'RETURN'].includes(action) ? ['quality', 'production']
     : ['RESPOND_RETURN', 'RESUBMIT_RETURNS', 'RECONCILE_REVIEW'].includes(action) ? ['technology']
     : ['CREATE_FIXTURE_PURCHASE', 'STOCK', 'SAVE_PREPARATION', 'SET_QUANTITY'].includes(action) ? ['quality', 'materials']
     : ['quality', 'technology', 'production'];
   return moduleAllows(access, owners, true) === true;
+}
+
+function submoduleApiDecision(access: ModuleAccessCarrier, path: string, write: boolean, ruleModules: readonly string[]): boolean {
+  const allow = (keys: readonly ModulePermissionKey[], mutation = write) => moduleAllows(access, keys, mutation) === true;
+  if (!write && /^\/api\/(?:work-orders|departments|customers|resource-categories|categories)(?:\/|$)/.test(path)) return Object.keys(expandModulePermissions(access.modulePermissions || {})).length > 0;
+  if (!write && /^\/api\/planning\/import\/drawings(?:\/|$)/.test(path)) return allow(['planning', 'sample-planning', 'order-pool', 'drawing-library']);
+  if (!write && /^\/api\/warehouse\/material-orders(?:\/|$)/.test(path)) return allow(['warehouse', 'material-follow-up', 'planning', 'sample-planning', 'order-pool']);
+  if (path.startsWith('/api/order-pool')) return allow(!write ? ['order-pool', 'warehouse', 'drawing-library', 'material-follow-up', 'planning'] : /\/progress$/.test(path) ? ['order-pool', 'warehouse', 'drawing-library'] : ['order-pool']);
+  if (path.startsWith('/api/quality-fixtures')) return allow(['quality-review', 'fixture-management', 'drawing-library', ...(!write ? ['planning', 'sample-planning', 'warehouse', 'order-pool'] as const : [])]);
+  if (!write && /^\/api\/drawing-library\/files\/[^/]+\/(?:content|display-settings)$/.test(path)) return allow(['quality-review', 'drawing-library', 'planning', 'sample-planning', 'order-pool', 'warehouse', 'production-execution', 'fixture-management']);
+  if (!write && path === '/api/employees') return allow(['employees', 'employee-accounts', 'training', 'recruitment', 'attendance', 'abnormal-time', 'other-hours', 'other-hours-approval', 'responsibilities']);
+  if (!write && path.startsWith('/api/skills')) return allow(['training', 'employees']);
+  if (path.startsWith('/api/other-work-times')) return allow(['other-hours', 'other-hours-approval']);
+  if (/^\/api\/work-orders\/[^/]+\/process-route/.test(path)) return allow(['product-times', 'production-execution']);
+  if (/^\/api\/(?:process-completion|process-report-submissions)/.test(path)) return allow(['reporting-recovery', 'production-execution']);
+  if (/^\/api\/work-orders(?:\/|$)/.test(path)) return allow(['planning', 'production-execution']);
+  if (path.startsWith('/api/reports')) return !write && allow(['reports', ...(path.startsWith('/api/reports/employee-attainment') ? ['employees', 'attendance'] as const : [])]);
+  if (/^\/api\/process-management\/(?:completions|completion-withdrawal-requests)/.test(path) || /^\/api\/process-management\/routes\/[^/]+\/completions\/[^/]+\/withdraw$/.test(path)) return allow(['reporting-recovery', 'production-execution']);
+  if (path.startsWith('/api/process-management/route-changes')) return allow(['workflows', 'product-times', 'production-execution']);
+  if (/^\/api\/(?:process-management|process-executions|process-labor-claims)/.test(path)) return allow(['production-execution', 'product-times']);
+  if (path.startsWith('/api/process-labor-pools')) return allow(write ? ['production-execution', 'product-times'] : ['production-execution', 'product-times', 'report-labor-ledger']);
+  if (path.startsWith('/api/import/work-orders')) return allow(['planning']);
+  if (path.startsWith('/api/export/production') || path.startsWith('/api/export/work-orders')) return !write && allow(['planning', 'production-execution']);
+  if (path.startsWith('/api/export/resource-files')) return !write && allow(['drawing-library']);
+  if (path.startsWith('/api/dashboard/')) return !write;
+  if (path.startsWith('/api/change-snapshots')) return allow(['changes']);
+  if (path.startsWith('/api/work-order-qr')) return allow(['production-execution', 'planning']);
+  const keys = matchingSubmodules(path, 'apis');
+  if (keys.length) return allow(keys);
+  // Remaining legacy endpoints still have capability rules, but never inherit a sibling's write access.
+  // Unmapped write namespaces fail closed; a shared capability must not grant a sibling operation.
+  return !write && ruleModules.some(module => ['BASIC_SUMMARY', 'ACCOUNT_SELF', 'NOTIFICATIONS'].includes(module));
 }
