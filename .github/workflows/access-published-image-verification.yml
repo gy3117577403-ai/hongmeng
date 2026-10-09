@@ -1,0 +1,384 @@
+name: Access published image verification
+on:
+  push:
+    branches: ['codex/submodule-approval-handoff-v134264']
+    paths: ['.github/workflows/access-published-image-verification.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: access-published-image-v134266
+  cancel-in-progress: false
+jobs:
+  immutable-hangzhou-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      RELEASE_REVISION: 5a31414ea39d345b9b45d8d77d9227b732b05596
+      RELEASE_DIGEST: sha256:c02d5d3d74e956dce9fa18534afe707f1053467e6cb454d163a0aff8d6b3820f
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: v1.34.266
+      - name: Verify original application source is unchanged
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse v1.34.266)" = "$RELEASE_REVISION"
+          changes="$(git diff --name-only "$RELEASE_REVISION" HEAD -- .)"
+          test -z "$changes" || { echo "$changes"; exit 1; }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install acceptance dependencies
+        run: npm ci && npx prisma generate
+      - name: Prepare pinned object storage image
+        run: bash scripts/pull-ci-minio.sh
+      - name: Prepare browser and Chinese fonts
+        run: |
+          set -euo pipefail
+          if command -v google-chrome >/dev/null 2>&1; then google-chrome --version; else npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome; fi
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Anonymous Hangzhou image pull and independent clean runtime smoke
+        timeout-minutes: 30
+        env:
+          CHINA_MIRROR_IMAGE: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:v1.34.266
+          UPSTREAM_IMAGE: ghcr.io/${{ github.repository }}:v1.34.266
+          EXPECTED_APP_VERSION: v1.34.266
+          SESSION_SECRET: ci-china-mirror-sample-session-secret-1234567890
+          SEED_ADMIN_USERNAME: samplemirroradmin
+          SEED_ADMIN_PASSWORD: Codex-Sample-Mirror-Seed-2026!Z
+          SMOKE_ADMIN_CHANGED_PASSWORD: Codex-Sample-Mirror-Changed-2026!R
+          S3_ACCESS_KEY_ID: samplemirroraccess
+          S3_SECRET_ACCESS_KEY: Codex-Sample-Mirror-MinIO-Secret-2026!Z
+          OUTBOX_WORKER_TOKEN: ci-china-mirror-outbox-worker-token-1234567890
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/immutable-access artifacts/sample-branches artifacts/account-access artifacts/quality-data-v1 artifacts/process-quality artifacts/planning-progress-preview artifacts/quality-workbench artifacts/terminal-tooling artifacts/reporting-recovery artifacts/drawing-library-v134146 artifacts/purchasing artifacts/finished-goods artifacts/realtime-hours artifacts/production-workload artifacts/performance-loading artifacts/sample-library
+          anonymous_config="$(mktemp -d)"
+          network="hongmeng-sample-mirror-${GITHUB_RUN_ID}"
+          postgres_name="hongmeng-sample-mirror-postgres"
+          minio_name="hongmeng-sample-mirror-minio"
+          app_name="hongmeng-sample-mirror-app"
+          cleanup() {
+            docker logs "$app_name" > artifacts/immutable-access/startup.log 2>&1 || true
+            docker rm -f "$app_name" "$minio_name" "$postgres_name" >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+            rm -rf "$anonymous_config"
+          }
+          trap cleanup EXIT
+
+          export DOCKER_CONFIG="$anonymous_config"
+          EXPECTED_IMAGE_DIGEST="$(timeout 30s docker buildx imagetools inspect "$UPSTREAM_IMAGE" | awk '$1 == "Digest:" { print $2; exit }')"
+          [[ "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          # The authorized operator copies the verified immutable image to Hangzhou.
+          # Wait for that publication, then exercise an anonymous pull and a second database.
+          pulled=0
+          for attempt in $(seq 1 30); do
+            if timeout 180s docker pull "$CHINA_MIRROR_IMAGE"; then pulled=1; break; fi
+            echo "Waiting for Hangzhou publication ($attempt/30)"
+            sleep 20
+          done
+          test "$pulled" = "1"
+          mirror_repository="${CHINA_MIRROR_IMAGE%:*}"
+          mirror_digest="$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$CHINA_MIRROR_IMAGE" | awk -F@ -v repository="$mirror_repository" '$1 == repository { print $2; exit }')"
+          [[ "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$mirror_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$mirror_digest" = "$EXPECTED_IMAGE_DIGEST"
+          test "$mirror_digest" = "$RELEASE_DIGEST"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$CHINA_MIRROR_IMAGE")" = "linux/amd64"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$CHINA_MIRROR_IMAGE")" = "$EXPECTED_APP_VERSION"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CHINA_MIRROR_IMAGE")" = "$RELEASE_REVISION"
+
+          docker network create "$network" >/dev/null
+          docker run -d --name "$postgres_name" --network "$network" --tmpfs /var/lib/postgresql/data \
+            -p 127.0.0.1:25437:5432 \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=hongmeng_sample_mirror \
+            postgres:16-alpine >/dev/null
+          docker run -d --name "$minio_name" --network "$network" --tmpfs /data \
+            -p 127.0.0.1:29000:9000 \
+            -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" \
+            -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" \
+            "$CI_MINIO_IMAGE" server /data --address :9000 --console-address :9001 >/dev/null
+
+          postgres_ready=0
+          for attempt in $(seq 1 40); do
+            if docker exec "$postgres_name" pg_isready -U postgres -d hongmeng_sample_mirror >/dev/null 2>&1; then
+              postgres_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$postgres_ready" != "1" ]; then
+            docker logs "$postgres_name"
+            exit 1
+          fi
+
+          if ! SMOKE_STORAGE_ALLOW=disposable-ci-storage \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources \
+            node scripts/prepare-smoke-storage.mjs; then
+            docker logs "$minio_name"
+            exit 1
+          fi
+
+          docker run -d --name "$app_name" --network "$network" -p 127.0.0.1:3300:3000 \
+            -e APP_BASE_URL=http://127.0.0.1:3300 \
+            -e DATABASE_URL="postgresql://postgres:postgres@${postgres_name}:5432/hongmeng_sample_mirror?schema=public" \
+            -e SESSION_SECRET="$SESSION_SECRET" \
+            -e SEED_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" \
+            -e SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            -e S3_ENDPOINT="http://${minio_name}:9000" \
+            -e S3_PUBLIC_ENDPOINT=http://127.0.0.1:29000 \
+            -e S3_REGION=auto \
+            -e S3_BUCKET=workorder-resources \
+            -e S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" \
+            -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
+            -e S3_FORCE_PATH_STYLE=true \
+            -e PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            -e PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS=600 \
+            "$mirror_repository@$RELEASE_DIGEST" >/dev/null
+
+          app_ready=0
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:3300/api/ready >/dev/null; then
+              app_ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$app_ready" != "1" ]; then
+            docker logs "$app_name"
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:3300/api/health > artifacts/immutable-access/health.json
+          curl -fsS http://127.0.0.1:3300/api/ready > artifacts/immutable-access/ready.json
+          docker image inspect "$mirror_repository@$RELEASE_DIGEST" > artifacts/immutable-access/image.json
+          docker exec "$app_name" node node_modules/prisma/build/index.js migrate status > artifacts/immutable-access/migrations.txt
+          SAMPLE_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_QA_ALLOW_DISPOSABLE_MUTATION=clean-ci-runtime \
+            EXPECTED_APP_VERSION="$EXPECTED_APP_VERSION" \
+            SMOKE_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" \
+            SMOKE_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            SMOKE_ADMIN_CHANGED_PASSWORD="$SMOKE_ADMIN_CHANGED_PASSWORD" \
+            node scripts/smoke-sample-capture.mjs
+          SAMPLE_BRANCH_QA_ALLOW=disposable-sample-branches \
+            SAMPLE_BRANCH_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_BRANCH_QA_OUTPUT=artifacts/sample-branches/hangzhou-http.json \
+            SAMPLE_PLAN_BROWSER_FIXTURE="$RUNNER_TEMP/sample-planning-hangzhou.json" \
+            node scripts/smoke-sample-branches.mjs
+          SAMPLE_BRANCH_QA_ALLOW=disposable-sample-branches \
+            SAMPLE_BRANCH_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_PLAN_BROWSER_FIXTURE="$RUNNER_TEMP/sample-planning-hangzhou.json" \
+            SAMPLE_PLAN_BROWSER_OUTPUT=output/playwright/sample-planning-hangzhou \
+            node scripts/smoke-sample-planning-browser.mjs
+
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources \
+            IMPORT_QA_ALLOW=disposable-import-runtime \
+            IMPORT_QA_OUTPUT=output/playwright/import-association-hangzhou \
+            node scripts/seed-import-association-smoke.cjs
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
+            IMPORT_QA_ALLOW=disposable-import-runtime IMPORT_QA_BASE=http://127.0.0.1:3300 \
+            IMPORT_QA_OUTPUT=output/playwright/import-association-hangzhou \
+            node scripts/smoke-import-association-browser.mjs
+
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
+            ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
+            ACCOUNT_ACCESS_QA_BASE=http://127.0.0.1:3300 \
+            ACCOUNT_ACCESS_QA_OUTPUT=artifacts/account-access/hangzhou-http.json \
+            ACCOUNT_ACCESS_FIXTURE="$RUNNER_TEMP/account-access-hangzhou.json" \
+            node scripts/smoke-account-access.mjs
+          ACCOUNT_ACCESS_QA_ALLOW=disposable-account-access \
+            ACCOUNT_ACCESS_QA_BASE=http://127.0.0.1:3300 \
+            ACCOUNT_ACCESS_FIXTURE="$RUNNER_TEMP/account-access-hangzhou.json" \
+            ACCOUNT_ACCESS_BROWSER_OUTPUT=output/playwright/account-access-hangzhou \
+            node scripts/smoke-account-access-browser.mjs
+
+
+
+
+          mkdir -p artifacts/quality-data-v1
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
+            < scripts/seed-quality-data-smoke.cjs > artifacts/quality-data-v1/mirror-fixture.json
+          mkdir -p artifacts/process-quality
+          docker exec -i -e PROCESS_QUALITY_QA_ALLOW=disposable-quality-reporting-runtime "$app_name" node \
+            < scripts/seed-process-quality-smoke.cjs > artifacts/process-quality/hangzhou-fixture.json
+          PROCESS_QUALITY_QA_ALLOW=disposable-quality-reporting-runtime \
+            PROCESS_QUALITY_QA_BASE=http://127.0.0.1:3300 \
+            PROCESS_QUALITY_QA_FIXTURE=artifacts/process-quality/hangzhou-fixture.json \
+            PROCESS_QUALITY_QA_OUTPUT=artifacts/process-quality/hangzhou-http.json \
+            node scripts/smoke-process-quality.mjs
+          QUALITY_DATA_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
+            QUALITY_DATA_QA_OUTPUT=artifacts/quality-data-v1/mirror-runtime.json \
+            node scripts/smoke-quality-data.mjs
+          QUALITY_DATA_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
+            QUALITY_PAPER_QA_OUTPUT=artifacts/quality-data-v1/mirror-paper-runtime.json \
+            node scripts/smoke-quality-paper.mjs
+            QUALITY_DATA_QA_BASE=http://127.0.0.1:3300 \
+              QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+              QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
+              QUALITY_FIRST_QA_OUTPUT=artifacts/quality-data-v1/mirror-first-runtime.json \
+              node scripts/smoke-quality-first.mjs
+
+          mkdir -p artifacts/planning-progress-preview
+          docker exec -i -e QUALITY_DATA_QA_ALLOW=disposable-quality-runtime "$app_name" node \
+            < scripts/seed-planning-import-smoke.cjs > artifacts/planning-progress-preview/mirror-reference.json
+          QUALITY_DATA_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_DATA_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_DATA_QA_FIXTURE=artifacts/quality-data-v1/mirror-fixture.json \
+            PLANNING_IMPORT_QA_OUTPUT=artifacts/planning-progress-preview/mirror-import-runtime.json \
+            PLANNING_IMPORT_QA_REFERENCE=artifacts/planning-progress-preview/mirror-reference.json \
+            node scripts/smoke-planning-import.mjs
+
+          mkdir -p artifacts/quality-workbench
+          docker exec -i -e QUALITY_WORKBENCH_QA_ALLOW=disposable-quality-runtime "$app_name" node \
+            < scripts/seed-quality-workbench-smoke.cjs > artifacts/quality-workbench/mirror-fixture.json
+          QUALITY_WORKBENCH_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_WORKBENCH_QA_ALLOW=disposable-quality-runtime \
+            QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/mirror-fixture.json \
+            QUALITY_WORKBENCH_QA_OUTPUT=artifacts/quality-workbench/mirror-http.json \
+            node scripts/smoke-quality-workbench.mjs
+          QUALITY_WORKBENCH_QA_BASE=http://127.0.0.1:3300 \
+            QUALITY_WORKBENCH_QA_FIXTURE=artifacts/quality-workbench/mirror-fixture.json \
+            QUALITY_WORKBENCH_QA_BROWSER_OUTPUT=artifacts/quality-workbench/hangzhou \
+            node scripts/smoke-quality-workbench-browser.mjs
+          mkdir -p artifacts/terminal-tooling
+          docker exec -i -e TOOLING_QA_ALLOW=disposable-tooling-runtime "$app_name" node \
+            < scripts/seed-terminal-tooling-smoke.cjs > artifacts/terminal-tooling/hangzhou-fixture.json
+          TOOLING_QA_ALLOW=disposable-tooling-runtime \
+            TOOLING_QA_BASE=http://127.0.0.1:3300 \
+            TOOLING_QA_FIXTURE=artifacts/terminal-tooling/hangzhou-fixture.json \
+            TOOLING_QA_OUTPUT=artifacts/terminal-tooling/hangzhou-http.json \
+            node scripts/smoke-terminal-tooling.mjs
+          TOOLING_QA_ALLOW=disposable-tooling-runtime \
+            TOOLING_QA_BASE=http://127.0.0.1:3300 \
+            TOOLING_QA_FIXTURE=artifacts/terminal-tooling/hangzhou-fixture.json \
+            TOOLING_QA_BROWSER_OUTPUT=artifacts/terminal-tooling/hangzhou-browser \
+            node scripts/smoke-terminal-tooling-browser.mjs
+          mkdir -p output/playwright/review-closure-hangzhou
+          REVIEW_QA_ALLOW=disposable-review-runtime \
+            DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources \
+            node scripts/seed-review-closure-smoke.cjs > output/playwright/review-closure-hangzhou/fixture.json
+          REVIEW_QA_ALLOW=disposable-review-runtime \
+            REVIEW_QA_BASE=http://127.0.0.1:3300 \
+            REVIEW_QA_FIXTURE=output/playwright/review-closure-hangzhou/fixture.json \
+            REVIEW_QA_OUTPUT=output/playwright/review-closure-hangzhou/browser \
+            node scripts/smoke-review-closure-browser.mjs
+          mkdir -p artifacts/reporting-recovery
+          docker exec -i -e REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime "$app_name" node \
+            < scripts/seed-reporting-recovery-smoke.cjs > artifacts/reporting-recovery/mirror-fixture.json
+          REPORT_RECOVERY_QA_ALLOW=disposable-reporting-runtime \
+            REPORT_RECOVERY_QA_BASE=http://127.0.0.1:3300 \
+            REPORT_RECOVERY_QA_FIXTURE=artifacts/reporting-recovery/mirror-fixture.json \
+            REPORT_RECOVERY_QA_OUTPUT=artifacts/reporting-recovery/mirror-http.json \
+            node scripts/smoke-reporting-recovery.mjs
+          RUN_DB_INTEGRATION=1 \
+            DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            PROCESS_PENDING_RECOVERY_TEST_ORIGIN=http://127.0.0.1:3300 \
+            PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            npx tsx --test --test-concurrency=1 --test-name-pattern='006:|without audited' tests/process-flexible-route-closure-integration.test.ts \
+            | tee artifacts/planning-progress-preview/mirror-partial-closure-runtime.log
+          mkdir -p artifacts/drawing-library-v134146
+          docker exec -i -e DRAWING_LIBRARY_QA_ALLOW=disposable-drawing-runtime "$app_name" node \
+            < scripts/seed-drawing-library-smoke.cjs > artifacts/drawing-library-v134146/mirror-fixture.json
+          DRAWING_LIBRARY_QA_ALLOW=disposable-drawing-runtime \
+            DRAWING_LIBRARY_QA_BASE=http://127.0.0.1:3300 \
+            DRAWING_LIBRARY_QA_FIXTURE=artifacts/drawing-library-v134146/mirror-fixture.json \
+            DRAWING_LIBRARY_QA_OUTPUT=artifacts/drawing-library-v134146/mirror-http.json \
+            node scripts/smoke-drawing-library.mjs
+          mkdir -p artifacts/purchasing
+          docker exec -i -e PURCHASING_QA_ALLOW=disposable-purchasing-runtime "$app_name" node \
+            < scripts/seed-purchasing-smoke.cjs > artifacts/purchasing/hangzhou-fixture.json
+          PURCHASING_QA_ALLOW=disposable-purchasing-runtime \
+            SMOKE_BASE_URL=http://127.0.0.1:3300 \
+            PURCHASING_QA_FIXTURE=artifacts/purchasing/hangzhou-fixture.json \
+            PURCHASING_QA_OUTPUT=artifacts/purchasing/hangzhou-http.json \
+            node scripts/smoke-purchasing.mjs
+          mkdir -p artifacts/finished-goods
+          docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime "$app_name" node \
+            < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/hangzhou-fixture.json
+          FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime \
+            FINISHED_GOODS_QA_BASE=http://127.0.0.1:3300 \
+            FINISHED_GOODS_QA_FIXTURE=artifacts/finished-goods/hangzhou-fixture.json \
+            FINISHED_GOODS_QA_OUTPUT=artifacts/finished-goods/hangzhou-http.json \
+            node scripts/smoke-finished-goods.mjs
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources \
+            SHIPPING_QA_BASE=http://127.0.0.1:3300 \
+            SHIPPING_QA_OUTPUT=output/playwright/shipping-report-hangzhou \
+            bash scripts/check-shipping-report-runtime.sh
+          mkdir -p artifacts/realtime-hours
+          docker exec -i -e REALTIME_HOURS_QA_ALLOW=disposable-realtime-hours-runtime "$app_name" node \
+            < scripts/seed-realtime-hours-smoke.cjs > artifacts/realtime-hours/hangzhou-fixture.json
+          REALTIME_HOURS_QA_ALLOW=disposable-realtime-hours-runtime \
+            REALTIME_HOURS_QA_BASE=http://127.0.0.1:3300 \
+            REALTIME_HOURS_QA_FIXTURE=artifacts/realtime-hours/hangzhou-fixture.json \
+            REALTIME_HOURS_QA_OUTPUT=artifacts/realtime-hours/hangzhou-http.json \
+            node scripts/smoke-realtime-hours.mjs
+          mkdir -p artifacts/production-workload
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            WORKLOAD_QA_ALLOW=disposable-workload-runtime node scripts/seed-production-workload-smoke.cjs > artifacts/production-workload/hangzhou-fixture.json
+          WORKLOAD_QA_ALLOW=disposable-workload-runtime \
+            WORKLOAD_QA_BASE=http://127.0.0.1:3300 \
+            WORKLOAD_QA_FIXTURE=artifacts/production-workload/hangzhou-fixture.json \
+            WORKLOAD_QA_OUTPUT=artifacts/production-workload/hangzhou-http.json \
+            node scripts/smoke-production-workload.mjs
+          PERFORMANCE_QA_ALLOW=disposable-performance-runtime \
+            PERFORMANCE_QA_BASE=http://127.0.0.1:3300 \
+            PERFORMANCE_QA_FIXTURE=artifacts/production-workload/hangzhou-fixture.json \
+            PERFORMANCE_QA_OUTPUT=artifacts/performance-loading/hangzhou-http.json \
+            node scripts/smoke-performance-loading.mjs
+
+          DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public" \
+            S3_ENDPOINT=http://127.0.0.1:29000 \
+            SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_LIBRARY_QA_OUTPUT=artifacts/sample-library/hangzhou-http.json \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-hangzhou.json" \
+            node scripts/smoke-sample-library.mjs
+          SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-hangzhou.json" \
+            SAMPLE_LIBRARY_BROWSER_OUTPUT=output/playwright/sample-library-hangzhou \
+            node scripts/smoke-sample-library-browser.mjs
+          SAMPLE_LIBRARY_QA_ALLOW=disposable-sample-library \
+            SAMPLE_LIBRARY_QA_BASE=http://127.0.0.1:3300 \
+            SAMPLE_LIBRARY_FIXTURE="$RUNNER_TEMP/sample-library-hangzhou.json" \
+            MANUAL_BROWSER_OUTPUT=output/playwright/assembly-manual-hangzhou \
+            node scripts/smoke-assembly-manual-browser.mjs
+
+          docker stop --time 20 "$app_name" >/dev/null
+          test "$(docker inspect -f '{{.State.ExitCode}}' "$app_name")" = "0"
+          {
+            echo "### Anonymous China mirror runtime acceptance"
+            echo
+            echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve independent verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immutable-access-v1.34.266
+          path: |
+            artifacts/**/*.json
+            artifacts/**/*.txt
+            artifacts/**/*.log
+            !artifacts/**/*fixture*.json
+            !artifacts/**/*reference*.json
+            output/playwright/**/*.png
+            output/playwright/**/browser-result.json
+            output/playwright/**/browser-result.txt
+            output/playwright/**/data-invariants.json
+            output/playwright/**/browser-runtime.txt
+          if-no-files-found: error
