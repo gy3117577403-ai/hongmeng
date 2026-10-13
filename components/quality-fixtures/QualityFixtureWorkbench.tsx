@@ -137,10 +137,11 @@ export default function QualityFixtureWorkbench({ user, initialData, initialView
     await act(async () => {
       const d = draft;
       const body = new FormData(); body.set("file", file); body.set("kind", kind); body.set("product", d.libraryItemId); body.set("package", d.id || "");
-      const r = await fetch("/api/quality-fixtures/files", { method: "POST", body }).then(response<{ id: string; sheets?: BomSheet[]; mapping?: BomMapping }>);
+      const r = await fetch("/api/quality-fixtures/files", { method: "POST", body }).then(response<{ id: string; sheets?: BomSheet[]; mapping?: BomMapping; documentPackage?: Pick<Draft, "id" | "version" | "status" | "drawingFileIds" | "sopFileIds"> | null }>);
       if (kind === "bom") { setSheets(r.sheets!); setDraft({ ...d, bomFileId: r.id, bomMapping: r.mapping!, bomRows: [], bomConfirmed: false }); }
+      else if (r.documentPackage) setDraft({ ...d, ...r.documentPackage });
       const fresh = await refresh();
-      if (kind !== "bom" && fresh.product?.id === d.libraryItemId) {
+      if (kind !== "bom" && !r.documentPackage && fresh.product?.id === d.libraryItemId) {
         const latest = fresh.product.fixturePackages[0];
         setDraft({ ...d, id: latest?.id, version: latest?.version, status: latest?.status,
           drawingFileIds: fresh.product.files.filter(f => f.category.code === "drawing").map(f => f.id),

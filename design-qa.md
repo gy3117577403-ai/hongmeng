@@ -1,4 +1,4 @@
-# Sample planning documents and deletion — v1.34.268
+# Sample planning documents and deletion — v1.34.269
 
 Final result: passed
 
@@ -40,6 +40,8 @@ Intentional adaptations: retain real navigation and week/date filters; support S
 Actual browser: create test order; upload PDF; replace; verify V1.1; open history and old V1.0; delete; verify quantity/hour refresh; restore; verify identical order and documents; select reason shortcut and inspect final deletion metrics.
 
 Database tests cover isolation, replay, stale versions, completion/stock preservation, warehouse reopening and reference retention. HTTP/S3 smoke covers real content bytes, invalid files, cross-order file denial and deletion/restore.
+
+Release follow-up: the production-review smoke exposed an upload-to-save package race. The upload now synchronizes its own product transactionally and returns the authoritative package. A real HTTP run passed 12 assertions including queue replay, retained signed evidence, immediate save and rejection after a concurrent upload. The actual edit dialog also uploaded an SOP, saved successfully and closed at the pending-review page; evidence: output/sample-documents-v134267/atomic-upload-result.json and atomic-upload-ui.png. Another 23 related PostgreSQL tests passed. CI now waits for the actual upload receipt rather than an unrelated view refresh.
 
 Runtime request review found success on final upload/replace/restore paths. Earlier deleted-focus 404 was fixed and retested. A late attempt to dismiss the native unsaved-file confirmation stalled the IAB automation channel; final console retrieval and automatic dismissal were not completed. This is a browser-automation coverage gap and is not claimed as a passed unsaved-navigation test.
 

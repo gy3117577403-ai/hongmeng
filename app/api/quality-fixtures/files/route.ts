@@ -11,6 +11,7 @@ import { safeFilename, validateFileContent } from "@/lib/validation";
 import { inspectMediaImage } from "@/lib/media-assets";
 import { reconcileProductionPlanDrawingLinks } from "@/lib/planning-product-link";
 import { synchronizeDrawingLibraryWorkOrderStatus } from "@/lib/drawing-library-lifecycle";
+import { syncProductDocuments } from "@/lib/quality-fixture-sync";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest) {
@@ -71,7 +72,14 @@ export async function POST(req: NextRequest) {
       await synchronizeDrawingLibraryWorkOrderStatus(tx, libraryItemId);
       await tx.qfEvent.create({ data: { entityType: "PRODUCT", entityId: libraryItemId, action: "UPLOAD_DRAWING", actorId: actor.id,
         actorName: actor.displayName || actor.username, snapshot: qfJson({ fileId: saved.id, sha256, name: file.name }) } });
-      return { id: saved.id, name: saved.originalName };
+      // The uploader must receive the package produced by its own write. A global
+      // queue refresh may skip this product while another transaction holds the lock.
+      const currentPackage = await syncProductDocuments(tx, libraryItemId, actor);
+      const ids = (value: unknown) => Array.isArray(value) ? value.map(item => String(item.id)) : [];
+      return { id: saved.id, name: saved.originalName, documentPackage: currentPackage ? {
+        id: currentPackage.id, version: currentPackage.version, status: currentPackage.status,
+        drawingFileIds: ids(currentPackage.drawingFiles), sopFileIds: ids(currentPackage.sopFiles),
+      } : null };
     }, { maxWait: 30000, timeout: 30000 });
     return NextResponse.json({ ok: true, data });
   } catch (e) { if (key) await deleteObjectsBestEffort([key]); return purchasingError(e); }
