@@ -52,12 +52,19 @@ test('dedicated molds, combinations and historical work preserve stock and exact
       const endedAt=new Date(Date.now()-2*3600000),startedAt=new Date(+endedAt-35*60000);
       const payload={key:randomUUID(),action:'BACKFILL',kind:'TUNING',toolingMode:'COMBINATION',specification:prefix,moldId,choices:[{position:'UPPER_INNER',bladeId:blade.id,stockId}],startedAt:startedAt.toISOString(),endedAt:endedAt.toISOString(),reason:'忘报补录'};
       const first=await worklogCommand(actors[0],payload),again=await worklogCommand(actors[0],payload);assert.deepEqual(first,again);
-      const history=await getToolingJob(String(first.jobId));assert.equal(history.workMs,35*60000);assert.equal(history.moldUsage?.disposition,'HISTORICAL');assert.equal(history.usages[0].disposition,'HISTORICAL');assert.equal(history.ledger.filter(l=>l.status!=='VOIDED').length,1);
+      const history=await getToolingJob(String(first.jobId));assert.equal(history.workMs,35*60000);assert.equal(history.moldUsage?.disposition,'HISTORICAL');assert.equal(history.usages[0].disposition,'HISTORICAL');
+      // A 35-minute interval can cross Shanghai midnight when CI runs around 02:00.
+      // One job still produces exactly one ledger entry per touched business day.
+      const ledger=history.ledger.filter(l=>l.status!=='VOIDED');
+      const days=new Set([shanghaiDay(startedAt),shanghaiDay(+endedAt-1)]);
+      assert.equal(ledger.length,days.size);
+      assert.equal(ledger.reduce((sum,row)=>sum+(row.reportedMilliseconds ?? 0),0),35*60000);
       assert.deepEqual(await prisma.toolingMold.findUniqueOrThrow({where:{id:moldId}}),before);assert.deepEqual(await prisma.toolingStock.findUniqueOrThrow({where:{id:stockId}}),stockBefore);
       await assert.rejects(worklogCommand(actors[0],{...payload,key:randomUUID()}),/重复报工/);
       await finish(activeId);
       const stats=await listToolingWork(actors[0],new URLSearchParams({period:'day',date:shanghaiDay(endedAt),mine:'1',mode:'COMBINATION',source:'BACKFILL'}));
-      assert.equal(stats.summary.modes.COMBINATION,35*60000);assert.equal(stats.summary.backfillCount,1);assert.equal(stats.jobs.length,1);
+      const dayStart=+new Date(shanghaiDay(endedAt)+'T00:00:00+08:00');
+      assert.equal(stats.summary.modes.COMBINATION,+endedAt-Math.max(+startedAt,dayStart));assert.equal(stats.summary.backfillCount,1);assert.equal(stats.jobs.length,1);
     });
     await t.test('backdated live start rejects future and overlap; valid start holds current stock and continues',async()=>{
       await assert.rejects(start(0,{action:'BACKSTART',startedAt:new Date(Date.now()+60000).toISOString(),reason:'误选'}),/起止时间/);
