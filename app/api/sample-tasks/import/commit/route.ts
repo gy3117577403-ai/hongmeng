@@ -262,7 +262,7 @@ export async function POST(req: NextRequest) {
             issuedDate: row.issuedDate ? new Date(`${row.issuedDate}T00:00:00Z`) : null,
             taskType: row.taskType,
             planWeekStartDate: row.planWeekStartDate ? new Date(row.planWeekStartDate) : null,
-            documentReviewRequired: true,
+            documentReviewRequired: false,
             warningDays: row.warningDays,
             priority: level.priority,
             createdById: actor.id,
@@ -273,7 +273,6 @@ export async function POST(req: NextRequest) {
           select: { id: true, code: true, status: true, dataPurpose: true },
         });
         await ensureSampleWarehouse(tx, task);
-        await tx.qfSyncQueue.upsert({ where: { libraryItemId: item.id }, create: { libraryItemId: item.id }, update: { updatedAt: new Date() } });
         createdTaskCount += 1;
         results.push({ rowNumber: row.rowNumber, status: 'CREATED', message: '样品计划已创建', taskId: task.id, taskCode: task.code, drawingLibraryItemId: item.id });
       }

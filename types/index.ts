@@ -334,6 +334,8 @@ export type SampleTaskDTO = {
   importSourceRow?: number | null;
   importFileName?: string | null;
   drawingDocumentCount?: number;
+  drawingCount?: number;
+  drawingVersion?: string | null;
   materialTaskId?: string | null;
   materialStatus?: string | null;
   materialConfirmed?: boolean;

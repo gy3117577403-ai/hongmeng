@@ -1,7 +1,7 @@
 import { FixtureError } from '@/lib/quality-fixture-domain';
 import { NextRequest, NextResponse } from 'next/server';
 import { SamplePlanError, sampleTaskType, sampleWeek } from '@/lib/sample-plan-domain';
-import { assertSampleDrawingApproved, completeSampleRepeat, synchronizeSampleWarehouse, transferSampleCompletion } from '@/lib/sample-plan-operations';
+import { bindSampleDocuments, completeSampleRepeat, synchronizeSampleWarehouse, transferSampleCompletion } from '@/lib/sample-plan-operations';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
@@ -77,14 +77,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const lifecycle: Prisma.SampleTaskUncheckedUpdateInput = {};
       let noDataCompletion = false;
       if (action === 'START') {
-        await assertSampleDrawingApproved(tx, existing);
+        await bindSampleDocuments(tx, existing);
         if (status === 'CANCELLED' || status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
         if (status === 'SUBMITTED' || existing.activeSubmissionId) throw new Error('SAMPLE_TASK_SUBMITTED');
         status = 'IN_PROGRESS';
         lifecycle.startedAt = existing.startedAt || now;
       } else if (action === 'COMPLETE') {
         if (existing.taskType === 'REPEAT') throw new SamplePlanError('请使用老产品完成登记');
-        await assertSampleDrawingApproved(tx, existing);
+        await bindSampleDocuments(tx, existing);
         if (status === 'CANCELLED' || status === 'COMPLETED') throw new Error('SAMPLE_TASK_CLOSED');
         {
           const [blockingEntries, blockingPhotos, totalEntries, totalPhotos, sections] = await Promise.all([
@@ -202,7 +202,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           sampleQuantity,
           taskType,
           planWeekStartDate: planWeek ? new Date(planWeek) : null,
-          documentReviewRequired: existing.documentReviewRequired || taskType !== existing.taskType && taskType === 'REPEAT',
+          documentReviewRequired: false,
           dueDate, plannedCompletionDate,
           issuedDate,
           warningDays,

@@ -2,9 +2,10 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { CalendarDays, ChevronLeft, ChevronRight, FileCheck2, Pencil, Search, ArrowUpRight, PackageCheck } from 'lucide-react';
+import SamplePlanRowActions from './SamplePlanRowActions';
+import { CalendarDays, ChevronLeft, ChevronRight, FileCheck2, Search, ArrowUpRight, PackageCheck } from 'lucide-react';
 import type { SampleTaskDTO } from '@/types';
-import { sampleDocumentState, sampleKittingState, sampleProgress, sampleTaskHref, samplePrimaryAction } from '@/lib/sample-workbench-view';
+import { sampleDocumentState, sampleKittingState, sampleProgress, sampleTaskHref } from '@/lib/sample-workbench-view';
 import { sampleHours } from '@/lib/sample-plan-time';
 import { sampleWarning } from '@/lib/sample-plan-view';
 import { sampleCurrentWeek, sampleShiftDay } from '@/lib/sample-plan-domain';
@@ -13,9 +14,10 @@ type Props = {
  scopeKey?:string; tasks:SampleTaskDTO[]; pagination:{page:number;pageSize:number;total:number;totalPages:number}; loading:boolean; totalQuantity:number;
  timeSummary?:{totalPlannedMilliseconds?:string;remainingPlannedMilliseconds?:string;missingTimeCount?:number;remainingUnknownCount?:number;unknownCompletedCount?:number};
  focusId?:string; error?:string; scopeLabel?:string; onPageSize:(size:number)=>void; onEmptyAction:(week:string)=>void;
+ canDelete:boolean; onReplace:(task:SampleTaskDTO)=>void; onDelete:(task:SampleTaskDTO)=>void;
  onPage:(page:number)=>void; onEdit:(task:SampleTaskDTO)=>void; onOpen:(task:SampleTaskDTO,tab:'documents'|'overview'|'completion'|'review')=>void; onChanged:()=>void;
 };
-export default function SamplePlanningTable({scopeKey,tasks,pagination,loading,totalQuantity,timeSummary={},focusId,error,scopeLabel,onPageSize,onEmptyAction,onPage,onEdit,onOpen,onChanged}:Props) {
+export default function SamplePlanningTable({scopeKey,tasks,pagination,loading,totalQuantity,timeSummary={},focusId,error,scopeLabel,onPageSize,onEmptyAction,onPage,onEdit,onOpen,onChanged,onReplace,onDelete,canDelete}:Props) {
  const [ids,setIds]=useState<string[]>([]),[open,setOpen]=useState(false),[week,setWeek]=useState(sampleCurrentWeek),[reason,setReason]=useState(''),[saving,setSaving]=useState(false),[saveError,setSaveError]=useState(''),[jump,setJump]=useState('');
  const snapshot=useRef<Array<{id:string;version:number}>>([]), scroll=useRef<HTMLDivElement>(null);
  const candidates=tasks.filter(t=>!['COMPLETED','CANCELLED'].includes(t.status));
@@ -27,17 +29,17 @@ export default function SamplePlanningTable({scopeKey,tasks,pagination,loading,t
  return <section className="sp-table-panel spr-table" aria-label="样品计划表" aria-busy={loading}>
   <header className="sp-table-summary"><strong>{loading&&!tasks.length?'—':pagination.total.toLocaleString()} <small>项计划</small><span>·</span>{loading&&!tasks.length?'—':totalQuantity.toLocaleString()} <small>件 / 套</small></strong><div className="spr-time-totals"><span>{timeSummary.missingTimeCount?'已知计划工时':'计划工时'} <b>{loading&&!tasks.length?'—':sampleHours(timeSummary.totalPlannedMilliseconds)} h</b></span><span>剩余计划工时 <b>{loading&&!tasks.length?'—':sampleHours(timeSummary.remainingPlannedMilliseconds)} h</b></span>{!!timeSummary.missingTimeCount&&<em>{timeSummary.missingTimeCount} 项工时待补</em>}{!!timeSummary.remainingUnknownCount&&<em>{timeSummary.remainingUnknownCount} 项余量未能估算</em>}</div>{loading&&<small role="status">正在更新…</small>}</header>
   <div className="spr-range-caption"><span>{scopeLabel}</span><span>数量与工时为当前筛选合计，包含全部分页</span></div>
-  <div className="sp-table-scroll" ref={scroll} tabIndex={0}><table><colgroup>{[44,235,84,125,84,84,108,83,107,105,136].map((width,i)=><col key={i} style={{width}}/>)}</colgroup><thead><tr><th><input aria-label="选择本页可排期计划" type="checkbox" checked={!!candidates.length&&candidates.every(t=>ids.includes(t.id))} onChange={e=>setIds(e.target.checked?candidates.map(t=>t.id):[])}/></th><th>客户 / 产品型号</th><th>计划 / 完成</th><th>单套 / 合计工时</th><th>计划完成</th><th>客户交期</th><th>图纸资料</th><th>仓库</th><th>制作进度</th><th>备注</th><th>操作</th></tr></thead><tbody>
-  {tasks.map((task,index)=>{const doc=sampleDocumentState(task),kit=sampleKittingState(task.materialStatus),progress=sampleProgress(task),action=samplePrimaryAction(task),closed=['COMPLETED','CANCELLED'].includes(task.status);return <tr key={task.id} data-focused={task.id===focusId} className={ids.includes(task.id)?'spr-selected':''}>
+  <div className="sp-table-scroll" ref={scroll} tabIndex={0}><table><colgroup>{[36,207,74,105,77,75,96,75,100,82,165].map((width,i)=><col key={i} style={{width}}/>)}</colgroup><thead><tr><th><input aria-label="选择本页可排期计划" type="checkbox" checked={!!candidates.length&&candidates.every(t=>ids.includes(t.id))} onChange={e=>setIds(e.target.checked?candidates.map(t=>t.id):[])}/></th><th>客户 / 产品型号</th><th>计划 / 完成</th><th>单套 / 合计工时</th><th>计划完成</th><th>客户交期</th><th>图纸资料</th><th>仓库</th><th>制作进度</th><th>备注</th><th>操作</th></tr></thead><tbody>
+  {tasks.map((task,index)=>{const doc=sampleDocumentState(task),kit=sampleKittingState(task.materialStatus),progress=sampleProgress(task),closed=['COMPLETED','CANCELLED'].includes(task.status);return <tr key={task.id} data-focused={task.id===focusId} className={ids.includes(task.id)?'spr-selected':''}>
    <td><input aria-label={`选择 ${task.specification}`} type="checkbox" disabled={closed} checked={ids.includes(task.id)} onChange={e=>setIds(v=>e.target.checked?[...v,task.id]:v.filter(id=>id!==task.id))}/><small className="sp-row-number">{start+index}</small></td>
    <td><button className="sp-model" title={`${task.specification} · ${task.sourceOrderNo || task.code}`} onClick={()=>onOpen(task,'overview')}>{task.specification}</button><small title={`${task.customerName} · ${task.productName||''}`}>{task.customerName} · {task.productName||'—'}</small>{task.dataPurpose!=='PRODUCTION'&&<em className="spr-purpose">{task.dataPurpose==='TEST'?'测试':'培训'}</em>}</td>
    <td><strong>{task.sampleQuantity??'—'}</strong><small>{task.completedQuantityKnown===false?'完成量未记录':`完成 ${task.completedQuantity || 0}`}</small></td>
    <td><strong className={task.unitPlannedMinutes==null?'spr-missing':''}>{task.unitPlannedMinutes==null?'待补':task.unitPlannedMinutes}<small>{task.unitPlannedMinutes==null?'':' 分钟/套'}</small></strong><small>{task.totalPlannedMilliseconds==null?'合计未计入':`合计 ${sampleHours(task.totalPlannedMilliseconds)} 小时`}</small></td>
    <td><span title={task.plannedCompletionDate||'未设置'}>{day(task.plannedCompletionDate)}</span></td><td><span className={sampleWarning(task).kind==='OVERDUE'?'sp-overdue':''} title={task.dueDate||'未设置'}>{day(task.dueDate)}</span></td>
-   <td><button className={`sp-badge ${doc.tone}`} onClick={()=>onOpen(task,'documents')}><FileCheck2 size={13}/>{doc.label}</button></td>
+   <td><button className={`sp-badge ${doc.tone}`} onClick={()=>onOpen(task,'documents')}><FileCheck2 size={13}/>{doc.label}</button>{task.drawingDocumentCount ? <small>{task.drawingDocumentCount} 份 · {task.drawingVersion}</small> : null}</td>
    <td>{task.materialTaskId?<Link prefetch={false} className={`sp-badge ${kit.tone}`} href={sampleTaskHref('/workspace/warehouse',task.id)}>{kit.label}<ArrowUpRight size={12}/></Link>:<span title={closed?'历史任务未建立配料记录，不计为当前缺料':'尚未建立配料记录'} className="sp-badge muted">{closed?'历史未建':'未建立'}</span>}</td>
    <td><button className={`sp-badge ${progress.tone}`} onClick={()=>onOpen(task,progress.label==='待整包审核'?'review':'completion')}>{progress.label}</button>{closed?<small title={task.completedAt||''}>{task.completedAt?sampleStamp(task.completedAt):'历史日期未记录'}</small>:task.taskType!=='REPEAT'&&<small>采集 {task.counts.data} · 照片 {task.counts.photos}</small>}{!!task.parameterConflictCount&&<Link className="su-pending-link" href="/connector-parameters?view=conflicts">参数待处理 {task.parameterConflictCount}</Link>}</td>
-   <td><button className="sp-note" title={task.planRemark||'添加备注'} onClick={()=>onEdit(task)}>{task.planRemark||'添加备注'}</button></td><td><div className="sp-row-actions"><button className="su-row-open" onClick={()=>onOpen(task,action.tab)}>{action.label}<ArrowUpRight size={13}/></button><button title={closed?'更正记录':'编辑计划'} aria-label={`${closed?'更正':'编辑'} ${task.specification}`} onClick={()=>onEdit(task)}><Pencil size={15}/></button></div></td>
+   <td><button className="sp-note" title={task.planRemark||'添加备注'} onClick={()=>onEdit(task)}>{task.planRemark||'添加备注'}</button></td><td><SamplePlanRowActions task={task} onReplace={()=>onReplace(task)} onDelete={()=>onDelete(task)} onEdit={()=>onEdit(task)} onOpen={tab=>onOpen(task,tab)} canDelete={canDelete}/></td>
   </tr>;})}
   {!tasks.length&&<tr><td colSpan={11}><div className="sp-empty"><Search size={28}/><strong>{loading?'正在加载计划':error?'计划暂未加载成功':'当前条件没有计划'}</strong><span>{error?'请使用上方重新加载，查询条件已保留':scopeLabel}</span>{!loading&&!error&&<div className="spr-empty-actions"><button onClick={()=>onEmptyAction('unplanned')}>查看待排期</button><button onClick={()=>onEmptyAction('')}>查看全部计划</button></div>}</div></td></tr>}
   </tbody></table></div>

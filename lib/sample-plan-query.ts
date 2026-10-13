@@ -11,17 +11,16 @@ export function samplePlanQuery(params: URLSearchParams, employeeId?: string | n
   if (!SAMPLE_VIEWS.includes(view)) throw new SampleQueryError('样品状态筛选无效');
   const unfinished = Prisma.sql`t.status NOT IN ('COMPLETED', 'CANCELLED')`;
   const pending = Prisma.sql`${unfinished} AND EXISTS (SELECT 1 FROM sample_submissions s WHERE s.id=t.active_submission_id AND s.status='PENDING')`;
-  const documentStatus = Prisma.sql`COALESCE((SELECT p.status FROM "QfPackage" p WHERE p."libraryItemId"=t.drawing_library_item_id ORDER BY p.sequence DESC LIMIT 1), '')`;
-  const hasDocuments = Prisma.sql`COALESCE((SELECT (jsonb_array_length(p."drawingFiles") + jsonb_array_length(p."sopFiles")) > 0 FROM "QfPackage" p WHERE p."libraryItemId"=t.drawing_library_item_id ORDER BY p.sequence DESC LIMIT 1), FALSE)`;
-  const needsDocuments = Prisma.sql`${unfinished} AND t.document_review_required=TRUE`;
+  const hasDocuments = Prisma.sql`CASE WHEN t.document_snapshot IS NOT NULL THEN EXISTS (
+    SELECT 1 FROM jsonb_array_elements(t.document_snapshot) f WHERE f->>'kind'='drawing'
+  ) ELSE EXISTS (SELECT 1 FROM drawing_library_files f JOIN resource_categories c ON c.id=f.category_id
+    WHERE f.library_item_id=t.drawing_library_item_id AND f.deleted_at IS NULL AND f.is_current=TRUE AND c.code='drawing') END`;
   const views: Record<SamplePlanView, Prisma.Sql> = {
     UNFINISHED: unfinished, ALL: Prisma.sql`t.status<>'CANCELLED'`,
-    DOCUMENT_PENDING: Prisma.sql`${needsDocuments} AND ${documentStatus}<>'APPROVED'`,
-    DRAWING_MISSING: Prisma.sql`${needsDocuments} AND NOT (${hasDocuments}) AND ${documentStatus} NOT IN ('RETURNED','REVIEWING','SUPERVISOR','QUALITY','APPROVED')`,
-    DRAWING_DRAFT: Prisma.sql`${needsDocuments} AND ${hasDocuments} AND ${documentStatus} IN ('','DRAFT','REVOKED','SUPERSEDED')`,
-    DRAWING_REVIEW: Prisma.sql`${needsDocuments} AND ${documentStatus} IN ('REVIEWING','SUPERVISOR','QUALITY')`,
-    DRAWING_RETURNED: Prisma.sql`${needsDocuments} AND ${documentStatus}='RETURNED'`,
-    DRAWING_APPROVED: Prisma.sql`t.document_review_required=TRUE AND ${documentStatus}='APPROVED'`,
+    DOCUMENT_PENDING: Prisma.sql`${unfinished} AND NOT (${hasDocuments})`,
+    DRAWING_MISSING: Prisma.sql`NOT (${hasDocuments})`,
+    DRAWING_DRAFT: Prisma.sql`FALSE`, DRAWING_REVIEW: Prisma.sql`FALSE`, DRAWING_RETURNED: Prisma.sql`FALSE`,
+    DRAWING_APPROVED: Prisma.sql`${hasDocuments}`,
     SHORTAGE: Prisma.sql`${unfinished} AND EXISTS (SELECT 1 FROM warehouse_material_tasks w WHERE w.sample_task_id=t.id AND w.status='exception')`,
     TODAY: Prisma.sql`${unfinished} AND t.due_date=${today}::date`,
     SOON: Prisma.sql`${unfinished} AND t.due_date>${today}::date AND t.due_date<=${today}::date+t.warning_days`,

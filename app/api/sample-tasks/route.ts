@@ -2,7 +2,6 @@ import { listSamplePlans, SampleQueryError } from '@/lib/sample-plan-query';
 import { NextRequest, NextResponse } from 'next/server';
 import { SamplePlanError, sampleTaskType, sampleWeek } from '@/lib/sample-plan-domain';
 import { ensureSampleWarehouse } from '@/lib/sample-plan-operations';
-import { syncProductDocuments } from '@/lib/quality-fixture-sync';
 import { DrawingLibraryResolutionError, resolveOrCreateDrawingProduct } from '@/lib/drawing-library-resolution';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -116,7 +115,7 @@ export async function POST(req: NextRequest) {
           sampleQuantity,
           taskType: sampleTaskType(body.taskType),
           planWeekStartDate: sampleWeek(body.planWeekStartDate) ? new Date(sampleWeek(body.planWeekStartDate)!) : null,
-          documentReviewRequired: dataPurpose === 'PRODUCTION',
+          documentReviewRequired: false,
           dueDate, plannedCompletionDate,
           issuedDate,
           warningDays,
@@ -140,7 +139,6 @@ export async function POST(req: NextRequest) {
         select: { id: true, code: true, status: true, dataPurpose: true },
       });
       await ensureSampleWarehouse(tx, created);
-      if (dataPurpose === 'PRODUCTION') await tx.qfSyncQueue.upsert({ where: { libraryItemId: item.id }, create: { libraryItemId: item.id }, update: { updatedAt: new Date() } });
       await tx.operationLog.create({
         data: {
           userId: actor.id,

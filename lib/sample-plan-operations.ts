@@ -1,30 +1,19 @@
 import { createHash } from 'node:crypto';
 import type { Prisma, SampleTask } from '@prisma/client';
-import { assertPackageFiles } from '@/lib/quality-fixture-service';
-import { fixtureSignaturesValid } from '@/lib/quality-fixture-domain';
-import { packageMatchesCurrentDocuments } from '@/lib/quality-fixture-sync';
+import { initializeSampleDocuments, documentJson } from '@/lib/sample-documents';
 import { chinaDateKey } from '@/lib/china-date';
 import { SamplePlanError, sampleCompletionQuantity, sampleDay } from '@/lib/sample-plan-domain';
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
 export async function ensureSampleWarehouse(tx: Tx, task: Pick<SampleTask, 'id' | 'status' | 'dataPurpose'>) {
+  await initializeSampleDocuments(tx, task.id);
   if (task.dataPurpose !== 'PRODUCTION' || ['COMPLETED','CANCELLED'].includes(task.status)) return null;
   return tx.warehouseMaterialTask.upsert({ where: { sampleTaskId: task.id }, create: { sampleTaskId: task.id }, update: {} });
 }
-export async function assertSampleDrawingApproved(tx: Tx, task: SampleTask, bind = true) {
-  if (!task.documentReviewRequired || task.dataPurpose !== 'PRODUCTION') return null;
-  let pack = task.approvedPackageId
-    ? await tx.qfPackage.findFirst({ where: { id: task.approvedPackageId, libraryItemId: task.drawingLibraryItemId } })
-    : await tx.qfPackage.findFirst({ where: { libraryItemId: task.drawingLibraryItemId }, orderBy: { sequence: 'desc' } });
-  if (pack?.status === 'SUPERSEDED' || pack?.status === 'REVOKED') pack = await tx.qfPackage.findFirst({ where: { libraryItemId: task.drawingLibraryItemId }, orderBy: { sequence: 'desc' } });
-  if (!pack || pack.status !== 'APPROVED' || !fixtureSignaturesValid(pack))
-    throw new SamplePlanError('图纸资料须由主管与品质双方审核通过', 409);
-  if (task.approvedPackageId !== pack.id && !await packageMatchesCurrentDocuments(tx, pack))
-    throw new SamplePlanError('图纸资料已经变更，请先完成当前版本审核', 409);
-  await assertPackageFiles(tx, pack);
-  if (bind && task.approvedPackageId !== pack.id) await tx.sampleTask.update({ where: { id: task.id }, data: { approvedPackageId: pack.id } });
-  return pack.id;
+export async function bindSampleDocuments(tx: Tx, task: SampleTask) {
+  // Sample production uses order-scoped documents without mass-production approval.
+  return initializeSampleDocuments(tx, task.id);
 }
 export async function transferSampleCompletion(tx: Tx, task: SampleTask, actor: Actor, input: { mutationId: string; quantity: unknown; workDate?: unknown; note?: unknown }) {
   if (task.dataPurpose !== 'PRODUCTION') return null;
@@ -40,7 +29,8 @@ export async function transferSampleCompletion(tx: Tx, task: SampleTask, actor: 
   const quantity = sampleCompletionQuantity(input.quantity, task.sampleQuantity, task.completedQuantity);
   const now = new Date();
   const binding = await tx.sampleTask.findUniqueOrThrow({ where: { id: task.id }, select: { approvedPackageId: true } });
-  const completion = await tx.sampleCompletion.create({ data: { taskId: task.id, mutationId: input.mutationId, requestHash: hash, quantity, approvedPackageId: binding.approvedPackageId, workDate: new Date(workDate), note, actorId: actor.id, actorName: actor.name } });
+  const documents = await initializeSampleDocuments(tx, task.id);
+  const completion = await tx.sampleCompletion.create({ data: { taskId: task.id, mutationId: input.mutationId, requestHash: hash, quantity, approvedPackageId: binding.approvedPackageId, documentSnapshot: documentJson(documents), workDate: new Date(workDate), note, actorId: actor.id, actorName: actor.name } });
   const stock = { pending: quantity, available: 0, reserved: 0, held: 0, blocked: 0 };
   const lot = await tx.fgLot.create({ data: {
     sourceKey: `sample:${completion.id}`, sourceKind: task.taskType === 'REPEAT' ? 'SAMPLE_REPEAT' : 'SAMPLE_NEW', sampleTaskId: task.id,
@@ -73,7 +63,7 @@ export async function completeSampleRepeat(tx: Tx, id: string, input: Record<str
     if (task.activeSubmissionId || [...entries,...photos].some(row=>['DRAFT','PENDING','CHANGES_REQUESTED'].includes(row.reviewStatus)) || sections.some(sampleDraftSectionHasUnsubmittedChange)) throw new SamplePlanError('仍有采集资料待处理，请先完成整包审核',409);
     if (!entries.length && !photos.length && !sections.some(s=>sampleDraftSectionHasData(s.payload)) && input.confirmNoData !== true) throw new SamplePlanError('没有采集记录，请确认本次无需采集资料');
   }
-  await assertSampleDrawingApproved(tx, task);
+  await bindSampleDocuments(tx, task);
   const quantity = sampleCompletionQuantity(input.quantity, task.sampleQuantity, task.completedQuantity);
   if (task.dataPurpose !== 'PRODUCTION') throw new SamplePlanError('实物完成转仓仅用于正式样品计划');
   await transferSampleCompletion(tx, task, actor, { mutationId, quantity, workDate: input.workDate, note: input.note });

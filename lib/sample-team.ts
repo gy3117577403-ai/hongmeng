@@ -1,3 +1,4 @@
+import { sampleDocuments } from './sample-documents';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { samplePlanTime } from './sample-plan-time';
@@ -65,6 +66,7 @@ export const sampleTaskInclude = {
       productName: true,
       specification: true,
       libraryKey: true,
+      files: { where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } }, select: { id: true, version: true, createdAt: true, category: { select: { code: true } } } },
       fixturePackages: { orderBy: { sequence: 'desc' as const }, take: 1, select: { id: true, status: true, drawingFiles: true, sopFiles: true } },
     },
   },
@@ -456,12 +458,14 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
   const hasUnsavedSectionData = task.draftSections.some(sampleDraftSectionHasUnsubmittedChange);
   if (!['PENDING_REVIEW', 'NEEDS_CHANGES'].includes(dataStatus) && hasUnsavedSectionData) dataStatus = 'COLLECTING';
   const activeRecords = [...task.entries, ...task.photos];
+  const documents = task.documentSnapshot == null ? (task.drawingLibraryItem.files || []).map(f => ({id:f.id,version:f.version,kind:f.category.code,createdAt:f.createdAt.toISOString()})) : sampleDocuments(task.documentSnapshot);
+  const newestDocument = [...documents].sort((a,b)=>b.createdAt.localeCompare(a.createdAt))[0];
   return {
     id: task.id,
     taskType: task.taskType as 'NEW' | 'REPEAT',
     planWeekStartDate: task.planWeekStartDate?.toISOString().slice(0, 10) || null,
     plannedCompletionDate: task.plannedCompletionDate?.toISOString().slice(0, 10) || null,
-    documentReviewRequired: task.documentReviewRequired,
+    documentReviewRequired: false,
     approvedPackageId: task.approvedPackageId,
     completedQuantity: task.completedQuantity,
     completedQuantityKnown: task.completedQuantityKnown,
@@ -472,11 +476,13 @@ export function serializeSampleTask(task: SampleTaskRecord): SampleTaskDTO {
     importMutationId: task.importMutationId,
     importSourceRow: task.importSourceRow,
     importFileName: task.importFileName,
-    drawingDocumentCount: [task.drawingLibraryItem.fixturePackages?.[0]?.drawingFiles, task.drawingLibraryItem.fixturePackages?.[0]?.sopFiles].reduce<number>((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0),
+    drawingDocumentCount: documents.length,
+    drawingCount: documents.filter(f=>f.kind==='drawing').length,
+    drawingVersion: newestDocument?.version || null,
     materialTaskId: task.warehouseTask?.id || null,
     materialStatus: task.warehouseTask?.status || null,
     materialConfirmed: task.warehouseTask?.requirementsConfirmed || false,
-    drawingReviewStatus: task.drawingLibraryItem.fixturePackages?.[0]?.status || null,
+    drawingReviewStatus: null,
     completions: (task.completions || []).map(c => ({ id: c.id, quantity: c.quantity, workDate: c.workDate.toISOString().slice(0, 10), actorName: c.actorName, createdAt: c.createdAt.toISOString() })),
     finishedGoodsCount: task._count?.finishedGoods || 0,
     stockSummary: task.finishedGoods?.length || !task._count?.finishedGoods ? (task.finishedGoods || []).reduce((sum,lot)=>({transferred:sum.transferred+lot.sourceQuantity,pending:sum.pending+lot.pending,available:sum.available+lot.available,reserved:sum.reserved+lot.reserved,held:sum.held+lot.held,blocked:sum.blocked+lot.blocked,shipped:sum.shipped+lot.lines.reduce((total,line)=>total+Math.max(0,line.quantity-line.returned),0)}),{transferred:0,pending:0,available:0,reserved:0,held:0,blocked:0,shipped:0}) : undefined,

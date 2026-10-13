@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { assertSampleDrawingApproved, completeSampleRepeat, ensureSampleWarehouse, transferSampleCompletion } from '../lib/sample-plan-operations';
+import { bindSampleDocuments, completeSampleRepeat, ensureSampleWarehouse, transferSampleCompletion } from '../lib/sample-plan-operations';
 import { mutateQualityFixture } from '../lib/quality-fixture-service';
 import { syncProductDocuments } from '../lib/quality-fixture-sync';
 import { drawingPlanWeekScope } from '../lib/drawing-plan-week';
@@ -11,7 +11,7 @@ import { listSamplePlans } from '../lib/sample-plan-query';
 import { loadFinishedGoods, mutateFinishedGoods } from '../lib/finished-goods-service';
 import { mutateWarehouseException, reportSampleShortages } from '../lib/material-exception-service';
 
-test('sample branches retain drawing review, independent material events and atomic finished stock', { skip: process.env.RUN_DB_INTEGRATION !== '1' }, async t => {
+test('sample branches bypass drawing approval but preserve mass review, independent material events and atomic finished stock', { skip: process.env.RUN_DB_INTEGRATION !== '1' }, async t => {
   const tag = 'SAMPLE-BRANCH-' + randomUUID().slice(0,8);
   const user = await prisma.user.create({ data: { username: tag, displayName: '样品验收管理员', passwordHash: 'not-a-login', laborRole: 'ADMIN' } });
   const actor = { id: user.id, name: user.displayName };
@@ -26,12 +26,14 @@ test('sample branches retain drawing review, independent material events and ato
   const settings = await prisma.qfSettings.findUnique({ where: { id: 'quality-fixtures' } });
   try {
     await qf({ action: 'SAVE_SETTINGS', version: settings?.version, supervisorIds: [user.id], qualityIds: [user.id] });
+    assert.equal(await prisma.$transaction(tx => syncProductDocuments(tx, item.id, user)),null,'sample-only documents do not enter mass-production review');
+    await prisma.workOrder.create({data:{code:tag+'-MASS',productName:tag,stage:'frontend',drawingLibraryItemId:item.id,planActive:true,documentReviewRequired:true,weekStartDate:new Date('2026-09-21')}});
     const pack = await prisma.$transaction(tx => syncProductDocuments(tx, item.id, user));
     assert.ok(pack);
     const getPack = () => prisma.qfPackage.findUniqueOrThrow({ where: { id: pack!.id } });
     const sign = async (role: string) => qf({ action: 'APPROVE', id: pack!.id, version: (await getPack()).version, reviewRole: role, confirmed: true });
-    await t.test('sample plan alone enters weekly drawing library and review without a production order', async () => {
-      assert.equal(await prisma.workOrder.count({ where: { drawingLibraryItemId: item.id } }), 0);
+    await t.test('sample plan retains weekly drawing visibility while review belongs to mass production', async () => {
+      assert.equal((await getTask()).documentReviewRequired,false);
       assert.equal(await prisma.drawingLibraryItem.count({ where: { id: item.id, ...drawingPlanWeekScope('2026-09-23', true) } }), 1);
       assert.equal(pack!.status, 'REVIEWING'); assert.equal((pack!.sopFiles as any[]).length, 0);
       const result = await listSamplePlans(new URLSearchParams({ keyword: tag, taskType: 'REPEAT', week: '2026-09-21', summary: 'true' }));
@@ -57,12 +59,13 @@ test('sample branches retain drawing review, independent material events and ato
       await prisma.sampleTask.update({where:{id:task.id},data:{status:task.status,planWeekStartDate:task.planWeekStartDate,archivedAt:null}});
     });
     await t.test('quality may review first; both signatures needed while BOM and warehouse remain pending', async () => {
-      await assert.rejects(() => prisma.$transaction(async tx => assertSampleDrawingApproved(tx, await getTask())), /双方审核/);
+      const bound = await prisma.$transaction(async tx => bindSampleDocuments(tx, await getTask()));
+      assert.equal(bound.length,1,'sample can use its frozen drawing before either mass signature');
       await sign('QUALITY');
-      await assert.rejects(() => complete({ expectedVersion: task.version, mutationId: 'too-early', quantity: 1, workDate:'2026-09-01' }), /双方审核/);
+      assert.notEqual((await getPack()).status,'APPROVED','mass production still requires both signatures');
       await sign('SUPERVISOR');
-      await prisma.$transaction(async tx => assertSampleDrawingApproved(tx, await getTask(), false));
-      assert.equal((await getTask()).approvedPackageId, null, 'read-only print readiness does not bind');
+      assert.equal((await getPack()).status,'APPROVED');
+      assert.equal((await getTask()).approvedPackageId,null);
       assert.equal((await getPack()).bomFileId, null);
       assert.equal(warehouse!.status, 'pending');
     });
@@ -90,9 +93,9 @@ test('sample branches retain drawing review, independent material events and ato
       await complete(body); await complete(body);
       await assert.rejects(() => complete({ ...body, quantity: 1 }), /不能变更/);
       const current = await getTask(); assert.equal(current.status, 'IN_PROGRESS'); assert.equal(current.completedQuantity, 2);
-      assert.equal(current.approvedPackageId, pack!.id);
+      assert.equal(current.approvedPackageId,null);
       const completions = await prisma.sampleCompletion.findMany({ where: { taskId: task.id } });
-      assert.equal(completions.length, 1); assert.equal(completions[0].approvedPackageId, pack!.id);
+      assert.equal(completions.length, 1); assert.equal(completions[0].approvedPackageId,null); assert.equal((completions[0].documentSnapshot as any[])[0].id,item.files[0].id);
       const lots = await prisma.fgLot.findMany({ where: { sampleTaskId: task.id } });
       assert.equal(lots.length, 1); assert.equal(lots[0].pending, 2); assert.equal(lots[0].available, 0); assert.equal(lots[0].workOrderId, null);
       assert.match(lots[0].note, /^样品完成/); assert.equal(lots[0].productionWorkDate!.toISOString().slice(0,10), '2026-09-21');
@@ -121,6 +124,7 @@ test('sample branches retain drawing review, independent material events and ato
     await prisma.sampleCompletion.deleteMany({ where: { taskId: task.id } });
     if (warehouse) { await prisma.materialFollowUpActivity.deleteMany({ where: { task: { warehouseTaskId: warehouse.id } } }); await prisma.materialFollowUpTask.deleteMany({ where: { warehouseTaskId: warehouse.id } }); await prisma.warehouseMaterialTask.delete({ where: { id: warehouse.id } }); }
     await prisma.sampleTask.delete({ where: { id: task.id } });
+    await prisma.workOrder.updateMany({where:{code:tag+'-MASS'},data:{deletedAt:new Date(),planActive:false}});
     // Keep isolated QF audit evidence; remove its active sample source from subsequent counts.
     await prisma.drawingLibraryItem.update({ where: { id: item.id }, data: { deletedAt: new Date() } });
     if (settings) await prisma.qfSettings.update({ where: { id: settings.id }, data: { supervisorIds: settings.supervisorIds, qualityIds: settings.qualityIds } });

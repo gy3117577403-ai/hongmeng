@@ -66,26 +66,22 @@ repeat=await detail(repeat);fresh=await detail(fresh);assert.ok(repeat.scheduleH
 
 const filtered = await req('repeat weekly summary', `/api/sample-tasks?view=ALL&taskType=REPEAT&week=${week}&summary=true&keyword=${tag}`);
 assert.equal(filtered.tasks.length, 1); assert.equal(filtered.tasks[0].id, repeat.id); assert.equal(filtered.tasks[0].photos.length, 0);
-await patch(repeat, { action: 'COMPLETE_REPEAT', mutationId: randomUUID(), quantity: 1, workDate: today }, 409);
+await req('sample print is not blocked by mass review', '/sample-print/'+repeat.id);
 await req('repeat cannot scan capture', `/api/sample-tasks/code/${repeat.qrCode}`, undefined, 404);
 await req('repeat cannot save process data', `/api/sample-tasks/${repeat.id}/entries`, { kind: 'NOTICE', label: 'forbidden', payload: { text: 'none' }, expectedTaskVersion: repeat.version, clientMutationId: randomUUID() }, 409);
 const pdf = await PDFDocument.create(); pdf.addPage([640,400]).drawText('SAMPLE DRAWING - CONTROLLED ACCEPTANCE', { x: 40, y: 300, size: 18 }); const bytes = await pdf.save();
-async function approve(task) {
-  await req('fixture selection before BOM', '/api/quality-fixtures', { action: 'SET_REQUIREMENT', productIds: [task.drawingLibraryItemId], needFixture: true });
-  const form = new FormData(); form.set('product',task.drawingLibraryItemId); form.set('kind','drawing'); form.set('file',new Blob([bytes],{type:'application/pdf'}),`${tag}.pdf`);
-  await req('upload drawing to object storage', '/api/quality-fixtures/files', form);
-  await req('synchronize sample drawings', `/api/sample-tasks/${task.id}/documents`, {});
-  let context = await req('load drawing approval in sample', `/api/sample-tasks/${task.id}/documents`); let pack = context.packages[0];
-  assert.equal(pack.sopFiles.length,0); assert.equal(pack.drawingFiles.length,1);
-  const content = await req('download stored drawing', `/api/drawing-library/files/${pack.drawingFiles[0].id}/content`); assert.ok(Buffer.isBuffer(content) && content.byteLength > 100);
-  if (pack.status === 'DRAFT') { await req('submit drawing only', '/api/quality-fixtures', { action:'SUBMIT',id:pack.id,version:pack.version }); context=await req('reload submitted review',`/api/sample-tasks/${task.id}/documents`);pack=context.packages[0]; }
-  await req('quality reviews first', '/api/quality-fixtures', { action:'APPROVE',id:pack.id,version:pack.version,reviewRole:'QUALITY',confirmed:true });
-  if (task.taskType==='REPEAT') await patch(task,{action:'COMPLETE_REPEAT',mutationId:randomUUID(),quantity:1,workDate:today},409);
-  context=await req('load supervisor remaining review',`/api/sample-tasks/${task.id}/documents`); pack=context.packages[0];
-  await req('supervisor confirms second', '/api/quality-fixtures', { action:'APPROVE',id:pack.id,version:pack.version,reviewRole:'SUPERVISOR',confirmed:true });
-  const print = await req('approved sample printing', `/sample-print/${task.id}`); assert.match(print,/Sample cable|样品/);
+async function uploadDocuments(task) {
+  task=await detail(task);
+  const form=new FormData();form.set('kind','drawing');form.set('file',new Blob([bytes],{type:'application/pdf'}),tag+'.pdf');
+  form.set('expectedVersion',String(task.version));form.set('mutationId',randomUUID());form.set('reason','隔离验收上传');
+  await req('upload sample drawing directly to object storage','/api/sample-tasks/'+task.id+'/documents',form);
+  const context=await req('read order-scoped drawing','/api/sample-tasks/'+task.id+'/documents');
+  assert.equal(context.files.length,1);assert.equal(context.packages,undefined);
+  const content=await req('download order drawing','/api/sample-tasks/'+task.id+'/documents/'+context.files[0].id+'/content');assert.ok(Buffer.isBuffer(content)&&content.length>100);
+  await req('print sample without drawing approvals','/sample-print/'+task.id);
+  const current=await detail(task);assert.equal(current.documentReviewRequired,false);return current;
 }
-await approve(repeat); await approve(fresh);
+repeat=await uploadDocuments(repeat);fresh=await uploadDocuments(fresh);
 const completion = { action:'COMPLETE_REPEAT', mutationId:randomUUID(), quantity:2,workDate:today,note:'Part 1' };
 const first = await patch(repeat,completion); await patch(repeat,completion); repeat=first.task; assert.equal(repeat.completedQuantity,2); assert.equal(repeat.status,'IN_PROGRESS');
 await patch(repeat,{...completion,quantity:1},409);
@@ -118,7 +114,7 @@ assert.equal(preview.summary.blocked,0);assert.deepEqual(preview.rows.map(r=>r.t
 const imported = await req('commit mixed sample branches', '/api/sample-tasks/import/commit', { clientMutationId:randomUUID(), fileName:'sample-branches.xlsx', rows:preview.rows, decisions:Object.fromEntries(preview.rows.map(r=>[r.rowNumber,{mode:'create'}])) });
 assert.equal(imported.createdTaskCount,2);
 const importedList = await req('verify imported sample plans', `/api/sample-tasks?view=ALL&week=${week}&summary=true&keyword=${tag}-IMPORT`);
-assert.equal(importedList.tasks.length,2);assert.ok(importedList.tasks.every(t=>t.planWeekStartDate===week && t.documentReviewRequired));
+assert.equal(importedList.tasks.length,2);assert.ok(importedList.tasks.every(t=>t.planWeekStartDate===week && !t.documentReviewRequired));
 const updateTarget=importedList.tasks.find(t=>t.taskType==='NEW');
 const updateRow={...preview.rows.find(r=>r.taskType==='NEW'),sampleQuantity:3,unitPlannedMinutes:'3.75',unitPlannedMilliseconds:225000};
 const updateImport={clientMutationId:randomUUID(),fileName:'sample-correction.xlsx',rows:[updateRow],decisions:{[updateRow.rowNumber]:{mode:'reuse',drawingLibraryItemId:updateTarget.drawingLibraryItemId}},planDecisions:{[updateRow.rowNumber]:{mode:'update',taskId:updateTarget.id,expectedVersion:updateTarget.version,reason:'隔离验收：调整数量与单套计划工时'}}};
@@ -168,41 +164,31 @@ const unchangedSource=await detail(originalParameterSample);assert.equal(unchang
 const history=await req('null-week completed samples are reachable',`/api/sample-tasks?view=COMPLETED&taskType=NEW&keyword=${tag}&summary=true`);assert.ok(history.tasks.some(t=>t.id===originalParameterSample.id));assert.ok(history.globalCompleted>=4);
 const records=await req('retained parameter conflict history',`/api/connector-parameters/conflicts?status=RESOLVED&keyword=${tag}`);assert.ok(records.items.some(item=>item.id===conflict.id&&item.resolution==='REPLACE'));
 
-// Document quick actions run against the same real HTTP/S3 runtime as the released image.
-const replacementTask=(await req('create replacement acceptance sample','/api/sample-tasks',{taskType:'REPEAT',customerName:tag,productName:'Sample cable',specification:tag+'-REPLACE',customerLevelCode:'A',sampleQuantity:2,planWeekStartDate:week,issuedDate:today,dueDate:today,plannedCompletionDate:today},201)).task;
-await approve(replacementTask);
-const productUrl=`/api/drawing-library/${replacementTask.drawingLibraryItemId}`;
-let product=(await req('read product before replacement',productUrl)).item;
-await req('restore lifecycle selector independently of SOP',productUrl+'/metadata',{sopStage:'validating',needsConfirmation:true},200,'PATCH');
-product=(await req('read saved lifecycle fields',productUrl)).item;assert.equal(product.sopMetadata.sopStage,'validating');assert.equal(product.needsConfirmation,true);
-const original=product.files[0];
-const signed=await fetch(base+`/api/drawing-library/files/${original.id}/download`,{headers:{Cookie:cookie},redirect:'manual'});
-assert.equal(signed.status,307);const oldObjectUrl=signed.headers.get('location');assert.ok(oldObjectUrl);
-const replacementForm=(content=bytes)=>{const form=new FormData();form.set('categoryId',original.categoryId);form.set('replaceFileId',original.id);form.set('discardPrevious','true');form.set('file',new Blob([content],{type:'application/pdf'}),'corrected.pdf');form.set('remark','Corrected dimensions');return form;};
-await req('invalid replacement preserves old document',productUrl+'/files/upload',replacementForm(new TextEncoder().encode('invalid pdf')),400);
-await req('old document still readable after failed upload',`/api/drawing-library/files/${original.id}/content`);
-const replaced=(await req('replace approved drawing without BOM',productUrl+'/files/upload',replacementForm())).file;
-const replay=(await req('lost response retry returns committed replacement',productUrl+'/files/upload',replacementForm())).file;assert.equal(replay.id,replaced.id);
-await req('old original cannot be previewed',`/api/drawing-library/files/${original.id}/content`,undefined,404);
-await req('old original cannot be restored',`/api/drawing-library/files/${original.id}/restore`,{},404);
-const trash=await req('retired original not in recycle bin','/api/drawing-library/trash?itemId='+product.id);assert.ok(!(trash.files||[]).some(f=>f.id===original.id));
-await req('replacement downloads real bytes',`/api/drawing-library/files/${replaced.id}/content`);
-let replacementPackage,objectDeleted=false;
-for(let attempt=0;attempt<40;attempt++){
- const docs=await req('wait for replacement review synchronization',`/api/sample-tasks/${replacementTask.id}/documents`);
- replacementPackage=docs.packages[0];
- const object=await fetch(oldObjectUrl,{signal:AbortSignal.timeout(10000)});await object.arrayBuffer();objectDeleted=object.status===404;
- if(objectDeleted&&replacementPackage?.drawingFiles?.some(f=>f.id===replaced.id)&&replacementPackage.status==='REVIEWING')break;
- await new Promise(resolve=>setTimeout(resolve,1500));
-}
-assert.ok(objectDeleted,'old S3 original is physically removed, including previously signed download');
-assert.equal(replacementPackage.status,'REVIEWING');assert.equal(replacementPackage.supervisorName,'');assert.equal(replacementPackage.qualityName,'');assert.equal(replacementPackage.supervisorAt,null);assert.equal(replacementPackage.qualityAt,null);
-assert.ok(replacementPackage.drawingFiles.some(f=>f.id===replaced.id));
-await req('quality rechecks replacement','/api/quality-fixtures',{action:'APPROVE',id:replacementPackage.id,version:replacementPackage.version,reviewRole:'QUALITY',confirmed:true});
-replacementPackage=(await req('read second replacement review',`/api/sample-tasks/${replacementTask.id}/documents`)).packages[0];
-await req('supervisor rechecks replacement','/api/quality-fixtures',{action:'APPROVE',id:replacementPackage.id,version:replacementPackage.version,reviewRole:'SUPERVISOR',confirmed:true});
-await req('replacement sample prints after both reviewers',`/sample-print/${replacementTask.id}`);
-product=(await req('quick states survive replacement',productUrl)).item;assert.equal(product.sopMetadata.sopStage,'validating');assert.equal(product.needsConfirmation,true);assert.ok(!product.files.some(f=>f.id===original.id));
+// Sample replacement and recoverable deletion use the real HTTP/S3 runtime.
+let replacementTask=(await req('create replacement acceptance sample','/api/sample-tasks',{taskType:'REPEAT',customerName:tag,productName:'Sample cable',specification:tag+'-REPLACE',customerLevelCode:'A',sampleQuantity:2,planWeekStartDate:week,issuedDate:today,dueDate:today,plannedCompletionDate:today},201)).task;
+replacementTask=await uploadDocuments(replacementTask);
+const docUrl='/api/sample-tasks/'+replacementTask.id+'/documents';
+const original=(await req('load original sample drawing',docUrl)).files[0],mutationId=randomUUID();
+const replacementForm=(content=bytes)=>{const form=new FormData();form.set('kind','drawing');form.set('replaceFileId',original.id);form.set('expectedVersion',String(replacementTask.version));form.set('mutationId',mutationId);form.set('file',new Blob([content],{type:'application/pdf'}),'corrected.pdf');form.set('reason','Corrected dimensions');return form;};
+await req('invalid sample replacement preserves original',docUrl,replacementForm(new TextEncoder().encode('invalid pdf')),400);
+const replaced=await req('replace directly without deleting order',docUrl,replacementForm());
+assert.equal((await req('lost response replay does not create another version',docUrl,replacementForm())).fileId,replaced.fileId);
+await req('old drawing bytes retained',docUrl+'/'+original.id+'/content');
+await req('replacement bytes readable',docUrl+'/'+replaced.fileId+'/content');
+const docs=await req('history identifies the old and new files',docUrl);
+assert.equal(docs.files.length,1);assert.equal(docs.files[0].id,replaced.fileId);assert.equal(docs.history[0].detail.old.id,original.id);
+const unchanged=await detail(replacementTask);assert.equal(unchanged.code,replacementTask.code);assert.equal(unchanged.qrCode,replacementTask.qrCode);assert.equal(unchanged.materialTaskId,replacementTask.materialTaskId);
+const sibling=(await req('create another order sharing archive','/api/sample-tasks',{drawingLibraryItemId:replacementTask.drawingLibraryItemId,taskType:'REPEAT',customerLevelCode:'A',sampleQuantity:2},201)).task;
+await req('cannot read unrelated order file','/api/sample-tasks/'+sibling.id+'/documents/'+replaced.fileId+'/content',undefined,404);
+const deleteUrl='/api/sample-tasks/'+replacementTask.id+'/delete',deletePreview=(await req('preview planned deletion',deleteUrl)).preview;
+const deletion={reason:'重复下单验收',confirmationCode:replacementTask.code,previewToken:deletePreview.previewToken,expectedVersion:deletePreview.task.version,confirmed:true,clientMutationId:randomUUID()};
+await req('planned order moves into recycle bin',deleteUrl,deletion,200,'DELETE');
+await req('deleted order is not writable',docUrl,replacementForm(),404);
+await req('deleted order is removed from active detail','/api/sample-tasks/'+replacementTask.id,undefined,404);
+const trashItems=(await req('read sample recycle bin','/api/sample-tasks/trash')).items;
+const deleted=trashItems.find(row=>row.task.id===replacementTask.id);assert.ok(deleted);
+await req('restore keeps all original identities','/api/sample-tasks/'+replacementTask.id+'/restore',{reason:'恢复验收',confirmationCode:replacementTask.code,expectedVersion:deleted.task.version,confirmed:true});
+await req('restored order original drawing remains readable',docUrl+'/'+original.id+'/content');
 
 // Prepare an actual spreadsheet for the browser upload flow, never production data.
 if(process.env.SAMPLE_PLAN_BROWSER_FIXTURE){

@@ -103,7 +103,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true, task: task ? serializeSampleTask(task) : null, deduplicated: entryResult.deduplicated }, { status: entryResult.deduplicated ? 200 : 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized(error);
-    if (error instanceof Error && error.message === 'SAMPLE_REPEAT_CAPTURE_DISABLED') return NextResponse.json({ ok: false, error: '老产品制作只审核图纸资料，无需采集或整包审核' }, { status: 409 });
+    if (error instanceof Error && error.message === 'SAMPLE_REPEAT_CAPTURE_DISABLED') return NextResponse.json({ ok: false, error: '老产品制作无需采集或整包审核' }, { status: 409 });
     if (error instanceof Error) {
       if (error.message === 'SAMPLE_TASK_NOT_FOUND') return NextResponse.json({ ok: false, error: '样品任务不存在' }, { status: 404 });
       if (error.message === 'SAMPLE_TASK_CONFLICT') return NextResponse.json({ ok: false, error: '样品任务已被其他人修改，请刷新后重试' }, { status: 409 });

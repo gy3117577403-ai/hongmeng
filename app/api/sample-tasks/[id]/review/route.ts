@@ -1,6 +1,6 @@
 import { FixtureError } from '@/lib/quality-fixture-domain';
 import { NextRequest, NextResponse } from 'next/server';
-import { assertSampleDrawingApproved, transferSampleCompletion } from '@/lib/sample-plan-operations';
+import { bindSampleDocuments, transferSampleCompletion } from '@/lib/sample-plan-operations';
 import { SamplePlanError } from '@/lib/sample-plan-domain';
 import { Prisma } from '@prisma/client';
 import { ForbiddenError, forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
@@ -288,7 +288,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         include: { drawingLibraryItem: { select: { id: true, specification: true } } },
       });
       if (!task) throw new SamplePackageReviewError('样品任务不存在', 'SAMPLE_TASK_NOT_FOUND', 404);
-      if (task.taskType === 'REPEAT') throw new SamplePackageReviewError('老产品只审核图纸资料', 'SAMPLE_REPEAT_CAPTURE_DISABLED', 409);
+      if (task.taskType === 'REPEAT') throw new SamplePackageReviewError('老产品制作无需整包审核', 'SAMPLE_REPEAT_CAPTURE_DISABLED', 409);
       if (task.version !== expectedTaskVersion) {
         throw new SamplePackageReviewError('样品任务已被其他人修改，请刷新后重试', 'SAMPLE_TASK_CONFLICT');
       }
@@ -699,7 +699,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         },
       });
       if (submissionUpdated.count !== 1) throw new SamplePackageReviewError('提交包已被其他人处理', 'SAMPLE_SUBMISSION_CONFLICT');
-      await assertSampleDrawingApproved(tx, task);
+      await bindSampleDocuments(tx, task);
       let completed = task.dataPurpose !== 'PRODUCTION';
       if (completion) {
         if (!completion.workDate) throw new SamplePlanError('请填写现场完成日期');

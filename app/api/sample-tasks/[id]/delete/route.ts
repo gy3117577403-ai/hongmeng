@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 
 function errorResponse(error: unknown) {
   if (error instanceof UnauthorizedError) return unauthorized(error);
-  if (error instanceof ForbiddenError) return NextResponse.json({ ok: false, error: '仅系统管理员可以删除已完成样品任务' }, { status: 403 });
+  if (error instanceof ForbiddenError) return NextResponse.json({ ok: false, error: '仅系统管理员可以删除样品订单' }, { status: 403 });
   if (error instanceof SampleTaskDeletionError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
   console.error('sample task delete failed', error);
   return NextResponse.json({ ok: false, error: '样品任务删除失败，请刷新后重试' }, { status: 500 });
@@ -40,6 +40,7 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
       previewToken: body.previewToken,
       expectedVersion: body.expectedVersion,
       confirmed: body.confirmed,
+      stopConfirmed: body.stopConfirmed,
       clientMutationId: body.clientMutationId,
     });
     return NextResponse.json({ ok: true, ...result });

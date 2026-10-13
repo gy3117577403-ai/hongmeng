@@ -142,6 +142,10 @@ async function loadDeleteState(db: Prisma.TransactionClient, id: string, include
         customerName: task.customerNameSnapshot,
         productName: task.productNameSnapshot,
         specification: task.specificationSnapshot,
+        sampleQuantity: task.sampleQuantity,
+        completedQuantity: task.completedQuantityKnown ? task.completedQuantity : null,
+        plannedHours: task.sampleQuantity !== null && task.unitPlannedMilliseconds !== null
+          ? task.sampleQuantity * task.unitPlannedMilliseconds / 3_600_000 : null,
         status: task.status,
         version: task.version,
         dataPurpose: task.dataPurpose,
@@ -149,9 +153,10 @@ async function loadDeleteState(db: Prisma.TransactionClient, id: string, include
         archivedAt: task.archivedAt?.toISOString() || null,
       },
       impact,
-      blockers: task.status === 'COMPLETED' ? [] : ['只有已完成样品任务可以删除'],
+      blockers: task.activeSubmissionId ? ['采集数据正在审核，请先撤回提交包后删除'] : [],
+      requiresStopConfirmation: task.status === 'IN_PROGRESS',
       retirementBlockers,
-      canDelete: task.status === 'COMPLETED' && !task.deletedAt,
+      canDelete: !task.deletedAt && !task.activeSubmissionId,
       canRetireTestOutputs: task.status === 'COMPLETED' && !task.deletedAt && retirementBlockers.length === 0,
       defaultMode: 'REMOVE_TASK_ONLY' as const,
       publishedOutputsRetained: true,
@@ -176,6 +181,7 @@ export async function softDeleteSampleTask(input: {
   expectedVersion: unknown;
   confirmed: unknown;
   clientMutationId: unknown;
+  stopConfirmed?: unknown;
   batchId?: string | null;
 }) {
   const reason = cleanSampleText(input.reason, 500);
@@ -188,19 +194,20 @@ export async function softDeleteSampleTask(input: {
 
   try {
     return await prisma.$transaction(async tx => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task-delete:${input.id}`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${input.id}`}))`;
       const replay = await tx.sampleTask.findUnique({ where: { id: input.id } });
       if (replay?.deletedAt && replay.lastDeleteMutationId === clientMutationId) {
         return { code: replay.code, recoverable: true as const, replayed: true as const };
       }
       const state = await loadDeleteState(tx, input.id);
+      if (state.task.status === 'IN_PROGRESS' && input.stopConfirmed !== true) throw new SampleTaskDeletionError('请先确认已通知现场停止制作',409);
       if (!state.preview.canDelete) throw new SampleTaskDeletionError(state.preview.blockers.join('；') || '当前任务不能删除', 409);
       if (input.confirmationCode !== state.task.code) throw new SampleTaskDeletionError('请输入完整样品任务编号确认删除');
       if (expectedVersion !== state.task.version) throw new SampleTaskDeletionError('任务已经被其他人修改，请重新查看删除影响', 409);
       if (input.previewToken !== state.preview.previewToken) throw new SampleTaskDeletionError('任务或关联数据已经变化，请重新查看删除影响', 409);
       const now = new Date();
       const claimed = await tx.sampleTask.updateMany({
-        where: { id: state.task.id, version: expectedVersion, status: 'COMPLETED', deletedAt: null },
+        where: { id: state.task.id, version: expectedVersion, status: state.task.status, deletedAt: null },
         data: {
           deletedAt: now,
           deletedById: input.actorId,
@@ -257,7 +264,7 @@ export async function restoreSampleTask(input: {
   if (input.confirmed !== true) throw new SampleTaskDeletionError('请确认恢复样品任务');
   if (!Number.isInteger(expectedVersion) || expectedVersion < 1) throw new SampleTaskDeletionError('任务版本无效，请刷新后重试');
   return prisma.$transaction(async tx => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task-delete:${input.id}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${input.id}`}))`;
     const task = await tx.sampleTask.findUnique({ where: { id: input.id } });
     if (!task || !task.deletedAt) throw new SampleTaskDeletionError('回收站中没有该样品任务', 404);
     if (input.confirmationCode !== task.code) throw new SampleTaskDeletionError('请输入完整样品任务编号确认恢复');
@@ -265,6 +272,7 @@ export async function restoreSampleTask(input: {
     const restored = await tx.sampleTask.update({
       where: { id: task.id },
       data: {
+        status: task.status === 'IN_PROGRESS' ? 'PLANNED' : task.status,
         deletedAt: null,
         deletedById: null,
         deletedByName: null,
@@ -282,7 +290,7 @@ export async function restoreSampleTask(input: {
       action: 'restore_sample_task',
       targetType: 'sample_task',
       targetId: task.id,
-      detail: { taskCode: task.code, reason, previousDeletedAt: task.deletedAt.toISOString(), previousDeleteReason: task.deleteReason },
+      detail: { taskCode: task.code, reason, previousDeletedAt: task.deletedAt.toISOString(), previousDeleteReason: task.deleteReason, previousStatus: task.status, restoredStatus: restored.status },
     } });
     return serializeSampleTask(restored);
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 20_000 });
@@ -360,7 +368,7 @@ export async function commitSampleTestCleanup(input: {
 
   return prisma.$transaction(async tx => {
     for (const item of preview.manifest) {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task-delete:${item.id}`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`sample-task:${item.id}`}))`;
     }
     const batch = await tx.sampleTaskCleanupBatch.create({ data: {
       mutationId,

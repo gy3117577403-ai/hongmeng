@@ -33,8 +33,8 @@ test('same products from two orders remain separate while one plan identity surv
 });
 test('row actions reflect next work instead of conflating upload, review and completion',()=>{
  const task={status:'PLANNED',taskType:'NEW',dataStatus:'NO_DATA',documentReviewRequired:true,drawingDocumentCount:0,drawingReviewStatus:null,counts:{pendingReview:0}} as SampleTaskDTO;
- assert.equal(sampleDocumentState(task).label,'待上传');assert.equal(samplePrimaryAction(task).label,'上传资料');
- assert.equal(samplePrimaryAction({...task,drawingReviewStatus:'RETURNED',drawingDocumentCount:1}).label,'处理退回');
+ assert.equal(sampleDocumentState(task).label,'待上传');assert.equal(samplePrimaryAction(task).label,'打开试制');
+ assert.equal(samplePrimaryAction({...task,drawingReviewStatus:'RETURNED',drawingDocumentCount:1}).label,'打开试制');
  assert.equal(samplePrimaryAction({...task,drawingReviewStatus:'APPROVED',dataStatus:'PROCESSED'}).label,'登记完成');
  assert.equal(samplePrimaryAction({...task,status:'COMPLETED'}).label,'查看记录');
 });

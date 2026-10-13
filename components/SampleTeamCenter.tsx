@@ -8,6 +8,7 @@ const SampleCapture = dynamic(() => import('@/components/SampleCaptureMobile'), 
 import '@/app/sample-branches.css';
 import { SampleBranchControls, SampleDialog } from '@/components/sample/SampleBranchControls';
 import SampleDocumentsPanel from '@/components/sample/SampleDocumentsPanel';
+import SampleDocumentChangeDialog from '@/components/sample/SampleDocumentChangeDialog';
 import SamplePlanningTable from '@/components/sample/SamplePlanningTable';
 import SampleLibraryEntry from '@/components/sample-library/SampleLibraryQr';
 import SamplePlanImportDialog from '@/components/sample/SamplePlanImportDialog';
@@ -75,10 +76,11 @@ type CenterMode = 'planning' | 'execution' | 'materials';
 type TaskViewFilter = SamplePlanView;
 type DetailTab = 'capture' | 'documents' | 'warehouse' | 'completion' | 'overview' | 'data' | 'materials' | 'photos' | 'review' | 'published';
 type SampleDeletePreview = {
-  task: { id: string; code: string; customerName: string; productName: string | null; specification: string; status: string; version: number; dataPurpose: string; completedAt: string | null; archivedAt: string | null };
+  task: { id: string; code: string; customerName: string; productName: string | null; specification: string; sampleQuantity: number | null; completedQuantity: number | null; plannedHours: number | null; status: string; version: number; dataPurpose: string; completedAt: string | null; archivedAt: string | null };
   impact: { entryCount: number; photoCount: number; submissionCount: number; publishedDrawingFileCount: number; productDataRecordCount: number; connectorBindingCount: number; affectedProductTimeProfileCount: number; objectDeletionCount: number };
   blockers: string[];
   canDelete: boolean;
+  requiresStopConfirmation?: boolean;
   previewToken: string;
   publishedOutputsRetained: boolean;
 };
@@ -411,6 +413,9 @@ export default function SampleTeamCenter({
   const [photoViewerIndex, setPhotoViewerIndex] = useState<number | null>(null);
   const [deletePreview, setDeletePreview] = useState<SampleDeletePreview | null>(null);
   const [deleteReason, setDeleteReason] = useState('');
+  const [deleteStopped,setDeleteStopped]=useState(false),[deleteError,setDeleteError]=useState('');
+  const [documentChange,setDocumentChange]=useState<SampleTaskDTO|null>(null);
+  const deleteMutation=useRef('');
   const [deleteCode, setDeleteCode] = useState('');
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -697,7 +702,7 @@ export default function SampleTeamCenter({
 
   async function openDeleteTask(task: SampleTaskDTO) {
     setDeleteReason('');
-    setDeleteCode('');
+    setDeleteCode(task.code);setDeleteStopped(false);setDeleteError('');deleteMutation.current=browserMutationId();
     setDeleteBusy(true);
     try {
       const response = await fetch(`/api/sample-tasks/${task.id}/delete`, { cache: 'no-store' });
@@ -724,16 +729,25 @@ export default function SampleTeamCenter({
           previewToken: deletePreview.previewToken,
           expectedVersion: deletePreview.task.version,
           confirmed: true,
-          clientMutationId: browserMutationId(),
+          stopConfirmed: deleteStopped,
+          clientMutationId: deleteMutation.current,
         }),
       });
       const body = await responseJson(response);
       if (!response.ok) throw new Error(body.error || '样品任务删除失败');
-      setDeletePreview(null);
-      setMessage(`${body.code || '样品任务'}已移入回收站，正式发布资料和对象文件均保留`);
+      const removedId = deletePreview.task.id;
+      setDeletePreview(null);setPlanningDetailOpen(false);setFocusId('');setError('');
+      setTasks(current => current.filter(task => task.id !== removedId));
+      if (selectedId === removedId) { setSelectedId(''); setDetailTask(null); }
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('taskId') === removedId) {
+        url.searchParams.delete('taskId');
+        window.history.replaceState(window.history.state, '', url);
+      }
+      setMessage(`${body.code || '样品订单'}已移入回收站，图纸和历史记录保留`);
       setRefreshToken(value => value + 1);
     } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : '样品任务删除失败');
+      setDeleteError(reason instanceof Error ? reason.message : '样品任务删除失败');
     } finally {
       setDeleteBusy(false);
     }
@@ -947,7 +961,7 @@ export default function SampleTeamCenter({
   ];
   const detailTabs: Array<{ key: DetailTab; label: string; count?: number; attention?: boolean }> = !selected ? [] : [
     { key: 'overview', label: '任务概览' },
-    { key: 'documents', label: '图纸审核' },
+    { key: 'documents', label: '图纸资料' },
 
     ...(selected.taskType === 'REPEAT' ? [] : [
       ...(!terminalTask ? [{ key: 'capture' as const, label: '填写 / 拍照' }] : []),
@@ -1009,7 +1023,7 @@ export default function SampleTeamCenter({
     modeDrawer.toggle();
   }
 
-  const statusBar = <section className="su-status spr-status" aria-label="样品任务状态筛选"><div className="su-primary-scopes">{(['ALL','UNFINISHED','COMPLETED','CANCELLED'] as const).map(view=><button key={view} className={taskView===view?'active':''} aria-pressed={taskView===view} onClick={()=>changeView(view)}>{({ALL:'全部',UNFINISHED:'未完成',COMPLETED:'已完成',CANCELLED:'已取消'})[view]}<b>{loading?'…':viewCounts[view]}</b></button>)}</div><div className="su-attention-scopes">{taskViews.filter(v=>['DOCUMENT_PENDING','SHORTAGE',...(taskType==='NEW'?['PENDING_REVIEW']:[])].includes(v.key)).map(v=><button key={v.key} className={taskView===v.key?'active':''} aria-pressed={taskView===v.key} onClick={()=>changeView(v.key)}>{v.icon}{v.label}<b>{loading?'…':v.count}</b></button>)}<select aria-label="资料审核状态" value={['DRAWING_MISSING','DRAWING_DRAFT','DRAWING_REVIEW','DRAWING_RETURNED','DRAWING_APPROVED'].includes(taskView)?taskView:''} onChange={e=>changeView((e.target.value || 'ALL') as TaskViewFilter)}><option value="">资料状态</option><option value="DRAWING_MISSING">待上传</option><option value="DRAWING_DRAFT">待提交</option><option value="DRAWING_REVIEW">待审核</option><option value="DRAWING_RETURNED">已退回</option><option value="DRAWING_APPROVED">已通过</option></select></div><button className="spr-history" onClick={showHistory}>历史已完成 <b>{loading?'…':globalCompleted}</b></button></section>;
+  const statusBar = <section className="su-status spr-status" aria-label="样品任务状态筛选"><div className="su-primary-scopes">{(['ALL','UNFINISHED','COMPLETED','CANCELLED'] as const).map(view=><button key={view} className={taskView===view?'active':''} aria-pressed={taskView===view} onClick={()=>changeView(view)}>{({ALL:'全部',UNFINISHED:'未完成',COMPLETED:'已完成',CANCELLED:'已取消'})[view]}<b>{loading?'…':viewCounts[view]}</b></button>)}</div><div className="su-attention-scopes">{taskViews.filter(v=>['DOCUMENT_PENDING','SHORTAGE',...(taskType==='NEW'?['PENDING_REVIEW']:[])].includes(v.key)).map(v=><button key={v.key} className={taskView===v.key?'active':''} aria-pressed={taskView===v.key} onClick={()=>changeView(v.key)}>{v.icon}{v.label}<b>{loading?'…':v.count}</b></button>)}<select aria-label="图纸资料状态" value={['DRAWING_MISSING','DRAWING_DRAFT','DRAWING_REVIEW','DRAWING_RETURNED','DRAWING_APPROVED'].includes(taskView)?taskView:''} onChange={e=>changeView((e.target.value || 'ALL') as TaskViewFilter)}><option value="">资料状态</option><option value="DRAWING_MISSING">待上传</option><option value="DRAWING_APPROVED">已上传</option></select></div><button className="spr-history" onClick={showHistory}>历史已完成 <b>{loading?'…':globalCompleted}</b></button></section>;
   return (
     <main style={modalContext ? { display: 'contents' } : undefined} className={`sample-team-page sample-branches-page hm-workbench-root hm-workbench-navigation-overlay ${mode === 'planning' ? 'sp-planning-page' : ''}`}>
       {!modalContext && <AppWorkbenchHeader
@@ -1077,10 +1091,10 @@ export default function SampleTeamCenter({
         {error && <div className="sample-team-error"><AlertTriangle size={18} /><span>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 
         {mode !== 'planning' && loading && !tasks.length ? <section className="sample-team-loading"><Loader2 className="spin" size={28} /><strong>正在加载样品任务</strong></section>
-          : mode !== 'planning' && viewCounts.ALL === 0 && !debouncedKeyword && !Object.values(filters).some(value => value && !['issued', 'all', 'issued_desc'].includes(value)) ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'materials' ? '正式样品计划下达后，仓库可在这里登记物料需求并确认配料。' : '计划中心下达样品任务后，会自动出现在这里。'}</p><div><Info size={15} />{taskType === 'REPEAT' ? '老产品仅审核图纸资料，完成后转成品仓。' : '新品保留现有采集与整包审核流程。'}</div></section>
+          : mode !== 'planning' && viewCounts.ALL === 0 && !debouncedKeyword && !Object.values(filters).some(value => value && !['issued', 'all', 'issued_desc'].includes(value)) ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'materials' ? '正式样品计划下达后，仓库可在这里登记物料需求并确认配料。' : '计划中心下达样品任务后，会自动出现在这里。'}</p><div><Info size={15} />{taskType === 'REPEAT' ? '老产品可直接制作，完成后转成品仓。' : '新品保留现有采集与整包审核流程。'}</div></section>
             : mode !== 'planning' && (!tasks.length || !visibleTasks.length) ? <section className="sample-filter-empty"><span className="sample-empty-icon"><Search size={30} /></span><h2>没有符合条件的样品任务</h2><p>调整搜索内容或任务状态后再查看。</p><button type="button" onClick={clearFilters}>清除筛选</button></section>
               : <section className="sample-team-workspace">
-          {mode === 'planning' && <SamplePlanningTable scopeKey={queryString} tasks={tasks} pagination={pagination} loading={loading} totalQuantity={totalQuantity} timeSummary={timeSummary} focusId={focusId} error={error} onPageSize={n=>{setPageSize(n);setPage(1);setFocusId('');}} scopeLabel={`${planWeek==='unplanned'?'待排期':planWeek?planWeek+' 当周':'全部计划周'} · ${taskViews.find(v=>v.key===taskView)?.label || ({ALL:'全部有效计划',DOCUMENT_PENDING:'资料待处理'} as Record<string,string>)[taskView] || '当前筛选'}`} onEmptyAction={week=>{clearFilters();setPlanWeek(week);setIncludeCarry(false);setImportBatch('');}} onPage={next => { setFocusId(''); setPage(next); }} onEdit={openEdit} onChanged={() => setRefreshToken(v=>v+1)} onOpen={(task, tab) => { lastDetailTaskRef.current=task.id; setSelectedId(task.id); setDetailTab(tab); setPlanningDetailOpen(true); }} />}
+          {mode === 'planning' && <SamplePlanningTable scopeKey={queryString} tasks={tasks} pagination={pagination} loading={loading} totalQuantity={totalQuantity} timeSummary={timeSummary} focusId={focusId} error={error} onPageSize={n=>{setPageSize(n);setPage(1);setFocusId('');}} scopeLabel={`${planWeek==='unplanned'?'待排期':planWeek?planWeek+' 当周':'全部计划周'} · ${taskViews.find(v=>v.key===taskView)?.label || ({ALL:'全部有效计划',DOCUMENT_PENDING:'资料待处理'} as Record<string,string>)[taskView] || '当前筛选'}`} onEmptyAction={week=>{clearFilters();setPlanWeek(week);setIncludeCarry(false);setImportBatch('');}} onPage={next => { setFocusId(''); setPage(next); }} onEdit={openEdit} canDelete={user.laborRole === 'ADMIN'} onReplace={setDocumentChange} onDelete={task=>void openDeleteTask(task)} onChanged={() => setRefreshToken(v=>v+1)} onOpen={(task, tab) => { lastDetailTaskRef.current=task.id; setSelectedId(task.id); setDetailTab(tab); setPlanningDetailOpen(true); }} />}
           {mode !== 'planning' && <aside className="sample-task-list" aria-label="样品任务列表">
             <header className="sample-task-list-head"><div><strong>任务清单</strong><span>{pagination.total} 个任务</span></div></header>
             <div className="sample-task-list-scroll hm-scroll-region" tabIndex={0}>
@@ -1094,7 +1108,7 @@ export default function SampleTeamCenter({
                   <p>{task.productName || '未设置品名'}</p>
                   <div className="sample-task-date-pair"><span>下达 {dateText(task.issuedDate)}</span><span>出货 {dateText(task.dueDate)}</span></div>
                   <div className="sample-task-card-state"><span className={`state-${task.status.toLowerCase()}`}>{task.taskType === 'REPEAT' && task.status === 'IN_PROGRESS' ? '制作中' : taskStatusLabels[task.status]}</span><span className={overdue ? 'overdue' : ''}><CalendarDays size={12} />{warning.label}</span></div>
-                  <footer><span className={task.drawingReviewStatus === 'APPROVED' ? 'sb-good-text' : ''}>图纸 {task.drawingReviewStatus === 'APPROVED' ? '已通过' : task.drawingReviewStatus === 'RETURNED' ? '已退回' : '待审核'}</span><span>配料 {task.materialStatus === 'completed' ? '已齐' : task.materialStatus === 'exception' ? '缺料' : '待准备'}</span><b>{task.completedQuantity || 0} / {task.sampleQuantity || '—'}</b></footer>
+                  <footer><span className={task.drawingDocumentCount ? 'sb-good-text' : ''}>图纸 {task.drawingDocumentCount ? '已上传' : '待上传'}</span><span>配料 {task.materialStatus === 'completed' ? '已齐' : task.materialStatus === 'exception' ? '缺料' : '待准备'}</span><b>{task.completedQuantity || 0} / {task.sampleQuantity || '—'}</b></footer>
                 </button>;
               })}
             </div>
@@ -1118,7 +1132,7 @@ export default function SampleTeamCenter({
                   {mode !== 'materials' && selected.status === 'PLANNED' && <button className="primary" type="button" onClick={() => void taskAction(selected, 'START')}>开始任务</button>}
                   {mode !== 'materials' && selected.taskType !== 'REPEAT' && selected.status === 'IN_PROGRESS' && selected.counts.data + selected.counts.photos === 0 && <button type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>无资料完成</button>}
                   {mode === 'planning' && selected.status === 'COMPLETED' && <button type="button" onClick={() => void taskAction(selected, selected.archivedAt ? 'UNARCHIVE' : 'ARCHIVE')}>{selected.archivedAt ? '取消归档' : '归档'}</button>}
-                  {mode === 'planning' && user.laborRole === 'ADMIN' && selected.status === 'COMPLETED' && <button className="danger" type="button" disabled={deleteBusy} onClick={() => void openDeleteTask(selected)}><Trash2 size={15} />删除</button>}
+                  {mode === 'planning' && user.laborRole === 'ADMIN' && <button className="danger" type="button" disabled={deleteBusy} onClick={() => void openDeleteTask(selected)}><Trash2 size={15} />删除</button>}
                 </div>
               </header>
 
@@ -1171,20 +1185,22 @@ export default function SampleTeamCenter({
 
       {photoViewerIndex !== null && selected?.photos[photoViewerIndex] && <SamplePhotoViewerDialog photos={selected.photos} index={photoViewerIndex} onIndexChange={setPhotoViewerIndex} onClose={() => setPhotoViewerIndex(null)} />}
 
-      {deletePreview && <div className="sample-modal-backdrop sample-delete-backdrop" role="presentation">
-        <section className="sample-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="sample-delete-title" aria-describedby="sample-delete-description">
-          <header><div><span>管理员安全删除</span><h2 id="sample-delete-title">{deletePreview.task.code}</h2></div><button type="button" aria-label="关闭" disabled={deleteBusy} onClick={() => setDeletePreview(null)}><X /></button></header>
-          <div className="sample-delete-body hm-scroll-region" tabIndex={0}>
-            <div className="sample-delete-warning"><AlertTriangle size={20} /><span><strong>只从样品计划移入回收站</strong><small id="sample-delete-description">已审核图纸、正式参数、提交历史和对象存储文件默认保留；这不是物理删除。</small></span></div>
-            <section className="sample-delete-identity"><span><small>客户</small><strong>{deletePreview.task.customerName}</strong></span><span><small>规格型号</small><strong>{deletePreview.task.specification}</strong></span><span><small>数据用途</small><strong>{deletePreview.task.dataPurpose === 'TEST' ? '测试数据' : deletePreview.task.dataPurpose === 'TRAINING' ? '培训数据' : '正式业务'}</strong></span></section>
-            <section className="sample-delete-impact" aria-label="删除影响"><article><small>采集数据</small><strong>{deletePreview.impact.entryCount}</strong></article><article><small>照片</small><strong>{deletePreview.impact.photoCount}</strong></article><article><small>提交包</small><strong>{deletePreview.impact.submissionCount}</strong></article><article><small>已发布图纸</small><strong>{deletePreview.impact.publishedDrawingFileCount}</strong></article><article><small>正式资料</small><strong>{deletePreview.impact.productDataRecordCount}</strong></article><article><small>连接器绑定</small><strong>{deletePreview.impact.connectorBindingCount}</strong></article><article><small>工时草稿</small><strong>{deletePreview.impact.affectedProductTimeProfileCount}</strong></article><article><small>物理删对象</small><strong>{deletePreview.impact.objectDeletionCount}</strong></article></section>
-            {!!deletePreview.blockers.length && <div className="sample-delete-blockers" role="alert">{deletePreview.blockers.map(item => <p key={item}>{item}</p>)}</div>}
-            <label><span>删除原因（必填）</span><textarea autoFocus maxLength={500} value={deleteReason} onChange={event => setDeleteReason(event.target.value)} placeholder="例如：重复建立的样品测试任务，正式发布资料保留" /></label>
-            <label><span>输入完整任务编号确认</span><input value={deleteCode} onChange={event => setDeleteCode(event.target.value)} placeholder={deletePreview.task.code} autoComplete="off" /></label>
-          </div>
-          <footer><span>可在“回收站”恢复；恢复不会改写审核结论。</span><div><button type="button" disabled={deleteBusy} onClick={() => setDeletePreview(null)}>取消</button><button className="danger" type="button" disabled={deleteBusy || !deletePreview.canDelete || !deleteReason.trim() || deleteCode !== deletePreview.task.code} onClick={() => void confirmDeleteTask()}>{deleteBusy ? <><Loader2 className="spin" size={15} />处理中</> : <><Trash2 size={15} />移入回收站</>}</button></div></footer>
-        </section>
-      </div>}
+      {documentChange && <SampleDocumentChangeDialog task={documentChange} onClose={()=>setDocumentChange(null)} onSaved={()=>{setDocumentChange(null);setRefreshToken(v=>v+1);setMessage('图纸已保存，订单与历史记录保持关联');}}/>}
+      {deletePreview && <SampleDialog title="删除样品订单" titleIcon={<span className="sd-modal-icon danger"><Trash2 size={24}/></span>} className="sd-delete-dialog" busy={deleteBusy} onClose={()=>setDeletePreview(null)}>
+        <div className="sb-dialog-body">
+          <div className="sd-order-identity"><strong>{deletePreview.task.specification}</strong><span>{deletePreview.task.customerName} · {deletePreview.task.code}</span></div>
+          <div className="sd-delete-metrics"><span>计划数量<strong>{deletePreview.task.sampleQuantity ?? '待补'} <small>件 / 套</small></strong></span><span>已完成<strong>{deletePreview.task.completedQuantity ?? '待确认'} <small>件 / 套</small></strong></span><span>计划工时<strong>{deletePreview.task.plannedHours === null ? '待补' : Number(deletePreview.task.plannedHours.toFixed(3))} <small>小时</small></strong></span></div>
+          <div className="sd-delete-note"><Trash2 size={20}/><span><strong>移入回收站，可恢复</strong><small>订单从计划与配料待办中移除，图纸、采集记录、照片及工时保留。</small></span></div>
+          {deletePreview.task.status==='COMPLETED'&&<p className="sd-preserved">已完成数量和成品仓记录保留，本操作不撤销完工。</p>}
+          <div className="sd-retained-counts"><span>采集数据 <b>{deletePreview.impact.entryCount}</b></span><span>照片 <b>{deletePreview.impact.photoCount}</b></span><span>提交记录 <b>{deletePreview.impact.submissionCount}</b></span></div>
+          <div className="sd-delete-reasons" role="group" aria-label="选择删除原因">{['重复下单','客户取消','导入错误'].map(reason=><button type="button" key={reason} aria-pressed={deleteReason===reason} disabled={deleteBusy} onClick={()=>setDeleteReason(reason)}>{reason}</button>)}</div>
+          <label>删除原因 <span>必填</span><textarea disabled={deleteBusy} autoFocus maxLength={500} value={deleteReason} onChange={e=>setDeleteReason(e.target.value)} placeholder="选择上方原因，或填写其他原因"/></label>
+          {deletePreview.requiresStopConfirmation&&<label className="sd-confirm"><input type="checkbox" disabled={deleteBusy} checked={deleteStopped} onChange={e=>setDeleteStopped(e.target.checked)}/><span><strong>已通知现场停止制作</strong><small>订单恢复后回到待开始，由计划重新安排。</small></span></label>}
+          {!!deletePreview.blockers.length&&<div className="sd-error" role="alert">{deletePreview.blockers.join('；')}</div>}
+          {deleteError&&<div className="sd-error" role="alert">{deleteError}</div>}
+        </div>
+        <footer><span>删除后可从回收站恢复</span><button disabled={deleteBusy} onClick={()=>setDeletePreview(null)}>保留订单</button><button className="sd-danger-primary" disabled={deleteBusy||!deletePreview.canDelete||!deleteReason.trim()||(deletePreview.requiresStopConfirmation&&!deleteStopped)} onClick={()=>void confirmDeleteTask()}>{deleteBusy?<Loader2 className="spin" size={16}/>:<Trash2 size={16}/>}移入回收站</button></footer>
+      </SampleDialog>}
 
       {trashOpen && <div className="sample-modal-backdrop sample-trash-backdrop" role="presentation">
         <section className="sample-trash-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-trash-title">
@@ -1192,10 +1208,10 @@ export default function SampleTeamCenter({
           <div className="sample-trash-body">
             <section className="sample-trash-list hm-scroll-region" tabIndex={0}>
               {trashBusy && !trashItems.length ? <div className="sample-trash-empty"><Loader2 className="spin" /><strong>正在加载回收站</strong></div> : trashItems.map(item => <button className={restoreItem?.task.id === item.task.id ? 'active' : ''} type="button" key={item.task.id} onClick={() => chooseRestoreItem(item)}><span><strong>{item.task.specification}</strong><small>{item.task.customerName} · {item.task.code}</small></span><em>{dateTimeText(item.deletedAt)}<small>{item.deletedBy || '未记录删除人'}</small></em></button>)}
-              {!trashBusy && !trashItems.length && <div className="sample-trash-empty"><Trash2 /><strong>回收站为空</strong><p>删除的已完成任务会出现在这里。</p></div>}
+              {!trashBusy && !trashItems.length && <div className="sample-trash-empty"><Trash2 /><strong>回收站为空</strong><p>删除的样品订单会出现在这里。</p></div>}
             </section>
             <section className="sample-trash-restore">
-              {restoreItem ? <><div className="sample-delete-warning"><Info size={20} /><span><strong>恢复 {restoreItem.task.code}</strong><small>任务、提交历史和照片会重新出现在样品计划；已退役的正式下游资料不会被自动恢复。</small></span></div><dl><div><dt>规格型号</dt><dd>{restoreItem.task.specification}</dd></div><div><dt>原删除原因</dt><dd>{restoreItem.deleteReason || '未记录'}</dd></div><div><dt>删除人</dt><dd>{restoreItem.deletedBy || '未记录'}</dd></div></dl><label><span>恢复原因（必填）</span><textarea maxLength={500} value={restoreReason} onChange={event => setRestoreReason(event.target.value)} placeholder="说明为什么需要恢复" /></label><label><span>输入完整任务编号确认</span><input value={restoreCode} onChange={event => setRestoreCode(event.target.value)} placeholder={restoreItem.task.code} autoComplete="off" /></label><button className="primary" type="button" disabled={trashBusy || !restoreReason.trim() || restoreCode !== restoreItem.task.code} onClick={() => void confirmRestoreTask()}>{trashBusy ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}确认恢复</button></> : <div className="sample-trash-empty"><FolderKanban /><strong>选择一个任务查看</strong><p>恢复操作同样需要填写原因并输入完整任务编号。</p></div>}
+              {restoreItem ? <><div className="sample-delete-warning"><Info size={20} /><span><strong>恢复 {restoreItem.task.code}</strong><small>订单资料与历史记录一并恢复；原制作中的订单回到待开始。</small></span></div><dl><div><dt>规格型号</dt><dd>{restoreItem.task.specification}</dd></div><div><dt>原删除原因</dt><dd>{restoreItem.deleteReason || '未记录'}</dd></div><div><dt>删除人</dt><dd>{restoreItem.deletedBy || '未记录'}</dd></div></dl><label><span>恢复原因（必填）</span><textarea maxLength={500} value={restoreReason} onChange={event => setRestoreReason(event.target.value)} placeholder="说明为什么需要恢复" /></label><label><span>输入完整任务编号确认</span><input value={restoreCode} onChange={event => setRestoreCode(event.target.value)} placeholder={restoreItem.task.code} autoComplete="off" /></label><button className="primary" type="button" disabled={trashBusy || !restoreReason.trim() || restoreCode !== restoreItem.task.code} onClick={() => void confirmRestoreTask()}>{trashBusy ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}确认恢复</button></> : <div className="sample-trash-empty"><FolderKanban /><strong>选择一个任务查看</strong><p>恢复操作同样需要填写原因并输入完整任务编号。</p></div>}
             </section>
           </div>
         </section>
@@ -1205,7 +1221,7 @@ export default function SampleTeamCenter({
         <section className="sample-plan-dialog" role="dialog" aria-modal="true" aria-labelledby="sample-plan-dialog-title">
           <header><div><span>{editOpen ? '编辑样品计划' : '新增样品计划'}</span><h2 id="sample-plan-dialog-title">{editOpen ? selected?.code : '建立任务与产品关联'}</h2></div><button type="button" aria-label="关闭" onClick={() => { if (!saving) { setCreateOpen(false); setEditOpen(false); } }}><X /></button></header>
           <div className="sample-plan-dialog-body hm-scroll-region" tabIndex={0}>
-            <section className="sample-plan-section"><div className="sample-section-title"><strong>本次任务类型</strong></div><div className="sb-branch-switch">{(['NEW','REPEAT'] as const).map(kind => <button type="button" key={kind} aria-pressed={form.taskType === kind} className={form.taskType === kind ? 'active' : ''} onClick={() => setForm(current => ({ ...current, taskType: kind, dataPurpose: kind === 'REPEAT' ? 'PRODUCTION' : current.dataPurpose }))}>{kind === 'NEW' ? '新品试制' : '老产品制作'}</button>)}</div><p>{form.taskType === 'REPEAT' ? '复用图纸，双方审核后制作，完成转成品仓。' : '图纸审核、仓库配料、试制采集与整包审核。'}</p><label className="sb-plan-week-label">计划周<input type="date" value={form.planWeekStartDate} onChange={e => setForm(current => ({ ...current, planWeekStartDate: e.target.value }))}/><small>选择该周任一日期；留空进入待排期，出货日期单独保留。</small></label></section>
+            <section className="sample-plan-section"><div className="sample-section-title"><strong>本次任务类型</strong></div><div className="sb-branch-switch">{(['NEW','REPEAT'] as const).map(kind => <button type="button" key={kind} aria-pressed={form.taskType === kind} className={form.taskType === kind ? 'active' : ''} onClick={() => setForm(current => ({ ...current, taskType: kind, dataPurpose: kind === 'REPEAT' ? 'PRODUCTION' : current.dataPurpose }))}>{kind === 'NEW' ? '新品试制' : '老产品制作'}</button>)}</div><p>{form.taskType === 'REPEAT' ? '复用图纸，制作完成后转成品仓。' : '图纸资料、仓库配料、试制采集与整包审核。'}</p><label className="sb-plan-week-label">计划周<input type="date" value={form.planWeekStartDate} onChange={e => setForm(current => ({ ...current, planWeekStartDate: e.target.value }))}/><small>选择该周任一日期；留空进入待排期，出货日期单独保留。</small></label></section>
 
             {!editOpen && <section className="sample-plan-section">
               <div className="sample-section-title"><strong>产品</strong><small>可选择现有产品，也可直接建立新规格主档</small></div>
@@ -1253,7 +1269,7 @@ export default function SampleTeamCenter({
 
             {editOpen && <p className="spr-help">数量变更会重新计算计划工时，并通知仓库重新确认配料；已记录的实际完成数量保留。</p>}{formError && <div className="sample-form-error"><AlertTriangle size={16} />{formError}</div>}
           </div>
-          <footer><span>{form.taskType === 'REPEAT' ? '老产品只审核图纸资料。' : '新品采集内容仍全部选填。'}</span><div><button type="button" disabled={saving} onClick={() => { setCreateOpen(false); setEditOpen(false); }}>取消</button><button className="primary" type="button" disabled={saving} onClick={() => void savePlan()}>{saving ? <><Loader2 className="spin" size={15} />保存中</> : editOpen ? '保存计划' : '创建样品任务'}</button></div></footer>
+          <footer><span>{form.taskType === 'REPEAT' ? '老产品制作无需整包审核。' : '新品采集内容仍全部选填。'}</span><div><button type="button" disabled={saving} onClick={() => { setCreateOpen(false); setEditOpen(false); }}>取消</button><button className="primary" type="button" disabled={saving} onClick={() => void savePlan()}>{saving ? <><Loader2 className="spin" size={15} />保存中</> : editOpen ? '保存计划' : '创建样品任务'}</button></div></footer>
         </section>
       </div>}
 

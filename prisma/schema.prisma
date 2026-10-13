@@ -4156,6 +4156,7 @@ model SampleTask {
   planWeekStartDate        DateTime?            @map("plan_week_start_date") @db.Date
   plannedCompletionDate    DateTime?            @map("planned_completion_date") @db.Date
   documentReviewRequired  Boolean              @default(false) @map("document_review_required")
+  documentSnapshot        Json?                @map("document_snapshot")
   approvedPackageId       String?              @map("approved_package_id")
   completedQuantity       Int                  @default(0) @map("completed_quantity")
   warehouseTask           WarehouseMaterialTask?
@@ -4228,6 +4229,7 @@ model SampleCompletion {
   requestHash String    @map("request_hash")
   quantity    Int
   approvedPackageId String? @map("approved_package_id")
+  documentSnapshot Json? @map("document_snapshot")
   workDate    DateTime  @map("work_date") @db.Date
   note        String    @default("")
   actorId     String    @map("actor_id")

@@ -4,6 +4,7 @@ import { lockFixtureBusiness, qfJson } from '@/lib/quality-fixture-service';
 import { syncProductDocuments } from '@/lib/quality-fixture-sync';
 import { resubmitDocumentReturns } from '@/lib/quality-document-returns';
 import { purgeObjectVersions } from '@/lib/s3';
+import { isSampleDocumentReferenced } from '@/lib/sample-documents';
 import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { synchronizeDrawingLibraryWorkOrderStatus } from '@/lib/drawing-library-lifecycle';
 import type { PcActor } from '@/lib/purchasing-service';
@@ -25,6 +26,7 @@ export async function retireReplacedDrawing(tx: Tx, old: DrawingLibraryFile, nex
   await tx.drawingReplacementJob.create({ data: {
     sourceFileId: old.id, replacementFileId: next.id, libraryItemId: old.libraryItemId,
     actorId: actor.id, actorName: actor.displayName || actor.username, reason,
+    purgePending: !await isSampleDocumentReferenced(tx,old.id),
     objectKeys: [old.objectKey, asset?.previewObjectKey, asset?.thumbnailObjectKey].filter((key): key is string => !!key),
   } });
 }
@@ -73,6 +75,8 @@ export async function syncDrawingReplacement(tx: Tx, job: DrawingReplacementJob)
 
 /** Shared sample evidence remains owned by its original business record. Never delete unrelated evidence. */
 async function objectStillReferenced(key: string) {
+  const originals = await prisma.drawingLibraryFile.findMany({where:{objectKey:key},select:{id:true}});
+  for (const file of originals) if (await isSampleDocumentReferenced(prisma,file.id)) return true;
   const asset = await prisma.mediaAsset.findFirst({ where: { OR: [{ originalObjectKey: key }, { previewObjectKey: key }, { thumbnailObjectKey: key }] }, select: { id: true } });
   const references = await Promise.all([
     prisma.drawingLibraryFile.count({ where: { retiredForReplacementAt: null, OR: [{ objectKey: key }, ...(asset ? [{ mediaAssetId: asset.id }] : [])] } }),
