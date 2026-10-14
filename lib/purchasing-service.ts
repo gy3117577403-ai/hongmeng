@@ -10,6 +10,7 @@ import { createSystemNotification } from "@/lib/system-notifications";
 import { enqueuePurchasingPush } from "@/lib/purchasing-notifications";
 import { createFixturePurchase } from "@/lib/quality-fixture-service";
 import { fixtureAvailable } from "@/lib/quality-fixture-domain";
+import { pcPurchasePricing, pcPricingSnapshot } from "@/lib/purchasing-pricing";
 import {
   PurchasingError,
   pcChoice,
@@ -680,7 +681,7 @@ async function purchase(tx: Tx, input: PcInput, a: PcActor) {
         `${p.name}已有资金、收货或票据；先撤回未付款资金单，已执行事项通过退货或调整处理`,
       );
     const reason = pcText(input.reason, "采购修订原因", 1000, revision),
-      actual = pcInt(e.actualCents, "实际采购总额（分）");
+      pricing = pcPurchasePricing(e, p.quantity), actual = pricing.actualCents;
     if (actual >= 50000 && !input.contractNumber && !p.contractLines.length)
       throw new PurchasingError(`${p.name}单项总额达到 500 元，请填写合同编号`);
     let itemId = pcText(e.itemId || p.itemId, "关联物资", 100, false);
@@ -710,7 +711,7 @@ async function purchase(tx: Tx, input: PcInput, a: PcActor) {
       where: { id: p.id },
       data: {
         status: "ORDERED",
-        actualCents: actual,
+        ...pricing,
         payableCents: actual,
         supplierId: supplier.id,
         settlement: mode,
@@ -843,6 +844,7 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
           lineId: p.id,
           number: p.number,
           name: p.name,
+          ...pcPricingSnapshot(p),
           supplier: p.supplier?.name,
           originalAvailableCents: available[i],
           allocationCents: shares[i],

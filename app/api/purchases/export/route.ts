@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { requireUser } from "@/lib/auth";
-import { loadPurchasing } from "@/lib/purchasing-queries";
+import { loadPurchasing, purchasingFundsForExport } from "@/lib/purchasing-queries";
+import { buildPurchasingFundWorkbook } from "@/lib/purchasing-export";
 import { purchasingError, purchasingQuery } from "@/lib/purchasing-http";
 import {
   PC_SETTLEMENTS,
@@ -14,6 +15,15 @@ export async function GET(req: NextRequest) {
   try {
     const a = await requireUser(),
       q = purchasingQuery(req.nextUrl.searchParams);
+    if (["funds", "finance"].includes(q.view || "")) {
+      const funds = await purchasingFundsForExport(q, a);
+      const book = buildPurchasingFundWorkbook(funds, a.displayName || a.username);
+      return new NextResponse(Buffer.from(await book.xlsx.writeBuffer()), { headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent('财务打款及采购明细.xlsx')}`,
+        "Cache-Control": "no-store",
+      } });
+    }
     const data = await loadPurchasing({ ...q, page: 1, pageSize: 10000 }, a);
     if (data.total > 10000)
       throw new PurchasingError(
@@ -23,8 +33,7 @@ export async function GET(req: NextRequest) {
     book.creator = a.displayName || a.username;
     const sourceLabel = q.source === "FIXTURE" ? "治具申购" : "普通采购";
     const sheet = book.addWorksheet(sourceLabel);
-    const stock = q.view === "stock",
-      fund = ["funds", "finance"].includes(q.view || "");
+    const stock = q.view === "stock";
     sheet.columns = (
       stock
         ? [
@@ -37,18 +46,7 @@ export async function GET(req: NextRequest) {
             "当前在库",
             "尚未退库领用量",
           ]
-        : fund
-          ? [
-              "资金单号",
-              "收款人",
-              "结算方式",
-              "申请金额",
-              "已付金额",
-              "剩余金额",
-              "状态",
-              "申请日期",
-            ]
-          : [
+        : [
               "采购明细号",
               "物品名称",
               "规格",
@@ -84,18 +82,7 @@ export async function GET(req: NextRequest) {
               r.onHand,
               r.issued,
             ]
-          : fund
-            ? [
-                r.number,
-                r.payee,
-                PC_SETTLEMENTS[r.settlement],
-                r.amountCents / 100,
-                r.paidCents / 100,
-                r.availableCents / 100,
-                PC_STATES[r.status] || r.status,
-                r.createdAt.slice(0, 10),
-              ]
-            : [
+          : [
                 r.number,
                 r.name,
                 r.spec,

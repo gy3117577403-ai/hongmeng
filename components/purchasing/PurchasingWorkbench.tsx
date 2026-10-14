@@ -29,6 +29,8 @@ import {
   PC_VIEWS,
   PC_SETTLEMENTS,
   PC_STATES,
+  PC_FUND_STATES,
+  PC_EXECUTION_STAGES,
   pcCents,
   pcMoney,
   type PcInput,
@@ -45,6 +47,7 @@ import {
 } from "./PurchaseFeedback";
 import PurchasePushPanel from "./PurchasePushPanel";
 import { purchasingNextStep } from "@/lib/purchasing-presentation";
+import { pcPurchasePricing } from "@/lib/purchasing-pricing";
 
 type LineDetail = Extract<PcDetail, { kind: "line" }>["record"];
 type FundDetail = Extract<PcDetail, { kind: "fund" }>["record"];
@@ -191,6 +194,7 @@ export default function PurchasingWorkbench({
   initialCreate = false,
   initialTask = "",
   initialSource = "NORMAL",
+  initialExecutionStage = "pending",
 }: {
   user: CurrentUserDTO;
   initialData: PcWorkbench;
@@ -199,6 +203,7 @@ export default function PurchasingWorkbench({
   initialCreate?: boolean;
   initialTask?: string;
   initialSource?: string;
+  initialExecutionStage?: string;
 }) {
   const [task, setTask] = useState(initialTask);
   const [confirmDiscard, setConfirmDiscard] = useState<"form" | "push" | null>(
@@ -237,6 +242,7 @@ export default function PurchasingWorkbench({
       follow: "",
       mine: "",
       sort: "",
+      executionStage: initialExecutionStage,
     }),
     [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]),
@@ -578,6 +584,10 @@ export default function PurchasingWorkbench({
       };
       for (const l of lines) {
         f["actual:" + l.id] = yuan(l.actualCents || l.estimateCents);
+        f["pricing:" + l.id] = l.status !== "ORDERED" || l.unitPrice ? "UNIT" : "TOTAL";
+        f["price:" + l.id] = l.unitPrice || "";
+        f["freight:" + l.id] = yuan(l.freightCents);
+        f["discount:" + l.id] = yuan(l.discountCents);
         f["quantity:" + l.id] = String(
           l.quantity - l.receivedQty - l.cancelledQty,
         );
@@ -769,11 +779,10 @@ export default function PurchasingWorkbench({
       )
         payload.amountCents = pcCents(form.amount);
       if (action === "PURCHASE") {
-        payload.entries = d.rows.map((r) => ({
-          id: r.id,
-          version: r.version,
-          actualCents: pcCents(form["actual:" + r.id]),
-          itemId: form["item:" + r.id],
+        payload.entries = d.rows.map((r) => ({ id: r.id, version: r.version, itemId: form["item:" + r.id],
+          ...pcPurchasePricing(form["pricing:" + r.id] === "UNIT" ? {
+            unitPrice: form["price:" + r.id], freightCents: pcCents(form["freight:" + r.id] || "0", "运费"), discountCents: pcCents(form["discount:" + r.id] || "0", "优惠"),
+          } : { actualCents: pcCents(form["actual:" + r.id]) }, r.quantity),
         }));
         payload.contractAttachmentIds = files.map((f) => f.id);
       }
@@ -870,7 +879,7 @@ export default function PurchasingWorkbench({
       const url = URL.createObjectURL(await r.blob()),
         a = document.createElement("a");
       a.href = url;
-      a.download = `采购${PC_VIEWS.find((v) => v.id === view)?.label}-${today()}.xlsx`;
+      a.download = ["funds", "finance"].includes(view) ? `财务打款及采购明细-${today()}.xlsx` : `采购${PC_VIEWS.find((v) => v.id === view)?.label}-${today()}.xlsx`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
@@ -1075,7 +1084,7 @@ export default function PurchasingWorkbench({
                 setPage(1);
                 setSelected([]);
                 setActiveId("");
-                setFilters((f) => ({ ...f, follow: "" }));
+                setFilters((f) => ({ ...f, follow: "", executionStage: "pending" }));
               }}
             >
               <span>{v.label}</span>
@@ -1111,8 +1120,14 @@ export default function PurchasingWorkbench({
                 {data.total} {view === "stock" ? "条库存" : "条记录"}
               </span>
               {view !== "stock" && <strong>{pcMoney(data.totalCents)}</strong>}
+              {view === "execution" && <small>{filters.executionStage === "pending" ? "预算合计" : filters.executionStage === "ordered" ? "采购应付合计" : "预算及采购应付合计"}</small>}
             </div>
           </div>
+          {view === "execution" && <div className="pc-execution-tabs" role="group" aria-label="采购执行分类">
+            {PC_EXECUTION_STAGES.map(stage => <button key={stage.id} type="button" aria-pressed={filters.executionStage === stage.id} className={filters.executionStage === stage.id ? "active" : ""} onClick={() => { changeFilter("executionStage", stage.id); setActiveId(""); }}>
+              {stage.label}<b>{data.executionCounts?.[stage.id] ?? "—"}</b><small>项</small>
+            </button>)}
+          </div>}
           <div className="pc-filters">
             {task && (
               <button
@@ -1357,9 +1372,7 @@ export default function PurchasingWorkbench({
                           >
                             {r.completed
                               ? "已完成"
-                              : r.kind === "fund" && r.status === "APPROVED"
-                                ? "待打款"
-                                : PC_STATES[r.status]}
+                              : r.kind === "fund" ? PC_FUND_STATES[r.status] || r.status : PC_STATES[r.status]}
                           </span>
                           {r.status === "ORDERED" ? (
                             <small>
@@ -1617,6 +1630,10 @@ export default function PurchasingWorkbench({
 
                           <Facts>
                             <Fact label="采购编号">{line.number}</Fact>
+                            {line.status === "ORDERED" && <>
+                              <Fact label={line.unitPrice ? "登记成交单价" : "总额折算单价"}>{line.unitPrice ? Number(line.unitPrice).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 6 }) : (line.actualCents / 100 / line.quantity).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 6 })} 元 / {line.unit}</Fact>
+                              {line.unitPrice ? <><Fact label="商品金额">{pcMoney(line.goodsCents || 0)}</Fact><Fact label="登记运费 / 优惠">{pcMoney(line.freightCents)} / {pcMoney(line.discountCents)}</Fact></> : <Fact label="单价依据">总额折算，可能包含运费或优惠</Fact>}
+                            </>}
                             <Fact label="申请 / 提交">
                               {line.request.applicantName} /{" "}
                               {line.request.submitterName}
@@ -2343,9 +2360,14 @@ export default function PurchasingWorkbench({
                     )}
                     {dialog.lines.map((l) => (
                       <div className="pc-wide pc-purchase-line" key={l.id}>
-                        <Field label={l.name + " · 实际采购总额（元）"}>
-                          {input("actual:" + l.id, "number")}
-                        </Field>
+                        <div className="pc-wide pc-pricing-title"><strong>{l.name}</strong><span>{l.spec} · {l.quantity} {l.unit}</span></div>
+                        <Field label="金额录入方式">{select("pricing:" + l.id, { UNIT: "按成交单价登记", TOTAL: "仅有总额（折算单价）" })}</Field>
+                        {form["pricing:" + l.id] === "UNIT" ? <>
+                          <Field label={l.name + " · 成交单价（元）"}><input type="number" min="0.000001" step="0.000001" required value={form["price:" + l.id] || ""} onChange={e => set("price:" + l.id, e.target.value)} /></Field>
+                          <Field label={l.name + " · 运费（元）"}>{input("freight:" + l.id, "number")}</Field>
+                          <Field label={l.name + " · 优惠（元）"}>{input("discount:" + l.id, "number")}</Field>
+                          <div className="pc-wide pc-pricing-total">{(() => { try { const p = pcPurchasePricing({ unitPrice: form["price:" + l.id], freightCents: pcCents(form["freight:" + l.id] || "0"), discountCents: pcCents(form["discount:" + l.id] || "0") }, l.quantity); return <>商品金额 {pcMoney(p.goodsCents || 0)}<strong>采购总额 {pcMoney(p.actualCents)}</strong></>; } catch { return <span>填写单价后，按数量计算商品金额，再加运费、减优惠。</span>; } })()}</div>
+                        </> : <><Field label={l.name + " · 实际采购总额（元）"}>{input("actual:" + l.id, "number")}</Field><p className="pc-wide pc-hint">此方式仅记录总额，导出会注明“总额折算”，不会将其作为登记成交单价。</p></>}
                         <Field label="物资身份">
                           {select("item:" + l.id, {
                             "": "新建独立物资编号",

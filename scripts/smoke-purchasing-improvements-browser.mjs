@@ -1,0 +1,110 @@
+import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { dirname, join, resolve } from 'node:path';
+import ExcelJS from 'exceljs';
+
+assert.equal(process.env.PURCHASING_QA_ALLOW, 'disposable-purchasing-runtime');
+const origin = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:33271';
+assert.ok(['127.0.0.1','localhost'].includes(new URL(origin).hostname));
+const fixture = JSON.parse(readFileSync(process.env.PURCHASING_IMPROVEMENTS_FIXTURE || 'output/playwright/purchasing-improvements/fixture.json','utf8').replace(/^\uFEFF/,''));
+assert.ok(fixture.marker.startsWith('PCQ-') && fixture.fundIds.length === 2);
+const dir = resolve(process.env.PURCHASING_IMPROVEMENTS_OUTPUT || 'output/playwright/purchasing-improvements').replaceAll('\\','/');
+mkdirSync(dir,{recursive:true});
+const generated = join(dir,'browser-code.generated.cjs');
+function cli(args) {
+  const command = process.platform === 'win32' ? process.execPath : 'npx';
+  const prefix = process.platform === 'win32' ? [join(dirname(process.execPath),'node_modules/npm/bin/npx-cli.js')] : [];
+  const r = spawnSync(command,[...prefix,'--yes','--package','@playwright/cli@0.1.19','playwright-cli','-s=purchasing-improvements',...args],{encoding:'utf8',timeout:480000});
+  const out = ((r.stdout||'')+(r.stderr||'')).replace(/### Ran Playwright code\r?\n```[\s\S]*?```(?:\r?\n)?/g,'').replaceAll(fixture.password,'[disposable-password]');
+  if(r.error||r.status) throw Error(r.error?.message||out);
+  return out;
+}
+async function scenario(page, origin, f, dir) {
+  const checks=[], errors=[];
+  page.on('pageerror',e=>errors.push(String(e)));
+  page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
+  const check=(yes,label)=>{if(!yes)throw Error(label);checks.push(label);};
+  const shot=name=>page.screenshot({path:`${dir}/${name}.png`,fullPage:false,animations:'disabled'});
+  const rows=async count=>page.waitForFunction(({count,marker})=>{const rows=[...document.querySelectorAll('.pc-table-wrap tbody tr')];return rows.length===count&&rows.every(r=>r.textContent.includes(marker));},{count,marker:f.marker});
+  const material=async(source,count)=>{
+    await page.waitForFunction(()=>{const count=document.querySelector('.mo-queue h3 small')?.textContent;return !!count&&!count.includes('—');});
+    await page.getByLabel('物料来源',{exact:true}).selectOption(source);
+    await page.waitForFunction(({count,source})=>{const rows=[...document.querySelectorAll('.mo-order-row')];const input=document.querySelector('select[aria-label="物料来源"]');return input?.value===source&&rows.length===count&&rows.every(r=>r.textContent.includes(source==='PURCHASED'?'-0':source==='CUSTOMER'?'-1':'-2'));},{count,source});
+  };
+  try {
+    await page.setViewportSize({width:1366,height:1024});
+    await page.goto(origin+'/login?next='+encodeURIComponent('/workspace/purchases?view=execution'));
+    await page.getByLabel('员工编号 / 管理账号').fill(f.user.username);
+    await page.getByLabel('密码',{exact:true}).fill(f.password);
+    await page.getByRole('button',{name:'登录',exact:true}).click();
+    await page.waitForURL(u=>u.pathname==='/workspace/purchases',{timeout:60000});
+    await page.getByPlaceholder('搜索物品、编号、申请人或供应商').fill(f.marker);
+    await rows(2);
+    const tabs=page.getByRole('group',{name:'采购执行分类'});
+    check(await tabs.getByRole('button',{name:/已审批待采购/}).getAttribute('aria-pressed')==='true','default stage is approved pending purchase');
+    await page.locator('.pc-table-wrap tbody input[type="checkbox"]').first().check();
+    await tabs.getByRole('button',{name:/已采购/}).click(); await rows(5);
+    check(await page.locator('.pc-table-wrap tbody input:checked').count()===0,'stage switch clears selection');
+    await shot('01-ordered-1366x1024');
+    await tabs.getByRole('button',{name:/全部执行/}).click(); await rows(7);
+    await tabs.getByRole('button',{name:/已审批待采购/}).click(); await rows(2);
+    await shot('02-approved-1366x1024');
+    await page.locator('tbody tr').filter({hasText:f.lines[5].number}).getByRole('button',{name:/查看/}).click();
+    await page.getByRole('button',{name:'登记采购',exact:true}).last().click();
+    const d=page.getByRole('dialog');
+    await d.getByPlaceholder('供应商全称',{exact:true}).fill('界面验收供应商 '+f.marker);
+    await d.getByLabel('收款人 / 单位',{exact:true}).fill('界面验收收款人');
+    await d.getByLabel('开户银行',{exact:true}).fill('验收银行');
+    await d.getByLabel('收款账号',{exact:true}).fill('TEST-271-BROWSER');
+    await d.getByLabel(f.lines[5].name+' · 成交单价（元）',{exact:true}).fill('12.345678');
+    await d.getByLabel(f.lines[5].name+' · 运费（元）',{exact:true}).fill('2');
+    await d.getByLabel(f.lines[5].name+' · 优惠（元）',{exact:true}).fill('1');
+    await shot('03-unit-price-form');
+    check((await d.locator('.pc-pricing-total').innerText()).includes('25.69'),'unit-price preview rounds extended total once');
+    await d.getByRole('button',{name:'确认保存',exact:true}).click();
+    await d.waitFor({state:'detached',timeout:30000}); await rows(1);
+    const result=await page.evaluate(async id=>{const r=await fetch('/api/purchases?record='+id);return r.json();},f.lines[5].id);
+    check(result.data.record.unitPrice==='12.345678'&&result.data.record.actualCents===2569,'browser unit-price submission persists precision and adjustments');
+    await page.goto(origin+'/workspace/purchases?view=finance');
+    await page.getByPlaceholder('搜索物品、编号、申请人或供应商').fill(f.marker); await rows(2);
+    await page.locator('.pc-table-wrap thead input[type="checkbox"]').check();
+    await shot('04-finance-export-1366x1024');
+    const downloading=page.waitForEvent('download');
+    await page.getByRole('button',{name:'导出选中',exact:true}).click();
+    const download=await downloading; await download.saveAs(dir+'/财务打款及采购明细.xlsx');
+    check((await download.failure())===null,'real selected finance workbook downloaded');
+    await page.goto(origin+'/workspace/procurement?scope=current&status=shortage&q='+f.marker);
+    await material('PURCHASED',1); await shot('05-shortage-purchased-1366x1024');
+    await material('CUSTOMER',1);
+    check((await page.locator('.mo-order-row').innerText()).includes('-1'),'historical purchased item does not satisfy current purchased shortage');
+    await material('UNKNOWN',1);
+    await page.waitForFunction(()=>document.querySelector('.mo-detail')?.textContent.includes('数量未知'));
+    check((await page.locator('.mo-detail').innerText()).includes('待确认'),'unknown shortage quantity remains visible');
+    await page.goto(origin+'/workspace/procurement?scope=pool&status=shortage&source=PURCHASED&q='+f.marker);
+    await material('PURCHASED',1); await shot('06-pool-shortage-1366x1024');
+    await material('CUSTOMER',1);
+    check((await page.locator('.mo-order-row').innerText()).includes('-1'),'order pool binds shortage and source to same material item');
+    await page.goto(origin+'/workspace/purchases?view=execution');
+    await page.getByPlaceholder('搜索物品、编号、申请人或供应商').fill(f.marker); await rows(1);
+    await page.setViewportSize({width:390,height:844}); await shot('07-execution-mobile');
+    check(await page.getByRole('group',{name:'采购执行分类'}).isVisible(),'execution stages remain accessible at mobile width');
+    check(errors.length===0,'no browser runtime or console errors: '+JSON.stringify(errors));
+    return {passed:true,checks};
+  } catch(error) { await shot('failure').catch(()=>{}); throw error; }
+}
+try {
+  writeFileSync(generated,`async page => { const scenario=${scenario.toString()}; return scenario(page,${JSON.stringify(origin)},${JSON.stringify(fixture)},${JSON.stringify(dir)}); }`);
+  cli(['open',origin+'/login']);
+  const output=cli(['run-code','--filename',generated]);
+  writeFileSync(join(dir,'browser-runtime.txt'),output);
+  assert.match(output,/"passed":\s*true/);
+  const book=new ExcelJS.Workbook(); await book.xlsx.readFile(join(dir,'财务打款及采购明细.xlsx'));
+  const summary=book.getWorksheet('付款汇总'), details=book.getWorksheet('采购明细');
+  assert.equal(summary.rowCount,3); assert.equal(details.rowCount,6);
+  assert.equal(Number(summary.getCell('E2').value)+Number(summary.getCell('E3').value),500);
+  assert.equal([2,3,4,5,6].reduce((n,i)=>n+Number(details.getCell(`P${i}`).value),0),500);
+  assert.ok([2,3,4,5,6].every(i=>details.getCell(`G${i}`).value===2&&details.getCell(`I${i}`).value===50));
+  writeFileSync(join(dir,'browser-result.json'),JSON.stringify({passed:true,summaryRows:2,detailRows:5,amount:500,download:'财务打款及采购明细.xlsx'},null,2));
+  console.log(output); console.log('Downloaded Excel verified: 2 fund rows, 5 item rows, 500 CNY.');
+} finally { rmSync(generated,{force:true}); try {cli(['close']);} catch {} }

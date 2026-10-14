@@ -7533,6 +7533,10 @@ model PcLine {
   quantity        Int
   estimateCents   Int
   actualCents     Int      @default(0)
+  unitPrice       Decimal? @db.Decimal(18, 6)
+  goodsCents      Int?
+  freightCents    Int      @default(0)
+  discountCents   Int      @default(0)
   payableCents    Int      @default(0)
   reservedCents   Int      @default(0)
   paidCents       Int      @default(0)

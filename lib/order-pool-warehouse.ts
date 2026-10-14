@@ -10,7 +10,10 @@ export async function poolWarehouseQueue(p: URLSearchParams) {
     const all=ordered.filter(t=>{const q=poolQuantities(t.planOrder!.orderQuantity,t.planOrder!.preparationQuantity,t.preparedQuantity,t.planOrder!.batches);return q.remaining>0 || p.get('view')==='tracking' && t.exceptionCases.some(e=>e.status==='OPEN');}).map((t,i)=>({...serializeMaterialOrder(t),preparationRank:i+1}));
     const query=(p.get('q')||'').trim().toLocaleLowerCase(),source=p.get('source')||'ALL';
     const base=all.filter(o=>(p.get('view')!=='tracking'||o.events.length>0)&& (source==='ALL'||o.events.some(e=>e.source===source))&&(!query||[o.specification,o.customer,o.code,...o.events.flatMap(e=>[e.model,e.note,...e.arrivals.map(b=>b.trackingNumber)])].join(' ').toLocaleLowerCase().includes(query)));
-    const matches=(o:typeof all[number],s:string)=>s==='active'?o.state!=='READY':s==='ready'?o.state==='READY':s==='waiting'?o.pendingBatches>0:s==='unchecked'?o.state==='UNCHECKED':s==='shortage'?o.openCount>0:s==='unknown'?o.forecast.unknown>0:s==='late'?o.events.some(e=>e.status==='OPEN'&&e.expectedAt&&new Date(e.expectedAt)<new Date()):s==='cancelled'?false:true;
+    const matches=(o:typeof all[number],s:string)=>{
+      const open=o.events.filter(e=>e.status==='OPEN'&&(source==='ALL'||e.source===source));
+      return s==='active'?o.state!=='READY':s==='ready'?o.state==='READY':s==='waiting'?open.some(e=>e.pending>0):s==='unchecked'?o.state==='UNCHECKED':s==='shortage'?open.length>0:s==='unknown'?open.some(e=>(e.remaining===null||e.remaining>0)&&!e.expectedAt):s==='late'?open.some(e=>e.expectedAt&&new Date(e.expectedAt)<new Date(chinaDate(new Date())+'T00:00:00+08:00')):s==='cancelled'?false:true;
+    };
     const summary=Object.fromEntries(['all','active','ready','waiting','unchecked','shortage','unknown','late'].map(s=>[s,base.filter(o=>matches(o,s)).length]));
     const filtered=base.filter(o=>matches(o,p.get('status')||'active')),total=filtered.length,pages=Math.max(1,Math.ceil(total/30)),page=Math.min(pages,Math.max(1,Number(p.get('page'))||1));
     return{orders:filtered.slice((page-1)*30,page*30),summary,older:0,weeks:[],currentWeek:chinaDate(chinaWeekRange(new Date()).start),week:'',pagination:{page,total,pages}};

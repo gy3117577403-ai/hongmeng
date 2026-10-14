@@ -117,7 +117,7 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_purchasing_ci'
           npx prisma migrate deploy
-          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-notifications.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/quality-review-closure-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
+          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-notifications.test.ts tests/purchasing-finance-export-integration.test.ts tests/material-shortage-filter-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/quality-review-closure-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
       - name: Issue work order PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -536,6 +536,13 @@ jobs:
             PURCHASING_QA_FIXTURE=artifacts/purchasing/release-fixture.json \
             PURCHASING_QA_OUTPUT=artifacts/purchasing/release-http.json \
             node scripts/smoke-purchasing.mjs
+          PURCHASING_QA_ALLOW=disposable-purchasing-runtime \
+            PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/purchasing-improvements-release.json" \
+            npx tsx scripts/seed-purchasing-improvements-smoke.ts
+          PURCHASING_QA_ALLOW=disposable-purchasing-runtime SMOKE_BASE_URL=http://127.0.0.1:3000 \
+            PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/purchasing-improvements-release.json" \
+            PURCHASING_IMPROVEMENTS_OUTPUT=output/playwright/purchasing-improvements-release \
+            node scripts/smoke-purchasing-improvements-browser.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime hongmeng-release-smoke node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/release-fixture.json
@@ -1021,6 +1028,14 @@ jobs:
             PURCHASING_QA_FIXTURE=artifacts/purchasing/hangzhou-fixture.json \
             PURCHASING_QA_OUTPUT=artifacts/purchasing/hangzhou-http.json \
             node scripts/smoke-purchasing.mjs
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            PURCHASING_QA_ALLOW=disposable-purchasing-runtime \
+            PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/purchasing-improvements-hangzhou.json" \
+            npx tsx scripts/seed-purchasing-improvements-smoke.ts
+          PURCHASING_QA_ALLOW=disposable-purchasing-runtime SMOKE_BASE_URL=http://127.0.0.1:3300 \
+            PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/purchasing-improvements-hangzhou.json" \
+            PURCHASING_IMPROVEMENTS_OUTPUT=output/playwright/purchasing-improvements-hangzhou \
+            node scripts/smoke-purchasing-improvements-browser.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime "$app_name" node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/hangzhou-fixture.json
@@ -1130,7 +1145,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: purchasing-${{ github.ref_name }}
-          path: artifacts/purchasing/*-http.json
+          path: |
+            artifacts/purchasing/*-http.json
+            output/playwright/purchasing-improvements*/*.png
+            output/playwright/purchasing-improvements*/browser-*.json
+            output/playwright/purchasing-improvements*/browser-runtime.txt
+            output/playwright/purchasing-improvements*/*.xlsx
           if-no-files-found: ignore
       - name: Upload shipping report acceptance evidence
         if: always()

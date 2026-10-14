@@ -24,6 +24,15 @@ export const PC_SETTLEMENTS: Record<string, string> = {
   ADVANCE: "采购垫付",
   MONTHLY: "月结",
 };
+export const PC_EXECUTION_STAGES = [
+  { id: "pending", label: "已审批待采购" },
+  { id: "ordered", label: "已采购" },
+  { id: "all", label: "全部执行" },
+] as const;
+export const PC_FUND_STATES: Record<string, string> = {
+  PENDING: "待资金审批", APPROVED: "已批准 / 待付款", PARTIAL: "部分付款",
+  PAID: "已付款", RETURNED: "已退回", WITHDRAWN: "已撤回", CLOSED: "已关闭",
+};
 export const PC_STATES: Record<string, string> = {
   DRAFT: "草稿",
   PENDING: "待审批",
@@ -225,6 +234,7 @@ export type PcWorkbench = {
   page: number;
   pageSize: number;
   counts: Record<string, number>;
+  executionCounts?: Record<string, number>;
   settings: null | {
     ownerId: string;
     purchaseApproverIds: string[];

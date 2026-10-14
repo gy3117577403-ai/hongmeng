@@ -7,6 +7,7 @@ import { activeProductionCarryoverWorkOrderWhere } from '@/lib/production-carryo
 import { parseWeek, addDays, ymd } from '@/lib/weekly-work-orders';
 import { materialOrderInclude, serializeMaterialOrder, readMaterialOrder } from '@/lib/material-order-service';
 import { poolWarehouseQueue } from '@/lib/order-pool-warehouse';
+import { materialOrderFilterWhere } from '@/lib/material-order-filters';
 export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   try {
@@ -35,20 +36,11 @@ export async function GET(req: NextRequest) {
     const unfinished: Prisma.WarehouseMaterialTaskWhereInput = { OR: [{ status: { not: 'completed' } }, { exceptionCases: { some: { status: 'OPEN' } } }] };
     if (scope === 'overdue') base.push(unfinished);
     if (p.get('view') === 'tracking') base.push({ exceptionCases: { some: {} } });
-    if (source !== 'ALL') base.push({ exceptionCases: { some: { supplySource: source } } });
     if (keyword) base.push({ OR: [
       { workOrder: { is: { OR: ['code','customerName','specification','productName'].map(field => ({ [field]: { contains: keyword, mode: 'insensitive' } })) } } },
       { exceptionCases: { some: { OR: [{ materialModel: { contains: keyword, mode: 'insensitive' } }, { exceptionNote: { contains: keyword, mode: 'insensitive' } }, { arrivals: { some: { trackingNumber: { contains: keyword, mode: 'insensitive' } } } }] } } },
     ] });
-    const filters: { [key: string]: Prisma.WarehouseMaterialTaskWhereInput } = {
-      active: unfinished, ready: { status: 'completed', exceptionCases: { none: { status: 'OPEN' } } },
-      waiting: { exceptionCases: { some: { status: 'OPEN', arrivals: { some: { status: 'ARRIVED' } } } } },
-      unchecked: { status: 'pending', exceptionCases: { none: {} } },
-      shortage: { exceptionCases: { some: { status: 'OPEN' } } },
-      unknown: { exceptionCases: { some: { status: 'OPEN', expectedArrivalAt: null, OR: [{ followUpTask: { is: null } }, { followUpTask: { is: { status: { not: 'WAITING_WAREHOUSE' } } } }] } } },
-      late: { exceptionCases: { some: { status: 'OPEN', expectedArrivalAt: { lt: new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }) + 'T00:00:00+08:00') }, followUpTask: { is: { status: { not: 'WAITING_WAREHOUSE' } } } } } },
-      all: {}, cancelled: {},
-    };
+    const filters = Object.fromEntries(['all','active','ready','waiting','unchecked','shortage','unknown','late','cancelled'].map(name => [name, materialOrderFilterWhere(name, source)]));
     const requestedPage = Math.max(1, Math.floor(Number(p.get('page')) || 1)), size = 30;
     const result = await prisma.$transaction(async tx => {
       const where = { AND: [...base, filters[status]] };

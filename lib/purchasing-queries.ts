@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   PC_VIEWS,
+  PC_EXECUTION_STAGES,
   PurchasingError,
   pcDate,
   pcMask,
@@ -12,6 +13,7 @@ import type { PcActor } from "@/lib/purchasing-service";
 export type PcQuery = {
   source?: string;
   view?: string;
+  executionStage?: string;
   task?: string;
   lineTask?: Prisma.PcLineWhereInput;
   fundTask?: Prisma.PcFundWhereInput;
@@ -37,7 +39,7 @@ const include = {
 type Line = Prisma.PcLineGetPayload<{
   include: typeof include;
 }>;
-type Plain<T> = T extends Date
+type Plain<T> = T extends Prisma.Decimal ? string : T extends Date
   ? string
   : T extends Array<infer U>
     ? Plain<U>[]
@@ -106,8 +108,11 @@ function lineWhere(
     });
   if (view === "approval")
     and.push({ status: { in: ["PENDING", "RETURNED", "WITHDRAWN"] } });
-  if (view === "execution")
-    and.push({ status: { in: ["APPROVED", "ORDERED"] }, completedAt: null });
+  if (view === "execution") {
+    const stage = q.executionStage || (q.task === "execution" ? "all" : "pending");
+    if (!PC_EXECUTION_STAGES.some(s => s.id === stage)) throw new PurchasingError("采购执行分类无效");
+    and.push({ status: stage === "all" ? { in: ["APPROVED", "ORDERED"] } : stage === "ordered" ? "ORDERED" : "APPROVED", completedAt: null });
+  }
   if (view === "completed") and.push({ completedAt: { not: null } });
   const refunds: Prisma.PcLineWhereInput = {
     returns: {
@@ -384,10 +389,13 @@ export async function loadPurchasing(
                 where: fundWhere({ ...q, ids: undefined }, a, v.id),
               })
             : await prisma.pcLine.count({
-                where: lineWhere({ ...q, ids: undefined }, a, v.id),
+                where: lineWhere({ ...q, executionStage: "all", ids: undefined }, a, v.id),
               });
     }),
   );
+  const executionCounts = view === "execution" ? Object.fromEntries(await Promise.all(
+    PC_EXECUTION_STAGES.map(async s => [s.id, await prisma.pcLine.count({ where: lineWhere({ ...q, executionStage: s.id, ids: undefined }, a, "execution") })] as const),
+  )) : undefined;
   return {
     rows,
     total,
@@ -395,6 +403,7 @@ export async function loadPurchasing(
     page,
     pageSize,
     counts,
+    executionCounts,
     settings: settings
       ? {
           ownerId: settings.ownerId,
@@ -549,6 +558,19 @@ export async function purchasingDetail(id: string, a: PcActor) {
   });
 }
 export type PcDetail = Awaited<ReturnType<typeof purchasingDetail>>;
+
+export async function purchasingFundsForExport(q: PcQuery, a: PcActor) {
+  return prisma.$transaction(async tx => {
+    const settings = await tx.pcSettings.findUnique({ where: { id: 'purchasing' } });
+    const where = fundWhere({ ...q, ...purchasingTaskFilters(q.task, a.id, settings) }, a);
+    const count = await tx.pcFund.count({ where });
+    if (count > 10000) throw new PurchasingError('当前超过 10000 条资金单，请缩小日期或供应商范围后导出');
+    const detailCount = await tx.pcFundAllocation.count({ where: { fund: where } });
+    if (detailCount > 100000) throw new PurchasingError('当前超过 100000 条采购明细，请缩小范围后导出');
+    return tx.pcFund.findMany({ where, include: { allocations: { include: { line: { include: { supplier: true, request: true } } }, orderBy: { line: { number: 'asc' } } } }, orderBy: q.sort === 'amount' ? { amountCents: 'desc' } : [{ createdAt: 'desc' }, { id: 'asc' }] });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, timeout: 30000 });
+}
+export type PcExportFund = Awaited<ReturnType<typeof purchasingFundsForExport>>[number];
 export async function purchasingLookups(q: URLSearchParams) {
   if (q.get("type") === "accounts") {
     const mode = q.get("settlement") || "CORPORATE",
