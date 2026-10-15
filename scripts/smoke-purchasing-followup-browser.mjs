@@ -115,6 +115,8 @@ async function scenario(page, origin, f, dir) {
     await shot('07-arrival-completion-choice');
     await page.setViewportSize({width:390,height:844});await shot('08-arrival-choice-mobile');
     check(await d().getByLabel('本次到料后，本项是否全部补齐？').isVisible(),'completion choice remains visible on mobile');
+    const arrivalChoiceBox=await d().getByLabel('本次到料后，本项是否全部补齐？').boundingBox();
+    check(arrivalChoiceBox?.width>=200&&arrivalChoiceBox.x+arrivalChoiceBox.width<=390,'mobile completion choice has room for the full outcome label');
     await page.setViewportSize({width:1366,height:1024});
     await d().getByRole('button',{name:'确认到料',exact:true}).click();await d().waitFor({state:'detached'});
     const arrival=await materialRecord('arrival');check(arrival.shortageCount===0&&arrival.events[0].status==='RESOLVED'&&arrival.events[0].usable===65,'warehouse and procurement share the resolved receipt ledger');
