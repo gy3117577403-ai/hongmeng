@@ -3105,6 +3105,7 @@ model WarehouseMaterialExceptionCase {
   materialModel            String                       @default("") @map("material_model")
   shortageQuantity         Float?                       @map("shortage_quantity")
   receivedQuantity         Float                        @default(0) @map("received_quantity")
+  arrivalOutcome           String                       @default("") @map("arrival_outcome")
   unit                     String                       @default("个")
   weekStartDate            DateTime?                    @map("week_start_date")
   weekEndDate              DateTime?                    @map("week_end_date")
@@ -7650,6 +7651,7 @@ model PcPayment {
 }
 
 model PcReceipt {
+  unit       String   @default("")
   fixtureDisposition String   @default("AVAILABLE")
   acceptanceNote     String   @default("")
   id         String   @id @default(uuid())
@@ -7691,6 +7693,7 @@ model PcStockBalance {
 }
 
 model PcStockMovement {
+  unit        String   @default("")
   id          String   @id @default(uuid())
   stockId     String
   stock       PcStockBalance @relation(fields: [stockId], references: [id], onDelete: Restrict)
@@ -7711,6 +7714,7 @@ model PcStockMovement {
 }
 
 model PcReturn {
+  unit                 String   @default("")
   id                   String   @id @default(uuid())
   number               String   @unique
   lineId               String

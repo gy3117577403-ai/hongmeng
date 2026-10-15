@@ -143,6 +143,7 @@ export function pcSplit(total: number, weights: number[]): number[] {
   return values;
 }
 export function pcMask(account: string) {
+  if (!account.trim() || /^0+$/.test(account.trim())) return "待补充";
   return account.length <= 4 ? "****" : `**** ${account.slice(-4)}`;
 }
 export type PcLineFact = {

@@ -63,7 +63,7 @@ test('execution partitions, exact financial workbook, snapshot and partial-payme
     await prisma.pcLine.update({ where: { id: ids[0] }, data: { name: '之后更名', quantity: 4, unitPrice: '24.75' } });
     const book = await workbook(), sheet = book.getWorksheet('采购明细')!;
     const row = Array.from({ length: 5 }, (_, i) => sheet.getRow(i + 2)).find(r => r.getCell(5).value === `${marker}-物品1`)!;
-    assert.ok(row); assert.equal(row.getCell(7).value, 2); assert.equal(row.getCell(9).value, 49.5); assert.equal(row.getCell(21).value, '资金申请时快照');
+    assert.ok(row); assert.equal(row.getCell(7).value, 2); assert.equal(row.getCell(9).value, 49.5); assert.equal(row.getCell(21).value, '资金申请时快照；当前采购计量已更正，请核对更正记录');
     await prisma.pcLine.update({ where: { id: ids[0] }, data: { name: `${marker}-物品1`, quantity: 2, unitPrice: '49.5' } });
   });
   const fundAction = async (action: string, id: string, extra: PcInput = {}) => run({ action, id, version: (await prisma.pcFund.findUniqueOrThrow({ where: { id } })).version, reason: '隔离测试', ...extra });

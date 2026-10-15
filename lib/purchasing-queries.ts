@@ -10,6 +10,7 @@ import {
   type PcWorkbench,
 } from "@/lib/purchasing-domain";
 import type { PcActor } from "@/lib/purchasing-service";
+import { pcHasPaymentAccount } from './purchasing-fields';
 export type PcQuery = {
   source?: string;
   view?: string;
@@ -576,9 +577,10 @@ export async function purchasingLookups(q: URLSearchParams) {
     const mode = q.get("settlement") || "CORPORATE",
       name = q.get("supplier") || "",
       userId = q.get("payeeUserId") || "";
-    const line = await prisma.pcLine.findFirst({
+    const lines = await prisma.pcLine.findMany({
       where: {
         status: "ORDERED",
+        payee: { notIn: ['', '0'] }, bank: { notIn: ['', '0'] }, account: { notIn: ['', '0'] },
         settlement: mode,
         ...(mode === "ADVANCE"
           ? { payeeUserId: userId }
@@ -593,7 +595,7 @@ export async function purchasingLookups(q: URLSearchParams) {
         updatedAt: true,
       },
     });
-    return plain(line);
+    return plain(lines.find(pcHasPaymentAccount) || null);
   }
   if (q.get("type") === "workorders")
     return prisma.workOrder.findMany({

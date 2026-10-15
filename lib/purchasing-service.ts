@@ -10,7 +10,8 @@ import { createSystemNotification } from "@/lib/system-notifications";
 import { enqueuePurchasingPush } from "@/lib/purchasing-notifications";
 import { createFixturePurchase } from "@/lib/quality-fixture-service";
 import { fixtureAvailable } from "@/lib/quality-fixture-domain";
-import { pcPurchasePricing, pcPricingSnapshot } from "@/lib/purchasing-pricing";
+import { pcPurchasePricing, pcPricingSnapshot, pcGoodsCents } from "@/lib/purchasing-pricing";
+import { pcUnit, pcLegacyUnit, pcPaymentField, pcPaymentValue, pcHasPaymentAccount, pcCycle } from './purchasing-fields';
 import {
   PurchasingError,
   pcChoice,
@@ -264,7 +265,7 @@ function editableRequest(
     denied("只有申请人或提交人可以修改、撤回该申请");
 }
 function lineFields(v: PcInput, draft: boolean) {
-  const quantity = pcInt(v.quantity ?? 1, "数量", 1, 1000000);
+  const quantity = pcInt(draft && (v.quantity === '' || v.quantity == null) ? 0 : v.quantity, "采购数量", draft ? 0 : 1, 1000000);
   const estimateCents = pcInt(
     v.estimateCents ?? 0,
     "预算合计（分）",
@@ -276,7 +277,7 @@ function lineFields(v: PcInput, draft: boolean) {
   return {
     name: pcText(v.name, "物品名称", 160, !draft),
     spec: pcText(v.spec, "规格型号", 200, !draft),
-    unit: pcText(v.unit || "件", "单位", 30),
+    unit: pcUnit(v.unit || "件"),
     quantity,
     estimateCents,
     category: pcText(v.category || "生产工具", "物品类型", 50),
@@ -634,6 +635,66 @@ async function createContract(tx: Tx, ps: Line[], input: PcInput, a: PcActor) {
   await event(tx, "CONTRACT", contract.id, "CREATE", a, contract);
   return contract;
 }
+async function updateSettlement(tx: Tx, input: PcInput, a: PcActor) {
+  responsible(await settings(tx), 'buyerIds', a);
+  const ids: string[] = [];
+  for (const e of entries(input.entries)) {
+    const p = await getLine(tx, e.id, e.version);
+    if (p.status !== 'ORDERED') conflict('请先登记采购，再补充收款与结算资料');
+    const after = {
+      payee: pcPaymentField(input.payee, '收款人', 200),
+      bank: pcPaymentField(input.bank, '开户银行', 200),
+      account: pcPaymentField(input.account, '收款账号', 120),
+      cycle: p.settlement === 'MONTHLY' ? pcCycle(input.cycle) : '',
+      dueDate: input.dueDate ? pcDate(input.dueDate, '付款到期日期') : '',
+    };
+    const changed = (['payee', 'bank', 'account'] as const).some(k => pcPaymentValue(p[k]) && p[k] !== after[k]);
+    const reason = pcText(input.reason, '已有收款信息变更原因', 1000, changed);
+    await tx.pcLine.update({ where: { id: p.id }, data: { ...after, version: { increment: 1 } } });
+    if (p.settlement !== 'ADVANCE' && p.supplierId && pcHasPaymentAccount(after))
+      await tx.pcSupplier.update({ where: { id: p.supplierId }, data: { payee: after.payee, bank: after.bank, account: after.account } });
+    await event(tx, 'LINE', p.id, 'UPDATE_SETTLEMENT', a, { before: { payee: p.payee, bank: p.bank, account: p.account, cycle: p.cycle, dueDate: p.dueDate }, after, existingFundsUnchanged: true }, reason);
+    ids.push(p.id);
+  }
+  return { lineIds: ids };
+}
+
+async function correctQuantity(tx: Tx, input: PcInput, a: PcActor) {
+  responsible(await settings(tx), 'purchaseApproverIds', a);
+  const p = await getLine(tx, input.id, pcInt(input.version, '采购版本'));
+  if (p.fixtureId || !['APPROVED', 'ORDERED'].includes(p.status)) conflict('普通采购审批通过后可更正计量；其他申请请按原申请流程修改');
+  const quantity = pcInt(input.quantity, '核实后的采购数量', 1, 1000000), unit = pcUnit(input.unit);
+  const reason = pcText(input.reason, '数量与单位核对依据', 1000);
+  if (input.confirmed !== true) throw new PurchasingError('请确认已核对实际采购与实物数量，采购总额保持不变');
+  if (quantity === p.quantity && unit === p.unit) throw new PurchasingError('数量和单位没有变化');
+  const legacy = pcLegacyUnit(p.unit);
+  const hasFacts = Boolean(p.receivedQty || p.cancelledQty || p.returns.length || p.balances.length || p.paidCents || p.reservedCents || p.invoiceCents);
+  const factor = quantity / p.quantity;
+  if (hasFacts && (!legacy || unit !== legacy.unit || factor !== legacy.factor))
+    conflict('已有收货或资金事实，仅支持将“1 × 5件”等历史计量换算为“5 件”；实际增减采购请按退货或新申请处理');
+  const converted = (n: number) => pcInt(n * (hasFacts ? factor : 1), '换算后的数量', 0, 1000000000);
+  let unitPrice = p.unitPrice;
+  if (unitPrice && p.goodsCents !== null) {
+    unitPrice = new Prisma.Decimal(p.goodsCents).div(100).div(quantity).toDecimalPlaces(6);
+    if (pcGoodsCents(unitPrice.toFixed(6), quantity) !== p.goodsCents) conflict('新数量无法在六位小数内保持原商品金额，请核对计量方式');
+  }
+  let itemId = p.itemId;
+  if (itemId && unit !== p.unit) {
+    const item = await tx.pcItem.create({ data: { number: await serial(tx, 'WZ'), name: p.name, spec: p.spec, unit, category: p.category } });
+    itemId = item.id;
+  }
+  const before = { quantity: p.quantity, unit: p.unit, unitPrice: p.unitPrice, itemId: p.itemId, receivedQty: p.receivedQty, returnedQty: p.returnedQty, cancelledQty: p.cancelledQty, balances: p.balances };
+  for (const stock of p.balances) {
+    const after = { onHand: converted(stock.onHand), issued: converted(stock.issued), held: converted(stock.held), repair: converted(stock.repair), reserved: converted(stock.reserved) };
+    await tx.pcStockBalance.update({ where: { id: stock.id }, data: { ...after, itemId: itemId!, version: { increment: 1 } } });
+    await tx.pcStockMovement.create({ data: { stockId: stock.id, lineId: p.id, kind: 'UNIT_CONVERSION', quantity: 0, balance: after.onHand, unit, sourceId: p.id, reason: `计量换算：1 ${p.unit} = ${factor} ${unit}；在库 ${stock.onHand} ${p.unit} → ${after.onHand} ${unit}；${reason}`, actorId: a.id, actorName: actorName(a) } });
+  }
+  const after = await tx.pcLine.update({ where: { id: p.id }, data: { quantity, unit, itemId, unitPrice, receivedQty: converted(p.receivedQty), returnedQty: converted(p.returnedQty), cancelledQty: converted(p.cancelledQty), version: { increment: 1 } } });
+  await event(tx, 'LINE', p.id, 'CORRECT_QUANTITY', a, { before, after, factor: hasFacts ? factor : null, historicalReceiptsAndFundsPreserved: true }, reason);
+  await refreshLine(tx, p.id);
+  return { id: p.id };
+}
+
 async function purchase(tx: Tx, input: PcInput, a: PcActor) {
   const s = await settings(tx);
   responsible(s, "buyerIds", a);
@@ -644,24 +705,22 @@ async function purchase(tx: Tx, input: PcInput, a: PcActor) {
       "结算方式",
     ),
     supplierName = pcText(input.supplier, "供应商", 200);
-  const payee = pcText(input.payee, "收款人", 200),
-    bank = pcText(input.bank, "开户银行", 200),
-    account = pcText(input.account, "收款账户", 120);
+  const payee = pcPaymentField(input.payee, "收款人", 200),
+    bank = pcPaymentField(input.bank, "开户银行", 200),
+    account = pcPaymentField(input.account, "收款账户", 120);
   const buyer = await activeUser(tx, input.buyerId || a.id);
   const payeeUser =
     mode === "ADVANCE" ? await activeUser(tx, input.payeeUserId) : null;
   const eta = pcDate(input.eta, "预计到货日期");
-  const cycle = mode === "MONTHLY" ? pcText(input.cycle, "月结月份", 7) : "";
-  if (cycle && !/^\d{4}-(0[1-9]|1[0-2])$/.test(cycle))
-    throw new PurchasingError("月结月份无效");
-  const dueDate = mode === "MONTHLY" ? pcDate(input.dueDate, "到期日期") : "";
+  const cycle = mode === "MONTHLY" ? pcCycle(input.cycle) : "";
+  const dueDate = mode === "MONTHLY" && input.dueDate ? pcDate(input.dueDate, "到期日期") : "";
   const supplier = await tx.pcSupplier.upsert({
     where: { name: supplierName },
     create: {
       name: supplierName,
       ...(mode !== "ADVANCE" ? { payee, bank, account } : {}),
     },
-    update: mode !== "ADVANCE" ? { payee, bank, account } : {},
+    update: mode !== "ADVANCE" && pcHasPaymentAccount({ payee, bank, account }) ? { payee, bank, account } : {},
   });
   const updated: Line[] = [];
   for (const e of es) {
@@ -785,7 +844,10 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
     throw new PurchasingError(
       "所选记录需拆分：同一资金单须同结算方式、收款人、账户和币种；对公还须同供应商，月结须同账期",
     );
-  const first = ps[0],
+  const first = ps[0];
+  if (ps.length > 1 && first.settlement === 'MONTHLY' && !first.cycle)
+    throw new PurchasingError('月结账期尚未确认，请先补充结算资料后合并请款，或分别申请');
+  const
     amount = pcInt(input.amountCents, "申请金额（分）"),
     available = ps.map((p) => p.payableCents - p.reservedCents),
     original = sum(available);
@@ -804,11 +866,10 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
     throw new PurchasingError("运费不能减少应付金额");
   if (adjustment === "ROUNDING" && Math.abs(delta) > 100)
     throw new PurchasingError("舍入调整不得超过 1 元，请选择其他明确差额类型");
-  const payee = pcText(input.payee || first.payee, "收款人", 200),
-    bank = pcText(input.bank || first.bank, "开户银行", 200),
-    account = pcText(input.account || first.account, "收款账户", 120);
-  const changed =
-    payee !== first.payee || bank !== first.bank || account !== first.account;
+  const payee = pcPaymentField(input.payee || first.payee, "收款人（请款前须补齐）", 200, true),
+    bank = pcPaymentField(input.bank || first.bank, "开户银行（请款前须补齐）", 200, true),
+    account = pcPaymentField(input.account || first.account, "收款账户（请款前须补齐）", 120, true);
+  const changed = ps.some(p => (pcPaymentValue(p.payee) && payee !== p.payee) || (pcPaymentValue(p.bank) && bank !== p.bank) || (pcPaymentValue(p.account) && account !== p.account));
   const reason = pcText(
     input.reason,
     "差额 / 收款信息变更原因",
@@ -830,7 +891,7 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
       bank,
       account,
       currency: first.currency,
-      cycle: first.cycle,
+      cycle: first.settlement === 'MONTHLY' ? pcCycle(input.cycle || first.cycle) : '',
       dueDate: input.dueDate
         ? pcDate(input.dueDate, "期望付款日期")
         : first.dueDate,
@@ -1108,6 +1169,7 @@ async function ledger(
   tx: Tx,
   stock: {
     id: string;
+    itemId: string;
     lineId: string | null;
     onHand: number;
     issued: number;
@@ -1135,6 +1197,7 @@ async function ledger(
   });
   await tx.pcStockMovement.create({
     data: {
+      unit: (await tx.pcItem.findUniqueOrThrow({ where: { id: stock.itemId }, select: { unit: true } })).unit,
       stockId: stock.id,
       lineId: stock.lineId,
       kind,
@@ -1177,6 +1240,7 @@ async function receive(tx: Tx, input: PcInput, a: PcActor) {
     const acceptanceNote = fixture ? pcText(input.acceptanceNote, "验收说明", 1000) : "";
     const r = await tx.pcReceipt.create({
       data: {
+        unit: p.unit,
         number,
         lineId: p.id,
         stockId: stock.id,
@@ -1318,6 +1382,7 @@ async function returnGoods(tx: Tx, input: PcInput, a: PcActor) {
   );
   const r = await tx.pcReturn.create({
     data: {
+      unit: p.unit,
       number: await serial(tx, "TH"),
       lineId: p.id,
       stockId: stock?.id,
@@ -1518,6 +1583,8 @@ export async function mutatePurchasing(
       else if (["WITHDRAW_LINES", "VOID_LINES"].includes(action))
         result = await withdrawLines(tx, input, a);
       else if (action === "PURCHASE") result = await purchase(tx, input, a);
+      else if (action === 'UPDATE_SETTLEMENT') result = await updateSettlement(tx, input, a);
+      else if (action === 'CORRECT_QUANTITY') result = await correctQuantity(tx, input, a);
       else if (action === "CREATE_FUND")
         result = await createFund(tx, input, a);
       else if (

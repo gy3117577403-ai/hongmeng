@@ -48,6 +48,7 @@ import {
 import PurchasePushPanel from "./PurchasePushPanel";
 import { purchasingNextStep } from "@/lib/purchasing-presentation";
 import { pcPurchasePricing } from "@/lib/purchasing-pricing";
+import { PC_UNITS, pcLegacyUnit, pcPaymentValue, pcQuantityText } from "@/lib/purchasing-fields";
 
 type LineDetail = Extract<PcDetail, { kind: "line" }>["record"];
 type FundDetail = Extract<PcDetail, { kind: "fund" }>["record"];
@@ -75,13 +76,16 @@ type Dialog = {
   returnId?: string;
   returnVersion?: number;
 };
+function PurchaseQuantity({ quantity, unit }: { quantity: number; unit: string }) {
+  return <span className="pc-quantity"><strong>{quantity > 0 ? pcQuantityText(quantity, unit) : '待填写'}</strong>{pcLegacyUnit(unit) && <small className="pc-warning">数量与单位待核对</small>}</span>;
+}
 const today = () =>
   new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Shanghai" });
 const blankLine = (): RequestLine => ({
   name: "",
   spec: "",
   unit: "件",
-  quantity: "1",
+  quantity: "",
   amount: "",
   category: "生产工具",
   urgency: "NORMAL",
@@ -97,6 +101,8 @@ const titles: Record<string, string> = {
   WITHDRAW_LINES: "撤回申请",
   VOID_LINES: "作废采购",
   PURCHASE: "登记采购信息",
+  UPDATE_SETTLEMENT: "补充收款与结算资料",
+  CORRECT_QUANTITY: "核对数量与单位",
   CREATE_FUND: "发起请款 / 报销",
   APPROVE_FUNDS: "通过资金审批",
   RETURN_FUNDS: "退回资金申请",
@@ -124,6 +130,9 @@ const eventNames: Record<string, string> = {
   RETURN: "退回修改",
   PURCHASE: "登记采购",
   REVISE_PURCHASE: "修订采购",
+  UPDATE_SETTLEMENT: "补充收款与结算资料",
+  CORRECT_QUANTITY: "数量与单位更正",
+  UNIT_CONVERSION: "计量换算",
   CREATE_FUND: "申请资金",
   OFFLINE_FUND: "补录付款申请",
   PAY: "登记付款",
@@ -554,12 +563,12 @@ export default function PurchasingWorkbench({
         receiverId: user.id,
         settlement: p?.settlement || "CORPORATE",
         supplier: p?.supplier?.name || "",
-        payee: p?.payee || fund?.payee || "",
+        payee: pcPaymentValue(p?.payee || fund?.payee),
         payeeUserId: p?.payeeUserId || "",
-        bank: p?.bank || fund?.bank || "",
-        account: p?.account || fund?.account || "",
+        bank: pcPaymentValue(p?.bank || fund?.bank),
+        account: pcPaymentValue(p?.account || fund?.account),
         eta: p?.eta || today(),
-        cycle: p?.cycle || today().slice(0, 7),
+        cycle: p?.cycle || "",
         dueDate: p?.dueDate || "",
         warehouse: "采购物资仓",
         location: "待上架区",
@@ -582,6 +591,12 @@ export default function PurchasingWorkbench({
         note: p?.note || "",
         ownerId: data.settings?.ownerId || user.id,
       };
+      if (action === "CORRECT_QUANTITY" && p) {
+        const legacy = pcLegacyUnit(p.unit);
+        f.quantity = String(p.quantity * (legacy?.factor || 1));
+        f.unit = legacy?.unit || p.unit;
+        f.confirmed = '';
+      }
       for (const l of lines) {
         f["actual:" + l.id] = yuan(l.actualCents || l.estimateCents);
         f["pricing:" + l.id] = l.status !== "ORDERED" || l.unitPrice ? "UNIT" : "TOTAL";
@@ -637,7 +652,7 @@ export default function PurchasingWorkbench({
             )
             .map((l) => ({
               ...l,
-              quantity: String(l.quantity),
+              quantity: l.quantity ? String(l.quantity) : "",
               amount: yuan(l.estimateCents),
             })),
         );
@@ -786,6 +801,12 @@ export default function PurchasingWorkbench({
         }));
         payload.contractAttachmentIds = files.map((f) => f.id);
       }
+      if (action === "CORRECT_QUANTITY") {
+        payload.id = d.rows[0].id;
+        payload.version = d.rows[0].version;
+        payload.quantity = Number(form.quantity);
+        payload.confirmed = form.confirmed === "1";
+      }
       if (action === "CONTRACT")
         payload.contractAttachmentIds = files.map((f) => f.id);
       if (action === "RECEIVE")
@@ -926,6 +947,8 @@ export default function PurchasingWorkbench({
             all(["ORDERED"]) ? "修订采购" : "登记采购",
             all(["APPROVED"]),
           )}
+        {line && all(["ORDERED"]) && rows.length === 1 && data.permissions.buy && btn("UPDATE_SETTLEMENT", "补充收款与结算资料")}
+        {line && rows.length === 1 && !rows[0].fixtureId && all(["APPROVED", "ORDERED"]) && data.permissions.approvePurchase && btn("CORRECT_QUANTITY", "核对数量与单位")}
         {line && all(["ORDERED"]) && (
           <>
             {rows.every((r) => r.availableCents > 0) &&
@@ -1278,6 +1301,7 @@ export default function PurchasingWorkbench({
                     />
                   </th>
                   <th>{view === "stock" ? "物资 / 来源" : "物品 / 单号"}</th>
+                  {!["stock", "finance", "funds"].includes(view) && <th className="pc-quantity-column">采购数量</th>}
                   <th>
                     {["finance", "funds"].includes(view)
                       ? "申请人与收款账户"
@@ -1318,10 +1342,11 @@ export default function PurchasingWorkbench({
                       </button>
                       <small>
                         {r.spec || "未填规格"}
-                        {r.kind === "line" ? ` · ${r.quantity} ${r.unit}` : ""}
+
                       </small>
                       <span className="pc-number">{r.number}</span>
                     </td>
+                    {!["stock", "finance", "funds"].includes(view) && <td className="pc-quantity-column"><PurchaseQuantity quantity={r.quantity} unit={r.unit} /></td>}
                     <td>
                       <b>{r.applicantName}</b>
                       <small>
@@ -1639,8 +1664,9 @@ export default function PurchasingWorkbench({
                               {line.request.submitterName}
                             </Fact>
                             <Fact label="物品规格">
-                              {line.spec} · {line.quantity} {line.unit}
+                              {line.spec}
                             </Fact>
+                            <Fact label="采购数量"><PurchaseQuantity quantity={line.quantity} unit={line.unit} /></Fact>
                             <Fact label="需求日期">{line.needDate}</Fact>
                             <Fact label="采购用途">{line.request.purpose}</Fact>
                             <Fact label="关联工单">
@@ -1654,7 +1680,7 @@ export default function PurchasingWorkbench({
                             <Fact label="预计到货">{line.eta}</Fact>
                             {line.settlement === "MONTHLY" && (
                               <Fact label="月结账期">
-                                {line.cycle} · {line.dueDate} 到期
+                                {line.cycle || "账期待确认"} · {line.dueDate ? `${line.dueDate} 到期` : "付款日期未约定"}
                               </Fact>
                             )}
                             <Fact label="备注">{line.note || line.reason}</Fact>
@@ -1675,9 +1701,9 @@ export default function PurchasingWorkbench({
                         <>
                           <Facts>
                             {" "}
-                            <Fact label="收款人">{line.payee}</Fact>
+                            <Fact label="收款人">{pcPaymentValue(line.payee) || "待补充"}</Fact>
                             <Fact label="银行 / 账户">
-                              {line.bank} {line.account}
+                              {pcPaymentValue(line.bank) || "银行待补充"} · {pcPaymentValue(line.account) || "账号待补充"}
                             </Fact>
                           </Facts>
                           <h3>
@@ -1718,7 +1744,7 @@ export default function PurchasingWorkbench({
                           {line.receipts.map((r) => (
                             <div className="pc-log" key={r.id}>
                               <b>
-                                {r.date} · {r.quantity} {line.unit}
+                                {r.date} · {pcQuantityText(r.quantity, r.unit || line.unit)}
                               </b>
                               <small>
                                 {r.number} · 收货人 {r.receiver}
@@ -1774,7 +1800,7 @@ export default function PurchasingWorkbench({
                                     {time(m.createdAt)} ·{" "}
                                     {eventNames[m.kind] || m.kind}{" "}
                                     {m.quantity > 0 ? "+" : ""}
-                                    {m.quantity} · 结存 {m.balance}
+                                    {pcQuantityText(m.quantity, m.unit || line.unit)} · 结存 {pcQuantityText(m.balance, m.unit || line.unit)}
                                     <small>
                                       {m.person} {m.reason} · {m.actorName}
                                     </small>
@@ -1790,7 +1816,7 @@ export default function PurchasingWorkbench({
                           {line.returns.map((r) => (
                             <div className="pc-log" key={r.id}>
                               <b>
-                                {r.number} · {r.quantity} {line.unit}
+                                {r.number} · {pcQuantityText(r.quantity, r.unit || line.unit)}
                               </b>
                               <small>
                                 {r.kind === "STOCK" ? "在库退货" : "未入库退货"}{" "}
@@ -2130,6 +2156,7 @@ export default function PurchasingWorkbench({
                       />
                     </Field>
                   </div>
+                  <datalist id="pc-unit-options">{PC_UNITS.map(unit => <option key={unit} value={unit} />)}</datalist>
                   <div className="pc-request-lines">
                     {requestLines.map((l, i) => (
                       <section className="pc-request-item" key={l.id || i}>
@@ -2183,6 +2210,9 @@ export default function PurchasingWorkbench({
                                       ? "number"
                                       : "text"
                                 }
+                                list={key === "unit" ? "pc-unit-options" : undefined}
+                                className={key === "quantity" ? "pc-quantity-input" : undefined}
+                                placeholder={key === "quantity" ? "请填写实际数量" : key === "unit" ? "件 / 个 / 包等" : undefined}
                                 value={l[key]}
                                 min={key === "quantity" ? 1 : 0}
                                 step={key === "quantity" ? 1 : "0.01"}
@@ -2350,17 +2380,17 @@ export default function PurchasingWorkbench({
                     )}
                     {form.settlement === "MONTHLY" && (
                       <>
-                        <Field label="月结账期">
+                        <Field label="月结账期（选填，未确定可留空）">
                           {input("cycle", "month")}
                         </Field>
-                        <Field label="付款到期日期">
+                        <Field label="付款到期日期（选填，未约定可留空）">
                           {input("dueDate", "date")}
                         </Field>
                       </>
                     )}
                     {dialog.lines.map((l) => (
                       <div className="pc-wide pc-purchase-line" key={l.id}>
-                        <div className="pc-wide pc-pricing-title"><strong>{l.name}</strong><span>{l.spec} · {l.quantity} {l.unit}</span></div>
+                        <div className="pc-wide pc-pricing-title"><strong>{l.name}</strong><span>{l.spec}</span><PurchaseQuantity quantity={l.quantity} unit={l.unit} /></div>
                         <Field label="金额录入方式">{select("pricing:" + l.id, { UNIT: "按成交单价登记", TOTAL: "仅有总额（折算单价）" })}</Field>
                         {form["pricing:" + l.id] === "UNIT" ? <>
                           <Field label={l.name + " · 成交单价（元）"}><input type="number" min="0.000001" step="0.000001" required value={form["price:" + l.id] || ""} onChange={e => set("price:" + l.id, e.target.value)} /></Field>
@@ -2397,14 +2427,26 @@ export default function PurchasingWorkbench({
                     </Field>
                   </>
                 )}
-                {["PURCHASE", "CREATE_FUND"].includes(formAction) && (
+                {formAction === "CORRECT_QUANTITY" && <>
+                  <div className="pc-wide pc-banner">原登记：数量 {dialog.lines[0]?.quantity}；单位「{dialog.lines[0]?.unit}」。请依据实际采购核对，以下建议值不会自动保存。更正保留采购总额和历史资金单；已有收货时仅支持历史单位的整数换算。</div>
+                  <Field label="核实后的采购数量"><input className="pc-quantity-input" type="number" min="1" step="1" value={form.quantity || ''} onChange={e => set('quantity', e.target.value)} /></Field>
+                  <Field label="核实后的单位"><input list="pc-correction-units" value={form.unit || ''} onChange={e => set('unit', e.target.value)} /><datalist id="pc-correction-units">{PC_UNITS.map(unit => <option key={unit} value={unit} />)}</datalist></Field>
+                  <div className="pc-wide"><PurchaseQuantity quantity={Number(form.quantity)} unit={form.unit || ''} /></div>
+                  <label className="pc-wide pc-check"><input type="checkbox" checked={form.confirmed === '1'} onChange={e => set('confirmed', e.target.checked ? '1' : '')} />已核对实际采购与实物数量，确认采购总额保持不变</label>
+                </>}
+                {formAction === "UPDATE_SETTLEMENT" && <>
+                  <p className="pc-wide pc-hint">{form.supplier} · {PC_SETTLEMENTS[form.settlement]}。收货后仍可补充；已提交的资金单保留原收款信息，后续请款使用补充后的资料。</p>
+                  {form.settlement === "MONTHLY" && <><Field label="月结账期（选填，未确定可留空）">{input('cycle', 'month')}</Field><Field label="付款到期日期（选填，未约定可留空）">{input('dueDate', 'date')}</Field></>}
+                </>}
+                {["PURCHASE", "CREATE_FUND", "OFFLINE_PAYMENT", "UPDATE_SETTLEMENT"].includes(formAction) && (
                   <>
+                    <p className="pc-wide pc-hint">{["PURCHASE", "UPDATE_SETTLEMENT"].includes(formAction) ? "收款信息可后补，以下三项均非必填；请款前需补齐有效资料。" : "请款前需填写完整有效的收款信息。首次补充不需要填写变更原因。"}</p>
                     <Field label="收款人 / 单位">{input("payee")}</Field>
                     <Field label="开户银行">{input("bank")}</Field>
                     <Field label="收款账号" wide>
                       {input("account")}
                     </Field>
-                    {formAction === "PURCHASE" && (
+                    {["PURCHASE", "UPDATE_SETTLEMENT", "CREATE_FUND", "OFFLINE_PAYMENT"].includes(formAction) && (
                       <button
                         className="pc-wide"
                         onClick={() => void loadAccountHistory()}
@@ -2416,6 +2458,7 @@ export default function PurchasingWorkbench({
                 )}
                 {["CREATE_FUND", "OFFLINE_PAYMENT"].includes(formAction) && (
                   <>
+                    {form.settlement === "MONTHLY" && <Field label="月结账期（单项请款可留空）">{input("cycle", "month")}</Field>}
                     <Field label="差额类型">
                       {select("adjustment", {
                         NONE: "与明细余额一致",
@@ -2613,9 +2656,9 @@ export default function PurchasingWorkbench({
                   ].includes(formAction) && (
                     <Field
                       label={
-                        ["PURCHASE", "CREATE_FUND"].includes(formAction)
+                        ["PURCHASE", "CREATE_FUND", "UPDATE_SETTLEMENT"].includes(formAction)
                           ? "变更 / 差额原因（发生变更时必填）"
-                          : "操作原因 / 说明"
+                          : formAction === "CORRECT_QUANTITY" ? "数量与单位核对依据（必填）" : "操作原因 / 说明"
                       }
                       wide
                     >

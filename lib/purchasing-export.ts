@@ -38,14 +38,14 @@ export function buildPurchasingFundWorkbook(funds: PcExportFund[], creator: stri
         price ? number(frozen ? snap.discountCents : p.discountCents, 0) / 100 : null,
         actualCents / 100, allocation / 100, activeAmount / 100, al.paidCents / 100, Math.max(0, activeAmount - al.paidCents) / 100,
         PC_FUND_STATES[f.status] || f.status, p.completedAt ? '已完成' : PC_STATES[p.status] || p.status,
-        frozen ? '资金申请时快照' : '历史关联记录（原单未存完整快照）',
+        frozen ? (quantity !== p.quantity || text(snap.unit) !== p.unit ? '资金申请时快照；当前采购计量已更正，请核对更正记录' : '资金申请时快照') : '历史关联记录（原单未存完整快照）',
       ]);
     }
     const expected = ['RETURNED', 'WITHDRAWN'].includes(f.status) ? 0 : f.amountCents;
     if (effective !== expected || paid !== f.paidCents) throw new PurchasingError(`${f.number} 的资金分摊与汇总不一致，请核对后导出`);
     summary.addRow([f.number, f.payee, PC_SETTLEMENTS[f.settlement] || f.settlement, f.actorName, requested / 100, effective / 100,
       paid / 100, Math.max(0, effective - paid) / 100, PC_FUND_STATES[f.status] || f.status,
-      date(f.createdAt), f.dueDate, f.allocations.length, adjustments[f.adjustment] || f.adjustment, f.reason]);
+      date(f.createdAt), f.dueDate || "未约定", f.allocations.length, adjustments[f.adjustment] || f.adjustment, f.reason]);
   }
   for (const sheet of [summary, details]) {
     sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };

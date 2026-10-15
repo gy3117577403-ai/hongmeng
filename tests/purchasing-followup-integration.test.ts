@@ -1,0 +1,135 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { prisma } from '../lib/prisma';
+import { mutatePurchasing } from '../lib/purchasing-service';
+import { purchasingLookups, purchasingFundsForExport } from '../lib/purchasing-queries';
+import { buildPurchasingFundWorkbook } from '../lib/purchasing-export';
+import { pcQuantityText } from '../lib/purchasing-fields';
+import type { PcInput } from '../lib/purchasing-domain';
+
+test('optional settlement, explicit quantities and audited legacy unit conversion', { skip: process.env.RUN_DB_INTEGRATION !== '1' }, async t => {
+  const marker = 'purchasing272-' + randomUUID(), date = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+  const actor = await prisma.user.create({ data: { username: marker, displayName: marker, passwordHash: 'not-a-login', laborRole: 'ADMIN' } });
+  const other = await prisma.user.create({ data: { username: marker + '-other', displayName: marker + '-other', passwordHash: 'not-a-login' } });
+  const run = (body: PcInput, key = randomUUID(), who = actor) => mutatePurchasing(body, who, key) as Promise<Record<string, unknown>>;
+  const get = (id: string) => prisma.pcLine.findUniqueOrThrow({ where: { id } });
+  const entry = async (id: string) => ({ id, version: (await get(id)).version });
+  const previous = await prisma.pcSettings.findUnique({ where: { id: 'purchasing' } });
+  await run({ action: 'SAVE_SETTINGS', version: previous?.version, ownerId: actor.id, purchaseApproverIds: [actor.id], buyerIds: [actor.id], fundApproverIds: [actor.id], financeIds: [actor.id], reason: '隔离到料与采购回归' });
+  const fields = { name: marker, spec: 'A2006H-2X4P', quantity: 5, unit: '件', estimateCents: 525, needDate: date };
+  const create = async (quantity = 5) => {
+    const r = await run({ action: 'SAVE_REQUEST', submit: true, purpose: marker, lines: [{ ...fields, quantity }] });
+    const id = (r.lineIds as string[])[0];
+    await run({ action: 'APPROVE_LINES', entries: [await entry(id)] });
+    return id;
+  };
+  const buy = async (id: string, extra: PcInput = {}) => run({ action: 'PURCHASE', entries: [{ ...await entry(id), actualCents: 525 }], settlement: 'MONTHLY', supplier: marker, eta: date, ...extra });
+  const receive = async (id: string, quantity: number) => run({ action: 'RECEIVE', entries: [{ ...await entry(id), quantity }], date, warehouse: '采购物资仓', location: 'A01' });
+  const account = { payee: marker, bank: '验收银行', account: 'TEST-272-VALID' };
+  try {
+    await t.test('quantity is required to submit, but an unfinished draft can save and withdraw', async () => {
+      for (const quantity of ['', undefined, 0]) await assert.rejects(run({ action: 'SAVE_REQUEST', submit: true, purpose: marker, lines: [{ ...fields, quantity }] }), /采购数量/);
+      await assert.rejects(run({ action: 'SAVE_REQUEST', submit: true, purpose: marker, lines: [{ ...fields, quantity: 1, unit: '5件' }] }), /数字填入采购数量/);
+      const r = await run({ action: 'SAVE_REQUEST', submit: false, lines: [{ name: '', quantity: '', unit: '件' }] });
+      const id = (r.lineIds as string[])[0];
+      assert.equal((await get(id)).quantity, 0);
+      await run({ action: 'WITHDRAW_LINES', entries: [await entry(id)], reason: '未填写草稿撤回' });
+      assert.equal((await get(id)).status, 'WITHDRAWN');
+      await assert.rejects(prisma.pcLine.update({ where: { id }, data: { status: 'PENDING' } }), /PcLine_quantity_facts_check/);
+    });
+    const id = await create(), second = await create();
+    await t.test('monthly procurement can be ordered and received with all five settlement fields empty', async () => {
+      await buy(id, { payee: '0', bank: '0', account: '0' }); await buy(second);
+      const p = await get(id);
+      assert.equal(p.status, 'ORDERED');
+      assert.deepEqual([p.payee, p.bank, p.account, p.cycle, p.dueDate], ['', '', '', '', '']);
+      await receive(id, 5);
+      assert.equal((await get(id)).receivedQty, 5);
+      await assert.rejects(run({ action: 'CREATE_FUND', entries: [await entry(id)], amountCents: 525 }), /收款人/);
+      await assert.rejects(run({ action: 'CREATE_FUND', entries: [await entry(id)], amountCents: 525, payee: '0', bank: '0', account: '0' }), /收款人/);
+      await assert.rejects(run({ action: 'CREATE_FUND', entries: [await entry(id), await entry(second)], amountCents: 1050, ...account }), /账期尚未确认/);
+    });
+    let fundId = '';
+    await t.test('first account completion at funding is valid without a fictitious change reason', async () => {
+      const r = await run({ action: 'CREATE_FUND', entries: [await entry(id)], amountCents: 525, ...account });
+      fundId = String(r.id);
+      const f = await prisma.pcFund.findUniqueOrThrow({ where: { id: fundId } });
+      assert.equal(f.accountChanged, false); assert.equal(f.cycle, ''); assert.equal(f.dueDate, '');
+      assert.equal(f.account, account.account);
+    });
+    await t.test('settlement completion works after receipt, preserves old funds and protects known supplier accounts', async () => {
+      await run({ action: 'UPDATE_SETTLEMENT', entries: [await entry(id)], ...account });
+      const supplier = await prisma.pcSupplier.findUniqueOrThrow({ where: { name: marker } });
+      assert.equal(supplier.account, account.account);
+      await run({ action: 'UPDATE_SETTLEMENT', entries: [await entry(second)] });
+      assert.equal((await prisma.pcSupplier.findUniqueOrThrow({ where: { name: marker } })).account, account.account);
+      await assert.rejects(run({ action: 'UPDATE_SETTLEMENT', entries: [await entry(id)], ...account, account: 'CHANGED' }), /变更原因/);
+      await run({ action: 'UPDATE_SETTLEMENT', entries: [await entry(id)], ...account, account: 'CHANGED', cycle: date.slice(0,7), dueDate: date, reason: '供应商书面确认新账户' });
+      assert.equal((await get(id)).receivedQty, 5);
+      assert.equal((await prisma.pcFund.findUniqueOrThrow({ where: { id: fundId } })).account, account.account);
+      await prisma.pcLine.update({ where: { id: second }, data: { payee: '00', bank: '0', account: '0', updatedAt: new Date(Date.now() + 1000) } });
+      const lookup = await purchasingLookups(new URLSearchParams({ type: 'accounts', settlement: 'MONTHLY', supplier: marker })) as { account: string };
+      assert.equal(lookup.account, 'CHANGED', 'blank/placeholder recent accounts do not mask an earlier valid one');
+      await assert.rejects(run({ action: 'UPDATE_SETTLEMENT', entries: [await entry(second)], ...account }, randomUUID(), other), /采购流程职责/);
+    });
+    const legacy = await create(1);
+    let legacyFund = '', receiptId = '', oldItem = '';
+    await t.test('legacy 1 × 5件 converts quantity, price and stock while preserving original receipts and fund snapshots', async () => {
+      await prisma.pcLine.update({ where: { id: legacy }, data: { unit: '5件' } });
+      await buy(legacy, { entries: [{ ...await entry(legacy), unitPrice: '5.25' }], ...account });
+      oldItem = (await get(legacy)).itemId!;
+      const createdFund = await run({ action: 'CREATE_FUND', entries: [await entry(legacy)], amountCents: 525 }); legacyFund = String(createdFund.id);
+      await receive(legacy, 1);
+      receiptId = (await prisma.pcReceipt.findFirstOrThrow({ where: { lineId: legacy } })).id;
+      const correction = { action: 'CORRECT_QUANTITY', ...await entry(legacy), quantity: 5, unit: '件', confirmed: true, reason: '核对原采购凭证和实物共五件，原单位误填数量' };
+      const key = randomUUID(); await run(correction, key); await run(correction, key);
+      const p = await get(legacy), receipt = await prisma.pcReceipt.findUniqueOrThrow({ where: { id: receiptId } });
+      assert.equal(p.quantity, 5); assert.equal(p.unit, '件'); assert.equal(p.receivedQty, 5); assert.equal(p.unitPrice?.toString(), '1.05');
+      assert.equal(p.actualCents, 525); assert.equal(p.payableCents, 525); assert.equal(p.reservedCents, 525);
+      assert.notEqual(p.itemId, oldItem); assert.equal(receipt.quantity, 1); assert.equal(receipt.unit, '5件');
+      const stock = await prisma.pcStockBalance.findFirstOrThrow({ where: { lineId: legacy } });
+      assert.equal(stock.onHand, 5); assert.equal(stock.itemId, p.itemId);
+      const conversion = await prisma.pcStockMovement.findFirstOrThrow({ where: { stockId: stock.id, kind: 'UNIT_CONVERSION' } });
+      assert.equal(conversion.quantity, 0, 'unit conversion is not a physical stock receipt'); assert.equal(conversion.balance, 5);
+      const f = await prisma.pcFund.findUniqueOrThrow({ where: { id: legacyFund } });
+      assert.equal((f.snapshot as Array<Record<string, unknown>>)[0].quantity, 1);
+      assert.equal((f.snapshot as Array<Record<string, unknown>>)[0].unit, '5件');
+      assert.equal(await prisma.pcEvent.count({ where: { entityId: legacy, action: 'CORRECT_QUANTITY' } }), 1);
+      const book = buildPurchasingFundWorkbook(await purchasingFundsForExport({ view: 'funds', ids: [legacyFund] }, actor), marker);
+      const row = book.getWorksheet('采购明细')!.getRow(2);
+      assert.equal(row.getCell(7).value, 1); assert.equal(row.getCell(8).value, '5件'); assert.match(String(row.getCell(21).value), /计量已更正/);
+      assert.equal(book.getWorksheet('付款汇总')!.getCell('K2').value, '未约定');
+    });
+    await t.test('future stock operations use the corrected unit, and arbitrary executed quantity edits are blocked', async () => {
+      const stock = await prisma.pcStockBalance.findFirstOrThrow({ where: { lineId: legacy } });
+      await run({ action: 'ISSUE', id: stock.id, version: stock.version, quantity: 2, person: '验收领用', reason: '按件领用' });
+      const updated = await prisma.pcStockBalance.findUniqueOrThrow({ where: { id: stock.id } });
+      assert.equal(updated.onHand, 3); assert.equal(updated.issued, 2);
+      const movement = await prisma.pcStockMovement.findFirstOrThrow({ where: { stockId: stock.id, kind: 'ISSUE' } });
+      assert.equal(movement.quantity, -2); assert.equal(movement.unit, '件');
+      assert.equal(pcQuantityText(1, '5件'), '1 × 5件'); assert.equal(pcQuantityText(5, '件'), '5 件');
+      await assert.rejects(run({ action: 'CORRECT_QUANTITY', ...await entry(legacy), quantity: 7, unit: '件', confirmed: true, reason: '禁止任意改已有库存' }), /仅支持/);
+      assert.equal((await get(legacy)).quantity, 5);
+    });
+    await t.test('conversion also preserves already issued and returned stock facts', async () => {
+      const id = await create(3);
+      await prisma.pcLine.update({ where: { id }, data: { unit: '5件' } });
+      await buy(id); await receive(id, 2);
+      let stock = await prisma.pcStockBalance.findFirstOrThrow({ where: { lineId: id } });
+      await run({ action: 'ISSUE', id: stock.id, version: stock.version, quantity: 1, person: '原计量领用', reason: '更正前领用' });
+      stock = await prisma.pcStockBalance.findUniqueOrThrow({ where: { id: stock.id } });
+      await run({ action: 'RETURN_GOODS', ...await entry(id), stockId: stock.id, stockVersion: stock.version, kind: 'STOCK', quantity: 1, amountCents: 175, date, reason: '更正前退货' });
+      await run({ action: 'CORRECT_QUANTITY', ...await entry(id), quantity: 15, unit: '件', confirmed: true, reason: '原单位五件为一组，核对全链路换算' });
+      const p = await get(id);
+      stock = await prisma.pcStockBalance.findUniqueOrThrow({ where: { id: stock.id } });
+      assert.equal(p.receivedQty, 10); assert.equal(p.returnedQty, 5); assert.equal(p.payableCents, 350);
+      assert.equal(stock.onHand, 0); assert.equal(stock.issued, 5);
+      const oldReturn = await prisma.pcReturn.findFirstOrThrow({ where: { lineId: id } });
+      assert.equal(oldReturn.quantity, 1); assert.equal(oldReturn.unit, '5件'); assert.equal(oldReturn.amountCents, 175);
+      await run({ action: 'RESTOCK', id: stock.id, version: stock.version, quantity: 5, person: '原计量领用', reason: '按件归还' });
+      const after = await prisma.pcStockBalance.findUniqueOrThrow({ where: { id: stock.id } });
+      assert.equal(after.onHand, 5); assert.equal(after.issued, 0);
+    });
+  } finally { await prisma.$disconnect(); }
+});
