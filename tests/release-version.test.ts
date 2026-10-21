@@ -16,8 +16,15 @@ const dockerfile = readFileSync(resolve(repositoryRoot, 'Dockerfile'), 'utf8');
 const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/docker-image.yml'), 'utf8');
 const appInfo = readFileSync(resolve(repositoryRoot, 'lib/app-info.ts'), 'utf8');
 
-const expectedPackageVersion = '1.34.275';
+const expectedPackageVersion = '1.34.276';
 const expectedImageVersion = `v${expectedPackageVersion}`;
+
+test('release workflow scripts remain below the GitHub expression size limit', () => {
+  const parsed = require('js-yaml').load(workflow) as { jobs: Record<string, { steps: { name?: string; run?: string }[] }> };
+  for (const job of Object.values(parsed.jobs)) for (const step of job.steps) {
+    assert.ok(!step.run || step.run.length < 20800, `${step.name}: extract shell logic before reaching the 21000-character expression limit`);
+  }
+});
 
 test('release version stays aligned across npm, Docker, and GHCR publishing', () => {
   assert.equal(packageJson.version, expectedPackageVersion);

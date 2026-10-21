@@ -1,11 +1,11 @@
-# 鸿蒙知识库 Office 预览 · v1.34.275
+# 鸿蒙知识库 Office 预览 · v1.34.276
 
 本目录提供部署配置，发布镜像不等于已经切换线上。两项资源应安装在主应用所在的 **同一 Sealos 命名空间**。
 
 ## 镜像
 
-- 主应用：`crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:v1.34.275`
-- 转换服务：`crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:office-preview-v1.34.275`
+- 主应用：`crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:v1.34.276`
+- 转换服务：`crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:office-preview-v1.34.276`
 - 平台：`linux/amd64`。转换服务基于 Gotenberg 8.38.1 LibreOffice 版本，固定上游 manifest，并验证内置 Noto CJK、Carlito、Caladea 字体。
 - 发布完成后的实际镜像摘要与验收证据见同目录 `release-verification.md`。
 

@@ -5,7 +5,7 @@ RUN test -n "$(fc-list :lang=zh family)" && fc-match 'Noto Sans CJK SC' && fc-ma
 
 # A single layer makes both registries independently pullable and digest-identical.
 FROM scratch
-ARG APP_VERSION=v1.34.275
+ARG APP_VERSION=v1.34.276
 ARG APP_REVISION=local
 COPY --from=configured / /
 LABEL org.opencontainers.image.title="hongmeng-office-preview" \
