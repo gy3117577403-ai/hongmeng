@@ -16,7 +16,7 @@ function cli(args) {
   const prefix = process.platform === 'win32' ? [join(dirname(process.execPath), 'node_modules/npm/bin/npx-cli.js')] : [];
   const result = spawnSync(command, [...prefix, '--yes', '--package', '@playwright/cli@0.1.19', 'playwright-cli', '-s=knowledge-preview', ...args], { encoding: 'utf8', timeout: 540000 });
   const output = ((result.stdout || '') + (result.stderr || '')).replace(/### Ran Playwright code\r?\n```[\s\S]*?```(?:\r?\n)?/g, '').replaceAll(fixture.password, '[disposable-password]');
-  if (result.error || result.status) throw Error(result.error?.message || output);
+  if (result.error || result.status) { writeFileSync(join(dir, 'browser-runtime.txt'), output); throw Error(result.error?.message || output); }
   return output;
 }
 async function scenario(page, origin, f, dir) {
@@ -32,6 +32,19 @@ async function scenario(page, origin, f, dir) {
     return file;
   };
   const waitPdf = async () => page.waitForFunction(() => [...document.querySelectorAll('.pdf-viewer canvas')].some(canvas => canvas.width > 100 && canvas.height > 100 && canvas.style.visibility !== 'hidden') && !document.querySelector('.pdf-viewer .viewer-state, .pdf-viewer .render-badge'), null, { timeout: 90000 });
+  const enterMobilePreview = async () => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    // Wait for the responsive React effect; offscreen panels can briefly still be "visible".
+    await page.waitForFunction(() => {
+      const detail = document.querySelector('.hm-knowledge-detail');
+      return window.matchMedia('(max-width: 1100px)').matches && detail && (detail.classList.contains('open') || detail.getAttribute('aria-hidden') === 'true');
+    });
+    if (await page.locator('.hm-knowledge-detail').getAttribute('aria-hidden') === 'true') await page.locator('.hm-knowledge-results button.active').click();
+    await page.locator('.hm-knowledge-detail.open:not([aria-hidden="true"])').waitFor();
+    const fullscreen = page.getByRole('dialog', { name: /^Office 预览/ });
+    if (!await fullscreen.isVisible()) await page.getByRole('region', { name: /^Office 预览/ }).getByRole('button', { name: '全屏预览', exact: true }).click();
+    await fullscreen.waitFor();
+  };
   try {
     await page.setViewportSize({ width: 1366, height: 1024 });
     await page.goto(origin + '/login?next=' + encodeURIComponent('/workspace/knowledge?articleId=' + f.articleId));
@@ -90,9 +103,7 @@ async function scenario(page, origin, f, dir) {
     const pageInput = page.locator('.pdf-viewer').getByLabel('预览页码');
     await pageInput.fill('2'); await pageInput.press('Enter'); await waitPdf();
     check(await pageInput.inputValue() === '2', 'Word preview jumps to second page');
-    await page.setViewportSize({ width: 390, height: 844 });
-    if (!await page.getByRole('region', { name: /^Office 预览/ }).isVisible()) await page.locator('.hm-knowledge-results button.active').click();
-    await page.getByRole('region', { name: /^Office 预览/ }).getByRole('button', { name: '全屏预览', exact: true }).click();
+    await enterMobilePreview();
     await waitPdf();
     await shot('05-word-mobile');
     check(await page.getByRole('button', { name: '退出全屏预览' }).isVisible(), 'mobile full-screen return control visible');
@@ -109,9 +120,7 @@ async function scenario(page, origin, f, dir) {
     await page.getByText('000123', { exact: true }).waitFor({ timeout: 90000 });
     check(true, 'new Office upload saves and becomes previewable in the same flow');
     await shot('06-new-upload-preview');
-    await page.setViewportSize({ width: 390, height: 844 });
-    if (!await page.getByRole('region', { name: /^Office 预览/ }).isVisible()) await page.locator('.hm-knowledge-results button.active').click();
-    await page.getByRole('region', { name: /^Office 预览/ }).getByRole('button', { name: '全屏预览', exact: true }).click();
+    await enterMobilePreview();
     await shot('07-excel-mobile');
     check(await page.getByRole('navigation', { name: '工作表', exact: true }).isVisible(), 'mobile worksheet tabs visible');
     check(errors.length === 0, 'no unexpected browser errors: ' + JSON.stringify(errors));

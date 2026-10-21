@@ -26,7 +26,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: converter
-          image: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:office-preview-v1.34.276
+          image: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:office-preview-v1.34.277
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
