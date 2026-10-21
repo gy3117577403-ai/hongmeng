@@ -123,6 +123,15 @@ async function scenario(page, origin, f, dir) {
     await enterMobilePreview();
     await shot('07-excel-mobile');
     check(await page.getByRole('navigation', { name: '工作表', exact: true }).isVisible(), 'mobile worksheet tabs visible');
+    await page.reload();
+    await page.locator('.hm-knowledge-results button.active').waitFor();
+    await page.waitForFunction(() => !!document.querySelector('.hm-knowledge-detail[aria-hidden="true"] [data-office-fullscreen]'));
+    check(await page.evaluate(() => document.body.style.overflow !== 'hidden'), 'a cold mobile load does not lock scrolling for a hidden Office preview');
+    await enterMobilePreview();
+    await page.getByRole('button', { name: '退出全屏预览' }).click();
+    await page.getByRole('button', { name: '关闭详情', exact: true }).click();
+    await page.waitForFunction(() => document.body.style.overflow !== 'hidden');
+    check(true, 'closing mobile Office detail releases the modal scroll lock');
     check(errors.length === 0, 'no unexpected browser errors: ' + JSON.stringify(errors));
     return { passed: true, checks, pdfs, productionModified: false };
   } catch (error) { await shot('failure').catch(() => {}); throw error; }

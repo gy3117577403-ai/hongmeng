@@ -592,7 +592,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
                 <div className="hm-knowledge-detail-scroll hm-scroll-region" tabIndex={0}>
                   {activePreview ? (
                     <section className={`hm-knowledge-preview-stage${activePreview.fileType === 'office' ? ' hm-knowledge-office-stage' : ''}`} aria-label="资料预览">
-                      {activePreview.fileType === 'office' ? <KnowledgeOfficePreview key={activePreview.fileId} file={activePreview} /> : activePreview.fileType === 'pdf'
+                      {activePreview.fileType === 'office' ? <KnowledgeOfficePreview key={activePreview.fileId} file={activePreview} active={!compactLayout || inspectorOpen} /> : activePreview.fileType === 'pdf'
                         ? <PdfViewer dashboardMode fileId={activePreview.fileId} title={activePreview.title} contentUrl={activePreview.contentUrl} downloadUrl={activePreview.downloadUrl} viewUrl={activePreview.contentUrl} />
                         : <ImageViewer dashboardMode fileId={activePreview.fileId} title={activePreview.title} contentUrl={activePreview.contentUrl} downloadUrl={activePreview.downloadUrl} />}
                     </section>

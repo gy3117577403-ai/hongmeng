@@ -9,7 +9,7 @@ import styles from './KnowledgeOfficePreview.module.css';
 
 function columnName(index: number) { let name = ''; for (let n = index + 1; n; n = Math.floor((n - 1) / 26)) name = String.fromCharCode(65 + (n - 1) % 26) + name; return name; }
 
-export function KnowledgeOfficePreview({ file }: { file: KnowledgePreviewDTO }) {
+export function KnowledgeOfficePreview({ file, active = true }: { file: KnowledgePreviewDTO; active?: boolean }) {
   const excel = isExcelFile(file.officeType || '');
   const [status, setStatus] = useState<OfficePreviewStatus | null>(null);
   const [error, setError] = useState('');
@@ -31,7 +31,7 @@ export function KnowledgeOfficePreview({ file }: { file: KnowledgePreviewDTO }) 
   const trigger = useRef<HTMLButtonElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
   const url = `/api/knowledge/attachments/${file.fileId}/preview`;
-  useModalLayer({ open: fullscreen, layerRef: layer, triggerRef: trigger, onClose: () => setFullscreen(false) });
+  useModalLayer({ open: active && fullscreen, layerRef: layer, triggerRef: trigger, onClose: () => setFullscreen(false) });
   useEffect(() => { if (window.matchMedia('(max-width: 767px)').matches) setFullscreen(true); }, []);
   useEffect(() => {
     let stopped = false, timer: ReturnType<typeof setTimeout>;
