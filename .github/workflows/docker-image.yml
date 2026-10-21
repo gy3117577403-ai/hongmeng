@@ -113,6 +113,9 @@ jobs:
           npm ci
           npx prisma generate
           bash scripts/pull-ci-minio.sh
+          # Match the source release browser runtime, including Chinese font metrics.
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
           if ! command -v google-chrome >/dev/null 2>&1; then
             npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
           fi
