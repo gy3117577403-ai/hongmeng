@@ -70,6 +70,7 @@ type Dialog = {
   rows: PcRow[];
   lines: LineDetail[];
   fund?: FundDetail;
+  funds?: FundDetail[];
   requestId?: string;
   requestVersion?: number;
   requestDraft?: boolean;
@@ -109,6 +110,7 @@ const titles: Record<string, string> = {
   WITHDRAW_FUND: "撤回资金申请",
   CLOSE_FUND: "关闭未付款余额",
   PAY: "登记实际付款",
+  BATCH_PAY: "批量登记打款",
   OFFLINE_PAYMENT: "补录线下已付款",
   RECEIVE: "登记收货入库",
   RETURN_GOODS: "办理采购退货",
@@ -136,6 +138,7 @@ const eventNames: Record<string, string> = {
   CREATE_FUND: "申请资金",
   OFFLINE_FUND: "补录付款申请",
   PAY: "登记付款",
+  BATCH_PAY: "批量登记打款",
   RECEIVE: "收货入库",
   RETURN_GOODS: "采购退货",
   REFUND: "供应商退款到账",
@@ -260,6 +263,7 @@ export default function PurchasingWorkbench({
   const [detailTab, setDetailTab] = useState("overview"),
     [dialog, setDialog] = useState<Dialog | null>(null),
     [form, setForm] = useState<Record<string, string>>({});
+  const [fileTargets, setFileTargets] = useState<Record<string, string>>({});
   const [requestLines, setRequestLines] = useState<RequestLine[]>([
       blankLine(),
     ]),
@@ -522,6 +526,7 @@ export default function PurchasingWorkbench({
     setFormError("");
     setError("");
     setFiles([]);
+    setFileTargets({});
     mutation.current = null;
     try {
       const details = await Promise.all(
@@ -539,21 +544,12 @@ export default function PurchasingWorkbench({
         )?.record;
       const p = lines[0],
         r = rows[0];
-      const currentRows = rows.map((row) => {
-        const l = lines.find((l) => l.id === row.id);
-        return l
-          ? rowFromLine(l)
-          : fund?.id === row.id
-            ? {
-                ...row,
-                number: fund.number,
-                name: fund.payee,
-                amountCents: fund.amountCents,
-                paidCents: fund.paidCents,
-                version: fund.version,
-                availableCents: fund.amountCents - fund.paidCents,
-              }
-            : row;
+      const funds = details.flatMap(d => d.kind === "fund" ? [d.record] : []);
+      const currentRows = rows.map(row => {
+        const l = lines.find(l => l.id === row.id), f = funds.find(f => f.id === row.id);
+        return l ? rowFromLine(l) : f ? { ...row, number: f.number, name: f.payee, payee: f.payee, account: f.account,
+          status: f.status, amountCents: f.amountCents, paidCents: f.paidCents, version: f.version,
+          spec: f.allocations.map(al => al.line.name).join('、'), availableCents: Math.max(0, f.amountCents - f.paidCents) } : row;
       });
       const returned = p?.returns.find((x) => x.id === extra?.returnId);
       const f: Record<string, string> = {
@@ -591,6 +587,7 @@ export default function PurchasingWorkbench({
         note: p?.note || "",
         ownerId: data.settings?.ownerId || user.id,
       };
+      if (action === "BATCH_PAY") currentRows.forEach(row => { f["amount:" + row.id] = yuan(row.availableCents); });
       if (action === "CORRECT_QUANTITY" && p) {
         const legacy = pcLegacyUnit(p.unit);
         f.quantity = String(p.quantity * (legacy?.factor || 1));
@@ -674,6 +671,7 @@ export default function PurchasingWorkbench({
         rows: currentRows,
         lines,
         fund,
+        funds,
         requestId: action === "EDIT_REQUEST" ? p?.requestId : undefined,
         requestVersion: p?.request.version,
         requestDraft: p?.request.status === "DRAFT",
@@ -762,6 +760,18 @@ export default function PurchasingWorkbench({
         entries,
         attachmentIds: files.map((f) => f.id),
       };
+      if (action === "BATCH_PAY") {
+        if (!d.rows.length) throw new Error("请保留至少一笔可登记的资金单");
+        payload = { action, entries: d.rows.map(r => {
+          if (!["APPROVED", "PARTIAL"].includes(r.status) || r.availableCents <= 0) throw new Error(`${r.number} 当前不可登记，请移除后继续`);
+          const amountCents = pcCents(form["amount:" + r.id], `${r.number} 本次付款金额`);
+          if (amountCents <= 0 || amountCents > r.availableCents) throw new Error(`${r.number} 本次金额须大于 0 且不超过剩余待付`);
+          return { id: r.id, version: r.version, amountCents, date: form["date:" + r.id] || form.date,
+            source: form["source:" + r.id] || form.source, reference: form["reference:" + r.id] || form.reference,
+            attachmentIds: files.filter(file => fileTargets[file.id] === r.id).map(file => file.id) };
+        }), attachmentIds: files.filter(file => !fileTargets[file.id]).map(file => file.id) };
+        if (files.some(file => fileTargets[file.id] && !d.rows.some(row => row.id === fileTargets[file.id]))) throw new Error("有凭证仍关联已移除的资金单，请重新选择凭证关联范围");
+      }
       if (action === "SAVE_SETTINGS")
         payload = {
           ...payload,
@@ -972,6 +982,7 @@ export default function PurchasingWorkbench({
             {btn("RETURN_FUNDS", "退回资金申请")}
           </>
         )}
+        {fund && rows.length > 1 && data.permissions.finance && btn("BATCH_PAY", `批量登记打款（${rows.length} 笔）`, true)}
         {fund &&
           all(["APPROVED", "PARTIAL"]) &&
           rows.length === 1 &&
@@ -1021,6 +1032,7 @@ export default function PurchasingWorkbench({
     "PURCHASE",
     "CREATE_FUND",
     "PAY",
+    "BATCH_PAY",
     "OFFLINE_PAYMENT",
     "REFUND",
     "REFUND_HANDOVER",
@@ -1275,7 +1287,7 @@ export default function PurchasingWorkbench({
             <div className="pc-selection">
               <span>
                 已选 {selected.length} 项 ·{" "}
-                {pcMoney(sum(selectedRows, "amountCents"))}
+                {selectedRows.every(r => r.kind === "fund") ? `剩余待付 ${pcMoney(sum(selectedRows, "availableCents"))}` : pcMoney(sum(selectedRows, "amountCents"))}
               </span>
               {actions(selectedRows, true)}
               <button onClick={() => setSelected([])}>取消选择</button>
@@ -1992,6 +2004,7 @@ export default function PurchasingWorkbench({
                         <small>
                           {p.source} · 流水 {p.reference}
                         </small>
+                        {p.batch && <small>付款批次：{p.batch.number}</small>}
                         <small>
                           {p.actorName} · {time(p.createdAt)}
                         </small>
@@ -2028,7 +2041,7 @@ export default function PurchasingWorkbench({
                         rel="noreferrer"
                       >
                         <b>{f.originalName} ↗</b>
-                        <small>{Math.ceil(f.size / 1024)} KB · 点击查看</small>
+                        <small>{Math.ceil(f.size / 1024)} KB · {f.entityType === "PAYMENT_BATCH" ? "批次共用凭证 · " : ""}点击查看</small>
                       </a>
                     ))}
                   </>
@@ -2104,7 +2117,7 @@ export default function PurchasingWorkbench({
       {dialog && (
         <div className="pc-overlay">
           <div
-            className={"pc-dialog " + (requestForm ? "pc-dialog-wide" : "")}
+            className={"pc-dialog " + (requestForm || formAction === "BATCH_PAY" ? "pc-dialog-wide" : "")}
             role="dialog"
             aria-modal="true"
             aria-labelledby="pc-dialog-title"
@@ -2348,7 +2361,7 @@ export default function PurchasingWorkbench({
                 </>
               )}
               {!requestForm &&
-                formAction !== "SAVE_SETTINGS" &&
+                !["SAVE_SETTINGS", "BATCH_PAY"].includes(formAction) &&
                 dialog.rows.length > 0 && (
                   <div className="pc-dialog-summary">
                     {dialog.rows.map((r) => (
@@ -2477,6 +2490,35 @@ export default function PurchasingWorkbench({
                     </div>
                   </>
                 )}
+                {formAction === "BATCH_PAY" && <section className="pc-batch-payment pc-wide">
+                  <p className="pc-banner">登记已经发生的付款。默认按剩余待付金额填写，可逐笔修改；同一笔转账可共用流水号和凭证。任一笔校验失败时整批不登记。</p>
+                  <div className="pc-form-grid">
+                    <Field label="统一付款日期">{input("date", "date")}</Field>
+                    <Field label="统一公司付款账户">{input("source")}</Field>
+                    <Field label="统一银行流水号（同一笔转账时填写）" wide>{input("reference")}</Field>
+                  </div>
+                  <div className="pc-batch-payment-list">
+                    {dialog.rows.map(r => {
+                      const eligible = ["APPROVED", "PARTIAL"].includes(r.status) && r.availableCents > 0;
+                      return <section className="pc-batch-payment-row" key={r.id} aria-label={`付款 ${r.number}`}>
+                        <header><div><b>{r.payee || r.name || "收款人待补充"}</b><small>{r.number} · 账号 {r.account ? '尾号 ' + r.account.slice(-4) : '待补充'}</small><p>{r.spec}</p></div>
+                          <button disabled={busy} onClick={() => { formDirty.current = true; setDialog(current => current ? { ...current, rows: current.rows.filter(row => row.id !== r.id) } : current); }}>移除本笔</button></header>
+                        <p>已付 {pcMoney(r.paidCents)} · 剩余待付 <b>{pcMoney(r.availableCents)}</b></p>
+                        {!eligible ? <p className="pc-error">当前状态：{PC_FUND_STATES[r.status] || r.status}，不可登记，请移除本笔后继续。</p> : <>
+                          <div className="pc-form-grid">
+                            <Field label={`${r.number} 本次付款金额（元）`}>{input("amount:" + r.id, "number")}</Field>
+                            <Field label={`${r.number} 银行流水号`}>{input("reference:" + r.id, "text")}</Field>
+                          </div>
+                          <details><summary>单独设置付款日期 / 付款账户（留空沿用统一填写）</summary><div className="pc-form-grid">
+                            <Field label={`${r.number} 付款日期`}>{input("date:" + r.id, "date")}</Field>
+                            <Field label={`${r.number} 公司付款账户`}>{input("source:" + r.id)}</Field>
+                          </div></details>
+                        </>}
+                      </section>;
+                    })}
+                  </div>
+                  <p className="pc-batch-payment-total">本次登记 {dialog.rows.length} 笔 · 合计 <strong>{(() => { try { return pcMoney(dialog.rows.reduce((total, r) => total + pcCents(form["amount:" + r.id]), 0)); } catch { return '请核对金额'; } })()}</strong></p>
+                </section>}
                 {moneyForm && (
                   <Field
                     label={
@@ -2697,6 +2739,10 @@ export default function PurchasingWorkbench({
                       >
                         {f.originalName}
                       </a>
+                      {formAction === "BATCH_PAY" && <select aria-label={`${f.originalName} 关联范围`} value={fileTargets[f.id] || ""} onChange={e => setFileTargets(current => ({ ...current, [f.id]: e.target.value }))}>
+                        <option value="">共用凭证 · 本批全部资金单</option>
+                        {dialog.rows.map(r => <option key={r.id} value={r.id}>{r.number} · {r.name}</option>)}
+                      </select>}
                       <button
                         disabled={busy}
                         onClick={() =>
@@ -2738,7 +2784,7 @@ export default function PurchasingWorkbench({
                   ? "保存中…"
                   : requestForm
                     ? "提交请购申请"
-                    : "确认" + (formAction === "PAY" ? "登记付款" : "保存")}
+                    : formAction === "BATCH_PAY" ? `确认登记 ${dialog.rows.length} 笔付款` : "确认" + (formAction === "PAY" ? "登记付款" : "保存")}
               </button>
             </footer>
           </div>

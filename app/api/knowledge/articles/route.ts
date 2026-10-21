@@ -6,9 +6,9 @@ import {
   KNOWLEDGE_STATUSES,
   knowledgeArticleInclude,
   knowledgeArticleSnapshot,
-  parseKnowledgeArticleInput,
   serializeKnowledgeArticle,
 } from '@/lib/knowledge';
+import { saveKnowledgeArticle, KnowledgeWriteError } from '@/lib/knowledge-write';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { snapshotChange } from '@/lib/change-snapshots';
@@ -49,6 +49,7 @@ export async function GET(req: NextRequest) {
         { specification: { contains: keyword, mode: 'insensitive' } },
         { productModel: { contains: keyword, mode: 'insensitive' } },
         { tags: { has: keyword } },
+        { attachments: { some: { deletedAt: null, OR: [{ originalName: { contains: keyword, mode: 'insensitive' } }, { displayName: { contains: keyword, mode: 'insensitive' } }] } } },
       ];
       const sequence = Number(keyword.replace(/^KB-/i, ''));
       if (Number.isInteger(sequence) && sequence > 0) where.OR.push({ sequence });
@@ -79,28 +80,7 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    if (body.category === undefined) body.category = 'general';
-    if (body.status === undefined) body.status = 'published';
-    const parsed = parseKnowledgeArticleInput(body);
-    if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
-    const values = parsed.data;
-    const article = await prisma.knowledgeArticle.create({
-      data: {
-        title: values.title as string,
-        category: values.category || 'general',
-        status: values.status || 'published',
-        summary: values.summary,
-        content: values.content as string,
-        tags: values.tags || [],
-        customerName: values.customerName,
-        specification: values.specification,
-        productModel: values.productModel,
-        createdById: user.id,
-        updatedById: user.id,
-        relations: values.relations?.length ? { create: values.relations } : undefined,
-      },
-      include: knowledgeArticleInclude,
-    });
+    const { article } = await saveKnowledgeArticle(body, user.id);
     await Promise.all([
       snapshotChange({ entityType: 'knowledge_article', entityId: article.id, action: 'create', after: knowledgeArticleSnapshot(article), changedBy: user.id }),
       logOp({ userId: user.id, action: 'create_knowledge_article', targetType: 'knowledge_article', targetId: article.id, detail: { sequence: article.sequence, category: article.category, status: article.status } }),
@@ -108,6 +88,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, article: serializeKnowledgeArticle(article) }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof KnowledgeWriteError) return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
     console.error('knowledge article create failed', error);
     return NextResponse.json({ ok: false, error: '知识文章创建失败' }, { status: 500 });
   }

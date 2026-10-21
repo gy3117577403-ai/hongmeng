@@ -283,7 +283,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/dashboard/field-summary', anyOf: ['BUSINESS', 'ENGINEERING', 'PRODUCTION'] },
   { prefix: '/api/dashboard/production-summary', anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION'] },
 
-  { prefix: '/api/knowledge', anyOf: ['SYSTEM_CONFIGURATION'] },
+  { prefix: '/api/knowledge', anyOf: ['KNOWLEDGE'] },
   { prefix: '/api/search', anyOf: ['SYSTEM_CONFIGURATION'] },
   { prefix: '/api/integrations', anyOf: ['SYSTEM_CONFIGURATION'] },
   { prefix: '/api/system', anyOf: ['SYSTEM_CONFIGURATION'] },

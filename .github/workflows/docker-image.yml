@@ -117,7 +117,7 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_purchasing_ci'
           npx prisma migrate deploy
-          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-notifications.test.ts tests/purchasing-finance-export-integration.test.ts tests/material-shortage-filter-integration.test.ts tests/material-arrival-outcome-integration.test.ts tests/purchasing-followup-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/quality-review-closure-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
+          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-batch-payment-integration.test.ts tests/knowledge-office-integration.test.ts tests/purchasing-notifications.test.ts tests/purchasing-finance-export-integration.test.ts tests/material-shortage-filter-integration.test.ts tests/material-arrival-outcome-integration.test.ts tests/purchasing-followup-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/quality-review-closure-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
       - name: Issue work order PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -550,6 +550,14 @@ jobs:
             PURCHASING_FOLLOWUP_FIXTURE="$RUNNER_TEMP/purchasing-followup-release.json" \
             PURCHASING_FOLLOWUP_OUTPUT=output/playwright/purchasing-followup-release \
             node scripts/smoke-purchasing-followup-browser.mjs
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public' \
+            PURCHASING_QA_ALLOW=disposable-purchasing-runtime \
+            PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/batch-knowledge-release.json" \
+            npx tsx scripts/seed-purchasing-improvements-smoke.ts
+          PURCHASING_QA_ALLOW=disposable-purchasing-runtime SMOKE_BASE_URL=http://127.0.0.1:3000 \
+            PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/batch-knowledge-release.json" \
+            BATCH_KNOWLEDGE_OUTPUT=output/playwright/batch-knowledge-release \
+            node scripts/smoke-batch-knowledge-browser.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime hongmeng-release-smoke node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/release-fixture.json
@@ -1051,6 +1059,14 @@ jobs:
             PURCHASING_FOLLOWUP_FIXTURE="$RUNNER_TEMP/purchasing-followup-hangzhou.json" \
             PURCHASING_FOLLOWUP_OUTPUT=output/playwright/purchasing-followup-hangzhou \
             node scripts/smoke-purchasing-followup-browser.mjs
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            PURCHASING_QA_ALLOW=disposable-purchasing-runtime \
+            PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/batch-knowledge-hangzhou.json" \
+            npx tsx scripts/seed-purchasing-improvements-smoke.ts
+          PURCHASING_QA_ALLOW=disposable-purchasing-runtime SMOKE_BASE_URL=http://127.0.0.1:3300 \
+            PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/batch-knowledge-hangzhou.json" \
+            BATCH_KNOWLEDGE_OUTPUT=output/playwright/batch-knowledge-hangzhou \
+            node scripts/smoke-batch-knowledge-browser.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime "$app_name" node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/hangzhou-fixture.json
@@ -1162,6 +1178,10 @@ jobs:
           name: purchasing-${{ github.ref_name }}
           path: |
             artifacts/purchasing/*-http.json
+            output/playwright/batch-knowledge*/*.png
+            output/playwright/batch-knowledge*/browser-*.json
+            output/playwright/batch-knowledge*/browser-runtime.txt
+            output/playwright/batch-knowledge*/finance.xlsx
             output/playwright/purchasing-improvements*/*.png
             output/playwright/purchasing-improvements*/browser-*.json
             output/playwright/purchasing-improvements*/browser-runtime.txt

@@ -37,6 +37,8 @@ import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCom
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { KnowledgeFileUploads, useKnowledgeUploads } from '@/components/KnowledgeFileUploads';
+import { KNOWLEDGE_FILE_HELP, knowledgeFileLabel } from '@/lib/knowledge-files';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
   CurrentUserDTO,
@@ -225,7 +227,11 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   const [form, setForm] = useState<ArticleForm>(emptyForm);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const uploads = useKnowledgeUploads();
+  const uploading = uploads.uploading;
+  const [discardForm, setDiscardForm] = useState(false);
+  const formDirty = useRef(false);
+  const saveBusy = useRef(false);
   const [deleteArticle, setDeleteArticle] = useState<KnowledgeArticleDTO | null>(null);
   const [deleteAttachment, setDeleteAttachment] = useState<KnowledgeAttachmentDTO | null>(null);
   const [previewOverride, setPreviewOverride] = useState<KnowledgePreviewDTO | null>(null);
@@ -237,22 +243,22 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   const formTriggerRef = useRef<HTMLElement | null>(null);
   const detailRef = useRef<HTMLElement>(null);
   const detailTriggerRef = useRef<HTMLElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selected = useMemo(() => results.find(item => item.key === selectedKey) || null, [results, selectedKey]);
   const candidates = useMemo(() => previewCandidates(selected), [selected]);
   const activePreview = previewOverride || candidates[0] || null;
 
   const closeForm = useCallback((): void => {
-    if (saving) return;
+    if (saving || uploading) return;
+    if (formDirty.current || uploads.files.length) { setDiscardForm(true); return; }
     setFormOpen(false);
     setEditing(null);
     setFormError('');
-  }, [saving]);
+  }, [saving, uploading, uploads.files.length]);
 
   const closeInspector = useCallback((): void => setInspectorOpen(false), []);
 
-  useModalLayer({ open: formOpen, layerRef: formRef, triggerRef: formTriggerRef, initialFocusRef: titleRef, backgroundRef: bodyRef, onClose: closeForm });
+  useModalLayer({ open: formOpen, layerRef: formRef, triggerRef: formTriggerRef, initialFocusRef: titleRef, backgroundRef: bodyRef, onClose: closeForm, interactionEnabled: !discardForm });
   useModalLayer({
     open: compactLayout && inspectorOpen,
     layerRef: detailRef,
@@ -350,6 +356,8 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
 
   function openCreate(trigger: HTMLElement, sourceItem?: KnowledgeSearchItemDTO | null): void {
     if (isModuleReadOnly(user.access, 'knowledge')) return;
+    uploads.clear();
+    formDirty.current = false;
     formTriggerRef.current = trigger;
     setEditing(null);
     const relation = sourceItem ? relationFromItem(sourceItem) : null;
@@ -367,6 +375,8 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
 
   function openEdit(trigger: HTMLElement, article: KnowledgeArticleDTO): void {
     if (isModuleReadOnly(user.access, 'knowledge')) return;
+    uploads.clear();
+    formDirty.current = false;
     formTriggerRef.current = trigger;
     setEditing(article);
     setForm(articleForm(article));
@@ -394,12 +404,16 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   async function saveArticle(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     if (!form.title.trim()) return setFormError('请输入知识标题');
-    if (!form.content.trim()) return setFormError('请输入知识内容');
+    if (saveBusy.current || uploading) return;
+    if (uploads.files.some(file => file.state !== 'done')) return setFormError('请重试或移除上传失败的附件后再保存');
+    if (!form.content.trim() && !editing?.attachments.length && !uploads.files.length) return setFormError('请填写知识内容或上传至少一个附件');
+    saveBusy.current = true;
     setSaving(true);
     setFormError('');
     try {
       const wasEditing = !!editing;
       const payload = {
+        attachmentIds: uploads.files.map(file => file.id),
         title: form.title,
         category: form.category,
         status: form.status,
@@ -419,6 +433,8 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
       });
       if (!data.article) throw new Error('知识保存结果缺失');
       const article = data.article;
+      uploads.clear();
+      formDirty.current = false;
       setFormOpen(false);
       setEditing(null);
       setSource('article');
@@ -434,6 +450,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
     } catch (saveError) {
       setFormError(saveError instanceof Error ? saveError.message : '知识保存失败');
     } finally {
+      saveBusy.current = false;
       setSaving(false);
     }
   }
@@ -451,28 +468,6 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
       setToast(deleteError instanceof Error ? deleteError.message : '知识删除失败');
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function uploadAttachment(event: React.ChangeEvent<HTMLInputElement>): Promise<void> {
-    const file = event.target.files?.[0];
-    const article = selected?.article;
-    event.target.value = '';
-    if (!file || !article) return;
-    setUploading(true);
-    try {
-      const body = new FormData();
-      body.append('file', file);
-      const data = await jsonRequest<ArticleResponse>(`/api/knowledge/articles/${article.id}/attachments/upload`, { method: 'POST', body });
-      if (!data.article) throw new Error('附件上传结果缺失');
-      updateArticleResult(data.article);
-      setPreviewOverride(articlePreview(data.article));
-      setToast('知识附件已上传');
-      await loadOverview();
-    } catch (uploadError) {
-      setToast(uploadError instanceof Error ? uploadError.message : '知识附件上传失败');
-    } finally {
-      setUploading(false);
     }
   }
 
@@ -603,7 +598,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
                         : <ImageViewer dashboardMode fileId={activePreview.fileId} title={activePreview.title} contentUrl={activePreview.contentUrl} downloadUrl={activePreview.downloadUrl} />}
                     </section>
                   ) : (
-                    <section className="hm-knowledge-no-preview"><FileSearch /><strong>当前内容没有可预览文件</strong><p>结构化参数和文字经验可直接在下方查看。</p></section>
+                    <section className="hm-knowledge-no-preview"><FileSearch /><strong>当前内容没有可预览文件</strong><p>文字经验可在下方查看，Excel / Word 附件可下载后打开。</p></section>
                   )}
 
                   {candidates.length > 1 && <div className="hm-knowledge-file-strip" aria-label="关联文件">{candidates.map(file => <button className={activePreview?.fileId === file.fileId ? 'active' : ''} type="button" key={file.fileId} title={file.title} onClick={() => setPreviewOverride(file)}>{file.fileType === 'pdf' ? <FileText /> : <ImageIcon />}<span>{file.title}</span></button>)}</div>}
@@ -617,7 +612,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
 
                   {selected.parameter && <section className="hm-knowledge-parameter-card"><h3>连接器参数</h3><div><span>外剥皮</span><strong>{selected.parameter.outerPeelMm || '未设置'}</strong></div><div><span>内剥皮</span><strong>{selected.parameter.innerPeelMm || '未设置'}</strong></div><div><span>入长</span><strong>{selected.parameter.insertionLengthMm || '未设置'}</strong></div>{selected.parameter.remark && <p>{selected.parameter.remark}</p>}</section>}
 
-                  {selected.article && <ArticleDetail readOnly={isModuleReadOnly(user.access, 'knowledge')} article={selected.article} onUpload={() => fileInputRef.current?.click()} uploading={uploading} onEdit={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} onDelete={setDeleteArticle} onDeleteAttachment={setDeleteAttachment} />}
+                  {selected.article && <ArticleDetail readOnly={isModuleReadOnly(user.access, 'knowledge')} article={selected.article} onUpload={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} uploading={uploading} onEdit={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} onDelete={setDeleteArticle} onDeleteAttachment={setDeleteAttachment} />}
 
                   {!selected.article && <section className="hm-knowledge-source-summary"><h3>内容摘要</h3><p>{selected.summary || '该资料暂无摘要，可进入来源模块查看完整内容。'}</p><a className="hm-workbench-button primary" href={selected.sourceHref}><ExternalLink size={16} />进入来源模块</a></section>}
                 </div>
@@ -627,13 +622,12 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
         </section>
       </div>
 
-      <input ref={fileInputRef} className="hm-knowledge-hidden-input" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" onChange={event => void uploadAttachment(event)} />
 
       {formOpen && (
         <div className="hm-knowledge-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeForm(); }}>
           <section ref={formRef} className="hm-knowledge-dialog" role="dialog" aria-modal="true" aria-labelledby="knowledge-form-title" tabIndex={-1}>
-            <header><div><span>{editing ? '编辑知识' : '新增知识'}</span><strong id="knowledge-form-title">{editing ? editing.title : '沉淀一条可复用经验'}</strong></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={closeForm}><X size={18} /></button></header>
-            <form onSubmit={event => void saveArticle(event)}>
+            <header><div><span>{editing ? '编辑知识' : '新增知识'}</span><strong id="knowledge-form-title">{editing ? editing.title : '沉淀一条可复用经验'}</strong></div><button type="button" aria-label="关闭" title="关闭" disabled={saving || uploading} onClick={closeForm}><X size={18} /></button></header>
+            <form onSubmit={event => void saveArticle(event)} onChangeCapture={() => { formDirty.current = true; }}>
               <div className="hm-knowledge-form-grid hm-scroll-region">
                 <label className="wide"><span>知识标题 *</span><input ref={titleRef} value={form.title} onChange={event => setForm(current => ({ ...current, title: event.target.value }))} maxLength={160} /></label>
                 <label><span>分类</span><select value={form.category} onChange={event => setForm(current => ({ ...current, category: event.target.value as KnowledgeArticleCategory }))}>{Object.entries(categoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
@@ -643,16 +637,19 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
                 <label><span>连接器型号</span><input value={form.productModel} onChange={event => setForm(current => ({ ...current, productModel: event.target.value }))} placeholder="可选" /></label>
                 <label><span>标签</span><input value={form.tags} onChange={event => setForm(current => ({ ...current, tags: event.target.value }))} placeholder="使用逗号分隔" /></label>
                 <label className="wide"><span>摘要</span><textarea value={form.summary} onChange={event => setForm(current => ({ ...current, summary: event.target.value }))} rows={2} maxLength={500} placeholder="让现场人员快速判断这条知识是否适用" /></label>
-                <label className="wide"><span>知识内容 *</span><textarea value={form.content} onChange={event => setForm(current => ({ ...current, content: event.target.value }))} rows={10} maxLength={30000} placeholder={'建议按以下结构填写：\n现象或目的\n原因\n处理步骤\n注意事项\n验证结果'} /></label>
+                <label className="wide"><span>知识内容（已上传附件时可留空）</span><textarea value={form.content} onChange={event => setForm(current => ({ ...current, content: event.target.value }))} rows={10} maxLength={30000} placeholder={'建议按以下结构填写：\n现象或目的\n原因\n处理步骤\n注意事项\n验证结果'} /></label>
+                <KnowledgeFileUploads uploads={uploads} disabled={saving} onFirstFile={name => { formDirty.current = true; setForm(current => ({ ...current, title: current.title || name.replace(/\.[^.]+$/, '').slice(0, 160) })); }} />
+                {!!editing?.attachments.length && <section className="hm-knowledge-form-relations wide"><strong>已保存的附件（{editing.attachments.length}）</strong>{editing.attachments.map(file => <div key={file.id}><Paperclip size={15} /><span>{file.originalName}</span><a href={file.downloadUrl}>下载</a></div>)}</section>}
                 {!!form.relations.length && <section className="hm-knowledge-form-relations wide"><span>关联来源</span>{form.relations.map(relation => <div key={`${relation.sourceType}:${relation.sourceId}`}><Link2 size={15} /><strong>{sourceLabels[relation.sourceType]} · {relation.sourceLabel || relation.sourceId}</strong><button type="button" aria-label="移除关联" title="移除关联" onClick={() => setForm(current => ({ ...current, relations: current.relations.filter(item => item.id !== relation.id) }))}><X size={15} /></button></div>)}</section>}
               </div>
               {formError && <p className="hm-knowledge-form-error" role="alert">{formError}</p>}
-              <footer><button className="hm-workbench-button" type="button" disabled={saving} onClick={closeForm}>取消</button><button className="hm-workbench-button primary" type="submit" disabled={saving} aria-busy={saving}>{saving ? <><Loader2 className="spin" />保存中</> : '保存知识'}</button></footer>
+              <footer><button className="hm-workbench-button" type="button" disabled={saving || uploading} onClick={closeForm}>取消</button><button className="hm-workbench-button primary" type="submit" disabled={saving || uploading || uploads.files.some(file => file.state !== 'done')} aria-busy={saving || uploading}>{saving ? <><Loader2 className="spin" />保存中</> : uploading ? '附件上传中…' : '保存知识'}</button></footer>
             </form>
           </section>
         </div>
       )}
 
+      <ConfirmDialog open={discardForm} title="放弃本次编辑？" description="尚未保存的文字和本次上传的附件将不会加入知识库。" confirmLabel="放弃编辑" onCancel={() => setDiscardForm(false)} onConfirm={() => { uploads.clear(true); formDirty.current = false; setDiscardForm(false); setFormOpen(false); setEditing(null); }} />
       <ConfirmDialog open={!!deleteArticle} title="删除这条知识？" description="文章将软删除，关联的 S3 附件不会被物理清除。" confirmLabel="确认删除" danger busy={saving} onCancel={() => setDeleteArticle(null)} onConfirm={() => void removeArticle()} />
       <ConfirmDialog open={!!deleteAttachment} title="移除这个附件？" description={deleteAttachment ? `${deleteAttachment.displayName || deleteAttachment.originalName} 将从知识页面隐藏，S3 原文件保留。` : ''} confirmLabel="确认移除" danger busy={saving} onCancel={() => setDeleteAttachment(null)} onConfirm={() => void removeAttachment()} />
     </main>
@@ -662,7 +659,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
 function ArticleDetail({ readOnly = false, article, onUpload, uploading, onEdit, onDelete, onDeleteAttachment }: {
   readOnly?: boolean;
   article: KnowledgeArticleDTO;
-  onUpload: () => void;
+  onUpload: (event: React.MouseEvent<HTMLButtonElement>) => void;
   uploading: boolean;
   onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onDelete: (article: KnowledgeArticleDTO) => void;
@@ -673,7 +670,7 @@ function ArticleDetail({ readOnly = false, article, onUpload, uploading, onEdit,
       <article className="hm-knowledge-article-body">
         <header><div><span>{categoryLabels[article.category]}</span><strong>{article.code} · V{article.version}</strong></div><em className={article.status}>{statusLabels[article.status]}</em></header>
         {article.summary && <p className="summary">{article.summary}</p>}
-        <div className="content">{article.content}</div>
+        <div className="content">{article.content || '本条知识以附件保存，请在下方下载查看。'}</div>
         {!!article.tags.length && <div className="tags"><Tag size={15} />{article.tags.map(tag => <span key={tag}>{tag}</span>)}</div>}
       </article>
       <section className="hm-knowledge-article-relations">
@@ -683,8 +680,8 @@ function ArticleDetail({ readOnly = false, article, onUpload, uploading, onEdit,
       </section>
       <section className="hm-knowledge-attachments">
         <header><h3>知识附件 <small>{article.attachmentCount}</small></h3><button className="hm-workbench-button" type="button" disabled={readOnly || uploading} onClick={onUpload}>{uploading ? <Loader2 className="spin" /> : <Upload size={15} />}上传附件</button></header>
-        {article.attachments.map(attachment => <div key={attachment.id}><Paperclip size={16} /><span><strong title={attachment.displayName || attachment.originalName}>{attachment.displayName || attachment.originalName}</strong><small>{formatBytes(attachment.size)} · {formatDate(attachment.createdAt)}</small></span><a href={attachment.downloadUrl} title="下载附件" aria-label={`下载 ${attachment.displayName || attachment.originalName}`}><Download size={16} /></a><button type="button" title="移除附件" aria-label={`移除 ${attachment.displayName || attachment.originalName}`} disabled={readOnly} onClick={() => onDeleteAttachment(attachment)}><Trash2 size={15} /></button></div>)}
-        {!article.attachments.length && <p>可上传 PDF、JPG、PNG 或 WEBP，文件保存到对象存储。</p>}
+        {article.attachments.map(attachment => <div key={attachment.id}><Paperclip size={16} /><span><strong title={attachment.displayName || attachment.originalName}>{attachment.displayName || attachment.originalName}</strong><small>{knowledgeFileLabel(attachment.fileType)} · {formatBytes(attachment.size)} · {attachment.uploadedBy?.displayName || attachment.uploadedBy?.username || '上传者'} · {formatDate(attachment.createdAt)}</small></span><a href={attachment.downloadUrl} title="下载附件" aria-label={`下载 ${attachment.displayName || attachment.originalName}`}><Download size={16} /></a><button type="button" title="移除附件" aria-label={`移除 ${attachment.displayName || attachment.originalName}`} disabled={readOnly} onClick={() => onDeleteAttachment(attachment)}><Trash2 size={15} /></button></div>)}
+        {!article.attachments.length && <p>{KNOWLEDGE_FILE_HELP}</p>}
       </section>
       <footer className="hm-knowledge-article-actions"><button className="hm-workbench-button" type="button" disabled={readOnly} onClick={onEdit}><Pencil size={15} />编辑知识</button><button className="hm-workbench-button danger" type="button" disabled={readOnly} onClick={() => onDelete(article)}><Trash2 size={15} />删除</button></footer>
     </>

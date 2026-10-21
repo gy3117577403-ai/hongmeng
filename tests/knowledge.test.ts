@@ -14,7 +14,7 @@ test('knowledge article input validates required fields and enums', () => {
   assert.equal(valid.data.status, 'published');
 
   const invalid = parseKnowledgeArticleInput({ title: '', content: '', category: 'invalid', status: 'unknown' });
-  assert.deepEqual(invalid.errors, ['请输入知识标题', '请输入知识内容', '知识分类不正确', '知识状态不正确']);
+  assert.deepEqual(invalid.errors, ['请输入知识标题', '请填写知识内容或上传至少一个附件', '知识分类不正确', '知识状态不正确']);
 });
 
 test('knowledge input trims and deduplicates tags and relations', () => {

@@ -5807,7 +5807,7 @@ model KnowledgeArticle {
 
 model KnowledgeAttachment {
   id           String           @id @default(uuid())
-  articleId    String           @map("article_id")
+  articleId    String?          @map("article_id")
   objectKey    String           @unique @map("object_key")
   originalName String           @map("original_name")
   displayName  String?          @map("display_name")
@@ -5818,7 +5818,7 @@ model KnowledgeAttachment {
   createdAt    DateTime         @default(now()) @map("created_at")
   updatedAt    DateTime         @updatedAt @map("updated_at")
   deletedAt    DateTime?        @map("deleted_at")
-  article      KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  article      KnowledgeArticle? @relation(fields: [articleId], references: [id], onDelete: Cascade)
   uploadedBy   User?            @relation("KnowledgeAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
 
   @@index([articleId, createdAt])
@@ -7639,6 +7639,8 @@ model PcPayment {
   id          String   @id @default(uuid())
   fundId      String
   fund        PcFund   @relation(fields: [fundId], references: [id], onDelete: Restrict)
+  batchId     String?
+  batch       PcPaymentBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
   amountCents Int
   date        String
   source      String
@@ -7648,6 +7650,17 @@ model PcPayment {
   createdAt   DateTime @default(now())
 
   @@index([fundId])
+  @@index([batchId])
+}
+
+model PcPaymentBatch {
+  id          String   @id @default(uuid())
+  number      String   @unique
+  totalCents  BigInt
+  actorId     String
+  actorName   String
+  createdAt   DateTime @default(now())
+  payments    PcPayment[]
 }
 
 model PcReceipt {

@@ -1528,3 +1528,16 @@
 .pc-quantity{display:inline-flex;flex-direction:column;gap:4px;white-space:normal}.pc-quantity>strong{font-size:19px!important;font-weight:750;color:#c2410c;line-height:1.3}.pc-quantity>small{font-size:11px}.pc-quantity-column{min-width:110px}.pc-quantity-input{font-size:19px!important;font-weight:700;color:#c2410c!important;background:#fff7ed!important;border-color:#fdba74!important}.pc-pricing-title .pc-quantity{margin-left:auto}
 
 .pc-table th.pc-quantity-column{width:12%}.pc-table .pc-quantity-column{display:table-cell!important}.pc-table:has(.pc-quantity-column) th:nth-child(4){width:16%}@media(max-width:1000px){.pc-table:has(.pc-quantity-column) th:nth-child(4),.pc-table:has(.pc-quantity-column) td:nth-child(4){display:none}}
+
+
+.pc-batch-payment { min-width: 0; }
+.pc-batch-payment-list { display: grid; gap: 12px; margin-top: 16px; }
+.pc-batch-payment-row { border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; background: #fff; }
+.pc-batch-payment-row > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pc-batch-payment-row > header > div { min-width: 0; overflow-wrap: anywhere; }
+.pc-batch-payment-row small { display: block; color: #64748b; margin-top: 5px; }
+.pc-batch-payment-row p { margin: 8px 0; font-size: 13px; }
+.pc-batch-payment-row summary { color: #64748b; padding: 12px 0; cursor: pointer; font-size: 12px; }
+.pc-batch-payment-total { position: sticky; bottom: -1px; margin: 14px 0 0; padding: 16px; border: 1px solid #fed7aa; background: #fff7ed; border-radius: 8px; }
+.pc-batch-payment-total strong { font-size: 21px; color: #c2410c; }
+.pc-file select { max-width: 230px; min-width: 100px; }

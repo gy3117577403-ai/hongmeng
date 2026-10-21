@@ -467,7 +467,7 @@ export async function purchasingDetail(id: string, a: PcActor) {
     where: { id },
     include: {
       allocations: { include: { line: { include: { request: true } } } },
-      payments: true,
+      payments: { include: { batch: { select: { number: true } } } },
     },
   });
   if (fund)
@@ -488,6 +488,7 @@ export async function purchasingDetail(id: string, a: PcActor) {
               entityType: "PAYMENT",
               entityId: { in: fund.payments.map((p) => p.id) },
             },
+            { entityType: "PAYMENT_BATCH", entityId: { in: fund.payments.flatMap(p => p.batchId ? [p.batchId] : []) } },
           ],
         },
         select: {
@@ -536,6 +537,7 @@ export async function purchasingDetail(id: string, a: PcActor) {
     ...p.invoiceLines.map((x) => x.invoiceId),
     ...p.allocations.map((x) => x.fundId),
     ...p.allocations.flatMap((x) => x.fund.payments.map((y) => y.id)),
+    ...p.allocations.flatMap(x => x.fund.payments.flatMap(y => y.batchId ? [y.batchId] : [])),
     ...p.returns.flatMap((x) => x.refunds.map((y) => y.id)),
   ];
   return plain({

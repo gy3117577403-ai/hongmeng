@@ -97,7 +97,7 @@ function parseRelations(value: unknown): KnowledgeRelationInput[] {
   return relations;
 }
 
-export function parseKnowledgeArticleInput(body: Record<string, unknown>, partial = false): { data: KnowledgeArticleInput; errors: string[] } {
+export function parseKnowledgeArticleInput(body: Record<string, unknown>, partial = false, attachmentCount = 0): { data: KnowledgeArticleInput; errors: string[] } {
   const data: KnowledgeArticleInput = {};
   const errors: string[] = [];
 
@@ -108,8 +108,8 @@ export function parseKnowledgeArticleInput(body: Record<string, unknown>, partia
   }
   if (!partial || body.content !== undefined) {
     const content = cleanText(body.content, 30000);
-    if (!content) errors.push('请输入知识内容');
-    else data.content = content;
+    if (!content && attachmentCount === 0) errors.push('请填写知识内容或上传至少一个附件');
+    data.content = content;
   }
   if (!partial || body.category !== undefined) {
     const category = cleanText(body.category, 32) as KnowledgeArticleCategory;
@@ -157,7 +157,7 @@ export function serializeKnowledgeArticle(article: KnowledgeArticleRecord): Know
     relationCount: article.relations.length,
     attachments: article.attachments.map(attachment => ({
       id: attachment.id,
-      articleId: attachment.articleId,
+      articleId: article.id,
       originalName: attachment.originalName,
       displayName: attachment.displayName,
       mimeType: attachment.mimeType,

@@ -846,3 +846,13 @@
   .hm-knowledge-workbench .hm-knowledge-form-grid .wide { grid-column: auto; }
   .hm-knowledge-workbench .hm-knowledge-header-search kbd { display: none; }
 }
+
+
+.hm-knowledge-upload-queue { border: 1px dashed #fdba74; background: #fffaf5; border-radius: 10px; padding: 16px; min-width: 0; }
+.hm-knowledge-upload-queue p { color: #64748b; font-size: 12px; line-height: 1.7; margin: 8px 0 12px; }
+.hm-knowledge-upload-queue input { max-width: 100%; }
+.hm-knowledge-upload-row { display: flex; gap: 10px; align-items: center; padding: 12px 0; border-top: 1px solid #ffedd5; margin-top: 10px; }
+.hm-knowledge-upload-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.hm-knowledge-upload-row strong, .hm-knowledge-upload-row small { display: block; }
+.hm-knowledge-upload-row small { margin-top: 5px; color: #64748b; }
+.hm-knowledge-upload-row button { min-height: 36px; flex-shrink: 0; border: 1px solid #e2e8f0; border-radius: 7px; background: white; padding: 4px 10px; }

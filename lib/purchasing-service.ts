@@ -1083,7 +1083,7 @@ async function changeFunds(tx: Tx, input: PcInput, a: PcActor) {
   }
   return { count: es.length };
 }
-async function pay(tx: Tx, input: PcInput, a: PcActor) {
+async function pay(tx: Tx, input: PcInput, a: PcActor, batchId?: string) {
   const s = await settings(tx);
   responsible(s, "financeIds", a);
   const f = await getFund(tx, input.id, pcInt(input.version, "资金单版本"));
@@ -1099,6 +1099,7 @@ async function pay(tx: Tx, input: PcInput, a: PcActor) {
   const payment = await tx.pcPayment.create({
     data: {
       fundId: f.id,
+      batchId,
       amountCents: amount,
       date,
       reference,
@@ -1141,6 +1142,30 @@ async function pay(tx: Tx, input: PcInput, a: PcActor) {
   await event(tx, "FUND", f.id, "PAY", a, payment);
   if (paid === f.amountCents) await closeTodo(tx, f.id);
   return { id: payment.id, remainingCents: f.amountCents - paid };
+}
+async function batchPay(tx: Tx, input: PcInput, a: PcActor) {
+  responsible(await settings(tx), "financeIds", a);
+  const es = entries(input.entries);
+  const totalCents = sum(es.map(e => pcInt(e.amountCents, "本次付款金额（分）")));
+  const batch = await tx.pcPaymentBatch.create({ data: {
+    number: await serial(tx, "FKPC"), totalCents: BigInt(totalCents),
+    actorId: a.id, actorName: actorName(a),
+  } });
+  await bindAttachments(tx, input.attachmentIds, "PAYMENT_BATCH", batch.id, a);
+  const payments = [];
+  for (const e of es) {
+    const f = await getFund(tx, e.id);
+    try {
+      payments.push({ fundId: f.id, ...await pay(tx, e, a, batch.id) });
+    } catch (error) {
+      if (error instanceof PurchasingError)
+        throw new PurchasingError(`${f.number}：${error.message}；本批次未登记，请核对后重试`, error.code, error.status);
+      throw error;
+    }
+  }
+  const result = { id: batch.id, number: batch.number, count: payments.length, totalCents, payments };
+  await event(tx, "PAYMENT_BATCH", batch.id, "BATCH_PAY", a, result);
+  return result;
 }
 async function offlinePayment(tx: Tx, input: PcInput, a: PcActor) {
   const s = await settings(tx);
@@ -1597,6 +1622,7 @@ export async function mutatePurchasing(
       )
         result = await changeFunds(tx, input, a);
       else if (action === "PAY") result = await pay(tx, input, a);
+      else if (action === "BATCH_PAY") result = await batchPay(tx, input, a);
       else if (action === "OFFLINE_PAYMENT")
         result = await offlinePayment(tx, input, a);
       else if (action === "RECEIVE") result = await receive(tx, input, a);

@@ -81,6 +81,7 @@ async function searchArticles(options: SearchOptions, take: number): Promise<Kno
       { specification: { contains: options.keyword, mode: 'insensitive' } },
       { productModel: { contains: options.keyword, mode: 'insensitive' } },
       { tags: { has: options.keyword } },
+      { attachments: { some: { deletedAt: null, OR: [{ originalName: { contains: options.keyword, mode: 'insensitive' } }, { displayName: { contains: options.keyword, mode: 'insensitive' } }] } } },
     ];
   }
   const records = await prisma.knowledgeArticle.findMany({ where, include: knowledgeArticleInclude, orderBy: { updatedAt: 'desc' }, take });
