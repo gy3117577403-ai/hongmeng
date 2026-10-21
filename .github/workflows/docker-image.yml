@@ -62,16 +62,7 @@ jobs:
           }
           console.log('Original source image acceptance and release identity verified.');
           NODE
-      - name: Install checksum-verified registry copy tool
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/crane"
-          cd "$RUNNER_TEMP/crane"
-          curl -fLsS --retry 3 -O https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz
-          curl -fLsS --retry 3 -O https://github.com/google/go-containerregistry/releases/download/v0.22.1/checksums.txt
-          grep 'go-containerregistry_Linux_x86_64.tar.gz$' checksums.txt | sha256sum -c -
-          tar -xzf go-containerregistry_Linux_x86_64.tar.gz crane
-          echo "$RUNNER_TEMP/crane" >> "$GITHUB_PATH"
+      - uses: docker/setup-buildx-action@v3
       - name: Copy exact published images to Hangzhou
         env:
           RELEASE_REGISTRY_AUTH: ${{ secrets.CODEX_HANGZHOU_RELEASE_AUTH }}
@@ -89,14 +80,26 @@ jobs:
           for tag in "$RELEASE" "office-preview-$RELEASE"; do
             source_image="ghcr.io/$GITHUB_REPOSITORY:$tag"
             target_image="$target_repository:$tag"
-            digest="$(crane digest "$source_image")"
+            digest="$(timeout 30s docker buildx imagetools inspect "$source_image" | awk '$1 == "Digest:" { print $2; exit }')"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            crane config "ghcr.io/$GITHUB_REPOSITORY@$digest" > "$RUNNER_TEMP/image-config.json"
-            jq -e --arg version "$RELEASE" --arg revision "$RELEASE_REVISION" '.os == "linux" and .architecture == "amd64" and .config.Labels["org.opencontainers.image.version"] == $version and .config.Labels["org.opencontainers.image.revision"] == $revision' "$RUNNER_TEMP/image-config.json" >/dev/null
-            existing="$(crane digest "$target_image" 2>/dev/null || true)"
+            source_reference="ghcr.io/$GITHUB_REPOSITORY@$digest"
+            timeout 300s docker pull "$source_reference"
+            test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$source_reference")" = linux/amd64
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$source_reference")" = "$RELEASE"
+            test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$source_reference")" = "$RELEASE_REVISION"
+            existing="$(timeout 30s docker buildx imagetools inspect "$target_image" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
             if [ -n "$existing" ]; then test "$existing" = "$digest"; fi
-            crane copy --no-clobber "ghcr.io/$GITHUB_REPOSITORY@$digest" "$target_image"
-            test "$(crane digest "$target_image")" = "$digest"
+            if [ -z "$existing" ]; then
+              docker tag "$source_reference" "$target_image"
+              pushed=0
+              for attempt in 1 2 3; do
+                if timeout 600s docker push "$target_image"; then pushed=1; break; fi
+                echo "Retrying native registry push ($attempt/3)"
+                sleep 5
+              done
+              test "$pushed" = 1
+            fi
+            test "$(timeout 30s docker buildx imagetools inspect "$target_image" | awk '$1 == "Digest:" { print $2; exit }')" = "$digest"
             jq --arg image "$target_image" --arg source "$source_image" --arg digest "$digest" --arg revision "$RELEASE_REVISION" '. + [{image:$image,source:$source,digest:$digest,revision:$revision,platform:"linux/amd64"}]' artifacts/hangzhou-release/mirror-results.json > "$RUNNER_TEMP/receipts.json"
             cp "$RUNNER_TEMP/receipts.json" artifacts/hangzhou-release/mirror-results.json
           done
@@ -113,7 +116,6 @@ jobs:
           if ! command -v google-chrome >/dev/null 2>&1; then
             npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
           fi
-      - uses: docker/setup-buildx-action@v3
       - name: Anonymous Hangzhou image pull and independent clean runtime smoke
         timeout-minutes: 30
         env:
