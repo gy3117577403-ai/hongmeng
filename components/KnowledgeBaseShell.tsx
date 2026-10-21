@@ -37,8 +37,9 @@ import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCom
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { KnowledgeOfficePreview } from '@/components/KnowledgeOfficePreview';
 import { KnowledgeFileUploads, useKnowledgeUploads } from '@/components/KnowledgeFileUploads';
-import { KNOWLEDGE_FILE_HELP, knowledgeFileLabel } from '@/lib/knowledge-files';
+import { KNOWLEDGE_FILE_HELP, knowledgeFileLabel, knowledgeAttachmentPreview } from '@/lib/knowledge-files';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
   CurrentUserDTO,
@@ -196,14 +197,12 @@ function relationFromItem(item: KnowledgeSearchItemDTO): KnowledgeRelationDTO | 
 }
 
 function articlePreview(article: KnowledgeArticleDTO): KnowledgePreviewDTO | null {
-  const attachment = article.attachments.find(item => item.fileType === 'pdf' || ['jpg', 'png', 'webp'].includes(item.fileType));
-  if (!attachment) return null;
-  return { fileId: attachment.id, title: attachment.displayName || attachment.originalName, fileType: attachment.fileType === 'pdf' ? 'pdf' : 'image', contentUrl: attachment.contentUrl, downloadUrl: attachment.downloadUrl };
+  return article.attachments.map(knowledgeAttachmentPreview).find(Boolean) || null;
 }
 
 function previewCandidates(item: KnowledgeSearchItemDTO | null): KnowledgePreviewDTO[] {
   if (!item) return [];
-  if (item.article) return item.article.attachments.filter(file => file.fileType === 'pdf' || ['jpg', 'png', 'webp'].includes(file.fileType)).map(file => ({ fileId: file.id, title: file.displayName || file.originalName, fileType: file.fileType === 'pdf' ? 'pdf' : 'image', contentUrl: file.contentUrl, downloadUrl: file.downloadUrl }));
+  if (item.article) return item.article.attachments.map(knowledgeAttachmentPreview).filter((file): file is KnowledgePreviewDTO => !!file);
   if (item.drawing) return item.drawing.files.filter(file => file.fileType === 'pdf' || file.fileType === 'image').map(file => ({ fileId: file.id, title: file.displayName || file.originalName, fileType: file.fileType === 'pdf' ? 'pdf' : 'image', contentUrl: file.contentUrl, downloadUrl: file.downloadUrl }));
   if (item.manual?.latestVersion) return item.manual.latestVersion.assets.map(file => ({ fileId: file.id, title: file.displayName || file.originalName, fileType: file.assetType === 'PDF' ? 'pdf' : 'image', contentUrl: file.contentUrl, downloadUrl: file.downloadUrl }));
   return item.preview ? [item.preview] : [];
@@ -592,16 +591,16 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
                 </header>
                 <div className="hm-knowledge-detail-scroll hm-scroll-region" tabIndex={0}>
                   {activePreview ? (
-                    <section className="hm-knowledge-preview-stage" aria-label="资料预览">
-                      {activePreview.fileType === 'pdf'
+                    <section className={`hm-knowledge-preview-stage${activePreview.fileType === 'office' ? ' hm-knowledge-office-stage' : ''}`} aria-label="资料预览">
+                      {activePreview.fileType === 'office' ? <KnowledgeOfficePreview key={activePreview.fileId} file={activePreview} /> : activePreview.fileType === 'pdf'
                         ? <PdfViewer dashboardMode fileId={activePreview.fileId} title={activePreview.title} contentUrl={activePreview.contentUrl} downloadUrl={activePreview.downloadUrl} viewUrl={activePreview.contentUrl} />
                         : <ImageViewer dashboardMode fileId={activePreview.fileId} title={activePreview.title} contentUrl={activePreview.contentUrl} downloadUrl={activePreview.downloadUrl} />}
                     </section>
                   ) : (
-                    <section className="hm-knowledge-no-preview"><FileSearch /><strong>当前内容没有可预览文件</strong><p>文字经验可在下方查看，Excel / Word 附件可下载后打开。</p></section>
+                    <section className="hm-knowledge-no-preview"><FileSearch /><strong>当前内容没有可预览文件</strong><p>文字经验可在下方查看，也可上传 Excel、Word、PDF 或图片直接预览。</p></section>
                   )}
 
-                  {candidates.length > 1 && <div className="hm-knowledge-file-strip" aria-label="关联文件">{candidates.map(file => <button className={activePreview?.fileId === file.fileId ? 'active' : ''} type="button" key={file.fileId} title={file.title} onClick={() => setPreviewOverride(file)}>{file.fileType === 'pdf' ? <FileText /> : <ImageIcon />}<span>{file.title}</span></button>)}</div>}
+                  {candidates.length > 1 && <div className="hm-knowledge-file-strip" aria-label="关联文件">{candidates.map(file => <button className={activePreview?.fileId === file.fileId ? 'active' : ''} type="button" key={file.fileId} title={file.title} onClick={() => setPreviewOverride(file)}>{file.fileType !== 'image' ? <FileText /> : <ImageIcon />}<span>{file.title}</span></button>)}</div>}
 
                   <section className="hm-knowledge-metadata">
                     {selected.customerName && <div><span>客户</span><strong>{selected.customerName}</strong></div>}
@@ -612,7 +611,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
 
                   {selected.parameter && <section className="hm-knowledge-parameter-card"><h3>连接器参数</h3><div><span>外剥皮</span><strong>{selected.parameter.outerPeelMm || '未设置'}</strong></div><div><span>内剥皮</span><strong>{selected.parameter.innerPeelMm || '未设置'}</strong></div><div><span>入长</span><strong>{selected.parameter.insertionLengthMm || '未设置'}</strong></div>{selected.parameter.remark && <p>{selected.parameter.remark}</p>}</section>}
 
-                  {selected.article && <ArticleDetail readOnly={isModuleReadOnly(user.access, 'knowledge')} article={selected.article} onUpload={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} uploading={uploading} onEdit={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} onDelete={setDeleteArticle} onDeleteAttachment={setDeleteAttachment} />}
+                  {selected.article && <ArticleDetail readOnly={isModuleReadOnly(user.access, 'knowledge')} article={selected.article} onUpload={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} uploading={uploading} onEdit={event => openEdit(event.currentTarget, selected.article as KnowledgeArticleDTO)} onDelete={setDeleteArticle} onDeleteAttachment={setDeleteAttachment} onPreview={file => { setPreviewOverride(knowledgeAttachmentPreview(file)); document.querySelector('.hm-knowledge-detail-scroll')?.scrollTo({ top: 0, behavior: 'smooth' }); }} />}
 
                   {!selected.article && <section className="hm-knowledge-source-summary"><h3>内容摘要</h3><p>{selected.summary || '该资料暂无摘要，可进入来源模块查看完整内容。'}</p><a className="hm-workbench-button primary" href={selected.sourceHref}><ExternalLink size={16} />进入来源模块</a></section>}
                 </div>
@@ -656,7 +655,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   );
 }
 
-function ArticleDetail({ readOnly = false, article, onUpload, uploading, onEdit, onDelete, onDeleteAttachment }: {
+function ArticleDetail({ readOnly = false, article, onUpload, uploading, onEdit, onDelete, onDeleteAttachment, onPreview }: {
   readOnly?: boolean;
   article: KnowledgeArticleDTO;
   onUpload: (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -664,13 +663,14 @@ function ArticleDetail({ readOnly = false, article, onUpload, uploading, onEdit,
   onEdit: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onDelete: (article: KnowledgeArticleDTO) => void;
   onDeleteAttachment: (attachment: KnowledgeAttachmentDTO) => void;
+  onPreview: (attachment: KnowledgeAttachmentDTO) => void;
 }) {
   return (
     <>
       <article className="hm-knowledge-article-body">
         <header><div><span>{categoryLabels[article.category]}</span><strong>{article.code} · V{article.version}</strong></div><em className={article.status}>{statusLabels[article.status]}</em></header>
         {article.summary && <p className="summary">{article.summary}</p>}
-        <div className="content">{article.content || '本条知识以附件保存，请在下方下载查看。'}</div>
+        <div className="content">{article.content || '本条知识以附件保存，点击附件名称即可预览。'}</div>
         {!!article.tags.length && <div className="tags"><Tag size={15} />{article.tags.map(tag => <span key={tag}>{tag}</span>)}</div>}
       </article>
       <section className="hm-knowledge-article-relations">
@@ -680,7 +680,7 @@ function ArticleDetail({ readOnly = false, article, onUpload, uploading, onEdit,
       </section>
       <section className="hm-knowledge-attachments">
         <header><h3>知识附件 <small>{article.attachmentCount}</small></h3><button className="hm-workbench-button" type="button" disabled={readOnly || uploading} onClick={onUpload}>{uploading ? <Loader2 className="spin" /> : <Upload size={15} />}上传附件</button></header>
-        {article.attachments.map(attachment => <div key={attachment.id}><Paperclip size={16} /><span><strong title={attachment.displayName || attachment.originalName}>{attachment.displayName || attachment.originalName}</strong><small>{knowledgeFileLabel(attachment.fileType)} · {formatBytes(attachment.size)} · {attachment.uploadedBy?.displayName || attachment.uploadedBy?.username || '上传者'} · {formatDate(attachment.createdAt)}</small></span><a href={attachment.downloadUrl} title="下载附件" aria-label={`下载 ${attachment.displayName || attachment.originalName}`}><Download size={16} /></a><button type="button" title="移除附件" aria-label={`移除 ${attachment.displayName || attachment.originalName}`} disabled={readOnly} onClick={() => onDeleteAttachment(attachment)}><Trash2 size={15} /></button></div>)}
+        {article.attachments.map(attachment => <div key={attachment.id}><Paperclip size={16} /><span><button type="button" className="hm-knowledge-attachment-name" title={attachment.displayName || attachment.originalName} onClick={() => onPreview(attachment)}>{attachment.displayName || attachment.originalName}</button><small>{knowledgeFileLabel(attachment.fileType)} · {formatBytes(attachment.size)} · {attachment.uploadedBy?.displayName || attachment.uploadedBy?.username || '上传者'} · {formatDate(attachment.createdAt)}</small></span><button type="button" className="hm-knowledge-preview-action" aria-label={`预览 ${attachment.displayName || attachment.originalName}`} onClick={() => onPreview(attachment)}>预览</button><a href={attachment.downloadUrl} title="下载原件" aria-label={`下载 ${attachment.displayName || attachment.originalName}`}><Download size={16} /></a><button type="button" title="移除附件" aria-label={`移除 ${attachment.displayName || attachment.originalName}`} disabled={readOnly} onClick={() => onDeleteAttachment(attachment)}><Trash2 size={15} /></button></div>)}
         {!article.attachments.length && <p>{KNOWLEDGE_FILE_HELP}</p>}
       </section>
       <footer className="hm-knowledge-article-actions"><button className="hm-workbench-button" type="button" disabled={readOnly} onClick={onEdit}><Pencil size={15} />编辑知识</button><button className="hm-workbench-button danger" type="button" disabled={readOnly} onClick={() => onDelete(article)}><Trash2 size={15} />删除</button></footer>

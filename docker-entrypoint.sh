@@ -205,17 +205,22 @@ server_pid=$!
 ) &
 worker_pid=$!
 
+node /app/scripts/knowledge-preview-worker.mjs &
+preview_worker_pid=$!
+
 shutdown() {
   trap - INT TERM
-  kill "$server_pid" "$worker_pid" 2>/dev/null || true
+  kill "$server_pid" "$worker_pid" "$preview_worker_pid" 2>/dev/null || true
   wait "$server_pid" 2>/dev/null || true
   wait "$worker_pid" 2>/dev/null || true
+  wait "$preview_worker_pid" 2>/dev/null || true
   exit 0
 }
 trap shutdown INT TERM
 
 server_status=0
 wait "$server_pid" || server_status=$?
-kill "$worker_pid" 2>/dev/null || true
+kill "$worker_pid" "$preview_worker_pid" 2>/dev/null || true
 wait "$worker_pid" 2>/dev/null || true
+wait "$preview_worker_pid" 2>/dev/null || true
 exit "$server_status"

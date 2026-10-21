@@ -8,6 +8,7 @@ import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { maxBytes, safeFilename } from '@/lib/validation';
+import { queueKnowledgePreviews } from '@/lib/knowledge-preview';
 
 export async function uploadKnowledgeAttachment(req: NextRequest, articleId?: string) {
   try {
@@ -31,6 +32,7 @@ export async function uploadKnowledgeAttachment(req: NextRequest, articleId?: st
           size: BigInt(upload.size), uploadedById: user.id,
         } });
         if (articleId) await tx.knowledgeArticle.update({ where: { id: articleId }, data: { updatedById: user.id, version: { increment: 1 } } });
+        if (articleId) await queueKnowledgePreviews(tx, [attachment]);
         return { attachment, article: articleId ? await lockKnowledgeArticle(tx, articleId) : null };
       });
     } catch (error) {

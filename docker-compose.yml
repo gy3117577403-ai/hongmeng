@@ -24,10 +24,20 @@ services:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?Set S3_ACCESS_KEY_ID in .env}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?Set a strong S3_SECRET_ACCESS_KEY in .env}
     entrypoint: /bin/sh -c 'sleep 5; mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; mc mb -p local/workorder-resources || true; exit 0;'
+  office-preview:
+    build:
+      context: .
+      dockerfile: deploy/office-preview/Dockerfile
+    restart: unless-stopped
+    expose: ["3000"]
+    mem_limit: 1536m
+    cpus: 2
+    tmpfs:
+      - /tmp:rw,size=805306368,mode=1777
   app:
     build: .
     restart: unless-stopped
-    depends_on: [db, minio-init]
+    depends_on: [db, minio-init, office-preview]
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set a strong URL-safe POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-workorder_resource}?schema=public
       SESSION_SECRET: ${SESSION_SECRET:?Set a random SESSION_SECRET of at least 32 characters in .env}
@@ -42,6 +52,7 @@ services:
       S3_FORCE_PATH_STYLE: "true"
       APP_BASE_URL: http://localhost:3000
       MAX_UPLOAD_SIZE_MB: "50"
+      OFFICE_PREVIEW_URL: http://office-preview:3000
       SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-admin}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
       SEED_RESET_ADMIN_PASSWORD: ${SEED_RESET_ADMIN_PASSWORD:-false}

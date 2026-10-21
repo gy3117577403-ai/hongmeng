@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hongmeng-office-preview
+  labels:
+    app: hongmeng-office-preview
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: hongmeng-office-preview
+  template:
+    metadata:
+      labels:
+        app: hongmeng-office-preview
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 75
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: converter
+          image: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:office-preview-v1.34.275
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+              ephemeral-storage: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1536Mi
+              ephemeral-storage: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: temporary-files
+              mountPath: /tmp
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: temporary-files
+          emptyDir:
+            sizeLimit: 768Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hongmeng-office-preview
+spec:
+  type: ClusterIP
+  selector:
+    app: hongmeng-office-preview
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hongmeng-office-preview-private
+spec:
+  podSelector:
+    matchLabels:
+      app: hongmeng-office-preview
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              hongmeng-office-client: "true"
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress: []

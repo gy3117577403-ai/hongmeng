@@ -301,6 +301,10 @@ function pathOnly(value: string): string {
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
 
+  if (/^\/api\/knowledge\/attachments\/[^/]+\/preview(?:\/pdf|\/table)?$/.test(path)) {
+    return { prefix: path, anyOf: ['KNOWLEDGE'], action: 'READ', allowedMethods: ['GET', 'HEAD', 'POST'] };
+  }
+
   // HR cannot enter access-grants, PIN administration, or system configuration.
   if (path === '/api/users') {
     return { prefix: path, anyOf: ['ACCOUNT_ADMIN', 'HR'], actionsByModule: { HR: 'UPDATE' }, allowedMethods: ['GET', 'HEAD', 'POST'] };
@@ -755,7 +759,8 @@ export function canAccessApiRoute(
   }
   if (independentSampleCaptureRoute(access, pathname, method || 'GET')) return true;
   const newRule = apiRouteAccessRule(pathname);
-  const moduleDecision = moduleApiDecision(access, pathname, method, newRule?.anyOf);
+  const previewRetry = /^\/api\/knowledge\/attachments\/[^/]+\/preview$/.test(pathOnly(pathname)) && String(method).toUpperCase() === 'POST';
+  const moduleDecision = moduleApiDecision(access, pathname, previewRetry ? 'GET' : method, newRule?.anyOf);
   if (moduleDecision !== null) return moduleDecision && (!newRule?.allowedMethods || newRule.allowedMethods.includes(String(method || 'GET').toUpperCase()));
   // Authentication and forced password changes are enforced by requireUser.
   // Material follow-up is shared for reading and text-only progress. The detail

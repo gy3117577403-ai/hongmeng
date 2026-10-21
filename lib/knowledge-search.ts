@@ -4,6 +4,7 @@ import { serializeManual } from '@/lib/connector-assembly-manuals';
 import { isVisibleDrawingLibraryItem, serializeDrawingLibraryItem } from '@/lib/drawing-library';
 import { knowledgeArticleInclude, serializeKnowledgeArticle } from '@/lib/knowledge';
 import { prisma } from '@/lib/prisma';
+import { knowledgeAttachmentPreview } from '@/lib/knowledge-files';
 import type {
   ConnectorAssemblyManualDTO,
   ConnectorParameterDTO,
@@ -33,15 +34,7 @@ function matches(source: SearchOptions['source'], expected: KnowledgeSourceType)
 }
 
 function articlePreview(article: KnowledgeArticleDTO): KnowledgePreviewDTO | null {
-  const attachment = article.attachments.find(item => item.fileType === 'pdf' || ['jpg', 'png', 'webp'].includes(item.fileType));
-  if (!attachment) return null;
-  return {
-    fileId: attachment.id,
-    title: attachment.displayName || attachment.originalName,
-    fileType: attachment.fileType === 'pdf' ? 'pdf' : 'image',
-    contentUrl: attachment.contentUrl,
-    downloadUrl: attachment.downloadUrl,
-  };
+  return article.attachments.map(knowledgeAttachmentPreview).find(Boolean) || null;
 }
 
 function drawingPreview(drawing: DrawingLibraryItemDTO): KnowledgePreviewDTO | null {

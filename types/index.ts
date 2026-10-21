@@ -4290,7 +4290,8 @@ export type KnowledgeArticleDTO = {
 export type KnowledgePreviewDTO = {
   fileId: string;
   title: string;
-  fileType: 'pdf' | 'image';
+  fileType: 'pdf' | 'image' | 'office';
+  officeType?: string;
   contentUrl: string;
   downloadUrl: string;
 };

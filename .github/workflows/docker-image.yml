@@ -271,6 +271,18 @@ jobs:
             org.opencontainers.image.version=${{ github.ref_name }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+      - name: Build private Office converter
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/office-preview/Dockerfile
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
+            APP_REVISION=${{ github.sha }}
+          load: true
+          push: false
+          provenance: false
+          tags: hongmeng-office-preview-smoke:${{ github.sha }}
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -313,15 +325,27 @@ jobs:
           cleanup() {
             docker rm -f hongmeng-release-smoke >/dev/null 2>&1 || true
             docker rm -f hongmeng-release-minio >/dev/null 2>&1 || true
+            docker rm -f hongmeng-release-office-preview >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
+          docker run -d --name hongmeng-release-office-preview -p 127.0.0.1:3335:3000 \
+            --memory=1536m --cpus=2 --tmpfs /tmp:rw,size=805306368,mode=1777 \
+            hongmeng-office-preview-smoke:${{ github.sha }}
           if ! SMOKE_STORAGE_ALLOW=disposable-ci-storage \
             S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources \
             node scripts/prepare-smoke-storage.mjs; then
             docker logs hongmeng-release-minio
             exit 1
           fi
+          PGPASSWORD=postgres createdb -h 127.0.0.1 -U postgres hongmeng_office_ci
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_office_ci?schema=public' npx prisma migrate deploy
+          npm run preview:worker
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_office_ci?schema=public' \
+            S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
+            OFFICE_PREVIEW_URL=http://127.0.0.1:3335 RUN_OFFICE_INTEGRATION=1 \
+            npx tsx --test tests/knowledge-preview-integration.test.ts
           docker run -d --name hongmeng-release-smoke --network host \
+            -e OFFICE_PREVIEW_URL=http://127.0.0.1:3335 \
             -e DATABASE_URL="$DATABASE_URL" \
             -e SESSION_SECRET="$SESSION_SECRET" \
             -e SEED_ADMIN_USERNAME="$SEED_ADMIN_USERNAME" \
@@ -558,6 +582,13 @@ jobs:
             PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/batch-knowledge-release.json" \
             BATCH_KNOWLEDGE_OUTPUT=output/playwright/batch-knowledge-release \
             node scripts/smoke-batch-knowledge-browser.mjs
+          OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-release \
+            S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
+            npx tsx scripts/seed-knowledge-preview-smoke.ts
+          OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-release \
+            SMOKE_BASE_URL=http://127.0.0.1:3000 node scripts/smoke-knowledge-preview-browser.mjs
+          OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-release \
+            SMOKE_BASE_URL=http://127.0.0.1:3000 node scripts/smoke-knowledge-preview-http.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime hongmeng-release-smoke node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/release-fixture.json
@@ -673,6 +704,16 @@ jobs:
           done <<EOF
           $RELEASE_TAGS
           EOF
+      - name: Push verified Office converter image
+        run: |
+          converter_tag="ghcr.io/${{ github.repository }}:office-preview-${{ github.ref_name }}"
+          docker tag hongmeng-office-preview-smoke:${{ github.sha }} "$converter_tag"
+          pushed=0
+          for attempt in $(seq 1 5); do
+            if docker push "$converter_tag"; then pushed=1; break; fi
+            sleep $((attempt * 10))
+          done
+          test "$pushed" = 1
       - name: Verify China mirror manifest and blobs
         id: china_mirror
         continue-on-error: true
@@ -802,8 +843,9 @@ jobs:
           postgres_name="hongmeng-sample-mirror-postgres"
           minio_name="hongmeng-sample-mirror-minio"
           app_name="hongmeng-sample-mirror-app"
+          converter_name="hongmeng-sample-mirror-office-preview"
           cleanup() {
-            docker rm -f "$app_name" "$minio_name" "$postgres_name" >/dev/null 2>&1 || true
+            docker rm -f "$app_name" "$minio_name" "$postgres_name" "$converter_name" >/dev/null 2>&1 || true
             docker network rm "$network" >/dev/null 2>&1 || true
             rm -rf "$anonymous_config"
           }
@@ -830,7 +872,24 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$CHINA_MIRROR_IMAGE")" = "$EXPECTED_APP_VERSION"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$CHINA_MIRROR_IMAGE")" = "$GITHUB_SHA"
 
+          converter_image="${CHINA_MIRROR_IMAGE%:*}:office-preview-${{ github.ref_name }}"
+          converter_upstream="${UPSTREAM_IMAGE%:*}:office-preview-${{ github.ref_name }}"
+          converter_digest="$(timeout 30s docker buildx imagetools inspect "$converter_upstream" | awk '$1 == "Digest:" { print $2; exit }')"
+          [[ "$converter_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          pulled=0
+          for attempt in $(seq 1 30); do
+            if timeout 240s docker pull "$converter_image"; then pulled=1; break; fi
+            echo "Waiting for Hangzhou Office converter ($attempt/30)"
+            sleep 20
+          done
+          test "$pulled" = 1
+          docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$converter_image" | grep -F "${converter_image%:*}@$converter_digest"
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$converter_image")" = "linux/amd64"
+          test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$converter_image")" = "$GITHUB_SHA"
+
           docker network create "$network" >/dev/null
+          docker run -d --name "$converter_name" --network "$network" --memory=1536m --cpus=2 \
+            --tmpfs /tmp:rw,size=805306368,mode=1777 "$converter_image" >/dev/null
           docker run -d --name "$postgres_name" --network "$network" --tmpfs /var/lib/postgresql/data \
             -p 127.0.0.1:25437:5432 \
             -e POSTGRES_USER=postgres \
@@ -864,6 +923,7 @@ jobs:
           fi
 
           docker run -d --name "$app_name" --network "$network" -p 127.0.0.1:3300:3000 \
+            -e OFFICE_PREVIEW_URL="http://${converter_name}:3000" \
             -e APP_BASE_URL=http://127.0.0.1:3300 \
             -e DATABASE_URL="postgresql://postgres:postgres@${postgres_name}:5432/hongmeng_sample_mirror?schema=public" \
             -e SESSION_SECRET="$SESSION_SECRET" \
@@ -1067,6 +1127,14 @@ jobs:
             PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/batch-knowledge-hangzhou.json" \
             BATCH_KNOWLEDGE_OUTPUT=output/playwright/batch-knowledge-hangzhou \
             node scripts/smoke-batch-knowledge-browser.mjs
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
+            OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
+            S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
+            npx tsx scripts/seed-knowledge-preview-smoke.ts
+          OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
+            SMOKE_BASE_URL=http://127.0.0.1:3300 node scripts/smoke-knowledge-preview-browser.mjs
+          OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
+            SMOKE_BASE_URL=http://127.0.0.1:3300 node scripts/smoke-knowledge-preview-http.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime "$app_name" node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/hangzhou-fixture.json
@@ -1127,6 +1195,18 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Office preview acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-office-preview-${{ github.ref_name }}
+          if-no-files-found: ignore
+          path: |
+            output/playwright/knowledge-preview*/*.png
+            output/playwright/knowledge-preview*/acceptance.json
+            output/playwright/knowledge-preview*/http-acceptance.json
+            output/playwright/knowledge-preview*/preview-*.pdf
+            output/playwright/knowledge-preview*/browser-runtime.txt
       - name: Upload order pool browser acceptance
         if: always()
         uses: actions/upload-artifact@v4

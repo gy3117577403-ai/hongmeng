@@ -1,0 +1,59 @@
+# 鸿蒙知识库 Office 预览 · v1.34.275
+
+本目录提供部署配置，发布镜像不等于已经切换线上。两项资源应安装在主应用所在的 **同一 Sealos 命名空间**。
+
+## 镜像
+
+- 主应用：`crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:v1.34.275`
+- 转换服务：`crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:office-preview-v1.34.275`
+- 平台：`linux/amd64`。转换服务基于 Gotenberg 8.38.1 LibreOffice 版本，固定上游 manifest，并验证内置 Noto CJK、Carlito、Caladea 字体。
+- 发布完成后的实际镜像摘要与验收证据见同目录 `release-verification.md`。
+
+## 部署顺序
+
+1. 按现有运维流程备份 PostgreSQL。确认主应用仍使用当前 S3 桶与数据库连接。
+2. 在当前命名空间导入 `converter.yaml`，等待 `hongmeng-office-preview` 就绪。它仅提供集群内部 3000 端口，**不创建公网域名、Ingress 或 NodePort**。
+3. `app.patch.yaml` 是现有主应用 Deployment 的增量补丁。把 `YOUR_EXISTING_APP_DEPLOYMENT` 和 `YOUR_EXISTING_APP_CONTAINER` 换成真实名称，再以 strategic merge 方式应用；不要把它当成完整应用配置覆盖原 Deployment。保留原有数据库、S3、登录密钥、域名、端口、资源限制等配置。
+4. 主应用增加 `OFFICE_PREVIEW_URL=http://hongmeng-office-preview:3000`，Pod 标签增加 `hongmeng-office-client: "true"`，更新主应用镜像为本版本。转换服务的网络策略只接受该标签的同命名空间 Pod，并阻止所有主动出站连接。
+5. 镜像启动入口会执行 Prisma migrate deploy，新增 `knowledge_attachment_previews` 表，不改写原知识或附件内容。预览工作进程由主应用入口自动启动，与业务维护任务分开运行，不需要额外 CronJob。
+
+若通过 kubectl 操作，先设置真实命名空间并替换补丁里的两个名字：
+
+```sh
+kubectl -n YOUR_NAMESPACE apply -f converter.yaml
+kubectl -n YOUR_NAMESPACE rollout status deployment/hongmeng-office-preview --timeout=180s
+kubectl -n YOUR_NAMESPACE patch deployment/YOUR_EXISTING_APP_DEPLOYMENT --type=strategic --patch-file app.patch.yaml
+kubectl -n YOUR_NAMESPACE rollout status deployment/YOUR_EXISTING_APP_DEPLOYMENT --timeout=300s
+```
+
+如果 Sealos 的应用界面不直接支持 Pod 标签或 NetworkPolicy，请在其 Kubernetes 资源界面编辑对应 Deployment。不能只新增环境变量而漏掉 `hongmeng-office-client` 标签，否则网络策略会阻止转换。
+如果主应用已有出站限制，还需在原有网络策略中允许它访问转换服务的 TCP 3000 端口。
+
+## 存储、资源与排队
+
+- 原文件和派生 PDF / 表格缓存均保存到主应用现有 S3 桶；只在 PostgreSQL 保存任务状态、缓存键和工作表元数据。转换服务无 PVC，临时文件写入 `emptyDir`，请求完成后清理，Pod 销毁后目录清空。
+- 建议主应用保留至少 2 GiB 内存供现有业务和表格解析使用。转换服务请求 0.25 CPU / 512 MiB，限制 2 CPU / 1536 MiB；临时卷最多 768 MiB。可依照实际文件规模调整，资源是配置上限而非费用承诺。
+- 每个主应用副本一次处理一份文件；数据库租约防止同一附件重复领取，进程中断后自动恢复。转换服务处理队列上限 4，单请求 60 秒，主应用转换等待 75 秒，租约 180 秒。
+- 不执行宏、不刷新外部连接、不向第三方预览站点发送文件。转换服务禁用远程下载、Webhook，并拒绝 LibreOffice 外部网络访问。NetworkPolicy 需要集群网络插件支持才能生效，镜像内的转换设置仍独立生效。
+
+## 使用与兼容
+
+- 打开经验知识后自动预览第一个附件；点附件名称或“预览”切换。支持 XLS、XLSX、DOC、DOCX，以及原有 PDF、图片。
+- 新上传文件保存知识后进入队列；历史附件首次打开时自动生成，不需重新上传。已就绪的缓存跨重启复用。
+- Excel 的表格视图可切换可见工作表、搜索当前表所有行、分页、缩放、冻结首行/首列、选择文字复制。保留格式化显示值（前导零、日期、长文本等）；合并单元格内容展开便于查找。显示原文件已保存的公式结果，缺失缓存值明确提示，不重新计算。
+- Excel 的“版式预览”和 Word 使用转换后的 PDF，支持翻页、页码跳转、缩放、适宽和全屏。保留原文件下载入口。版式按 LibreOffice 可用字体和原打印区域生成，复杂 Office 专有功能不保证逐像素一致；表格视图用于查找打印区域之外的数据。
+- 表格视图上限：50 MiB 原件、50 个可见工作表、每表 256 列、总计 50 万单元格、1200 万字符。超过上限会明确提示，仍可尝试 PDF 或下载；绝不静默截断数据。PDF 结果上限 80 MiB。隐藏工作表不进入可见表格或强制展开打印。
+- 转换失败可重试，原件保留。Excel 表格和 PDF 状态独立，PDF 故障不影响已成功生成的表格。删除附件或知识后，缓存接口同步拒绝访问。
+
+## 上线验收与排障
+
+1. 已登录账号打开一条历史 XLS / XLSX 和一条历史 DOC / DOCX；首次显示排队/生成状态，之后可预览。
+2. Excel 切换工作表、搜索末尾型号、翻到第二页；检查前导零和数量。进入版式预览确认图片。Word 翻页并检查中文、表格、图片。
+3. 上传新 Office 文件后保存，确认预览和原件下载均正常。刷新页面复用缓存，移除测试附件后旧预览 URL 应返回 404。
+4. 若长期排队，检查主应用是否保留原镜像启动命令、日志中的 `[knowledge-preview]`、迁移状态。若显示转换失败，检查转换服务 `/health`、Pod 标签、NetworkPolicy、资源和 `OFFICE_PREVIEW_URL`。修复后点“重试预览”。不要为排障公开转换服务。
+5. 需要回滚时，将主应用镜像恢复上一版本。新增预览表可保留，不要删除原附件或 S3 文件。上一个版本仍能下载原件。
+
+## 上游资料
+
+- https://gotenberg.dev/docs/convert-with-libreoffice/convert-to-pdf
+- https://github.com/gotenberg/gotenberg/releases/tag/v8.38.1

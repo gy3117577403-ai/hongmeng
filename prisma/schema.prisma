@@ -5820,11 +5820,35 @@ model KnowledgeAttachment {
   deletedAt    DateTime?        @map("deleted_at")
   article      KnowledgeArticle? @relation(fields: [articleId], references: [id], onDelete: Cascade)
   uploadedBy   User?            @relation("KnowledgeAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  preview      KnowledgeAttachmentPreview?
 
   @@index([articleId, createdAt])
   @@index([uploadedById])
   @@index([deletedAt])
   @@map("knowledge_attachments")
+}
+
+// Durable, regenerable derivatives. Original attachments remain the source of truth.
+model KnowledgeAttachmentPreview {
+  attachmentId    String   @id @map("attachment_id")
+  sourceObjectKey String   @map("source_object_key")
+  rendererVersion String  @map("renderer_version")
+  status          String   @default("pending")
+  tableStatus     String   @default("pending") @map("table_status")
+  pdfStatus       String   @default("pending") @map("pdf_status")
+  sheets          Json     @default("[]")
+  pdfKey          String?  @map("pdf_key")
+  tableError      String?  @map("table_error")
+  pdfError        String?  @map("pdf_error")
+  attempts        Int      @default(0)
+  leaseToken      String?  @map("lease_token")
+  leaseUntil      DateTime? @map("lease_until")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  attachment      KnowledgeAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+
+  @@index([status, updatedAt])
+  @@map("knowledge_attachment_previews")
 }
 
 model KnowledgeRelation {

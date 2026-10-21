@@ -23,6 +23,7 @@ reports/bulk-original-drawings/
 tmp/bulk-original-test/
 
 # Docker/local build artifacts
+ops/knowledge-sheet-worker.cjs
 .docker/
 output/quality-fixture-qa/
 fixture-*.log

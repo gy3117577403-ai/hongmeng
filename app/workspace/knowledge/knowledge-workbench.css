@@ -575,6 +575,7 @@
 .hm-knowledge-workbench .hm-knowledge-preview-stage .image-viewer {
   height: 100%;
 }
+.hm-knowledge-workbench .hm-knowledge-office-stage { height: clamp(480px, 62vh, 670px); }
 
 .hm-knowledge-workbench .hm-knowledge-no-preview {
   min-height: 150px;
@@ -711,7 +712,7 @@
 .hm-knowledge-workbench .hm-knowledge-attachments > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .hm-knowledge-workbench .hm-knowledge-attachments > header h3 { margin: 0; }
 .hm-knowledge-workbench .hm-knowledge-attachments > header button { min-height: 34px; }
-.hm-knowledge-workbench .hm-knowledge-attachments > div { min-height: 44px; display: grid; grid-template-columns: 18px minmax(0, 1fr) 32px 32px; align-items: center; gap: 5px; border-top: 1px solid var(--hm-color-border); color: #647183; }
+.hm-knowledge-workbench .hm-knowledge-attachments > div { min-height: 48px; display: grid; grid-template-columns: 18px minmax(0, 1fr) 46px 32px 32px; align-items: center; gap: 5px; border-top: 1px solid var(--hm-color-border); color: #647183; }
 .hm-knowledge-workbench .hm-knowledge-attachments > div > span { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .hm-knowledge-workbench .hm-knowledge-attachments strong,
 .hm-knowledge-workbench .hm-knowledge-attachments small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -720,6 +721,8 @@
 .hm-knowledge-workbench .hm-knowledge-attachments a,
 .hm-knowledge-workbench .hm-knowledge-attachments > div button { width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border: 1px solid var(--hm-color-border); border-radius: 5px; background: #fff; color: #6c7989; }
 .hm-knowledge-workbench .hm-knowledge-attachments > div button:hover { color: var(--hm-color-danger); }
+.hm-knowledge-workbench .hm-knowledge-attachments > div button.hm-knowledge-attachment-name { display:block; width:100%; height:auto; padding:4px 0; border:0; text-align:left; font-size:12px; color:#174978; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hm-knowledge-workbench .hm-knowledge-attachments > div button.hm-knowledge-preview-action { width:44px; color:#c45105; border-color:#fed7aa; background:#fff7ed; font-size:11px; }
 
 .hm-knowledge-workbench .hm-knowledge-article-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 
@@ -829,6 +832,7 @@
   .hm-knowledge-workbench .hm-knowledge-detail-scrim { position: fixed; z-index: 101; inset: var(--hm-shell-header) 0 0 var(--hm-shell-rail); display: block; width: auto; height: auto; padding: 0; border: 0; background: rgba(19, 31, 47, .38); }
   .hm-knowledge-workbench .hm-knowledge-detail { position: fixed; z-index: 102; top: calc(var(--hm-shell-header) + 8px); right: 8px; bottom: 8px; width: min(620px, calc(100vw - var(--hm-shell-rail) - 24px)); transform: translateX(calc(100% + 20px)); transition: transform var(--hm-motion-fast); }
   .hm-knowledge-workbench .hm-knowledge-detail.open { transform: translateX(0); }
+  .hm-knowledge-workbench .hm-knowledge-detail.open:has([data-office-fullscreen]) { transform: none; transition: none; overflow: visible; z-index: 2600; }
   .hm-knowledge-workbench .hm-knowledge-detail-close { display: grid; }
 }
 

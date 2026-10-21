@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { knowledgeArticleInclude, parseKnowledgeArticleInput } from '@/lib/knowledge';
+import { queueKnowledgePreviews } from '@/lib/knowledge-preview';
 
 export class KnowledgeWriteError extends Error {
   constructor(message: string, public status = 400) { super(message); }
@@ -39,6 +40,7 @@ export async function saveKnowledgeArticle(body: Record<string, unknown>, userId
     if (ids.length) {
       const bound = await tx.knowledgeAttachment.updateMany({ where: { id: { in: ids }, articleId: null, uploadedById: userId, deletedAt: null }, data: { articleId: article.id } });
       if (bound.count !== ids.length) throw new KnowledgeWriteError('附件已被其他操作使用，请核对后重试', 409);
+      await queueKnowledgePreviews(tx, staged);
     }
     if (relations !== undefined) {
       await tx.knowledgeRelation.deleteMany({ where: { articleId: article.id } });
