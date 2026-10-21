@@ -3,6 +3,19 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      mirror_only:
+        description: Copy and verify an already tested release without rebuilding
+        type: boolean
+        default: false
+      release:
+        description: Existing immutable release tag
+        type: string
+        default: v1.34.278
+      source_run_id:
+        description: Original release run with successful source-image acceptance
+        type: string
+        default: '39614022554'
 concurrency:
   group: docker-image-release
   cancel-in-progress: true
@@ -10,6 +23,134 @@ permissions:
   contents: read
   packages: write
 jobs:
+  mirror-existing-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.mirror_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    env:
+      RELEASE: ${{ inputs.release }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hongmeng_ci?schema=public
+      DAILY_PLAN_ENABLED: 'true'
+      CI_MINIO_IMAGE: hongmeng-ci-minio:verified-a1a8bd4ac40a
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release }}
+      - name: Verify original release acceptance and immutable source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
+          test "$RELEASE" = "v$(node -p "require('./package.json').version")"
+          echo "RELEASE_REVISION=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          mkdir -p artifacts/hangzhou-release
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > artifacts/hangzhou-release/source-run.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs" > "$RUNNER_TEMP/source-jobs.json"
+          node <<'NODE'
+          const fs = require('fs'), cp = require('child_process');
+          const run = JSON.parse(fs.readFileSync('artifacts/hangzhou-release/source-run.json'));
+          if (run.head_sha !== cp.execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim()) throw Error('Source run revision does not match release');
+          const steps = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/source-jobs.json')).jobs.flatMap(j => j.steps);
+          for (const name of ['Type check', 'Lint', 'Unit tests', 'Smoke test exact release image', 'Order pool preparation browser acceptance against exact release image', 'Push verified release image', 'Push verified Office converter image']) {
+            if (!steps.some(s => s.name === name && s.conclusion === 'success')) throw Error('Original release gate did not pass: ' + name);
+          }
+          console.log('Original source image acceptance and release identity verified.');
+          NODE
+      - name: Install checksum-verified registry copy tool
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/crane"
+          cd "$RUNNER_TEMP/crane"
+          curl -fLsS --retry 3 -O https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz
+          curl -fLsS --retry 3 -O https://github.com/google/go-containerregistry/releases/download/v0.22.1/checksums.txt
+          grep 'go-containerregistry_Linux_x86_64.tar.gz$' checksums.txt | sha256sum -c -
+          tar -xzf go-containerregistry_Linux_x86_64.tar.gz crane
+          echo "$RUNNER_TEMP/crane" >> "$GITHUB_PATH"
+      - name: Copy exact published images to Hangzhou
+        env:
+          RELEASE_REGISTRY_AUTH: ${{ secrets.CODEX_HANGZHOU_RELEASE_AUTH }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_REGISTRY_AUTH"
+          umask 077
+          registry_config="$(mktemp -d)"
+          trap 'rm -rf "$registry_config"' EXIT
+          printf '%s' "$RELEASE_REGISTRY_AUTH" > "$registry_config/config.json"
+          unset RELEASE_REGISTRY_AUTH
+          export DOCKER_CONFIG="$registry_config"
+          target_repository=crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng
+          printf '[]' > artifacts/hangzhou-release/mirror-results.json
+          for tag in "$RELEASE" "office-preview-$RELEASE"; do
+            source_image="ghcr.io/$GITHUB_REPOSITORY:$tag"
+            target_image="$target_repository:$tag"
+            digest="$(crane digest "$source_image")"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            crane config "ghcr.io/$GITHUB_REPOSITORY@$digest" > "$RUNNER_TEMP/image-config.json"
+            jq -e --arg version "$RELEASE" --arg revision "$RELEASE_REVISION" '.os == "linux" and .architecture == "amd64" and .config.Labels["org.opencontainers.image.version"] == $version and .config.Labels["org.opencontainers.image.revision"] == $revision' "$RUNNER_TEMP/image-config.json" >/dev/null
+            existing="$(crane digest "$target_image" 2>/dev/null || true)"
+            if [ -n "$existing" ]; then test "$existing" = "$digest"; fi
+            crane copy --no-clobber "ghcr.io/$GITHUB_REPOSITORY@$digest" "$target_image"
+            test "$(crane digest "$target_image")" = "$digest"
+            jq --arg image "$target_image" --arg source "$source_image" --arg digest "$digest" --arg revision "$RELEASE_REVISION" '. + [{image:$image,source:$source,digest:$digest,revision:$revision,platform:"linux/amd64"}]' artifacts/hangzhou-release/mirror-results.json > "$RUNNER_TEMP/receipts.json"
+            cp "$RUNNER_TEMP/receipts.json" artifacts/hangzhou-release/mirror-results.json
+          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Prepare independent runtime acceptance
+        run: |
+          set -euo pipefail
+          npm ci
+          npx prisma generate
+          bash scripts/pull-ci-minio.sh
+          if ! command -v google-chrome >/dev/null 2>&1; then
+            npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
+          fi
+      - uses: docker/setup-buildx-action@v3
+      - name: Anonymous Hangzhou image pull and independent clean runtime smoke
+        timeout-minutes: 30
+        env:
+          CHINA_MIRROR_IMAGE: crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:${{ inputs.release }}
+          UPSTREAM_IMAGE: ghcr.io/${{ github.repository }}:${{ inputs.release }}
+          EXPECTED_APP_VERSION: ${{ inputs.release }}
+          SESSION_SECRET: ci-china-mirror-sample-session-secret-1234567890
+          SEED_ADMIN_USERNAME: samplemirroradmin
+          SEED_ADMIN_PASSWORD: Codex-Sample-Mirror-Seed-2026!Z
+          SMOKE_ADMIN_CHANGED_PASSWORD: Codex-Sample-Mirror-Changed-2026!R
+          S3_ACCESS_KEY_ID: samplemirroraccess
+          S3_SECRET_ACCESS_KEY: Codex-Sample-Mirror-MinIO-Secret-2026!Z
+          OUTBOX_WORKER_TOKEN: ci-china-mirror-outbox-worker-token-1234567890
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs'), yaml = require('js-yaml');
+          const workflow = yaml.load(fs.readFileSync('.github/workflows/docker-image.yml', 'utf8'));
+          const step = workflow.jobs['build-and-push'].steps.find(s => s.name === 'Anonymous Hangzhou image pull and independent clean runtime smoke');
+          const script = step.run.split('$' + '{{ github.ref_name }}').join(process.env.RELEASE);
+          if (script.includes('$' + '{{')) throw Error('Unexpected unresolved workflow expression');
+          fs.writeFileSync(process.env.RUNNER_TEMP + '/verify-hangzhou.sh', script);
+          NODE
+          export GITHUB_SHA="$RELEASE_REVISION"
+          bash "$RUNNER_TEMP/verify-hangzhou.sh"
+      - name: Upload immutable image receipts and preview acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hangzhou-office-release-${{ inputs.release }}
+          if-no-files-found: error
+          path: |
+            artifacts/hangzhou-release/*.json
+            output/playwright/knowledge-preview*/*.png
+            output/playwright/knowledge-preview*/acceptance.json
+            output/playwright/knowledge-preview*/http-acceptance.json
+            output/playwright/knowledge-preview*/browser-runtime.txt
   build-and-push:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
