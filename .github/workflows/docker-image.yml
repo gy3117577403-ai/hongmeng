@@ -727,8 +727,7 @@ jobs:
           OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-release \
             S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
             SMOKE_BASE_URL=http://127.0.0.1:3000 bash scripts/check-knowledge-preview-browser.sh
-          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public' THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-release npx tsx scripts/seed-three-fixes-smoke.ts
-          THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-release SMOKE_BASE_URL=http://127.0.0.1:3000 node scripts/smoke-three-fixes-browser.mjs
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public' THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-release SMOKE_BASE_URL=http://127.0.0.1:3000 bash scripts/check-three-fixes-browser.sh
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime hongmeng-release-smoke node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/release-fixture.json
@@ -1290,8 +1289,7 @@ jobs:
             OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
             S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
             SMOKE_BASE_URL=http://127.0.0.1:3300 bash scripts/check-knowledge-preview-browser.sh
-          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-hangzhou npx tsx scripts/seed-three-fixes-smoke.ts
-          THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-hangzhou SMOKE_BASE_URL=http://127.0.0.1:3300 node scripts/smoke-three-fixes-browser.mjs
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-hangzhou SMOKE_BASE_URL=http://127.0.0.1:3300 bash scripts/check-three-fixes-browser.sh
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime "$app_name" node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/hangzhou-fixture.json
