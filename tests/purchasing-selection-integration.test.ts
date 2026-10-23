@@ -27,6 +27,11 @@ test('cross-page reimbursement groups are atomic, idempotent, version checked an
       const list = await loadPurchasing({ q: marker, receiptState: state, pageSize: 100 }, actor);
       assert.equal(list.total, count); assert.ok(list.rows.every(r => pcReceiptState(r).state === state));
     }
+    await prisma.pcLine.update({ where: { id: request.lines[24].id }, data: { status: 'VOID' } });
+    await prisma.pcLine.update({ where: { id: request.lines[25].id }, data: { receivedQty: 0, cancelledQty: 5 } });
+    const cancelled = await loadPurchasing({ q: marker, receiptState: 'CANCELLED', pageSize: 100 }, actor);
+    assert.equal(cancelled.total, 2, 'explicit cancelled filter includes void purchases and fully cancelled receipts');
+    assert.ok(cancelled.rows.every(r => pcReceiptState(r).state === 'CANCELLED'));
     const groups = [request.lines.slice(0, 12), request.lines.slice(12, 24)].map(lines => ({ entries: lines.map(l => ({ id: l.id, version: l.version })), amountCents: 6000 }));
     const before = await prisma.pcFund.count();
     await assert.rejects(() => run({ action: 'BATCH_CREATE_FUNDS', groups: [groups[0], { ...groups[1], amountCents: 1 }] }), /差额/);

@@ -109,7 +109,7 @@ function lineWhere(
     });
   else
     and.push({
-      status: q.follow === "void" ? "VOID" : { notIn: ["DRAFT", "VOID"] },
+      status: q.follow === "void" ? "VOID" : { notIn: q.receiptState === 'CANCELLED' ? ['DRAFT'] : ["DRAFT", "VOID"] },
     });
   if (view === "approval")
     and.push({ status: { in: ["PENDING", "RETURNED", "WITHDRAWN"] } });
@@ -245,7 +245,7 @@ export async function loadPurchasing(
   ]);
   q = { ...q, ...purchasingTaskFilters(q.task, a.id, settings) };
   if (q.receiptState && !['funds', 'finance', 'stock'].includes(view)) {
-    if (!(q.receiptState in PC_RECEIPT_STATES)) throw new PurchasingError('入库状态筛选无效');
+    if (!Object.keys(PC_RECEIPT_STATES).includes(q.receiptState)) throw new PurchasingError('入库状态筛选无效');
     const matches = await prisma.$queryRaw<{id: string}[]>(Prisma.sql`
       SELECT p.id FROM "PcLine" p JOIN "PcRequest" r ON r.id=p."requestId"
       WHERE r."deletedAt" IS NULL AND r.source=${q.source === 'FIXTURE' ? 'FIXTURE' : 'NORMAL'}

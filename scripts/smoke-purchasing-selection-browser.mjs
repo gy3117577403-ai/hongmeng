@@ -21,6 +21,7 @@ function cli(args) {
 async function scenario(page, origin, f, dir) {
   const checks = [], errors = [];
   page.on('pageerror', e => errors.push(String(e)));
+  const request = (path, method = 'GET', body) => page.evaluate(async ({ path, method, body }) => { const r = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, body: await r.json() }; }, { path, method, body });
   const check = (yes, label) => { if (!yes) throw Error(label); checks.push(label); };
   const shot = name => page.screenshot({ path: `${dir}/${name}.png`, fullPage: false, animations: 'disabled' });
   const stable = async () => { await page.waitForFunction(() => document.querySelector('.pc-table-wrap')?.getAttribute('aria-busy') === 'false'); };
@@ -61,8 +62,9 @@ async function scenario(page, origin, f, dir) {
     check(await dialog.locator('li').count() === 24, 'review includes all 24 item lines');
     await shot('02-grouped-reimbursement');
     await dialog.getByRole('button', { name: '确认保存', exact: true }).click(); await dialog.waitFor({ state: 'hidden' }); await stable();
-    const result = await page.request.get(origin + '/api/purchases?q=' + encodeURIComponent(f.marker) + '&pageSize=100');
-    const data = (await result.json()).data;
+    const result = await request('/api/purchases?q=' + encodeURIComponent(f.marker) + '&pageSize=100');
+    check(result.status === 200 && result.body.ok, 'authenticated result read: ' + JSON.stringify({ status: result.status, error: result.body.error }));
+    const data = result.body.data;
     check(data.rows.filter(r => r.status === 'ORDERED').every(r => r.availableCents === 0), 'all eligible lines reserved exactly once after grouped submission');
     await page.getByLabel('入库状态', { exact: true }).selectOption('RECEIVED'); await stable();
     await page.waitForFunction(() => document.querySelectorAll('tbody tr').length === 2);
@@ -78,8 +80,8 @@ async function scenario(page, origin, f, dir) {
     await page.waitForFunction(() => Number(document.querySelector('.sb-week-switch button.active b')?.textContent) > 0);
     check(!(await page.getByLabel('样品类型与计划周').innerText()).includes('周数量暂不可用'), 'sample week data is available');
     await shot('04-warehouse-sample-access');
-    const forbidden = await page.request.patch(origin + '/api/sample-tasks/' + f.taskId, { data: { action: 'SCHEDULE', expectedVersion: 1 }, headers: { origin } });
-    check(forbidden.status() === 403, 'warehouse-only grant cannot edit sample planning');
+    const forbidden = await request('/api/sample-tasks/' + f.taskId, 'PATCH', { action: 'SCHEDULE', expectedVersion: 1 });
+    check(forbidden.status === 403, 'warehouse-only grant cannot edit sample planning');
     await page.getByRole('button', { name: '确认已配齐', exact: true }).click();
     await page.getByRole('button', { name: '更正状态', exact: true }).waitFor();
     check((await page.locator('.sw-state-actions').innerText()).includes('已配齐'), 'warehouse collaboration completes sample kitting');
@@ -87,10 +89,10 @@ async function scenario(page, origin, f, dir) {
     await login(f.accounts[1].username, '/workspace/warehouse?branch=samples&taskId=' + f.taskId);
     await page.locator('.sw-material-panel').waitFor();
     check(await page.getByRole('button', { name: '更正状态', exact: true }).count() === 0, 'read-only warehouse has no mutation button');
-    const record = await page.request.get(origin + '/api/warehouse/sample-tasks/' + f.taskId + '/materials');
-    const body = await record.json();
-    const blocked = await page.request.patch(origin + '/api/warehouse/sample-tasks/' + f.taskId + '/materials', { data: { action: 'reopen', version: body.task.version, note: 'must be denied' }, headers: { origin } });
-    check(blocked.status() === 403, 'read-only warehouse API mutation is denied');
+    const record = await request('/api/warehouse/sample-tasks/' + f.taskId + '/materials');
+    check(record.status === 200 && record.body.ok, 'read-only material endpoint is accessible');
+    const blocked = await request('/api/warehouse/sample-tasks/' + f.taskId + '/materials', 'PATCH', { action: 'reopen', version: record.body.task.version, note: 'must be denied' });
+    check(blocked.status === 403, 'read-only warehouse API mutation is denied');
     await page.route('**/api/warehouse/sample-tasks?**', route => route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ ok: false, error: '当前账号没有执行此操作的权限' }) }));
     await page.getByRole('button', { name: '刷新样品配料', exact: true }).click();
     await page.getByText('当前账号无权读取样品配料数据', { exact: true }).waitFor();
