@@ -1362,7 +1362,7 @@ export default function PurchasingWorkbench({
             <button disabled={loading || selectingAll || !data.total} onClick={() => void selectFiltered()}>{selectingAll ? '正在读取…' : `选择全部筛选结果（${data.total} 项）`}</button>
           </div>
           {showSelection && selected.length > 0 && <div className="pc-selected-list" aria-label="跨页已选明细">{selectedRows.map(r => <div key={r.id}><span><b>{r.name}</b><small>{r.number} · {r.fundingIssue || (r.kind === 'line' ? `可申请 ${pcMoney(r.availableCents)}` : `待付 ${pcMoney(r.availableCents)}`)}</small></span><button onClick={() => selectRows([r], false)} aria-label={'移除选择 ' + r.number}>移除</button></div>)}</div>}
-          <div className="pc-table-wrap" aria-busy={loading}>
+          <div className="pc-table-wrap" aria-busy={loading} data-page={data.page}>
             <table className="pc-table">
               <thead>
                 <tr>
@@ -1533,6 +1533,7 @@ export default function PurchasingWorkbench({
                 aria-label="上一页"
                 disabled={page <= 1 || loading}
                 onClick={() => {
+                  setLoading(true);
                   setPage((p) => p - 1);
                 }}
               >
@@ -1545,6 +1546,7 @@ export default function PurchasingWorkbench({
                 aria-label="下一页"
                 disabled={page * data.pageSize >= data.total || loading}
                 onClick={() => {
+                  setLoading(true);
                   setPage((p) => p + 1);
                 }}
               >

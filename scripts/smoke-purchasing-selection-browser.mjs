@@ -24,7 +24,7 @@ async function scenario(page, origin, f, dir) {
   const request = (path, method = 'GET', body) => page.evaluate(async ({ path, method, body }) => { const r = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, body: await r.json() }; }, { path, method, body });
   const check = (yes, label) => { if (!yes) throw Error(label); checks.push(label); };
   const shot = name => page.screenshot({ path: `${dir}/${name}.png`, fullPage: false, animations: 'disabled' });
-  const stable = async () => { await page.waitForFunction(() => document.querySelector('.pc-table-wrap')?.getAttribute('aria-busy') === 'false'); };
+  const stable = async expectedPage => { await page.waitForFunction(expected => { const table = document.querySelector('.pc-table-wrap'); return table?.getAttribute('aria-busy') === 'false' && (!expected || table.dataset.page === String(expected)); }, expectedPage); };
   const login = async (username, path) => {
     await page.context().clearCookies(); await page.goto(origin + '/login?next=' + encodeURIComponent(path));
     await page.getByLabel('员工编号 / 管理账号').fill(username); await page.getByLabel('密码', { exact: true }).fill(f.password);
@@ -38,11 +38,11 @@ async function scenario(page, origin, f, dir) {
     await stable();
     await page.getByLabel('选择当前页全部记录', { exact: true }).check();
     check((await page.locator('.pc-selection').innerText()).includes('已选 12 项'), 'first page selects 12');
-    await page.getByRole('button', { name: '下一页', exact: true }).click(); await stable();
+    await page.getByRole('button', { name: '下一页', exact: true }).click(); await stable(2);
     await page.getByLabel('选择当前页全部记录', { exact: true }).check();
     check((await page.locator('.pc-selection').innerText()).includes('已选 24 项'), 'second page appends to 24');
     check((await page.locator('.pc-selection').innerText()).includes('120.00'), 'cross-page amount includes all 24');
-    await page.getByRole('button', { name: '上一页', exact: true }).click(); await stable();
+    await page.getByRole('button', { name: '上一页', exact: true }).click(); await stable(1);
     check(await page.locator('tbody input:checked').count() === 12, 'returning to first page preserves all checkboxes');
     await page.getByLabel('选择当前页全部记录', { exact: true }).uncheck();
     check((await page.locator('.pc-selection').innerText()).includes('已选 12 项'), 'deselecting page preserves off-page selection');
