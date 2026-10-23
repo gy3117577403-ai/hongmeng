@@ -4,7 +4,8 @@ import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { PDFDocument } from 'pdf-lib';
 import { prisma } from '../lib/prisma';
-import { ensureKnowledgePreview, readableKnowledgePreview, processKnowledgePreview, readPreviewObject, readKnowledgePreviewSheet } from '../lib/knowledge-preview';
+import { ensureKnowledgePreview, readableKnowledgePreview, processKnowledgePreview, readPreviewObject, readKnowledgePreviewSheet, readKnowledgePreviewPage } from '../lib/knowledge-preview';
+import * as XLSX from 'xlsx';
 import { putObject, deleteObjectsBestEffort } from '../lib/s3';
 import { saveKnowledgeArticle } from '../lib/knowledge-write';
 
@@ -22,6 +23,24 @@ test('Office previews use real storage and converter, preserve originals and rec
     return { file, bytes };
   };
   try {
+    await t.test('old failed Excel regenerates and regional reads search beyond the first chunk without exposing storage keys', async () => {
+      const { file } = await createFile('xlsx');
+      const book = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([['型号', '数量'], ...Array.from({ length: 2200 }, (_, i) => [`CODE-${String(i).padStart(6, '0')}`, i])]), '采购表');
+      const bytes = XLSX.write(book, { type: 'buffer', bookType: 'xlsx' });
+      await putObject({ key: file.objectKey, body: bytes, contentType: 'application/octet-stream', originalName: file.originalName });
+      await ensureKnowledgePreview(file.id);
+      await prisma.knowledgeAttachmentPreview.update({ where: { attachmentId: file.id }, data: { rendererVersion: 'office-v1', status: 'failed', tableStatus: 'failed', tableError: '旧范围上限' } });
+      await ensureKnowledgePreview(file.id); await processKnowledgePreview();
+      const first = await readKnowledgePreviewPage(file.id, 0, 1);
+      assert.equal(first.rows.length, 100); assert.equal(first.totalRows, 2201);
+      assert.equal('chunks' in first, false); assert.equal('objectKey' in first, false);
+      const found = await readKnowledgePreviewPage(file.id, 0, 1, 'CODE-002199');
+      assert.equal(found.rows[0].index, 2201); assert.equal(found.rows[0].cells[1], '2199');
+      const last = await readKnowledgePreviewPage(file.id, 0, 999);
+      assert.equal(last.rows.at(-1)?.index, 2201);
+      assert.equal(createHash('sha256').update(await readPreviewObject(file.objectKey)).digest('hex'), createHash('sha256').update(bytes).digest('hex'));
+    });
     await t.test('four old attachment formats are lazily converted once and original bytes stay identical', async () => {
       for (const type of ['xls', 'xlsx', 'doc', 'docx']) {
         const { file, bytes } = await createFile(type);
@@ -81,7 +100,12 @@ test('Office previews use real storage and converter, preserve originals and rec
   } finally {
     const files = await prisma.knowledgeAttachment.findMany({ where: { uploadedById: user.id }, include: { preview: true } });
     const keys = files.flatMap(file => [file.preview?.pdfKey, ...((file.preview?.sheets || []) as { objectKey: string }[]).map(sheet => sheet.objectKey)]).filter((key): key is string => !!key);
-    await deleteObjectsBestEffort([...originals, ...keys]);
+    const chunkKeys: string[] = [];
+    for (const file of files) for (const sheet of (file.preview?.sheets || []) as { objectKey: string }[]) {
+      const manifest = JSON.parse((await readPreviewObject(sheet.objectKey)).toString('utf8'));
+      chunkKeys.push(...(manifest.chunks || []).map((chunk: { objectKey: string }) => chunk.objectKey));
+    }
+    await deleteObjectsBestEffort([...originals, ...keys, ...chunkKeys]);
     await prisma.knowledgeAttachment.deleteMany({ where: { uploadedById: user.id } });
     await prisma.knowledgeArticle.deleteMany({ where: { createdById: user.id } });
     await prisma.user.delete({ where: { id: user.id } }); await prisma.$disconnect();

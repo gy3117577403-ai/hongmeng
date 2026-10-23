@@ -76,6 +76,8 @@ type Dialog = {
   requestDraft?: boolean;
   returnId?: string;
   returnVersion?: number;
+  correctionId?: string;
+  correctionVersion?: number;
 };
 function PurchaseQuantity({ quantity, unit }: { quantity: number; unit: string }) {
   return <span className="pc-quantity"><strong>{quantity > 0 ? pcQuantityText(quantity, unit) : '待填写'}</strong>{pcLegacyUnit(unit) && <small className="pc-warning">数量与单位待核对</small>}</span>;
@@ -104,6 +106,9 @@ const titles: Record<string, string> = {
   PURCHASE: "登记采购信息",
   UPDATE_SETTLEMENT: "补充收款与结算资料",
   CORRECT_QUANTITY: "核对数量与单位",
+  CORRECT_ADVANCE_AMOUNT: "更正垫付金额",
+  APPROVE_AMOUNT_CORRECTION: "通过金额更正",
+  REJECT_AMOUNT_CORRECTION: "退回金额更正",
   CREATE_FUND: "发起请款 / 报销",
   APPROVE_FUNDS: "通过资金审批",
   RETURN_FUNDS: "退回资金申请",
@@ -132,6 +137,11 @@ const eventNames: Record<string, string> = {
   RETURN: "退回修改",
   PURCHASE: "登记采购",
   REVISE_PURCHASE: "修订采购",
+  CORRECT_ADVANCE_AMOUNT: "申请垫付金额更正",
+  APPLY_AMOUNT_CORRECTION: "垫付金额更正生效",
+  APPROVE_AMOUNT_CORRECTION: "金额更正复核通过",
+  REJECT_AMOUNT_CORRECTION: "金额更正复核退回",
+  AMOUNT_CORRECTION_RELEASE: "金额更正释放未付余额",
   UPDATE_SETTLEMENT: "补充收款与结算资料",
   CORRECT_QUANTITY: "数量与单位更正",
   UNIT_CONVERSION: "计量换算",
@@ -506,7 +516,7 @@ export default function PurchasingWorkbench({
       receivedQty: p.receivedQty,
       cancelledQty: p.cancelledQty,
       returnedQty: p.returnedQty,
-      availableCents: Math.max(0, p.payableCents - p.reservedCents),
+      availableCents: Math.max(0, p.payableCents - p.reservedCents + p.refundedCents),
       paidCents: p.paidCents - p.refundedCents,
       invoiceCents: p.invoiceCents,
       refundOpen: 0,
@@ -520,7 +530,7 @@ export default function PurchasingWorkbench({
   async function open(
     action: string,
     rows: PcRow[] = [],
-    extra?: { returnId?: string },
+    extra?: { returnId?: string; correctionId?: string },
   ) {
     if (busyRef.current) return;
     setFormError("");
@@ -552,6 +562,7 @@ export default function PurchasingWorkbench({
           spec: f.allocations.map(al => al.line.name).join('、'), availableCents: Math.max(0, f.amountCents - f.paidCents) } : row;
       });
       const returned = p?.returns.find((x) => x.id === extra?.returnId);
+      const correction = p?.amountCorrections.find(c => c.id === extra?.correctionId);
       const f: Record<string, string> = {
         date: today(),
         applicantId: user.id,
@@ -677,6 +688,8 @@ export default function PurchasingWorkbench({
         requestDraft: p?.request.status === "DRAFT",
         returnId: returned?.id,
         returnVersion: returned?.version,
+        correctionId: correction?.id,
+        correctionVersion: correction?.version,
       });
       if (["SAVE_REQUEST", "EDIT_REQUEST"].includes(action))
         setWorkorders(
@@ -817,6 +830,16 @@ export default function PurchasingWorkbench({
         payload.quantity = Number(form.quantity);
         payload.confirmed = form.confirmed === "1";
       }
+      if (action === "CORRECT_ADVANCE_AMOUNT") {
+        const r = d.rows[0];
+        payload = { ...payload, id: r.id, version: r.version, ...pcPurchasePricing(form["pricing:" + r.id] === "UNIT" ? {
+          unitPrice: form["price:" + r.id], freightCents: pcCents(form["freight:" + r.id] || "0"), discountCents: pcCents(form["discount:" + r.id] || "0"),
+        } : { actualCents: pcCents(form["actual:" + r.id]) }, r.quantity) };
+      }
+      if (["APPROVE_AMOUNT_CORRECTION", "REJECT_AMOUNT_CORRECTION"].includes(action)) {
+        payload.correctionId = d.correctionId;
+        payload.correctionVersion = d.correctionVersion;
+      }
       if (action === "CONTRACT")
         payload.contractAttachmentIds = files.map((f) => f.id);
       if (action === "RECEIVE")
@@ -873,16 +896,17 @@ export default function PurchasingWorkbench({
           "Idempotency-Key": mutation.current.key,
         },
         body,
-      }).then(response<{ id?: string; duplicates?: unknown[] }>);
+      }).then(response<{ id?: string; duplicates?: unknown[]; status?: string }>);
       setDialog(null);
       setSelected([]);
+      if (["CORRECT_ADVANCE_AMOUNT", "APPROVE_AMOUNT_CORRECTION", "REJECT_AMOUNT_CORRECTION"].includes(String(payload.action))) setDetailTab("corrections");
       setRevision((n) => n + 1);
       setMessage(
         payload.action === "SAVE_REQUEST"
           ? payload.submit
             ? "采购申请已提交"
             : "草稿已保存"
-          : `${titles[String(payload.action)]}已完成`,
+          : payload.action === "CORRECT_ADVANCE_AMOUNT" && result.status === "PENDING" ? "金额更正已提交复核，通过后生效" : `${titles[String(payload.action)]}已完成`,
       );
       if (result.duplicates?.length)
         setMessage(
@@ -958,6 +982,7 @@ export default function PurchasingWorkbench({
             all(["APPROVED"]),
           )}
         {line && all(["ORDERED"]) && rows.length === 1 && data.permissions.buy && btn("UPDATE_SETTLEMENT", "补充收款与结算资料")}
+        {line && all(["ORDERED"]) && rows.length === 1 && rows[0].settlement === "ADVANCE" && data.permissions.buy && btn("CORRECT_ADVANCE_AMOUNT", "更正垫付金额")}
         {line && rows.length === 1 && !rows[0].fixtureId && all(["APPROVED", "ORDERED"]) && data.permissions.approvePurchase && btn("CORRECT_QUANTITY", "核对数量与单位")}
         {line && all(["ORDERED"]) && (
           <>
@@ -1553,6 +1578,7 @@ export default function PurchasingWorkbench({
                   ...(line
                     ? [
                         ["finance", "资金票据"],
+                        ...(line.settlement === "ADVANCE" ? [["corrections", "金额更正" + (line.amountCorrections.some(c => c.status === "PENDING") ? " · 待复核" : "")]] : []),
                         ["stock", "收货售后"],
                       ]
                     : []),
@@ -1570,7 +1596,7 @@ export default function PurchasingWorkbench({
                 ))}
               </nav>
               <div className="pc-detail-body">
-                {["overview", "finance", "stock"].includes(detailTab) &&
+                {["overview", "finance", "stock", "corrections"].includes(detailTab) &&
                   line && (
                     <>
                       {detailTab === "overview" && (
@@ -1745,6 +1771,19 @@ export default function PurchasingWorkbench({
                           ))}
                         </>
                       )}
+                      {detailTab === "corrections" && <>                          {line.amountCorrections.length > 0 && <section aria-label="垫付金额更正记录">
+                            <h3>垫付金额更正</h3>
+                            {line.amountCorrections.map(c => <div className="pc-log" key={c.id}>
+                              <b>{pcMoney(Number((c.before as Record<string, unknown>).actualCents))} → {pcMoney(Number((c.after as Record<string, unknown>).actualCents))} · {({ PENDING: '待复核', APPLIED: '已生效', REJECTED: '已退回' } as Record<string, string>)[c.status]}</b>
+                              <p>{c.reason}</p><small>{c.actorName} · {time(c.createdAt)}{c.reviewedAt ? ` · ${c.reviewerName}复核：${c.reviewReason || '直接生效'}` : ` · 等待${c.reviewRole === 'FINANCE' ? '财务' : '资金审批负责人'}复核`}</small>
+                              {c.status === 'PENDING' && <p className="pc-warning">复核期间暂停关联资金付款和金额变更。通过后释放原资金单未付余额，按新余额重新请款；历史付款、发票和库存数量保留。</p>}
+                              {c.status === 'PENDING' && (c.reviewRole === 'FINANCE' ? data.permissions.finance : data.permissions.approveFund) && <div className="pc-actions">
+                                <button onClick={() => void open('APPROVE_AMOUNT_CORRECTION', [rowFromLine(line)], { correctionId: c.id })}>通过金额更正</button>
+                                <button onClick={() => void open('REJECT_AMOUNT_CORRECTION', [rowFromLine(line)], { correctionId: c.id })}>退回金额更正</button>
+                              </div>}
+                            </div>)}
+                          </section>}
+{!line.amountCorrections.length && <p className="pc-muted">暂无金额更正记录</p>}</>}
                       {detailTab === "stock" && (
                         <>
                           <h3>收货与库存</h3>
@@ -1821,17 +1860,17 @@ export default function PurchasingWorkbench({
                               </details>
                             </div>
                           ))}
-                          <h3>退货与退款</h3>
+                          <h3>退货与退款 / 更正差额</h3>
                           {line.returns.length === 0 && (
                             <p className="pc-muted">暂无退货记录</p>
                           )}
                           {line.returns.map((r) => (
                             <div className="pc-log" key={r.id}>
                               <b>
-                                {r.number} · {pcQuantityText(r.quantity, r.unit || line.unit)}
+                                {r.number} · {r.kind === "AMOUNT_CORRECTION" ? "金额更正差额" : pcQuantityText(r.quantity, r.unit || line.unit)}
                               </b>
                               <small>
-                                {r.kind === "STOCK" ? "在库退货" : "未入库退货"}{" "}
+                                {r.kind === "AMOUNT_CORRECTION" ? "价格更正，库存数量保持不变" : r.kind === "STOCK" ? "在库退货" : "未入库退货"}{" "}
                                 · 冲减 {pcMoney(r.amountCents)} · {r.reason}
                               </small>
                               <p>
@@ -2440,6 +2479,18 @@ export default function PurchasingWorkbench({
                     </Field>
                   </>
                 )}
+                {formAction === "CORRECT_ADVANCE_AMOUNT" && dialog.lines.map(l => <div className="pc-wide pc-purchase-line" key={l.id}>
+                  <p className="pc-wide pc-banner">已入库 {pcQuantityText(l.receivedQty, l.unit)}，原总额 {pcMoney(l.actualCents)}。更正仅调整价格；库存数量、历史付款和发票保持原记录。已有资金申请、付款或票据时提交复核；多付形成待退差额，少付可重新申请余额。</p>
+                  <Field label="金额录入方式">{select('pricing:' + l.id, { UNIT: '按成交单价更正', TOTAL: '按采购总额更正' })}</Field>
+                  {form['pricing:' + l.id] === 'UNIT' ? <>
+                    <Field label="更正后成交单价（元）"><input type="number" min="0.000001" step="0.000001" value={form['price:' + l.id] || ''} onChange={e => set('price:' + l.id, e.target.value)} /></Field>
+                    <Field label="运费（元）">{input('freight:' + l.id, 'number')}</Field>
+                    <Field label="优惠（元）">{input('discount:' + l.id, 'number')}</Field>
+                    <p className="pc-wide">{(() => { try { return '更正后总额 ' + pcMoney(pcPurchasePricing({ unitPrice: form['price:' + l.id], freightCents: pcCents(form['freight:' + l.id] || '0'), discountCents: pcCents(form['discount:' + l.id] || '0') }, l.quantity).actualCents); } catch { return '请核对单价、运费和优惠'; } })()}</p>
+                  </> : <Field label="更正后采购总额（元）">{input('actual:' + l.id, 'number')}</Field>}
+                  <Field label="补充合同编号（达到 500 元且未关联合同时必填）" wide>{input('contractNumber')}</Field>
+                </div>)}
+                {["APPROVE_AMOUNT_CORRECTION", "REJECT_AMOUNT_CORRECTION"].includes(formAction) && (() => { const c = dialog.lines[0]?.amountCorrections.find(c => c.id === dialog.correctionId); return c ? <div className="pc-wide pc-banner">{pcMoney(Number((c.before as Record<string, unknown>).actualCents))} → {pcMoney(Number((c.after as Record<string, unknown>).actualCents))}。申请原因：{c.reason}。通过后关闭关联资金单的未付款余额，保留已付款事实；报销差额需按实际再次请款或登记退款。</div> : <p className="pc-wide pc-warning">更正记录已变化，请关闭后刷新。</p>; })()}
                 {formAction === "CORRECT_QUANTITY" && <>
                   <div className="pc-wide pc-banner">原登记：数量 {dialog.lines[0]?.quantity}；单位「{dialog.lines[0]?.unit}」。请依据实际采购核对，以下建议值不会自动保存。更正保留采购总额和历史资金单；已有收货时仅支持历史单位的整数换算。</div>
                   <Field label="核实后的采购数量"><input className="pc-quantity-input" type="number" min="1" step="1" value={form.quantity || ''} onChange={e => set('quantity', e.target.value)} /></Field>

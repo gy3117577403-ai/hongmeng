@@ -816,6 +816,107 @@ async function purchase(tx: Tx, input: PcInput, a: PcActor) {
   }
   return { count: updated.length, ids: updated.map((p) => p.id) };
 }
+function amountBasis(p: Line) {
+  return { ...pcPricingSnapshot(p), payableCents: p.payableCents, paidCents: p.paidCents,
+    refundedCents: p.refundedCents, invoiceCents: p.invoiceCents, settlement: p.settlement };
+}
+
+async function applyAmountCorrection(tx: Tx, correctionId: string, p: Line, a: PcActor) {
+  const correction = await tx.pcAmountCorrection.findUniqueOrThrow({ where: { id: correctionId } });
+  const proposed = pcRecord(correction.after);
+  const pricing = pcPurchasePricing(proposed, p.quantity);
+  const nextPayable = p.payableCents + pricing.actualCents - p.actualCents;
+  if (nextPayable < 0) conflict('更正金额小于既有退货或优惠冲减，请先核对原业务');
+  // Approved fund snapshots cannot silently acquire a new amount. Release their
+  // unpaid balances in full, preserving every payment and original snapshot.
+  for (const fundId of new Set(p.allocations.filter(al => al.active && ['PENDING', 'APPROVED', 'PARTIAL'].includes(al.fund.status)).map(al => al.fundId))) {
+    const f = await getFund(tx, fundId);
+    for (const al of f.allocations.filter(al => al.active)) {
+      const released = al.amountCents - al.paidCents;
+      await tx.pcLine.update({ where: { id: al.lineId }, data: { reservedCents: { decrement: released }, version: { increment: 1 } } });
+      await tx.pcFundAllocation.update({ where: { id: al.id }, data: al.paidCents ? { amountCents: al.paidCents } : { active: false } });
+      await event(tx, 'LINE', al.lineId, 'AMOUNT_CORRECTION_RELEASE', a, { correctionId, fundId, releasedCents: released }, correction.reason);
+    }
+    await tx.pcFund.update({ where: { id: f.id }, data: { status: f.paidCents ? 'CLOSED' : 'RETURNED',
+      ...(f.paidCents ? { amountCents: f.paidCents } : {}), reason: '金额更正：' + correction.reason, version: { increment: 1 } } });
+    await event(tx, 'FUND', f.id, 'AMOUNT_CORRECTION_RELEASE', a, { correctionId, before: f, after: await getFund(tx, f.id) }, correction.reason);
+    await closeTodo(tx, f.id);
+    await notify(tx, 'AMOUNT_CORRECTION_FUND', f.id, f.version + 1, `${f.number}因金额更正已释放未付余额，请核对后重新申请`, [f.actorId], a, 'execution');
+  }
+  await tx.pcLine.update({ where: { id: p.id }, data: { ...pricing, payableCents: nextPayable, version: { increment: 1 } } });
+  const refundDue = Math.max(0, p.paidCents - p.refundedCents - nextPayable);
+  if (refundDue) {
+    const r = await tx.pcReturn.create({ data: { number: await serial(tx, 'TJ'), lineId: p.id, kind: 'AMOUNT_CORRECTION', quantity: 0,
+      unit: p.unit, amountCents: p.actualCents - pricing.actualCents, refundDueCents: refundDue, reason: correction.reason,
+      date: dateNow(), destination: 'COMPANY', actorId: a.id, actorName: actorName(a) } });
+    await notify(tx, 'AMOUNT_CORRECTION_REFUND', r.id, r.version, `${p.number}金额更正后有待退回公司差额，请登记实际到账`, (await settings(tx)).financeIds, a, 'documents');
+  }
+  await event(tx, 'LINE', p.id, 'APPLY_AMOUNT_CORRECTION', a, { correctionId, before: correction.before,
+    after: amountBasis(await getLine(tx, p.id)), refundDueCents: refundDue, stockAndPaymentsPreserved: true }, correction.reason);
+  if (proposed.contractNumber) await createContract(tx, [await getLine(tx, p.id)], { contractNumber: proposed.contractNumber }, a);
+  await refreshLine(tx, p.id);
+}
+
+async function correctAdvanceAmount(tx: Tx, input: PcInput, a: PcActor) {
+  const s = await settings(tx);
+  responsible(s, 'buyerIds', a);
+  const p = await getLine(tx, input.id, pcInt(input.version, '采购记录版本'));
+  if (p.status !== 'ORDERED' || p.settlement !== 'ADVANCE') conflict('该入口仅用于已登记采购的个人垫付金额更正');
+  if (p.returns.some(r => r.refundDueCents > r.companyReceivedCents)) conflict('已有待退回公司差额，请先登记实际退款后再更正金额');
+  const reason = pcText(input.reason, '金额更正原因', 1000), pricing = pcPurchasePricing(input, p.quantity);
+  if (pricing.actualCents === p.actualCents && String(pricing.unitPrice) === String(p.unitPrice) && pricing.freightCents === p.freightCents && pricing.discountCents === p.discountCents) conflict('金额及价格明细没有变化');
+  if (p.payableCents + pricing.actualCents - p.actualCents < 0) conflict('更正金额小于已发生的退货或优惠冲减');
+  const contractNumber = pcText(input.contractNumber, '合同编号', 100, false);
+  if (pricing.actualCents >= 50000 && !contractNumber && !p.contractLines.length) throw new PurchasingError('更正后总额达到 500 元，请补充合同编号');
+  const financeFacts = p.paidCents > 0 || p.invoiceCents > 0 || p.returns.length > 0;
+  const pending = financeFacts || p.allocations.some(al => al.active && ['PENDING', 'APPROVED', 'PARTIAL'].includes(al.fund.status));
+  const reviewRole = financeFacts ? 'FINANCE' : 'FUND';
+  const c = await tx.pcAmountCorrection.create({ data: { lineId: p.id, status: pending ? 'PENDING' : 'APPLIED',
+    before: json(amountBasis(p)), after: json({ ...pricing, contractNumber }), reason, reviewRole, actorId: a.id, actorName: actorName(a),
+    ...(!pending ? { reviewerId: a.id, reviewerName: actorName(a), reviewedAt: new Date() } : {}) } });
+  await bindAttachments(tx, input.attachmentIds, 'AMOUNT_CORRECTION', c.id, a);
+  await event(tx, 'LINE', p.id, 'CORRECT_ADVANCE_AMOUNT', a, c, reason);
+  if (pending) {
+    await tx.pcLine.update({ where: { id: p.id }, data: { version: { increment: 1 } } });
+    await notify(tx, 'AMOUNT_CORRECTION', p.id, p.version + 1, `${p.number}有个人垫付金额更正待${financeFacts ? '财务' : '资金审批负责人'}复核`, financeFacts ? s.financeIds : s.fundApproverIds, a);
+  } else await applyAmountCorrection(tx, c.id, p, a);
+  return { id: p.id, correctionId: c.id, status: c.status };
+}
+
+async function reviewAmountCorrection(tx: Tx, input: PcInput, a: PcActor) {
+  const c = await tx.pcAmountCorrection.findUnique({ where: { id: pcText(input.correctionId, '更正记录', 100) } });
+  if (!c) throw new PurchasingError('更正记录不存在');
+  pcVersion(c.version, input.correctionVersion);
+  if (c.status !== 'PENDING') conflict('该金额更正已经处理，请刷新查看');
+  responsible(await settings(tx), c.reviewRole === 'FINANCE' ? 'financeIds' : 'fundApproverIds', a);
+  const p = await getLine(tx, c.lineId), approve = input.action === 'APPROVE_AMOUNT_CORRECTION';
+  if (approve && JSON.stringify(amountBasis(p)) !== JSON.stringify(c.before)) {
+    // JSONB key order is not stable; compare canonical scalar fields instead.
+    const before = pcRecord(c.before), current = amountBasis(p);
+    if (Object.entries(current).some(([key, value]) => String(value) !== String(before[key]))) conflict('原金额或结算事实已变化，请退回后重新核对更正');
+  }
+  const reason = pcText(input.reason, '复核说明', 1000);
+  await tx.pcAmountCorrection.update({ where: { id: c.id }, data: { status: approve ? 'APPLIED' : 'REJECTED', reviewerId: a.id,
+    reviewerName: actorName(a), reviewReason: reason, reviewedAt: new Date(), version: { increment: 1 } } });
+  if (approve) await applyAmountCorrection(tx, c.id, p, a);
+  else await tx.pcLine.update({ where: { id: p.id }, data: { version: { increment: 1 } } });
+  await event(tx, 'LINE', p.id, String(input.action), a, { correctionId: c.id, before: c.before, proposed: c.after }, reason);
+  await tx.systemNotificationRecipient.updateMany({ where: { completedAt: null, notification: { sourceId: p.id, eventType: 'PURCHASING_AMOUNT_CORRECTION' } },
+    data: { completedAt: new Date(), completionKind: 'PURCHASING_HANDLED', completionReason: '金额更正已复核' } });
+  await notify(tx, 'AMOUNT_CORRECTION_RESULT', p.id, (await getLine(tx, p.id)).version,
+    `${p.number}金额更正已${approve ? '通过，后续请款按更正后余额申请' : '退回'}`, [c.actorId], a, 'execution');
+  return { id: p.id, correctionId: c.id, status: approve ? 'APPLIED' : 'REJECTED' };
+}
+
+async function guardPendingAmountCorrections(tx: Tx, input: PcInput, action: string) {
+  if (!['CORRECT_ADVANCE_AMOUNT', 'CORRECT_QUANTITY', 'PURCHASE', 'UPDATE_SETTLEMENT', 'CREATE_FUND', 'OFFLINE_PAYMENT', 'APPROVE_FUNDS', 'RETURN_FUNDS', 'WITHDRAW_FUND', 'CLOSE_FUND', 'PAY', 'BATCH_PAY', 'RETURN_GOODS', 'REFUND', 'REFUND_HANDOVER', 'INVOICE', 'VOID_LINES'].includes(action)) return;
+  const ids = [input.id, ...(Array.isArray(input.entries) ? input.entries.map(v => pcRecord(v).id) : [])].filter((id): id is string => typeof id === 'string');
+  const pending = await tx.pcAmountCorrection.findFirst({ where: { status: 'PENDING', line: { OR: [
+    { id: { in: ids } }, { allocations: { some: { active: true, fundId: { in: ids } } } }, { returns: { some: { id: { in: ids } } } },
+  ] } } });
+  if (pending) conflict('关联采购正在复核金额更正，请先通过或退回更正，再处理资金、价格或退款');
+}
+
 async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
   const s = await settings(tx),
     ps: Line[] = [];
@@ -832,7 +933,7 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
       ].includes(a.id)
     )
       denied("仅采购经办、申请人或垫付人可发起资金申请");
-    if (p.payableCents - p.reservedCents <= 0)
+    if (p.payableCents - p.reservedCents + p.refundedCents <= 0)
       conflict(`${p.name}没有可申请余额`);
     if (p.returns.some((r) => r.refundDueCents > r.companyReceivedCents))
       conflict("请先结清该采购的退款");
@@ -849,7 +950,7 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
     throw new PurchasingError('月结账期尚未确认，请先补充结算资料后合并请款，或分别申请');
   const
     amount = pcInt(input.amountCents, "申请金额（分）"),
-    available = ps.map((p) => p.payableCents - p.reservedCents),
+    available = ps.map((p) => p.payableCents - p.reservedCents + p.refundedCents),
     original = sum(available);
   pcInt(original, "本次明细合计");
   const adjustment = pcChoice(
@@ -1599,6 +1700,7 @@ export async function mutatePurchasing(
       }
       let result: unknown;
       const action = pcText(input.action, "操作类型", 60);
+      await guardPendingAmountCorrections(tx, input, action);
       if (action === "SAVE_SETTINGS") result = await saveSettings(tx, input, a);
       else if (action === "CREATE_FIXTURE_PURCHASE") result = await createFixturePurchase(tx, input, a);
       else if (action === "SAVE_REQUEST")
@@ -1610,6 +1712,8 @@ export async function mutatePurchasing(
       else if (action === "PURCHASE") result = await purchase(tx, input, a);
       else if (action === 'UPDATE_SETTLEMENT') result = await updateSettlement(tx, input, a);
       else if (action === 'CORRECT_QUANTITY') result = await correctQuantity(tx, input, a);
+      else if (action === 'CORRECT_ADVANCE_AMOUNT') result = await correctAdvanceAmount(tx, input, a);
+      else if (['APPROVE_AMOUNT_CORRECTION', 'REJECT_AMOUNT_CORRECTION'].includes(action)) result = await reviewAmountCorrection(tx, input, a);
       else if (action === "CREATE_FUND")
         result = await createFund(tx, input, a);
       else if (

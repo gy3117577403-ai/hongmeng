@@ -263,7 +263,7 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_purchasing_ci'
           npx prisma migrate deploy
-          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-batch-payment-integration.test.ts tests/knowledge-office-integration.test.ts tests/purchasing-notifications.test.ts tests/purchasing-finance-export-integration.test.ts tests/material-shortage-filter-integration.test.ts tests/material-arrival-outcome-integration.test.ts tests/purchasing-followup-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/quality-review-closure-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
+          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-amount-correction-integration.test.ts tests/purchasing-batch-payment-integration.test.ts tests/knowledge-office-integration.test.ts tests/purchasing-notifications.test.ts tests/purchasing-finance-export-integration.test.ts tests/material-shortage-filter-integration.test.ts tests/material-arrival-outcome-integration.test.ts tests/purchasing-followup-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/quality-review-closure-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
       - name: Issue work order PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -727,6 +727,8 @@ jobs:
           OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-release \
             S3_ENDPOINT=http://127.0.0.1:19000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
             SMOKE_BASE_URL=http://127.0.0.1:3000 bash scripts/check-knowledge-preview-browser.sh
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public' THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-release npx tsx scripts/seed-three-fixes-smoke.ts
+          THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-release SMOKE_BASE_URL=http://127.0.0.1:3000 node scripts/smoke-three-fixes-browser.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime hongmeng-release-smoke node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/release-fixture.json
@@ -852,6 +854,36 @@ jobs:
             sleep $((attempt * 10))
           done
           test "$pushed" = 1
+      - name: Publish verified images to Hangzhou
+        env:
+          RELEASE_REGISTRY_AUTH: ${{ secrets.CODEX_HANGZHOU_RELEASE_AUTH }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_REGISTRY_AUTH"
+          umask 077
+          registry_config="$(mktemp -d)"
+          trap 'rm -rf "$registry_config"' EXIT
+          printf '%s' "$RELEASE_REGISTRY_AUTH" > "$registry_config/config.json"
+          unset RELEASE_REGISTRY_AUTH
+          target_repository=crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng
+          for tag in "${{ github.ref_name }}" "office-preview-${{ github.ref_name }}"; do
+            source_image="ghcr.io/${{ github.repository }}:$tag"
+            target_image="$target_repository:$tag"
+            digest="$(docker buildx imagetools inspect "$source_image" | awk '$1 == "Digest:" { print $2; exit }')"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            existing="$(docker --config "$registry_config" buildx imagetools inspect "$target_image" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            test -z "$existing" || test "$existing" = "$digest"
+            if [ -z "$existing" ]; then
+              docker tag "$source_image" "$target_image"
+              pushed=0
+              for attempt in 1 2 3; do
+                if timeout 600s docker --config "$registry_config" push "$target_image"; then pushed=1; break; fi
+                sleep 5
+              done
+              test "$pushed" = 1
+            fi
+            test "$(docker --config "$registry_config" buildx imagetools inspect "$target_image" | awk '$1 == "Digest:" { print $2; exit }')" = "$digest"
+          done
       - name: Verify China mirror manifest and blobs
         id: china_mirror
         continue-on-error: true
@@ -1258,6 +1290,8 @@ jobs:
             OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
             S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
             SMOKE_BASE_URL=http://127.0.0.1:3300 bash scripts/check-knowledge-preview-browser.sh
+          DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-hangzhou npx tsx scripts/seed-three-fixes-smoke.ts
+          THREE_FIXES_QA_ALLOW=disposable-three-fixes-runtime THREE_FIXES_QA_OUTPUT=output/playwright/three-fixes-hangzhou SMOKE_BASE_URL=http://127.0.0.1:3300 node scripts/smoke-three-fixes-browser.mjs
           mkdir -p artifacts/finished-goods
           docker exec -i -e FINISHED_GOODS_QA_ALLOW=disposable-finished-goods-runtime "$app_name" node \
             < scripts/seed-finished-goods-smoke.cjs > artifacts/finished-goods/hangzhou-fixture.json
@@ -1318,6 +1352,15 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload three fixes acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: three-fixes-${{ github.ref_name }}
+          if-no-files-found: ignore
+          path: |
+            output/playwright/three-fixes*/*.png
+            output/playwright/three-fixes*/acceptance.txt
       - name: Upload Office preview acceptance
         if: always()
         uses: actions/upload-artifact@v4

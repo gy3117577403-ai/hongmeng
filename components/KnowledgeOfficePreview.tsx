@@ -16,6 +16,7 @@ export function KnowledgeOfficePreview({ file, active = true }: { file: Knowledg
   const [mode, setMode] = useState<'table' | 'pdf'>(excel ? 'table' : 'pdf');
   const [sheetIndex, setSheetIndex] = useState(0);
   const [page, setPage] = useState(1);
+  const [column, setColumn] = useState<number | undefined>(undefined);
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [sheet, setSheet] = useState<SheetPage | null>(null);
@@ -53,13 +54,13 @@ export function KnowledgeOfficePreview({ file, active = true }: { file: Knowledg
     if (status?.tableStatus !== 'ready' || mode !== 'table') return;
     const controller = new AbortController(); let stopped = false;
     setTableBusy(true); setSheetError('');
-    void fetch(`${url}/table?sheet=${sheetIndex}&page=${page}&q=${encodeURIComponent(search)}`, { signal: controller.signal, cache: 'no-store' })
+    void fetch(`${url}/table?sheet=${sheetIndex}&page=${page}&q=${encodeURIComponent(search)}${column === undefined ? '' : '&column=' + column}`, { signal: controller.signal, cache: 'no-store' })
       .then(async response => { const data = await response.json(); if (!response.ok) throw Error(data.error); return data.sheet as SheetPage; })
-      .then(data => { if (!stopped) { setSheet(data); if (scroll.current) scroll.current.scrollTop = 0; } })
+      .then(data => { if (!stopped) { setSheet(data); setPage(data.page); if (scroll.current) scroll.current.scrollTop = 0; } })
       .catch(failure => { if (!stopped) { setSheet(null); setSheetError(failure.message || '工作表加载失败'); } })
       .finally(() => { if (!stopped) setTableBusy(false); });
     return () => { stopped = true; controller.abort(); };
-  }, [url, status?.tableStatus, sheetIndex, page, search, mode, retry]);
+  }, [url, status?.tableStatus, sheetIndex, page, search, mode, retry, column]);
   const doRetry = useCallback(() => { setError(''); setRetry(value => value + 1); }, []);
   const currentState = mode === 'table' ? status?.tableStatus : status?.pdfStatus;
   const currentError = mode === 'table' ? status?.tableError : status?.pdfError;
@@ -85,7 +86,7 @@ export function KnowledgeOfficePreview({ file, active = true }: { file: Knowledg
           <PdfViewer dashboardMode fileId={`${file.fileId}-office-pdf`} title={file.title} contentUrl={status.pdfUrl} downloadUrl={file.downloadUrl} viewUrl={status.pdfUrl} page={pdfPage} onPageChange={setPdfPage} />
         </div> : <>
           <nav className={styles.sheets} aria-label="工作表">{status?.sheets.map((item, index) => <button type="button" key={index} aria-pressed={sheetIndex === index}
-            onClick={() => { setSheetIndex(index); setPage(1); setQuery(''); setSearch(''); setSheet(null); }}>{item.name}</button>)}</nav>
+            onClick={() => { setSheetIndex(index); setPage(1); setColumn(undefined); setQuery(''); setSearch(''); setSheet(null); }}>{item.name}</button>)}</nav>
           <div className={styles.tools}>
             <label className={styles.search}><Search size={15} /><input type="search" aria-label="搜索当前工作表" placeholder="搜索当前工作表" value={query} onChange={event => setQuery(event.target.value)} /></label>
             <label><input type="checkbox" checked={freezeRow} onChange={event => setFreezeRow(event.target.checked)} />冻结首行</label>
@@ -96,16 +97,16 @@ export function KnowledgeOfficePreview({ file, active = true }: { file: Knowledg
             {tableBusy && <div className={styles.loading}><Loader2 className="spin" size={16} />加载工作表…</div>}
             {sheetError ? <div className={styles.state} role="alert"><p>{sheetError}</p><button type="button" onClick={doRetry}>重新加载工作表</button></div>
               : sheet && <table className={`${freezeRow ? styles.freezeRow : ''} ${freezeColumn ? styles.freezeColumn : ''}`} style={{ fontSize: `${12 * zoom / 100}px` }}>
-                <thead><tr><th scope="col" className={styles.rowNumber}>行</th>{Array.from({ length: sheet.columnCount }, (_, col) => <th key={col} scope="col" style={{ minWidth: sheet.widths[col] * zoom / 100 }}>{columnName(col)}</th>)}</tr>
-                  {freezeRow && sheet.header && <tr className={styles.firstRow}><th scope="row" className={styles.rowNumber}>1</th>{sheet.header.cells.map((value, col) => <th key={col} scope="col">{value}</th>)}</tr>}
+                <thead><tr><th scope="col" className={styles.rowNumber}>行</th>{Array.from({ length: sheet.visibleColumns }, (_, col) => <th key={col} scope="col" style={{ minWidth: sheet.widths[col + sheet.columnOffset] * zoom / 100 }}>{columnName(col + sheet.columnOffset)}</th>)}</tr>
+                  {freezeRow && sheet.header && <tr className={styles.firstRow}><th scope="row" className={styles.rowNumber}>{sheet.header.index}</th>{sheet.header.cells.map((value, col) => <th key={col} scope="col">{value}</th>)}</tr>}
                 </thead>
-                <tbody>{sheet.rows.filter(row => !freezeRow || row.index !== 1).map(row => <tr key={row.index}>
+                <tbody>{sheet.rows.filter(row => !freezeRow || row.index !== sheet.header?.index).map(row => <tr key={row.index}>
                   <th scope="row" className={styles.rowNumber}>{row.index}</th>{row.cells.map((value, col) => <td key={col}>{value}</td>)}
                 </tr>)}</tbody>
               </table>}
             {sheet && !sheet.rows.length && <p className={styles.empty}>{search ? '未找到匹配的单元格' : '此工作表没有内容'}</p>}
           </div>
-          <footer className={styles.footer}><span>{sheet ? `${sheet.totalRows} 行${search ? '匹配' : ''} · ${sheet.columnCount} 列` : '加载中'}</span>
+          <div className={styles.tools}>{sheet && sheet.columnCount - (sheet.firstColumn || 0) > 40 && <><button type="button" disabled={tableBusy || sheet.columnOffset <= (sheet.firstColumn || 0)} onClick={() => setColumn(Math.max(sheet.firstColumn || 0, sheet.columnOffset-40))}>前 40 列</button><label>起始列 <input aria-label="起始列编号" type="number" min={(sheet.firstColumn || 0)+1} max={sheet.columnCount} value={sheet.columnOffset+1} onChange={e => setColumn(Math.max(0,Number(e.target.value)-1))}/></label><span>{columnName(sheet.columnOffset)} — {columnName(sheet.columnOffset+sheet.visibleColumns-1)}</span><button type="button" disabled={tableBusy || sheet.columnOffset+sheet.visibleColumns >= sheet.columnCount} onClick={() => setColumn(sheet.columnOffset+40)}>后 40 列</button></>}</div><footer className={styles.footer}><span>{sheet ? `${sheet.totalRows} 行${search ? '匹配' : ''} · ${sheet.columnCount} 列` : '加载中'}</span>
             <div><button type="button" disabled={tableBusy || !sheet || sheet.page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button>
               <label>第 <input type="number" aria-label="工作表页码" min={1} max={sheet?.totalPages || 1} value={page} onChange={event => setPage(Math.max(1, Math.min(sheet?.totalPages || 1, Number(event.target.value) || 1)))} /> / {sheet?.totalPages || 1} 页</label>
               <button type="button" disabled={tableBusy || !sheet || sheet.page >= sheet.totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></div>

@@ -44,3 +44,6 @@ windows-import-helper/**/obj/
 windows-import-helper/artifacts/
 windows-import-helper/**/*.user
 windows-import-helper/.vs/
+
+# Disposable local acceptance data and private originals
+/.local/

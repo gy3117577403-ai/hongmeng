@@ -5,8 +5,11 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getObjectStream, putObject, deleteObjectsBestEffort } from '@/lib/s3';
 import { isExcelFile, isOfficeFile, OFFICE_RENDERER_VERSION, type PreviewSheet, type SheetMetadata, type OfficePreviewStatus } from '@/lib/knowledge-preview-types';
+import { knowledgeRowRanges, paginateKnowledgeSheet } from '@/lib/knowledge-sheet-parser';
 
 type StoredSheet = SheetMetadata & { objectKey: string };
+type SheetChunk = { objectKey: string; firstRow: number; lastRow: number };
+type ChunkedSheet = PreviewSheet & { chunks?: SheetChunk[] };
 export class KnowledgePreviewError extends Error {
   constructor(message: string, public status = 400) { super(message); }
 }
@@ -34,10 +37,10 @@ export async function ensureKnowledgePreview(attachmentId: string, retry = false
       await tx.knowledgeAttachmentPreview.update({ where: { attachmentId }, data: { sourceObjectKey: attachment.objectKey,
         rendererVersion: OFFICE_RENDERER_VERSION, status: 'pending', tableStatus: isExcelFile(attachment.fileType) ? 'pending' : 'unavailable',
         pdfStatus: 'pending', sheets: [], pdfKey: null, tableError: null, pdfError: null, attempts: 0, leaseToken: null, leaseUntil: null } });
-    } else if (retry && ['ready', 'failed'].includes(current.status) && (current.pdfStatus === 'failed' || current.tableStatus === 'failed')) {
+    } else if (retry && ['ready', 'failed'].includes(current.status) && (current.pdfStatus === 'failed' || current.tableStatus === 'failed' || (current.sheets as unknown as StoredSheet[]).some(s => s.error))) {
       await tx.knowledgeAttachmentPreview.update({ where: { attachmentId }, data: { status: 'pending', attempts: 0,
         ...(current.pdfStatus === 'failed' ? { pdfStatus: 'pending', pdfError: null } : {}),
-        ...(current.tableStatus === 'failed' ? { tableStatus: 'pending', tableError: null } : {}) } });
+        ...(current.tableStatus === 'failed' || (current.sheets as unknown as StoredSheet[]).some(s => s.error) ? { tableStatus: 'pending', tableError: null } : {}) } });
     }
     return tx.knowledgeAttachmentPreview.findUniqueOrThrow({ where: { attachmentId } });
   });
@@ -144,9 +147,16 @@ export async function processKnowledgePreview() {
       try {
         const sheets = await parseInWorker(bytes); const manifest: StoredSheet[] = [];
         for (let i = 0; i < sheets.length; i++) {
-          const { rows: _rows, merges: _merges, ...metadata } = sheets[i];
+          const { rows, merges: _merges, hiddenRows: _hidden, ...metadata } = sheets[i];
+          const chunks: SheetChunk[] = [];
+          for (let start = 0; start < rows.length; start += 1000) {
+            const part = rows.slice(start, start + 1000);
+            const chunkKey = `${prefix}/sheet-${i}-rows-${start}.json`; keys.push(chunkKey);
+            await putObject({ key: chunkKey, body: Buffer.from(JSON.stringify(part)), contentType: 'application/json', originalName: 'rows.json' });
+            chunks.push({ objectKey: chunkKey, firstRow: part[0].index, lastRow: part.at(-1)!.index });
+          }
           const objectKey = `${prefix}/sheet-${i}.json`; keys.push(objectKey);
-          await putObject({ key: objectKey, body: Buffer.from(JSON.stringify(sheets[i])), contentType: 'application/json', originalName: `${i}.json` });
+          await putObject({ key: objectKey, body: Buffer.from(JSON.stringify({ ...sheets[i], rows: [], chunks })), contentType: 'application/json', originalName: `${i}.json` });
           manifest.push({ ...metadata, objectKey });
         }
         const saved = await prisma.knowledgeAttachmentPreview.updateMany({ where: guard, data: { sheets: manifest, tableStatus: 'ready', tableError: null } });
@@ -181,9 +191,42 @@ function safePreviewError(error: unknown, fallback: string) {
   return error instanceof Error && /^[\u3400-\u9fff〔]/.test(error.message) ? error.message.slice(0, 250) : fallback;
 }
 
-export async function readKnowledgePreviewSheet(attachmentId: string, index: number) {
+async function readSheetManifest(attachmentId: string, index: number): Promise<ChunkedSheet> {
   const preview = await readableKnowledgePreview(attachmentId);
   const sheets = preview.sheets as unknown as StoredSheet[];
   if (preview.tableStatus !== 'ready' || !Number.isInteger(index) || index < 0 || !sheets[index]) throw new KnowledgePreviewError('工作表尚未生成或不存在', 404);
-  return JSON.parse((await readPreviewObject(sheets[index].objectKey, 64 * 1024 * 1024)).toString('utf8')) as PreviewSheet;
+  if (sheets[index].error) throw new KnowledgePreviewError(sheets[index].error!, 422);
+  return JSON.parse((await readPreviewObject(sheets[index].objectKey, 64 * 1024 * 1024)).toString('utf8')) as ChunkedSheet;
+}
+
+async function readSheetChunk(chunk: SheetChunk): Promise<PreviewSheet['rows']> {
+  return JSON.parse((await readPreviewObject(chunk.objectKey, 64 * 1024 * 1024)).toString('utf8'));
+}
+
+/** Used by diagnostics. HTTP readers use the bounded regional reader below. */
+export async function readKnowledgePreviewSheet(attachmentId: string, index: number): Promise<PreviewSheet> {
+  const sheet = await readSheetManifest(attachmentId, index);
+  for (const chunk of sheet.chunks || []) sheet.rows.push(...await readSheetChunk(chunk));
+  return sheet;
+}
+
+export async function readKnowledgePreviewPage(attachmentId: string, index: number, page: number, query = '', column?: number) {
+  const sheet = await readSheetManifest(attachmentId, index);
+  const search = query.trim().slice(0, 200).toLocaleLowerCase();
+  // Search every chunk of this worksheet, keeping matching row numbers only.
+  let ranges: [number, number][];
+  if (search && sheet.chunks) {
+    const matches: PreviewSheet['rows'] = [];
+    for (const chunk of sheet.chunks) {
+      const rows = await readSheetChunk(chunk);
+      for (const row of rows) if (Object.values(row.cells).some(v => v.toLocaleLowerCase().includes(search))) matches.push({ index: row.index, cells: { 0: search } });
+    }
+    ranges = knowledgeRowRanges({ ...sheet, rows: matches }, search);
+  } else ranges = knowledgeRowRanges(sheet, search);
+  const window = paginateKnowledgeSheet(sheet, page, query, column, ranges);
+  const indices = [...window.rows.map(row => row.index), sheet.firstRow || 1];
+  for (const chunk of sheet.chunks || []) {
+    if (indices.some(index => index >= chunk.firstRow && index <= chunk.lastRow)) sheet.rows.push(...await readSheetChunk(chunk));
+  }
+  return paginateKnowledgeSheet(sheet, page, query, column, ranges);
 }

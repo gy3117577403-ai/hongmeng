@@ -75,7 +75,7 @@ export function pcLineRow(p: Line): PcRow {
     receivedQty: p.receivedQty,
     cancelledQty: p.cancelledQty,
     returnedQty: p.returnedQty,
-    availableCents: Math.max(0, p.payableCents - p.reservedCents),
+    availableCents: Math.max(0, p.payableCents - p.reservedCents + p.refundedCents),
     paidCents: p.paidCents - p.refundedCents,
     invoiceCents: p.invoiceCents,
     refundOpen: p.returns.reduce(
@@ -521,6 +521,7 @@ export async function purchasingDetail(id: string, a: PcActor) {
       },
       contractLines: { include: { contract: true } },
       invoiceLines: { include: { invoice: true } },
+      amountCorrections: { orderBy: { createdAt: "desc" } },
     },
   });
   if (!p || p.request.deletedAt)
@@ -533,6 +534,7 @@ export async function purchasingDetail(id: string, a: PcActor) {
   const ids = [
     p.id,
     p.requestId,
+    ...p.amountCorrections.map(c => c.id),
     ...p.contractLines.map((x) => x.contractId),
     ...p.invoiceLines.map((x) => x.invoiceId),
     ...p.allocations.map((x) => x.fundId),

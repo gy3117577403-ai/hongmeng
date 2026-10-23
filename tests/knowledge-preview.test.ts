@@ -33,9 +33,26 @@ test('missing formula cache is explicit, hidden sheets stay hidden and merged co
   assert.equal(paginateKnowledgeSheet(parsed[0], 999).rows.at(-1)?.index, 311);
   assert.equal(paginateKnowledgeSheet(parsed[0], 1, '<script>').totalRows, 0);
 });
-test('excessive ranges are explicitly rejected, never silently truncated', () => {
-  const sheet = XLSX.utils.aoa_to_sheet([['too large']]); sheet['!ref'] = 'A1:IV2000';
-  assert.throws(() => parseKnowledgeWorkbook(bytes(sheet)), /超出在线表格预览范围/);
+test('format-only tails do not enlarge the effective table; real far cells remain accessible', () => {
+  const sheet = XLSX.utils.aoa_to_sheet([['型号', '数量'], ['000123', 5]]); sheet['!ref'] = 'A1:XFD2982';
+  const parsed = parseKnowledgeWorkbook(bytes(sheet))[0];
+  assert.equal(parsed.columnCount, 2); assert.equal(parsed.rowCount, 2); assert.equal(parsed.nonEmptyCells, 4);
+  sheet.XFD2982 = { t: 's', v: '末列真实资料' };
+  const wide = parseKnowledgeWorkbook(bytes(sheet))[0];
+  assert.equal(wide.columnCount, 16384);
+  const end = paginateKnowledgeSheet(wide, 1, '末列真实资料', 16383);
+  assert.equal(end.totalRows, 1); assert.equal(end.rows[0].index, 2982);
+  assert.equal(end.rows[0].cells[16383 - end.columnOffset], '末列真实资料');
+  assert.ok(end.visibleColumns <= 40);
+});
+test('more than fifty worksheets and hidden rows do not prevent other sheets being read', () => {
+  const book = XLSX.utils.book_new();
+  for (let i = 0; i < 55; i++) XLSX.utils.book_append_sheet(book, XLSX.utils.aoa_to_sheet([[`页${i}`], ['隐藏'], ['末行']]), `表${i}`);
+  book.Sheets['表54']['!rows'] = [{}, { hidden: true }];
+  const sheets = parseKnowledgeWorkbook(XLSX.write(book, { type: 'buffer', bookType: 'xlsx' }));
+  assert.equal(sheets.length, 55);
+  assert.equal(paginateKnowledgeSheet(sheets[54], 1, '隐藏').totalRows, 0);
+  assert.deepEqual(paginateKnowledgeSheet(sheets[54], 1).rows.map(r => r.index), [1, 3]);
 });
 test('knowledge readers can preview and retry without acquiring edit permission', () => {
   const reader = resolveAccessContext([

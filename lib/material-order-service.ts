@@ -99,13 +99,62 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
     }
     if (serializeMaterialOrder(current).cancelled || current.sampleTask?.deletedAt || current.planOrder && (current.planOrder.deletedAt || ['cancelled','completed'].includes(current.planOrder.status))) throw new MaterialInputError('订单已取消，仅可查看历史记录', 409);
     if (action !== 'note' && (!Number.isInteger(suppliedVersion) || current.version !== suppliedVersion)) throw new MaterialInputError('订单已被更新，已刷新数据；请核对后重新提交', 409);
-    if (['confirm_prepared', 'confirm_arrival', 'confirm_outcome', 'cancel_duplicate', 'verify_arrival', 'complete', 'reopen', 'resolve'].includes(action) && !canConfirm) throw new MaterialInputError('需要仓库到料确认权限', 403);
+    if (['verify_arrivals', 'confirm_prepared', 'confirm_arrival', 'confirm_outcome', 'cancel_duplicate', 'verify_arrival', 'complete', 'reopen', 'resolve'].includes(action) && !canConfirm) throw new MaterialInputError('需要仓库到料确认权限', 403);
     if (input.workspace === 'warehouse' && ['record_shipment', 'cancel_shipment', 'report_arrival', 'eta'].includes(action)) throw new MaterialInputError('发货与交期请在物料追踪中维护', 400);
     const now = new Date();
     let content = text(input.note), eventId = text(input.exceptionId, 100), arrivalId = text(input.arrivalId, 100);
     let event = current.exceptionCases.find(e => e.id === eventId);
     const auditDetail: { [key: string]: Prisma.InputJsonValue | null } = { exceptionCaseId: eventId || null, arrivalId: arrivalId || null, requestKey: key };
-    if (action === 'confirm_prepared' || current.planOrderId && action === 'complete') {
+    if (action === 'verify_arrivals') {
+      if (current.status === 'completed') throw new MaterialInputError('已配齐订单请先重新核对', 409);
+      const entries = input.entries as { arrivalId?: unknown; acceptedQuantity?: unknown; itemComplete?: unknown }[];
+      if (!Array.isArray(entries) || !entries.length || entries.length > 100 || entries.some(e => !e || typeof e !== 'object')) throw new MaterialInputError('请选择 1 至 100 批待核验到料');
+      if (new Set(entries.map(e => e.arrivalId)).size !== entries.length) throw new MaterialInputError('同一批次不能重复核验');
+      const affected = new Map<string, boolean>();
+      const rejectedItems = new Set<string>();
+      for (const entry of entries) {
+        const item = current.exceptionCases.find(e => e.status === 'OPEN' && e.arrivals.some(b => b.id === entry.arrivalId));
+        const batch = item?.arrivals.find(b => b.id === entry.arrivalId);
+        if (!item || !batch || batch.status !== 'ARRIVED') throw new MaterialInputError('所选批次已核验、尚未报到或不属于本单，请刷新', 409);
+        const accepted = materialQuantity(entry.acceptedQuantity)!;
+        if (accepted > batch.quantity) throw new MaterialInputError('可用数量不能超过本批报到数量');
+        const rejected = Math.round((batch.quantity - accepted) * 1e6) / 1e6;
+        if (rejected > 0 && !content) throw new MaterialInputError('请说明少到、错料或不合格原因');
+        if (rejected > 0 && entry.itemComplete === true) throw new MaterialInputError('本批仍有异常待补，不能确认本项补齐');
+        if (rejected > 0) rejectedItems.add(item.id);
+        await tx.materialArrivalBatch.update({ where: { id: batch.id }, data: { status: 'VERIFIED', acceptedQuantity: accepted, rejectedQuantity: rejected, verifiedAt: now, verifiedById: actorId, note: content || batch.note } });
+        affected.set(item.id, affected.get(item.id) === true || entry.itemComplete === true);
+        await tx.warehouseMaterialActivity.create({ data: { taskId: id, action: 'verify_arrival', actorId,
+          content: `${item.materialModel}：仓库核验可用 ${accepted} ${item.unit}${rejected ? `，需补货 ${rejected}` : ''}${content ? `；${content}` : ''}`,
+          detail: { exceptionCaseId: item.id, arrivalId: batch.id, requestKey: key, acceptedQuantity: accepted, rejectedQuantity: rejected } } });
+      }
+      for (const [itemId, complete] of affected) {
+        if (complete && rejectedItems.has(itemId)) throw new MaterialInputError('本项仍有异常待补，不能确认补齐');
+        const item = await tx.warehouseMaterialExceptionCase.findUniqueOrThrow({ where: { id: itemId }, include: { arrivals: true } });
+        const totals = materialAmounts(item.shortageQuantity, item.arrivals);
+        if (complete && (totals.pending || totals.transit)) throw new MaterialInputError('确认本项补齐前，请先核验本项全部批次');
+        const solved = !totals.pending && !totals.transit && (item.shortageQuantity === null ? complete : totals.usable + 1e-6 >= item.shortageQuantity);
+        const status = solved ? 'RESOLVED' : totals.pending > 0 && totals.remaining === 0 ? 'WAITING_WAREHOUSE' : 'IN_PROGRESS';
+        const progress = `批量核验后累计可用 ${totals.usable} ${item.unit}，${solved ? '本项已补齐' : item.shortageQuantity === null ? '待确认补齐结果' : `仍缺 ${totals.missing} ${item.unit}`}`;
+        await tx.warehouseMaterialExceptionCase.update({ where: { id: itemId }, data: { receivedQuantity: totals.usable + totals.pending,
+          ...(solved ? { status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, resolutionNote: content || progress, arrivalOutcome: 'COMPLETE' } : {}) } });
+        const follow = await tx.materialFollowUpTask.upsert({ where: { warehouseExceptionId: itemId },
+          create: { warehouseTaskId: id, warehouseExceptionId: itemId, createdById: actorId, status, latestProgress: progress, lastFollowedAt: now, ...(solved ? { resolvedAt: now, resolvedById: actorId } : {}) },
+          update: { status, latestProgress: progress, lastFollowedAt: now, version: { increment: 1 }, ...(solved ? { resolvedAt: now, resolvedById: actorId } : {}) } });
+        await tx.materialFollowUpActivity.create({ data: { taskId: follow.id, action, content: progress, actorId, toStatus: status } });
+      }
+      await synchronizeWarehouseExceptions(tx, id, actorId);
+      if (input.confirmComplete === true) {
+        if (input.physicalConfirmed !== true) throw new MaterialInputError('请确认已按实物核对产品配套数量');
+        if (current.planOrderId) {
+          try { await confirmPoolQuantity(tx, id, poolInteger(input.preparedQuantity, '累计可配套数量'), actorId); }
+          catch (e) { if (e instanceof PoolError) throw new MaterialInputError(e.message, e.status); throw e; }
+        } else {
+          const latest = await tx.warehouseMaterialTask.findUniqueOrThrow({ where: { id } });
+          await updateWarehouseException(tx, id, { action: 'complete', version: latest.version, note: content || '仓库批量核验并确认整单齐料' }, actorId, true);
+        }
+      }
+    } else if (action === 'confirm_prepared' || current.planOrderId && action === 'complete') {
       try { await confirmPoolQuantity(tx,id,poolInteger(input.preparedQuantity,'累计可配套数量'),actorId); } catch(e) { if(e instanceof PoolError) throw new MaterialInputError(e.message,e.status); throw e; }
     } else if (current.planOrderId && action === 'reopen') {
       await synchronizeWarehouseExceptions(tx,id,actorId);

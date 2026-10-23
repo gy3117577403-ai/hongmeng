@@ -7603,11 +7603,34 @@ model PcLine {
   contractLines   PcContractLine[]
   balances        PcStockBalance[]
   movements       PcStockMovement[]
+  amountCorrections PcAmountCorrection[]
 
   @@index([status, createdAt])
   @@index([supplierId, settlement])
   @@index([requestId])
   @@index([completedAt])
+}
+
+model PcAmountCorrection {
+  id           String   @id @default(uuid())
+  lineId       String
+  line         PcLine   @relation(fields: [lineId], references: [id], onDelete: Restrict)
+  status       String   @default("PENDING")
+  before       Json
+  after        Json
+  reason       String
+  reviewRole   String
+  actorId      String
+  actorName    String
+  reviewerId   String?
+  reviewerName String?
+  reviewReason String   @default("")
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  reviewedAt   DateTime?
+
+  @@index([lineId, createdAt])
+  @@index([status, reviewRole])
 }
 
 model PcFund {
