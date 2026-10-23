@@ -24,6 +24,7 @@ test('receipt status uses historical receipts and cancelled outstanding quantity
   assert.equal(pcReceiptState({ ...base, cancelledQty: 5 }).state, 'CANCELLED');
   assert.equal(pcReceiptState({ ...base, status: 'APPROVED' }).state, 'NOT_ORDERED');
   assert.equal(pcReceiptState({ ...base, status: 'VOID' }).state, 'CANCELLED');
+  assert.equal(pcReceiptState({ ...base, status: 'VOID' }).pending, 0, 'void purchases have no outstanding receipt even when the original quantity is retained');
   assert.deepEqual(pcReceiptState({ ...base, receivedQty: 5, returnedQty: 5 }), { state: 'RECEIVED', label: '已入库', expected: 5, pending: 0, returned: 5 });
 });
 const line = { id: 'a', status: 'ORDERED', payableCents: 200, reservedCents: 0, refundedCents: 0, settlement: 'ADVANCE', payee: '甲', payeeUserId: 'u', bank: '银行', account: 'A', supplierId: 's1', currency: 'CNY', cycle: '', request: { source: 'NORMAL', applicantId: 'u', submitterId: 'u' }, returns: [], amountCorrections: [] };

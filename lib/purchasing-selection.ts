@@ -15,7 +15,7 @@ export function pcReceiptState(p: Pick<PcRow, 'status' | 'quantity' | 'receivedQ
   const state = p.status === 'VOID' || expected === 0 ? 'CANCELLED'
     : p.status !== 'ORDERED' ? 'NOT_ORDERED'
     : p.receivedQty <= 0 ? 'UNRECEIVED' : pending > 0 ? 'PARTIAL' : 'RECEIVED';
-  return { state, label: PC_RECEIPT_STATES[state], expected, pending, returned: p.returnedQty };
+  return { state, label: PC_RECEIPT_STATES[state], expected, pending: state === 'CANCELLED' ? 0 : pending, returned: p.returnedQty };
 }
 
 type FundingLine = {
