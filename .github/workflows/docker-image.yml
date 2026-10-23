@@ -113,9 +113,7 @@ jobs:
           npm ci
           npx prisma generate
           bash scripts/pull-ci-minio.sh
-          # Match the source release browser runtime, including Chinese font metrics.
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-noto-cjk
+          # CJK fonts are copied from the pinned converter after it starts below.
           if ! command -v google-chrome >/dev/null 2>&1; then
             npx --yes --package @playwright/cli@0.1.19 playwright-cli install-browser chrome
           fi
@@ -593,8 +591,7 @@ jobs:
           PRODUCTION_BOARD_QA_BASE=http://127.0.0.1:3000 \
             PRODUCTION_BOARD_QA_FIXTURE=artifacts/production-collaboration/fixture.json \
             node scripts/smoke-production-board-browser.mjs
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-noto-cjk
+          BROWSER_FONT_CONTAINER=hongmeng-release-office-preview bash scripts/prepare-browser-fonts.sh
           mkdir -p artifacts/material-collaboration
           docker exec -i -e MATERIAL_COLLAB_QA_ALLOW=disposable-material-runtime hongmeng-release-smoke node \
             < scripts/seed-material-collaboration-smoke.cjs > artifacts/material-collaboration/release-fixture.json
@@ -1042,6 +1039,7 @@ jobs:
           docker network create "$network" >/dev/null
           docker run -d --name "$converter_name" --network "$network" --memory=1536m --cpus=2 \
             --tmpfs /tmp:rw,size=805306368,mode=1777 "$converter_image" >/dev/null
+          BROWSER_FONT_CONTAINER="$converter_name" bash scripts/prepare-browser-fonts.sh
           docker run -d --name "$postgres_name" --network "$network" --tmpfs /var/lib/postgresql/data \
             -p 127.0.0.1:25437:5432 \
             -e POSTGRES_USER=postgres \

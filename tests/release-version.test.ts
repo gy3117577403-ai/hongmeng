@@ -16,7 +16,7 @@ const dockerfile = readFileSync(resolve(repositoryRoot, 'Dockerfile'), 'utf8');
 const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/docker-image.yml'), 'utf8');
 const appInfo = readFileSync(resolve(repositoryRoot, 'lib/app-info.ts'), 'utf8');
 
-const expectedPackageVersion = '1.34.281';
+const expectedPackageVersion = '1.34.282';
 const expectedImageVersion = `v${expectedPackageVersion}`;
 
 test('release workflow scripts remain below the GitHub expression size limit', () => {
