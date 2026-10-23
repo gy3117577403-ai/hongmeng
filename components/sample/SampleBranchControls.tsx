@@ -40,7 +40,7 @@ export function SampleBranchControls({ type, week, carry, refresh, onChange, war
   const facetParams = new URLSearchParams(filters); for(const key of ['week','carry','focusId','page','pageSize']) facetParams.delete(key); const facetKey=facetParams.toString();
   useEffect(() => {
     const ctrl = new AbortController(); setLoading(true);
-    sampleRequest(`/api/sample-tasks/weeks?${facetKey}&taskType=${type}${warehouse ? '&warehouse=true' : ''}`, { signal: ctrl.signal }).then(body => { setWeeks(body.weeks); setCurrent(body.currentWeek); setFailed(false); }).catch(e => { if (e.name !== 'AbortError') setFailed(true); }).finally(()=>{if(!ctrl.signal.aborted)setLoading(false);});
+    sampleRequest(`/api/${warehouse?'warehouse/':''}sample-tasks/weeks?${facetKey}&taskType=${type}${warehouse ? '&warehouse=true' : ''}`, { signal: ctrl.signal }).then(body => { setWeeks(body.weeks); setCurrent(body.currentWeek); setFailed(false); }).catch(e => { if (e.name !== 'AbortError') setFailed(true); }).finally(()=>{if(!ctrl.signal.aborted)setLoading(false);});
     return () => ctrl.abort();
   }, [type, refresh, warehouse, facetKey]);
   const count = (key: string) => { const value=weeks.find(w => w.week === key); return loading?'…':failed?'—':value?.total || 0; };

@@ -189,6 +189,7 @@ export function pcFundingKey(p: {
   ]);
 }
 export type PcRow = {
+  fundingIssue?: string;
   source?: string;
   fixtureId?: string | null;
   fixturePackageId?: string | null;

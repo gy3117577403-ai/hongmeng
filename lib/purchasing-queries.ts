@@ -11,7 +11,10 @@ import {
 } from "@/lib/purchasing-domain";
 import type { PcActor } from "@/lib/purchasing-service";
 import { pcHasPaymentAccount } from './purchasing-fields';
+import { PC_RECEIPT_STATES, pcFundingIssue } from './purchasing-selection';
 export type PcQuery = {
+  receiptState?: string;
+  receiptIds?: string[];
   source?: string;
   view?: string;
   executionStage?: string;
@@ -32,6 +35,7 @@ export type PcQuery = {
   ids?: string[];
 };
 const include = {
+  amountCorrections: { where: { status: 'PENDING' }, select: { status: true } },
   request: true,
   supplier: true,
   returns: true,
@@ -172,6 +176,7 @@ function lineWhere(
       ],
     });
   if (q.ids?.length) and.push({ id: { in: q.ids } });
+  if (q.receiptIds) and.push({ id: { in: q.receiptIds } });
   return { AND: and };
 }
 function fundWhere(
@@ -239,6 +244,16 @@ export async function loadPurchasing(
     }),
   ]);
   q = { ...q, ...purchasingTaskFilters(q.task, a.id, settings) };
+  if (q.receiptState && !['funds', 'finance', 'stock'].includes(view)) {
+    if (!(q.receiptState in PC_RECEIPT_STATES)) throw new PurchasingError('入库状态筛选无效');
+    const matches = await prisma.$queryRaw<{id: string}[]>(Prisma.sql`
+      SELECT p.id FROM "PcLine" p JOIN "PcRequest" r ON r.id=p."requestId"
+      WHERE r."deletedAt" IS NULL AND r.source=${q.source === 'FIXTURE' ? 'FIXTURE' : 'NORMAL'}
+      AND (CASE WHEN p.status='VOID' OR p.quantity-p."cancelledQty"<=0 THEN 'CANCELLED'
+        WHEN p.status<>'ORDERED' THEN 'NOT_ORDERED' WHEN p."receivedQty"<=0 THEN 'UNRECEIVED'
+        WHEN p."receivedQty"+p."cancelledQty"<p.quantity THEN 'PARTIAL' ELSE 'RECEIVED' END)=${q.receiptState}`);
+    q = { ...q, receiptIds: matches.map(r => r.id) };
+  }
   const permission = (
     key: "purchaseApproverIds" | "fundApproverIds" | "financeIds" | "buyerIds",
   ) => settings?.[key].includes(a.id) || false;
@@ -259,10 +274,7 @@ export async function loadPurchasing(
         prisma.pcFund.findMany({
           where,
           include: { allocations: { include: { line: true } } },
-          orderBy:
-            q.sort === "amount"
-              ? { amountCents: "desc" }
-              : { createdAt: "desc" },
+          orderBy: [q.sort === "amount" ? { amountCents: "desc" } : { createdAt: "desc" }, { id: "asc" }],
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),
@@ -352,12 +364,7 @@ export async function loadPurchasing(
       prisma.pcLine.findMany({
         where,
         include,
-        orderBy:
-          q.sort === "amount"
-            ? { payableCents: "desc" }
-            : q.sort === "need"
-              ? { needDate: "asc" }
-              : { createdAt: "desc" },
+        orderBy: [q.sort === "amount" ? { payableCents: "desc" } : q.sort === "need" ? { needDate: "asc" } : { createdAt: "desc" }, { id: "asc" }],
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
@@ -368,7 +375,7 @@ export async function loadPurchasing(
         _sum: { payableCents: true, estimateCents: true },
       }),
     ]);
-    rows = ps.map(pcLineRow);
+    rows = ps.map(p => ({ ...pcLineRow(p), fundingIssue: pcFundingIssue(p, a.id, settings?.buyerIds || []) }));
     total = count;
     totalCents = agg.reduce(
       (s, g) =>

@@ -1076,6 +1076,19 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
     );
   return { id: f.id, number: f.number, version: f.version };
 }
+async function createFundBatch(tx: Tx, input: PcInput, a: PcActor) {
+  if (!Array.isArray(input.groups) || !input.groups.length || input.groups.length > 100)
+    throw new PurchasingError('请保留 1 至 100 个请款分组');
+  const groups = input.groups.map(pcRecord);
+  const allEntries = groups.flatMap(group => entries(group.entries));
+  pcIds(allEntries.map(entry => entry.id), '采购明细');
+  const funds = [];
+  for (const group of groups) {
+    await guardPendingAmountCorrections(tx, group, 'CREATE_FUND');
+    funds.push(await createFund(tx, { ...group, adjustment: 'NONE', attachmentIds: [] }, a));
+  }
+  return { funds, count: funds.length };
+}
 async function changeFunds(tx: Tx, input: PcInput, a: PcActor) {
   const s = await settings(tx),
     action = String(input.action),
@@ -1716,6 +1729,7 @@ export async function mutatePurchasing(
       else if (['APPROVE_AMOUNT_CORRECTION', 'REJECT_AMOUNT_CORRECTION'].includes(action)) result = await reviewAmountCorrection(tx, input, a);
       else if (action === "CREATE_FUND")
         result = await createFund(tx, input, a);
+      else if (action === 'BATCH_CREATE_FUNDS') result = await createFundBatch(tx, input, a);
       else if (
         [
           "APPROVE_FUNDS",

@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import { requireUser } from "@/lib/auth";
 import { loadPurchasing, purchasingFundsForExport } from "@/lib/purchasing-queries";
 import { buildPurchasingFundWorkbook } from "@/lib/purchasing-export";
+import { pcReceiptState } from '@/lib/purchasing-selection';
 import { purchasingError, purchasingQuery } from "@/lib/purchasing-http";
 import {
   PC_SETTLEMENTS,
@@ -25,6 +26,8 @@ export async function GET(req: NextRequest) {
       } });
     }
     const data = await loadPurchasing({ ...q, page: 1, pageSize: 10000 }, a);
+    if (q.ids?.length && data.rows.length !== new Set(q.ids).size)
+      throw new PurchasingError('部分选中记录已变化或不再符合筛选，请刷新并核对后导出');
     if (data.total > 10000)
       throw new PurchasingError(
         "当前超过 10000 条，请缩小日期或供应商范围后导出",
@@ -63,6 +66,8 @@ export async function GET(req: NextRequest) {
               "取消待收数量",
               "状态",
               "需求日期",
+              "入库状态",
+              "待收数量",
             ]
     ).map((header, i) => ({
       header,
@@ -99,6 +104,8 @@ export async function GET(req: NextRequest) {
                 r.cancelledQty,
                 r.completed ? "已完成" : PC_STATES[r.status] || r.status,
                 r.needDate,
+                pcReceiptState(r).label,
+                pcReceiptState(r).pending,
               ],
       );
     sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };

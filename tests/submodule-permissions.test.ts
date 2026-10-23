@@ -7,6 +7,17 @@ import { canAccessAppRoute } from '../lib/app-route-access';
 import { canReadReportSource } from '../lib/report-branch-access';
 import { delegatedApprovalNotice, supportedHandoffApproval } from '../lib/approval-routing';
 function access(permissions: ModulePermissions) {return resolveAccessContext([{profile:'MODULE_ACCESS',grantType:'PRIMARY',scopeKey:'MODULES:ON'},...Object.entries(permissions).map(([key,value])=>({profile:'MODULE_ACCESS' as const,grantType:'CONCURRENT' as const,scopeKey:`MODULE:${key}:${value}`}))]);}
+test('warehouse sample branch works without sample-planning and read-only grants cannot confirm materials', () => {
+  for (const level of ['READ', 'COLLABORATE'] as const) {
+    const a = access({ warehouse: level });
+    assert.equal(canAccessAppRoute(a, '/workspace/warehouse?branch=samples'), true);
+    for (const path of ['/api/warehouse/sample-tasks', '/api/warehouse/sample-tasks/weeks', '/api/warehouse/sample-tasks/example', '/api/warehouse/sample-tasks/example/materials']) assert.equal(canAccessApiRoute(a, path, 'GET'), true, path);
+    assert.equal(canAccessApiRoute(a, '/api/warehouse/sample-tasks/example/materials', 'PATCH'), level === 'COLLABORATE');
+    for (const path of ['/api/sample-tasks', '/api/sample-tasks/example', '/api/sample-tasks/example/submit']) assert.equal(canAccessApiRoute(a, path, 'POST'), false, path);
+    assert.equal(canAccessApiRoute(a, '/api/sample-tasks/example', 'PATCH'), false);
+  }
+  assert.equal(canAccessApiRoute(access({ warehouse: 'READ', 'material-follow-up': 'COLLABORATE' }), '/api/warehouse/sample-tasks/example/materials', 'PATCH'), false);
+});
 for(const item of BUSINESS_SUBMODULES) test(`${item.key}: independent page grant and no administrative authority`,()=>{
  const a=access({[item.key]:'READ'});
  for(const path of item.paths)assert.equal(canAccessAppRoute(a,path),true,path);

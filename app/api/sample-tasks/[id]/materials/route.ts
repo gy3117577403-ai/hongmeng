@@ -10,7 +10,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     await requireUser();
     const task = await prisma.warehouseMaterialTask.findFirst({ where: { sampleTaskId: params.id, sampleTask: { deletedAt: null } }, include: warehouseMaterialTaskDetailInclude });
     return NextResponse.json({ ok: true, task: task ? serializeWarehouseMaterialTask(task) : null });
-  } catch (e) { if (e instanceof UnauthorizedError) return unauthorized(); throw e; }
+  } catch (e) { if (e instanceof UnauthorizedError) return unauthorized(e); throw e; }
 }
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -25,7 +25,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       : await mutateWarehouseException(record.id, { ...input, action: input.confirm === true ? 'complete' : input.action }, user.id, canConfirm);
     return NextResponse.json({ ok: true, task: serializeWarehouseMaterialTask(result) });
   } catch (e) {
-    if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof UnauthorizedError) return unauthorized(e);
     if (e instanceof MaterialInputError) return NextResponse.json({ ok: false, error: e.message }, { status: e.statusCode });
     console.error('sample materials failed', e); return NextResponse.json({ ok: false, error: '配料保存失败，请刷新后重试' }, { status: 500 });
   }

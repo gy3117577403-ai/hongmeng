@@ -261,7 +261,7 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_purchasing_ci'
           npx prisma migrate deploy
-          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-amount-correction-integration.test.ts tests/purchasing-batch-payment-integration.test.ts tests/knowledge-office-integration.test.ts tests/purchasing-notifications.test.ts tests/purchasing-finance-export-integration.test.ts tests/material-shortage-filter-integration.test.ts tests/material-arrival-outcome-integration.test.ts tests/purchasing-followup-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/quality-review-closure-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
+          npx tsx --test --test-concurrency=1 tests/purchasing-integration.test.ts tests/purchasing-selection-integration.test.ts tests/purchasing-amount-correction-integration.test.ts tests/purchasing-batch-payment-integration.test.ts tests/knowledge-office-integration.test.ts tests/purchasing-notifications.test.ts tests/purchasing-finance-export-integration.test.ts tests/material-shortage-filter-integration.test.ts tests/material-arrival-outcome-integration.test.ts tests/purchasing-followup-integration.test.ts tests/quality-fixture-integration.test.ts tests/quality-fixture-scope-integration.test.ts tests/quality-fixture-single-document-integration.test.ts tests/quality-document-return-integration.test.ts tests/quality-review-closure-integration.test.ts tests/drawing-plan-week-integration.test.ts tests/drawing-replacement-integration.test.ts
       - name: Issue work order PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -801,6 +801,7 @@ jobs:
             node scripts/smoke-assembly-manual-browser.mjs
 
 
+          bash scripts/check-purchasing-selection.sh release
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Order pool preparation browser acceptance against exact release image
@@ -1277,6 +1278,7 @@ jobs:
             PURCHASING_IMPROVEMENTS_FIXTURE="$RUNNER_TEMP/batch-knowledge-hangzhou.json" \
             BATCH_KNOWLEDGE_OUTPUT=output/playwright/batch-knowledge-hangzhou \
             node scripts/smoke-batch-knowledge-browser.mjs
+          bash scripts/check-purchasing-selection.sh hangzhou
           DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
             OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
             S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
@@ -1342,6 +1344,17 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload purchasing selection and warehouse acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: purchasing-selection-${{ github.ref_name }}
+          if-no-files-found: ignore
+          path: |
+            output/playwright/purchasing-selection*/*.png
+            output/playwright/purchasing-selection*/browser-result.json
+            output/playwright/purchasing-selection*/browser-runtime.txt
+            output/playwright/purchasing-selection*/selected.xlsx
       - name: Upload three fixes acceptance
         if: always()
         uses: actions/upload-artifact@v4

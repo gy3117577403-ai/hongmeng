@@ -17,7 +17,7 @@ export const ACCESS_DATA_CONTRACTS: Partial<Record<AccessModuleCode, AccessDataC
   QUALITY_DATA: { label: '质量数据', endpoints: ['/api/quality-data/records'] },
   BUSINESS: { label: '业务订单', endpoints: ['/api/work-orders'], datasetKey: 'workOrders' },
   PROCUREMENT: { label: '物料跟进', endpoints: ['/api/material-follow-ups'], datasetKey: 'materialFollowUps' },
-  WAREHOUSE: { label: '仓库管理', endpoints: ['/api/warehouse/material-tasks'] },
+  WAREHOUSE: { label: '仓库管理', endpoints: ['/api/warehouse/material-tasks', '/api/warehouse/sample-tasks', '/api/warehouse/sample-tasks/weeks', '/api/warehouse/sample-tasks/example', '/api/warehouse/sample-tasks/example/materials'] },
   ENGINEERING: { label: '技术资料', endpoints: ['/api/drawing-library'], datasetKey: 'drawings' },
   QUALITY: { label: '质量协同', endpoints: ['/api/issues'], datasetKey: 'issues' },
   PROCESS: { label: '工艺管理', endpoints: ['/api/product-time-profiles'], datasetKey: 'productTimes' },

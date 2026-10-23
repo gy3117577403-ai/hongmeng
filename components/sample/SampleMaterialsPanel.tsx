@@ -8,17 +8,17 @@ import { SampleDialog, sampleRequest, sampleStamp } from './SampleBranchControls
 const sourceName = { PURCHASED: '采购物料', CUSTOMER: '客供物料', UNKNOWN: '待确认来源' };
 const followName: Record<string,string> = { PENDING:'待跟进',IN_PROGRESS:'跟进中',WAITING_ARRIVAL:'等待到料',WAITING_WAREHOUSE:'待仓库确认',RESOLVED:'已解决',CANCELLED:'已取消' };
 const blank = () => ({ key:crypto.randomUUID(),materialModel:'',supplySource:'PURCHASED',shortageQuantity:'',unit:'',exceptionNote:'' });
-export default function SampleMaterialsPanel({ task, user, onChanged, refresh = 0 }: { task:SampleTaskDTO;user:CurrentUserDTO;onChanged:()=>void;refresh?:number }) {
+export default function SampleMaterialsPanel({ task, user, onChanged, refresh = 0, warehouse = false }: { task:SampleTaskDTO;user:CurrentUserDTO;onChanged:()=>void;refresh?:number;warehouse?:boolean }) {
  const [record,setRecord]=useState<WarehouseMaterialTaskDTO|null>(null),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[error,setError]=useState(''),[toast,setToast]=useState('');
  const [tab,setTab]=useState<'shortages'|'history'>('shortages'),[dialog,setDialog]=useState<'shortage'|'resolve'|'reopen'|null>(null),[target,setTarget]=useState<WarehouseMaterialExceptionCaseDTO|null>(null),[reason,setReason]=useState('');
  const [lines,setLines]=useState<ReturnType<typeof blank>[]>([]);
  const canConfirm=user.access.capabilities.includes('WAREHOUSE:UPDATE'),canReport=canConfirm||user.access.capabilities.includes('PROCUREMENT:UPDATE');
  const closed=task.status==='CANCELLED';
- useEffect(()=>{const ctrl=new AbortController();setLoading(true);setError('');sampleRequest(`/api/sample-tasks/${task.id}/materials`,{signal:ctrl.signal}).then(body=>{if(!ctrl.signal.aborted)setRecord(body.task);}).catch(e=>{if(e.name!=='AbortError')setError(e.message);}).finally(()=>{if(!ctrl.signal.aborted)setLoading(false);});return()=>ctrl.abort();},[task.id,task.materialStatus,refresh]);
+ useEffect(()=>{const ctrl=new AbortController();setLoading(true);setRecord(null);setError('');sampleRequest(`/api/${warehouse?'warehouse/':''}sample-tasks/${task.id}/materials`,{signal:ctrl.signal}).then(body=>{if(!ctrl.signal.aborted)setRecord(body.task);}).catch(e=>{if(e.name!=='AbortError')setError(e.message);}).finally(()=>{if(!ctrl.signal.aborted)setLoading(false);});return()=>ctrl.abort();},[task.id,task.materialStatus,refresh,warehouse]);
  useEffect(()=>{if(!toast)return;const timer=setTimeout(()=>setToast(''),3500);return()=>clearTimeout(timer);},[toast]);
  async function send(action:string){if(!record||saving)return;setSaving(true);setError('');try{
   const payload=action==='report_shortages'?{shortages:lines.map(({key,...line})=>({...line,shortageQuantity:line.shortageQuantity.trim()?Number(line.shortageQuantity):null}))}:action==='resolve'?{exceptionId:target?.id,resolution:'pending',note:reason.trim()||'仓库确认已到料'}:action==='reopen'?{note:reason}:{};
-  const body=await sampleRequest(`/api/sample-tasks/${task.id}/materials`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:record.version,action,...payload})});
+  const body=await sampleRequest(`/api/${warehouse?'warehouse/':''}sample-tasks/${task.id}/materials`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({version:record.version,action,...payload})});
   setRecord(body.task);setDialog(null);setToast(action==='complete'?'已确认配齐':action==='report_shortages'?'缺料已登记，已进入对应物料跟进':action==='resolve'?'此项缺料已解决':'已恢复待配料');onChanged();
  }catch(e){setError(e instanceof Error?e.message:'保存失败');}finally{setSaving(false);}}
  const update=(key:string,patch:Partial<ReturnType<typeof blank>>)=>setLines(list=>list.map(row=>row.key===key?{...row,...patch}:row));

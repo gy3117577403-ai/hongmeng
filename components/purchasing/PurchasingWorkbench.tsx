@@ -48,6 +48,7 @@ import {
 import PurchasePushPanel from "./PurchasePushPanel";
 import { purchasingNextStep } from "@/lib/purchasing-presentation";
 import { pcPurchasePricing } from "@/lib/purchasing-pricing";
+import { PC_RECEIPT_STATES, pcReceiptState, pcSelectPage, pcFundingGroups, pcFundingIssue } from '@/lib/purchasing-selection';
 import { PC_UNITS, pcLegacyUnit, pcPaymentValue, pcQuantityText } from "@/lib/purchasing-fields";
 
 type LineDetail = Extract<PcDetail, { kind: "line" }>["record"];
@@ -110,6 +111,7 @@ const titles: Record<string, string> = {
   APPROVE_AMOUNT_CORRECTION: "通过金额更正",
   REJECT_AMOUNT_CORRECTION: "退回金额更正",
   CREATE_FUND: "发起请款 / 报销",
+  BATCH_CREATE_FUNDS: "分组申请请款 / 报销",
   APPROVE_FUNDS: "通过资金审批",
   RETURN_FUNDS: "退回资金申请",
   WITHDRAW_FUND: "撤回资金申请",
@@ -265,11 +267,16 @@ export default function PurchasingWorkbench({
       mine: "",
       sort: "",
       executionStage: initialExecutionStage,
+      receiptState: '',
     }),
     [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]),
     [activeId, setActiveId] = useState(initialRecord),
     [detail, setDetail] = useState<PcDetail | null>(null);
+  const [selectionRows, setSelectionRows] = useState<Record<string, PcRow>>({});
+  const [showSelection, setShowSelection] = useState(false), [selectingAll, setSelectingAll] = useState(false);
+  const selectionEpoch = useRef(0);
+  const clearSelection = useCallback(() => { selectionEpoch.current++; setSelected([]); setSelectionRows({}); setShowSelection(false); }, []);
   const [detailTab, setDetailTab] = useState("overview"),
     [dialog, setDialog] = useState<Dialog | null>(null),
     [form, setForm] = useState<Record<string, string>>({});
@@ -315,20 +322,38 @@ export default function PurchasingWorkbench({
       }),
     [view, task, query, filters, page],
   );
-  const selectedRows = data.rows.filter((r) => selected.includes(r.id));
+  const selectedRows = selected.map(id => { const live = data.rows.find(row => row.id === id), cached = selectionRows[id]; return cached && (!live || cached.version >= live.version) ? cached : live; }).filter((row): row is PcRow => !!row);
+  const selectRows = (rows: PcRow[], checked: boolean) => {
+    try {
+      const next = pcSelectPage(selected, rows.map(row => row.id), checked);
+      setSelectionRows(prior => ({ ...prior, ...Object.fromEntries(rows.map(row => [row.id, row])) }));
+      setSelected(next);
+    } catch (e) { setError(e instanceof Error ? e.message : '选择失败'); }
+  };
+  const selectFiltered = async () => {
+    const epoch = selectionEpoch.current, query = params(); query.set('selection', '1');
+    setSelectingAll(true);
+    try {
+      const rows = await fetch('/api/purchases?' + query).then(response<PcRow[]>);
+      if (epoch !== selectionEpoch.current) return;
+      setSelectionRows(Object.fromEntries(rows.map(row => [row.id, row]))); setSelected(rows.map(row => row.id)); setError('');
+    } catch (e) { if (epoch === selectionEpoch.current) setError(e instanceof Error ? e.message : '选择失败'); }
+    finally { setSelectingAll(false); }
+  };
   const changeFilter = (key: keyof typeof filters, value: string) => {
     setFilters((p) => ({ ...p, [key]: value }));
     setPage(1);
-    setSelected([]);
+    if (selected.length) setMessage('筛选条件已变化，已清空原选择');
+    clearSelection();
   };
   useEffect(() => {
     const t = setTimeout(() => {
       setQuery(search);
       setPage(1);
-      setSelected([]);
+      clearSelection();
     }, 250);
     return () => clearTimeout(t);
-  }, [search]);
+  }, [search, clearSelection]);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -496,6 +521,7 @@ export default function PurchasingWorkbench({
   };
   function rowFromLine(p: LineDetail): PcRow {
     return {
+      fundingIssue: pcFundingIssue(p, user.id, data.settings?.buyerIds || []),
       id: p.id,
       kind: "line",
       number: p.number,
@@ -539,13 +565,8 @@ export default function PurchasingWorkbench({
     setFileTargets({});
     mutation.current = null;
     try {
-      const details = await Promise.all(
-        rows
-          .filter((r) => r.kind !== "stock")
-          .map((r) =>
-            fetch("/api/purchases?record=" + r.id).then(response<PcDetail>),
-          ),
-      );
+      const detailIds = rows.filter(r => r.kind !== 'stock').map(r => r.id);
+      const details = detailIds.length ? await fetch('/api/purchases?records=' + encodeURIComponent(detailIds.join(','))).then(response<PcDetail[]>) : [];
       const lines = details.flatMap((d) =>
           d.kind === "line" ? [d.record] : [],
         ),
@@ -555,6 +576,12 @@ export default function PurchasingWorkbench({
       const p = lines[0],
         r = rows[0];
       const funds = details.flatMap(d => d.kind === "fund" ? [d.record] : []);
+      setSelectionRows(prior => ({ ...prior, ...Object.fromEntries(lines.map(l => [l.id, rowFromLine(l)])) }));
+      if (action === 'CREATE_FUND') {
+        const blocked = lines.map(l => ({ l, issue: pcFundingIssue(l, user.id, data.settings?.buyerIds || []) })).filter(v => v.issue);
+        if (blocked.length) { setShowSelection(true); throw new Error(blocked.map(({l, issue}) => `${l.name}：${issue}`).join('；')); }
+        if (pcFundingGroups(lines).length > 1) action = 'BATCH_CREATE_FUNDS';
+      }
       const currentRows = rows.map(row => {
         const l = lines.find(l => l.id === row.id), f = funds.find(f => f.id === row.id);
         return l ? rowFromLine(l) : f ? { ...row, number: f.number, name: f.payee, payee: f.payee, account: f.account,
@@ -606,6 +633,7 @@ export default function PurchasingWorkbench({
         f.confirmed = '';
       }
       for (const l of lines) {
+        for (const key of ['payee', 'bank', 'account', 'cycle', 'dueDate'] as const) f[key + ':' + l.id] = pcPaymentValue(l[key]);
         f["actual:" + l.id] = yuan(l.actualCents || l.estimateCents);
         f["pricing:" + l.id] = l.status !== "ORDERED" || l.unitPrice ? "UNIT" : "TOTAL";
         f["price:" + l.id] = l.unitPrice || "";
@@ -773,6 +801,15 @@ export default function PurchasingWorkbench({
         entries,
         attachmentIds: files.map((f) => f.id),
       };
+      if (action === 'BATCH_CREATE_FUNDS') {
+        payload = { action, groups: pcFundingGroups(d.lines).map(group => {
+          const first = group[0];
+          return { entries: group.map(l => ({ id: l.id, version: l.version })),
+            amountCents: group.reduce((sum, l) => sum + l.payableCents - l.reservedCents + l.refundedCents, 0),
+            payee: form['payee:' + first.id], bank: form['bank:' + first.id], account: form['account:' + first.id],
+            cycle: form['cycle:' + first.id], dueDate: form['dueDate:' + first.id], reason: form.reason };
+        }) };
+      }
       if (action === "BATCH_PAY") {
         if (!d.rows.length) throw new Error("请保留至少一笔可登记的资金单");
         payload = { action, entries: d.rows.map(r => {
@@ -898,7 +935,7 @@ export default function PurchasingWorkbench({
         body,
       }).then(response<{ id?: string; duplicates?: unknown[]; status?: string }>);
       setDialog(null);
-      setSelected([]);
+      clearSelection();
       if (["CORRECT_ADVANCE_AMOUNT", "APPROVE_AMOUNT_CORRECTION", "REJECT_AMOUNT_CORRECTION"].includes(String(payload.action))) setDetailTab("corrections");
       setRevision((n) => n + 1);
       setMessage(
@@ -986,8 +1023,6 @@ export default function PurchasingWorkbench({
         {line && rows.length === 1 && !rows[0].fixtureId && all(["APPROVED", "ORDERED"]) && data.permissions.approvePurchase && btn("CORRECT_QUANTITY", "核对数量与单位")}
         {line && all(["ORDERED"]) && (
           <>
-            {rows.every((r) => r.availableCents > 0) &&
-              btn("CREATE_FUND", "申请资金", true)}
             {rows.every((r) => r.receivedQty + r.cancelledQty < r.quantity) &&
               btn("RECEIVE", "收货入库", true)}
             {btn("INVOICE", "登记发票")}
@@ -997,6 +1032,7 @@ export default function PurchasingWorkbench({
               btn("OFFLINE_PAYMENT", "补录已付款")}
           </>
         )}
+        {line && rows.some(r => r.status === 'ORDERED') && btn('CREATE_FUND', '请款 / 报销', true)}
         {line &&
           all(["APPROVED", "ORDERED"]) &&
           data.permissions.buy &&
@@ -1142,7 +1178,7 @@ export default function PurchasingWorkbench({
                 setView(v.id);
                 setTask("");
                 setPage(1);
-                setSelected([]);
+                clearSelection();
                 setActiveId("");
                 setFilters((f) => ({ ...f, follow: "", executionStage: "pending" }));
               }}
@@ -1195,7 +1231,7 @@ export default function PurchasingWorkbench({
                 onClick={() => {
                   setTask("");
                   setPage(1);
-                  setSelected([]);
+                  clearSelection();
                 }}
               >
                 {{
@@ -1303,6 +1339,7 @@ export default function PurchasingWorkbench({
                 </select>
               </>
             )}
+            {!['stock', 'funds', 'finance'].includes(view) && <select aria-label="入库状态" value={filters.receiptState} onChange={e => changeFilter('receiptState', e.target.value)}><option value="">全部入库状态</option>{Object.entries(PC_RECEIPT_STATES).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>}
             <button className="pc-export" onClick={() => void exportRows()}>
               <ArrowDownToLine size={15} />
               {selected.length ? "导出选中" : "导出筛选结果"}
@@ -1312,12 +1349,19 @@ export default function PurchasingWorkbench({
             <div className="pc-selection">
               <span>
                 已选 {selected.length} 项 ·{" "}
-                {selectedRows.every(r => r.kind === "fund") ? `剩余待付 ${pcMoney(sum(selectedRows, "availableCents"))}` : pcMoney(sum(selectedRows, "amountCents"))}
+                {selectedRows.every(r => r.kind === "fund") ? `剩余待付 ${pcMoney(sum(selectedRows, "availableCents"))}` : `采购金额 ${pcMoney(sum(selectedRows, "amountCents"))} · 可申请 ${pcMoney(sum(selectedRows.filter(r => r.kind === 'line' && !r.fundingIssue && r.status === 'ORDERED'), 'availableCents'))}`}
               </span>
               {actions(selectedRows, true)}
-              <button onClick={() => setSelected([])}>取消选择</button>
+              <button onClick={() => setShowSelection(v => !v)}>{showSelection ? '收起已选' : '查看已选'}</button>
+              {selectedRows.some(r => r.kind === 'line' && r.fundingIssue) && <button onClick={() => setSelected(selectedRows.filter(r => r.kind === 'line' && !r.fundingIssue).map(r => r.id))}>仅保留可请款 / 报销</button>}
+              <button onClick={clearSelection}>取消选择</button>
             </div>
           )}
+          <div className="pc-selection-tools">
+            <span>表头勾选本页；翻页保留选择。单批最多 100 项。</span>
+            <button disabled={loading || selectingAll || !data.total} onClick={() => void selectFiltered()}>{selectingAll ? '正在读取…' : `选择全部筛选结果（${data.total} 项）`}</button>
+          </div>
+          {showSelection && selected.length > 0 && <div className="pc-selected-list" aria-label="跨页已选明细">{selectedRows.map(r => <div key={r.id}><span><b>{r.name}</b><small>{r.number} · {r.fundingIssue || (r.kind === 'line' ? `可申请 ${pcMoney(r.availableCents)}` : `待付 ${pcMoney(r.availableCents)}`)}</small></span><button onClick={() => selectRows([r], false)} aria-label={'移除选择 ' + r.number}>移除</button></div>)}</div>}
           <div className="pc-table-wrap" aria-busy={loading}>
             <table className="pc-table">
               <thead>
@@ -1326,15 +1370,13 @@ export default function PurchasingWorkbench({
                     <input
                       type="checkbox"
                       aria-label="选择当前页全部记录"
+                      disabled={loading || selectingAll}
+                      ref={el => { if (el) el.indeterminate = data.rows.some(r => selected.includes(r.id)) && !data.rows.every(r => selected.includes(r.id)); }}
                       checked={
                         !!data.rows.length &&
                         data.rows.every((r) => selected.includes(r.id))
                       }
-                      onChange={(e) =>
-                        setSelected(
-                          e.target.checked ? data.rows.map((r) => r.id) : [],
-                        )
-                      }
+                      onChange={(e) => selectRows(data.rows, e.target.checked)}
                     />
                   </th>
                   <th>{view === "stock" ? "物资 / 来源" : "物品 / 单号"}</th>
@@ -1361,13 +1403,8 @@ export default function PurchasingWorkbench({
                         type="checkbox"
                         aria-label={"选择 " + r.number}
                         checked={selected.includes(r.id)}
-                        onChange={(e) =>
-                          setSelected((p) =>
-                            e.target.checked
-                              ? [...p, r.id]
-                              : p.filter((id) => id !== r.id),
-                          )
-                        }
+                        disabled={loading || selectingAll}
+                        onChange={(e) => selectRows([r], e.target.checked)}
                       />
                     </td>
                     <td>
@@ -1436,10 +1473,10 @@ export default function PurchasingWorkbench({
                               ? "已完成"
                               : r.kind === "fund" ? PC_FUND_STATES[r.status] || r.status : PC_STATES[r.status]}
                           </span>
+                          {r.kind === 'line' && (() => { const receipt = pcReceiptState(r); return <div className="pc-receipt"><strong className={'pc-receipt-badge ' + receipt.state.toLowerCase()}>{receipt.state === 'RECEIVED' ? '✓ ' : ''}{receipt.label}</strong>{r.status === 'ORDERED' && <small>已入库 {r.receivedQty} / {receipt.expected} {r.unit} · 待收 {receipt.pending} {r.unit}</small>}{receipt.returned > 0 && <small className="pc-warning">已退货 {receipt.returned} {r.unit}</small>}</div>; })()}
                           {r.status === "ORDERED" ? (
                             <small>
-                              已收 {r.receivedQty}/{r.quantity - r.cancelledQty}{" "}
-                              · 已付 {pcMoney(r.paidCents)}
+                              已付 {pcMoney(r.paidCents)}
                             </small>
                           ) : (
                             <small>
@@ -1497,7 +1534,6 @@ export default function PurchasingWorkbench({
                 disabled={page <= 1 || loading}
                 onClick={() => {
                   setPage((p) => p - 1);
-                  setSelected([]);
                 }}
               >
                 <ChevronLeft size={17} />
@@ -1510,7 +1546,6 @@ export default function PurchasingWorkbench({
                 disabled={page * data.pageSize >= data.total || loading}
                 onClick={() => {
                   setPage((p) => p + 1);
-                  setSelected([]);
                 }}
               >
                 <ChevronRight size={17} />
@@ -2156,7 +2191,7 @@ export default function PurchasingWorkbench({
       {dialog && (
         <div className="pc-overlay">
           <div
-            className={"pc-dialog " + (requestForm || formAction === "BATCH_PAY" ? "pc-dialog-wide" : "")}
+            className={"pc-dialog " + (requestForm || ['BATCH_PAY', 'BATCH_CREATE_FUNDS'].includes(formAction) ? "pc-dialog-wide" : "")}
             role="dialog"
             aria-modal="true"
             aria-labelledby="pc-dialog-title"
@@ -2400,7 +2435,7 @@ export default function PurchasingWorkbench({
                 </>
               )}
               {!requestForm &&
-                !["SAVE_SETTINGS", "BATCH_PAY"].includes(formAction) &&
+                !["SAVE_SETTINGS", "BATCH_PAY", "BATCH_CREATE_FUNDS"].includes(formAction) &&
                 dialog.rows.length > 0 && (
                   <div className="pc-dialog-summary">
                     {dialog.rows.map((r) => (
@@ -2415,6 +2450,16 @@ export default function PurchasingWorkbench({
                   </div>
                 )}
               <div className="pc-form-grid">
+                {formAction === 'BATCH_CREATE_FUNDS' && <section className="pc-wide pc-batch-payment">
+                  <p className="pc-banner">按收款人、账户、结算方式及账期分为 {pcFundingGroups(dialog.lines).length} 组。每组按可申请余额生成一张资金单，任一组校验失败时整批不提交。部分请款可返回后单独选择一组办理。</p>
+                  {pcFundingGroups(dialog.lines).map((group, index) => { const first = group[0]; return <section className="pc-batch-payment-row" key={first.id}>
+                    <h3>第 {index + 1} 组 · {PC_SETTLEMENTS[first.settlement]} · {pcMoney(group.reduce((n, l) => n + l.payableCents - l.reservedCents + l.refundedCents, 0))}</h3>
+                    <ul>{group.map(l => <li key={l.id}>{l.name} · {pcQuantityText(l.quantity, l.unit)} · {pcMoney(l.payableCents - l.reservedCents + l.refundedCents)}</li>)}</ul>
+                    <div className="pc-form-grid"><Field label={`第 ${index + 1} 组收款人`}>{input('payee:' + first.id)}</Field><Field label={`第 ${index + 1} 组开户银行`}>{input('bank:' + first.id)}</Field><Field label={`第 ${index + 1} 组收款账号`} wide>{input('account:' + first.id)}</Field>
+                    {first.settlement === 'MONTHLY' && <Field label={`第 ${index + 1} 组账期（选填）`}>{input('cycle:' + first.id, 'month')}</Field>}<Field label={`第 ${index + 1} 组期望付款日期（选填）`}>{input('dueDate:' + first.id, 'date')}</Field></div>
+                  </section>; })}
+                  <Field label="收款信息变更原因 / 备注" wide>{input('reason')}</Field>
+                </section>}
                 {formAction === "PURCHASE" && (
                   <>
                     <Field label="供应商">
