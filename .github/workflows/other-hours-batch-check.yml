@@ -1,0 +1,70 @@
+name: Other Hours Batch Approval Preflight
+on:
+  push:
+    branches: ["codex/other-hours-batch-v134287"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hongmeng_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_ci?schema=public
+      DAILY_PLAN_ENABLED: 'true'
+      SESSION_SECRET: disposable-other-hours-batch-session-2026-1234567890
+      APP_BASE_URL: http://127.0.0.1:3000
+      S3_ACCESS_KEY_ID: otherbatchstorage
+      S3_SECRET_ACCESS_KEY: disposable-other-hours-storage-2026-123456
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Prepare isolated storage and visual fonts
+        run: |
+          bash scripts/pull-ci-minio.sh
+          docker run -d --name other-hours-batch-storage --network host -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" -e MINIO_ROOT_PASSWORD="$S3_SECRET_ACCESS_KEY" hongmeng-ci-minio:verified-a1a8bd4ac40a server /data --address :19000
+          sudo apt-get -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=1 install -y fonts-noto-cjk
+      - run: npm ci
+      - run: npx prisma generate && npx prisma migrate deploy
+      - name: Approval, concurrent retry and hours reconciliation
+        env:
+          RUN_DB_INTEGRATION: '1'
+        run: npx tsx --test --test-concurrency=1 tests/other-work-hours-integration.test.ts tests/other-work-batch-integration.test.ts tests/employee-attainment-policy-integration.test.ts
+      - name: Full unit regression
+        run: npm run test:unit
+      - run: npm run build
+      - name: Browser, export and performance acceptance
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/other-hours-batch
+          node node_modules/next/dist/bin/next start --hostname 127.0.0.1 -p 3000 > artifacts/other-hours-batch/server.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:3000/login >/dev/null; then break; fi
+            sleep 2
+          done
+          bash scripts/check-other-hours-batch.sh release
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: other-hours-batch-preflight
+          path: |
+            artifacts/other-hours-batch/*.log
+            output/playwright/other-hours-batch*/*.png
+            output/playwright/other-hours-batch*/acceptance.json
+            output/playwright/other-hours-batch*/browser-runtime.txt
+            output/playwright/other-hours-batch*/approved-ledger.xlsx

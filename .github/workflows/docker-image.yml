@@ -369,7 +369,7 @@ jobs:
       - name: Other work hours approval and report PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/other-work-hours-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/other-work-hours-integration.test.ts tests/other-work-batch-integration.test.ts
       - name: Employee attainment effective-date PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -802,6 +802,7 @@ jobs:
 
 
           bash scripts/check-purchasing-selection.sh release
+          bash scripts/check-other-hours-batch.sh release
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Order pool preparation browser acceptance against exact release image
@@ -1279,6 +1280,7 @@ jobs:
             BATCH_KNOWLEDGE_OUTPUT=output/playwright/batch-knowledge-hangzhou \
             node scripts/smoke-batch-knowledge-browser.mjs
           bash scripts/check-purchasing-selection.sh hangzhou
+          bash scripts/check-other-hours-batch.sh hangzhou
           DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
             OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
             S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
@@ -1344,6 +1346,17 @@ jobs:
             echo
             echo "Pulled the complete image anonymously with an empty Docker config, verified linux/amd64 and digest \`$mirror_digest\`, then started it against disposable PostgreSQL and MinIO and passed sample capture, quality data lifecycle, and actionable reporting recovery HTTP smoke."
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload other hours batch and performance acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: other-hours-batch-${{ github.ref_name }}
+          if-no-files-found: ignore
+          path: |
+            output/playwright/other-hours-batch*/*.png
+            output/playwright/other-hours-batch*/acceptance.json
+            output/playwright/other-hours-batch*/browser-runtime.txt
+            output/playwright/other-hours-batch*/approved-ledger.xlsx
       - name: Upload purchasing selection and warehouse acceptance
         if: always()
         uses: actions/upload-artifact@v4

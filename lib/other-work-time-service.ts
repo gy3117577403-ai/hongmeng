@@ -199,7 +199,7 @@ export async function createOtherWork(actor: Actor, data: Record<string, unknown
   });
 }
 
-export async function commandOtherWork(actor: Actor, id: string, data: Record<string, unknown>) {
+export async function commandOtherWork(actor: Actor, id: string, data: Record<string, unknown>, batchId?: string) {
   return prisma.$transaction(async tx => {
     const initial = await recordFor(tx, id, actor);
     await lockEmployee(tx, initial.employeeId);
@@ -249,7 +249,7 @@ export async function commandOtherWork(actor: Actor, id: string, data: Record<st
     } else throw new OtherWorkError('不支持的操作');
     await bump(tx, row, update);
     await audit(tx, row, actor, action, { before: { status: row.status, requestedMinutes: row.requestedMinutes, approvedMinutes: row.approvedMinutes, description: row.description },
-      after: JSON.parse(JSON.stringify(update)), scope: otherWorkScope(actor), attachments: row.attachments.map(a => a.id) }, reason);
+      after: JSON.parse(JSON.stringify(update)), scope: otherWorkScope(actor), attachments: row.attachments.map(a => a.id), ...(batchId ? { batchId } : {}) }, reason);
     if (action === 'CORRECTION_REQUEST') {
       const admins = await tx.user.findMany({ where: { laborRole: 'ADMIN', isActive: true, accountStatus: 'ACTIVE', id: { not: actor.id } }, select: { id: true } });
       await createSystemNotification(tx, { eventType: 'other_work_correction', dedupeKey: 'other-correction:' + id + ':' + row.version, category: 'APPROVAL', title: row.employeeNameSnapshot + '申请更正其他工时', body: reason,
@@ -295,20 +295,54 @@ export async function listOtherWork(actor: Actor, query: URLSearchParams) {
     summary: { approvedMinutes: statusTotals.find(row => row.status === 'APPROVED')?._sum.approvedMinutes || 0, pending: statusCounts.PENDING || 0 },
     categories, employees, byCategory, permissions: { ...otherWorkScope(actor), admin: actor.laborRole === 'ADMIN' }, today: otherWorkToday() };
 }
-export async function detailOtherWork(actor: Actor, id: string) {
-  const row = await recordFor(prisma, id, actor);
-  const [attendance, other, loss, executions, completions, reviewers] = await Promise.all([
-    prisma.attendanceRecord.findFirst({ where: { employeeId: row.employeeId, workDate: row.workDate } }),
-    prisma.otherWorkTimeRequest.findMany({ where: { employeeId: row.employeeId, workDate: row.workDate, status: { in: ['PENDING', 'APPROVED'] }, id: { not: id } }, select: { id: true, status: true, categoryNameSnapshot: true, requestedMinutes: true, approvedMinutes: true, startedAt: true, endedAt: true } }),
-    prisma.abnormalTimeAllocation.findMany({ where: { employeeId: row.employeeId, workDate: row.workDate, event: { deletedAt: null, employeeExempt: true, qualityStatus: 'confirmed' } }, select: { durationMilliseconds: true, event: { select: { approvedDurationMilliseconds: true } } } }),
-    prisma.processExecution.findMany({ where: { employeeId: row.employeeId, voidedAt: null, endedAt: { gte: new Date(row.workDate.getTime() - 8 * 3600000), lt: new Date(row.workDate.getTime() + 16 * 3600000) } }, select: { startedAt: true, endedAt: true, actualLaborMilliseconds: true } }),
-    prisma.processCompletion.findMany({ where: { workDate: row.workDate, voidedAt: null, workStartedAt: { not: null }, workEndedAt: { not: null }, OR: [{ principalEmployeeId: row.employeeId }, { participants: { some: { employeeId: row.employeeId } } }] }, select: { id: true, workStartedAt: true, workEndedAt: true } }),
-    row.status === 'PENDING' ? reviewerIds(prisma, row) : Promise.resolve([]),
+// The workbench requests rows separately from summaries and editor options. Legacy
+// callers retain the complete list contract above, including exports and reports.
+export async function listOtherWorkCompact(actor: Actor, query: URLSearchParams) {
+  const where = otherWorkListWhere(actor, query);
+  const page = Math.max(1, Math.min(100000, Math.floor(Number(query.get('page')) || 1)));
+  const size = 30;
+  const [rows, total] = await Promise.all([
+    prisma.otherWorkTimeRequest.findMany({ where, orderBy: [{ workDate: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * size, take: size,
+      select: { id: true, employeeId: true, createdById: true, teamIdSnapshot: true, toolingJobId: true, version: true, workDate: true,
+        employeeNameSnapshot: true, employeeNoSnapshot: true, teamSnapshot: true, categoryId: true, categoryNameSnapshot: true,
+        requestedMinutes: true, approvedMinutes: true, status: true, description: true, correctionRequestedAt: true,
+        _count: { select: { attachments: { where: { deletedAt: null } } } },
+        reviews: { where: { action: 'REJECT' }, orderBy: { createdAt: 'desc' }, take: 1, select: { reason: true } } } }),
+    prisma.otherWorkTimeRequest.count({ where }),
   ]);
-  return { row: serializeOtherWork(row, actor), context: { attendanceStatus: attendance?.status || 'missing', attendanceMilliseconds: attendance?.actualMilliseconds || 0,
+  return { rows: rows.map(row => ({ ...row, workDate: dateKeyFromDatabase(row.workDate), attachmentCount: row._count.attachments,
+    attachments: [], permissions: { review: row.status === 'PENDING' && canReviewOtherWork(actor, row) } })),
+    pagination: { page, size, total }, permissions: { ...otherWorkScope(actor), admin: actor.laborRole === 'ADMIN' }, today: otherWorkToday() };
+}
+export async function otherWorkSummary(actor: Actor, query: URLSearchParams) {
+  const scopeQuery = new URLSearchParams(query); scopeQuery.delete('status');
+  const totals = await prisma.otherWorkTimeRequest.groupBy({ by: ['status'], where: otherWorkListWhere(actor, scopeQuery), _sum: { approvedMinutes: true }, _count: true });
+  return { statusCounts: Object.fromEntries(totals.map(row => [row.status, row._count])),
+    summary: { approvedMinutes: totals.find(row => row.status === 'APPROVED')?._sum.approvedMinutes || 0, pending: totals.find(row => row.status === 'PENDING')?._count || 0 } };
+}
+export async function otherWorkOptions(actor: Actor, employees = false) {
+  return { categories: await prisma.otherWorkTimeCategory.findMany({ orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] }),
+    employees: employees && actor.laborRole === 'ADMIN' ? await prisma.employee.findMany({ select: { id: true, employeeNo: true, name: true }, orderBy: { employeeNo: 'asc' } }) : [] };
+}
+export async function detailOtherWork(actor: Actor, id: string, includeContext = true) {
+  const row = await recordFor(prisma, id, actor);
+  return { row: serializeOtherWork(row, actor), context: includeContext ? await otherWorkContext(actor, id, true) : null };
+}
+export async function otherWorkContext(actor: Actor, id: string, expanded = false) {
+  const row = await prisma.otherWorkTimeRequest.findUnique({ where: { id }, select: { id: true, createdById: true, employeeId: true, teamIdSnapshot: true, teamSnapshot: true, workDate: true, status: true } });
+  if (!row || !canReadOtherWork(actor, row)) throw new OtherWorkError('申报不存在或没有查看权限', 404);
+  const [attendance, other, loss, executions, completions, reviewerAvailable] = await Promise.all([
+    prisma.attendanceRecord.findFirst({ where: { employeeId: row.employeeId, workDate: row.workDate } }),
+    expanded ? prisma.otherWorkTimeRequest.findMany({ where: { employeeId: row.employeeId, workDate: row.workDate, status: { in: ['PENDING', 'APPROVED'] }, id: { not: id } }, select: { id: true, status: true, categoryNameSnapshot: true, requestedMinutes: true, approvedMinutes: true, startedAt: true, endedAt: true } }) : Promise.resolve([]),
+    prisma.abnormalTimeAllocation.findMany({ where: { employeeId: row.employeeId, workDate: row.workDate, event: { deletedAt: null, employeeExempt: true, qualityStatus: 'confirmed' } }, select: { durationMilliseconds: true, event: { select: { approvedDurationMilliseconds: true } } } }),
+    expanded ? prisma.processExecution.findMany({ where: { employeeId: row.employeeId, voidedAt: null, endedAt: { gte: new Date(row.workDate.getTime() - 8 * 3600000), lt: new Date(row.workDate.getTime() + 16 * 3600000) } }, select: { startedAt: true, endedAt: true, actualLaborMilliseconds: true } }) : Promise.resolve([]),
+    expanded ? prisma.processCompletion.findMany({ where: { workDate: row.workDate, voidedAt: null, workStartedAt: { not: null }, workEndedAt: { not: null }, OR: [{ principalEmployeeId: row.employeeId }, { participants: { some: { employeeId: row.employeeId } } }] }, select: { id: true, workStartedAt: true, workEndedAt: true } }) : Promise.resolve([]),
+    row.status !== 'PENDING' || canReviewOtherWork(actor, row) ? Promise.resolve(true) : reviewerIds(prisma, row).then(ids => ids.length > 0),
+  ]);
+  return { expanded, attendanceStatus: attendance?.status || 'missing', attendanceMilliseconds: attendance?.actualMilliseconds || 0,
     confirmedLossMilliseconds: loss.reduce((sum, a) => sum + (a.event.approvedDurationMilliseconds ?? a.durationMilliseconds), 0), other, executions, completions,
-    reviewerAvailable: row.status !== 'PENDING' || reviewers.length > 0,
-    reviewHint: '仅填时长时无法自动核实时间重叠，请结合安排和订单损耗核对；标准产出工时不等于实际耗时。' } };
+    reviewerAvailable,
+    reviewHint: '仅填时长时无法自动核实时间重叠，请结合安排和订单损耗核对；标准产出工时不等于实际耗时。' };
 }
 
 export async function mutateOtherWorkAttachment(actor: Actor, id: string, version: number,

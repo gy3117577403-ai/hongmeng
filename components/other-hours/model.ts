@@ -9,6 +9,7 @@ export type Row = {
   startedAt: string | null; endedAt: string | null; reviewedByName: string | null; reviewedAt: string | null;
   correctionRequestedAt: string | null; correctionReason: string | null; correctionOfId: string | null;
   attachments: Photo[];
+  attachmentCount?: number;
   reviews: { id: string; action: string; reason: string | null; createdAt: string; actor: { displayName: string; username: string } }[];
   permissions: { edit: boolean; submit: boolean; withdraw: boolean; review: boolean; void: boolean; requestCorrection: boolean };
 };
@@ -21,6 +22,7 @@ export type Data = {
   employees?: { id: string; name: string; employeeNo: string }[];
 };
 export type Context = {
+  expanded?: boolean;
   attendanceStatus: string; attendanceMilliseconds: number; confirmedLossMilliseconds: number; reviewerAvailable: boolean;
   completions: { id: string; workStartedAt: string; workEndedAt: string }[];
   other: { id: string; status: string; categoryNameSnapshot: string; requestedMinutes: number; approvedMinutes: number | null }[];
@@ -56,7 +58,7 @@ export function queryFor(filters: Filters, page: number) {
 export async function api<T>(path: string, options?: RequestInit): Promise<T> {
   let response: Response;
   try { response = await fetch(path, { cache: 'no-store', ...options }); }
-  catch { throw new Error('网络连接失败，请检查网络后重试'); }
+  catch (error) { if (error instanceof Error && error.name === 'AbortError') throw error; throw new Error('网络连接失败，请检查网络后重试'); }
   let value;
   try { value = await response.json(); }
   catch { throw new Error('服务暂时不可用，请稍后重试'); }

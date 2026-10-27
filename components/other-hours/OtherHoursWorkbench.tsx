@@ -1,7 +1,7 @@
 'use client';
 /* eslint-disable @next/next/no-img-element */
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, ChevronLeft, ChevronRight, Clock3, Download, HelpCircle, Info, ListFilter, Plus, QrCode, RefreshCw, Search, X } from 'lucide-react';
 import QRCode from 'qrcode';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -10,6 +10,7 @@ import type { CurrentUserDTO } from '@/types';
 import { OtherHoursDialog } from './OtherHoursDialog';
 import { OtherHoursForm } from './OtherHoursForm';
 import { OtherHoursDetail } from './OtherHoursDetail';
+import { useOtherHoursBatch } from './OtherHoursBatch';
 import { api, compressPhoto, duration, hours, initialForm, monthRange, queryFor, states, toForm, today, type Category, type Context, type Data, type Filters, type Form, type Photo, type Row } from './model';
 import './workbench.css';
 
@@ -18,7 +19,12 @@ const emptyFilters = (field: boolean, approval: boolean): Filters => ({ scope: f
 
 export default function OtherHoursWorkbench({ user, approval = false, field = false }: { user: CurrentUserDTO; approval?: boolean; field?: boolean }) {
   const { showToast } = useToast();
-  const [data, setData] = useState<Data | null>(null);
+  const [listData, setData] = useState<Data | null>(null);
+  const [options, setOptions] = useState<Pick<Data, 'categories' | 'employees'>>({ categories: [], employees: [] });
+  const [summary, setSummary] = useState<Pick<Data, 'summary' | 'statusCounts'> | null>(null);
+  const [summaryError, setSummaryError] = useState('');
+  const [optionsRefresh, setOptionsRefresh] = useState(0);
+  const data = useMemo(() => listData ? { ...listData, ...options, summary: summary?.summary || { approvedMinutes: 0, pending: 0 }, statusCounts: summary?.statusCounts || {} } : null, [listData, options, summary]);
   const [filters, setFilters] = useState<Filters>(() => emptyFilters(field, approval));
   const [filterDraft, setFilterDraft] = useState<Filters>(filters);
   const [searchInput, setSearchInput] = useState('');
@@ -27,6 +33,8 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
   const [initialized, setInitialized] = useState(false);
   const [selected, setSelected] = useState<Row | null>(null);
   const [context, setContext] = useState<Context | null>(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState('');
   const [detailOpen, setDetailOpen] = useState(false);
   const [view, setView] = useState<'form' | 'records'>('form');
   const [composerActive, setComposerActive] = useState(field);
@@ -61,11 +69,16 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
   const continuation = useRef<(() => void) | null>(null);
   const decision = useRef<{ action: string; row: Row; minutes: number } | null>(null);
   const listKey = useRef('');
+  const detailRequest = useRef<AbortController | null>(null);
+  const contextRequest = useRef<AbortController | null>(null);
   selectedRef.current = selected; editorRef.current = editorRow; formState.current = form;
   const dirty = JSON.stringify(form) !== baseline || failedFiles.length > 0;
   const nestedDialog = Boolean(modal || preview);
   const notify = (message: string) => showToast(message, { tone: 'success', duration: 2800 });
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : '操作失败，请重试');
+  const batch = useOtherHoursBatch({ filters, rows: data?.rows || [], enabled: !field && filters.scope === 'manage' && filters.status === 'PENDING' && Boolean(data?.permissions.manage), busy, loading,
+    onBusyChange: value => { busyRef.current = value; setBusy(value); if (value) setError(''); }, onComplete: () => setRefresh(n => n + 1), onError: fail,
+    onView: id => guard(() => { pinnedSelection.current = id; setComposerActive(false); void selectRow(id); }) });
   const changeFilters = (change: Partial<Filters>) => {
     pinnedSelection.current = null;
     setPage(1); setFilters(current => ({ ...current, ...change })); setRefresh(n => n + 1);
@@ -92,16 +105,32 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
     resetEditor(toForm(row), row); correctionOf.current = row.correctionOfId; idempotency.current = '';
     setComposerActive(true); setView('form'); setDetailOpen(false);
   });
+  const loadContext = useCallback(async (id: string, expanded = false) => {
+    contextRequest.current?.abort();
+    const controller = new AbortController(); contextRequest.current = controller;
+    const generation = selectionGeneration.current;
+    setContextLoading(true); setContextError('');
+    try {
+      const result = await api<{ context: Context }>('/api/other-work-times/' + id + '?part=context' + (expanded ? '&expanded=1' : ''), { signal: controller.signal });
+      if (generation === selectionGeneration.current && !controller.signal.aborted) setContext(result.context);
+    } catch (err) { if (!controller.signal.aborted && generation === selectionGeneration.current) setContextError(err instanceof Error ? err.message : '核对信息加载失败'); }
+    finally { if (!controller.signal.aborted && generation === selectionGeneration.current) setContextLoading(false); }
+  }, []);
   const selectRow = useCallback(async (id: string) => {
     const generation = ++selectionGeneration.current;
+    detailRequest.current?.abort(); contextRequest.current?.abort();
+    const controller = new AbortController(); detailRequest.current = controller;
+    setContext(null); setContextError(''); setContextLoading(false);
     selectionId.current = id; setDetailLoading(true);
     try {
-      const result = await api<{ row: Row; context: Context }>('/api/other-work-times/' + id);
+      const result = await api<{ row: Row }>('/api/other-work-times/' + id + '?part=base', { signal: controller.signal });
       if (generation !== selectionGeneration.current) return;
-      setSelected(result.row); selectedRef.current = result.row; setContext(result.context); setApprovedMinutes(result.row.requestedMinutes);
-    } catch (err) { if (generation === selectionGeneration.current) setError(err instanceof Error ? err.message : '详情加载失败'); }
+      setSelected(result.row); selectedRef.current = result.row; setApprovedMinutes(result.row.requestedMinutes);
+      if (result.row.permissions.review || result.row.status === 'PENDING') void loadContext(id);
+    } catch (err) { if (!controller.signal.aborted && generation === selectionGeneration.current) setError(err instanceof Error ? err.message : '详情加载失败'); }
     finally { if (generation === selectionGeneration.current) setDetailLoading(false); }
-  }, []);
+  }, [loadContext]);
+  useEffect(() => () => { detailRequest.current?.abort(); contextRequest.current?.abort(); }, []);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const next = emptyFilters(field, approval);
@@ -116,22 +145,49 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
     setFilters(next); setFilterDraft(next); setInitialized(true);
   }, [approval, field, selectRow]);
   useEffect(() => {
+    if (busy || filters.search === searchInput.trim()) return;
     const timer = setTimeout(() => { setPage(1); setFilters(current => current.search === searchInput.trim() ? current : { ...current, search: searchInput.trim() }); }, 250);
     return () => clearTimeout(timer);
-  }, [searchInput]);
+  }, [searchInput, busy, filters.search]);
+  const summaryKey = queryFor({ ...filters, status: '' }, 1).toString();
+  useEffect(() => {
+    if (!initialized) return;
+    const controller = new AbortController();
+    setSummary(null); setSummaryError('');
+    void api<Pick<Data, 'summary' | 'statusCounts'>>('/api/other-work-times?' + summaryKey + '&part=summary', { signal: controller.signal })
+      .then(value => { if (!controller.signal.aborted) setSummary(value); }).catch(err => { if (!controller.signal.aborted) setSummaryError(err.message); });
+    return () => controller.abort();
+  }, [summaryKey, refresh, initialized]);
+  const needsEmployees = user.laborRole === 'ADMIN' && (composerActive || modal === 'filters');
+  useEffect(() => {
+    if (!initialized) return;
+    const controller = new AbortController();
+    void api<Pick<Data, 'categories' | 'employees'>>('/api/other-work-times?part=options' + (needsEmployees ? '&employees=1' : ''), { signal: controller.signal })
+      .then(value => {
+        if (controller.signal.aborted) return;
+        setOptions(value);
+        if (!formState.current.categoryId) {
+          const categoryId = value.categories.find(c => c.isActive)?.id || '';
+          setBaseline(JSON.stringify({ ...initialForm(), categoryId })); setForm(current => ({ ...current, categoryId }));
+        }
+      }).catch(err => { if (!controller.signal.aborted) setError(err.message); });
+    return () => controller.abort();
+  }, [initialized, needsEmployees, optionsRefresh]);
   useEffect(() => {
     if (!initialized) return;
     let cancelled = false;
+    const controller = new AbortController();
     const generation = ++listGeneration.current;
     const key = JSON.stringify(filters);
     setLoading(true);
     const load = async () => {
       try {
         let result: Data;
-        try { result = await api<Data>('/api/other-work-times?' + queryFor(filters, page)); }
+        try { result = await api<Data>('/api/other-work-times?' + queryFor(filters, page) + '&part=rows', { signal: controller.signal }); }
         catch (err) {
+          if (controller.signal.aborted) return;
           if (filters.scope !== 'manage') throw err;
-          const mine = await api<Data>('/api/other-work-times?' + queryFor({ ...filters, scope: 'mine' }, page));
+          const mine = await api<Data>('/api/other-work-times?' + queryFor({ ...filters, scope: 'mine' }, page) + '&part=rows', { signal: controller.signal });
           if (mine.permissions.manage) throw err;
           if (!cancelled && generation === listGeneration.current) setFilters(current => ({ ...current, scope: 'mine' }));
           return;
@@ -141,16 +197,11 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
         const append = field && page > 1 && listKey.current === key;
         listKey.current = key;
         setData(previous => append && previous ? { ...result, rows: [...new Map([...previous.rows, ...result.rows].map(row => [row.id, row])).values()] } : result);
-        if (!formState.current.categoryId) {
-          const categoryId = result.categories.find(c => c.isActive)?.id || '';
-          setBaseline(JSON.stringify({ ...initialForm(), categoryId }));
-          setForm(current => ({ ...current, categoryId }));
-        }
       } catch (err) { if (!cancelled && generation === listGeneration.current) setError(err instanceof Error ? err.message : '加载失败，请刷新重试'); }
       finally { if (!cancelled && generation === listGeneration.current) setLoading(false); }
     };
     void load();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; controller.abort(); };
   }, [filters, page, refresh, field, initialized]);
   useEffect(() => {
     if (field || composerActive || loading || !data || pinnedSelection.current) return;
@@ -286,11 +337,11 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
   function updateCategory(category?: Category) {
     void perform(async () => {
       await api('/api/other-work-times/categories', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(category ? { ...category, isActive: !category.isActive } : { name: categoryName }) });
-      setCategoryName(''); setRefresh(n => n + 1); notify('事项分类已更新');
+      setCategoryName(''); setOptionsRefresh(n => n + 1); notify('事项分类已更新');
     });
   }
   const update = <K extends keyof Form>(key: K, value: Form[K]) => setForm(current => ({ ...current, [key]: value }));
-  const detail = selected && <OtherHoursDetail row={selected} context={context} busy={busy} approvedMinutes={approvedMinutes} setApprovedMinutes={setApprovedMinutes}
+  const detail = selected && <OtherHoursDetail key={selected.id} row={selected} context={context} contextLoading={contextLoading} contextError={contextError} onLoadContext={() => void loadContext(selected.id, true)} busy={busy} approvedMinutes={approvedMinutes} setApprovedMinutes={setApprovedMinutes}
     onAction={requestAction} onEdit={() => edit(selected)} onCopy={() => fresh(selected)} onPreview={setPreview} allowCopy={selected.employeeId === user.employeeId || Boolean(data?.permissions.admin)} />;
   const decisionTitle: Record<string, string> = { APPROVE: '确认核减时长', REJECT: '退回申报', WITHDRAW: '撤回并修改', VOID: '作废申报', CORRECTION_REQUEST: '申请更正' };
   const decisionAction = decision.current?.action || '';
@@ -323,20 +374,23 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
         <button type="button" disabled={busy} aria-pressed={view === 'records'} onClick={() => { setView('records'); setPage(1); setRefresh(n => n + 1); }}>我的申报</button></nav>}
       {error && !nestedDialog && <div className="oh-feedback error" role="alert"><span>{error}</span><button type="button" className="oh-icon-button" aria-label="关闭错误" onClick={() => setError('')}><X size={16} /></button></div>}
       <div className="oh-layout">
-        <section className="oh-ledger" aria-label={scopeLabel} hidden={field && view !== 'records'}>
+        <section className={'oh-ledger' + (batch.active ? ' oh-ledger-batch' : '')} aria-label={scopeLabel} hidden={field && view !== 'records'}>
           <header className="oh-ledger-header"><div className="oh-ledger-heading">
             {field ? <h2>我的申报</h2> : <div className="oh-scope-tabs"><button type="button" disabled={busy} aria-pressed={filters.scope === 'mine'} onClick={() => changeFilters({ scope: 'mine' })}>我的申报</button>
               {data?.permissions.manage && <button type="button" disabled={busy} aria-pressed={filters.scope === 'manage'} onClick={() => changeFilters({ scope: 'manage' })}>管理台账</button>}</div>}
             <button type="button" className="oh-filter-trigger" disabled={busy} onClick={() => { setFilterDraft(filters); setModal('filters'); }}><span>{rangeLabel}</span><ListFilter size={15} />{field ? '筛选' : ''}</button></div>
             <div className="oh-status-tabs" aria-label="申报状态">{visibleStatuses.map(value => <button type="button" key={value} disabled={busy} aria-pressed={filters.status === value} onClick={() => changeFilters({ status: value })}>
-              {statusLabel(value)}{!field && value && <small>{statusCount(value)}</small>}</button>)}</div>
-            {(!field || filters.search) && <label className="oh-search"><Search size={16} /><input type="search" value={searchInput} aria-label="搜索申报" placeholder={filters.scope === 'mine' ? '搜索事项或工作说明' : '搜索员工、工号或事项'} onChange={e => setSearchInput(e.target.value)} /></label>}
+              {statusLabel(value)}{!field && value && <small>{summary ? statusCount(value) : '…'}</small>}</button>)}</div>
+            {(!field || filters.search) && <label className="oh-search"><Search size={16} /><input type="search" disabled={busy} value={searchInput} aria-label="搜索申报" placeholder={filters.scope === 'mine' ? '搜索事项或工作说明' : '搜索员工、工号或事项'} onChange={e => setSearchInput(e.target.value)} /></label>}
             {(filters.categoryId || filters.corrections || filters.employeeId || !visibleStatuses.includes(filters.status)) && <div className="oh-applied-filters">
               <span>{filters.categoryId ? data?.categories.find(c => c.id === filters.categoryId)?.name : ''}{filters.corrections ? ' · 申请更正' : ''}{!visibleStatuses.includes(filters.status) ? statusLabel(filters.status) : ''}{filters.employeeId ? ' · 指定员工' : ''}</span>
               <button type="button" className="oh-quiet" onClick={() => changeFilters({ categoryId: '', corrections: false, employeeId: '', status: '' })}>清除</button></div>}
           </header>
-          <div className="oh-ledger-summary"><span>当前范围 · 待审批 <b>{data?.summary.pending || 0} 笔</b></span><span>已通过 <b>{hours(data?.summary.approvedMinutes || 0)}</b></span></div>
-          <div className="oh-list" aria-busy={loading}>{data?.rows.map((row, index) => <div key={row.id}>
+          <div className="oh-ledger-summary"><span>当前范围 · 待审批 <b>{summary ? `${summary.summary.pending} 笔` : '统计中…'}</b></span><span>已通过 <b>{summary ? hours(summary.summary.approvedMinutes) : '统计中…'}</b></span></div>
+          {summaryError && <div className="oh-batch-entry"><button type="button" className="oh-quiet" disabled={busy} title={summaryError} onClick={() => setRefresh(n => n + 1)}>统计加载失败，点击重试</button></div>}
+          {batch.trigger && <div className="oh-batch-entry">{batch.trigger}</div>}{batch.toolbar}
+          <div className="oh-list" aria-busy={loading} data-page={page}>{data?.rows.map((row, index) => <div key={row.id} className={batch.active ? 'oh-selectable-row' : undefined}>
+            {batch.active && <input type="checkbox" className="oh-row-checkbox" aria-label={`选择 ${row.employeeNameSnapshot} ${row.employeeNoSnapshot} ${row.requestedMinutes} 分钟 ${row.id}`} checked={batch.selected.has(row.id)} disabled={busy || loading || !row.permissions.review} title={row.permissions.review ? '选择此申报' : '本人或当前不可审批的申报'} onChange={() => batch.toggle(row)} />}
             {field && (index === 0 || data.rows[index - 1].workDate !== row.workDate) && <div className="oh-date-group">{row.workDate === data.today ? '今天 · ' : ''}{row.workDate}</div>}
             <button type="button" disabled={busy} className={'oh-row' + ((!field && selected?.id === row.id && !composerActive) || highlight === row.id ? ' selected' : '')}
               onClick={() => {
@@ -349,13 +403,14 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
               }}>
               <div className="oh-row-top"><strong>{field ? row.categoryNameSnapshot : row.employeeNameSnapshot}</strong><span className={'oh-status status-' + row.status}>{states[row.status]}</span></div>
               <p>{!field && <span>{row.categoryNameSnapshot} · </span>}{row.description || '继续填写工作说明'}</p>
-              <footer><span>{field ? row.attachments.length ? '照片 ' + row.attachments.length + ' 张' : row.workDate.slice(5) : row.workDate.slice(5) + ' · ' + (row.teamSnapshot || '未分组')}</span>
+              <footer><span>{field ? (row.attachmentCount ?? row.attachments.length) ? '照片 ' + (row.attachmentCount ?? row.attachments.length) + ' 张' : row.workDate.slice(5) : row.workDate.slice(5) + ' · ' + (row.teamSnapshot || '未分组')}</span>
                 <b>{duration(row.approvedMinutes ?? row.requestedMinutes)}</b>{field && <ChevronRight size={15} />}</footer>
               {row.status === 'REJECTED' && <small className="oh-row-rejection">{[...row.reviews].reverse().find(r => r.action === 'REJECT')?.reason || '请查看退回原因'}</small>}
               {row.correctionRequestedAt && row.status === 'APPROVED' && <small className="oh-row-correction">已申请更正</small>}
             </button></div>)}
             {!data?.rows.length && <div className="oh-empty"><Clock3 size={28} /><p>{loading ? '正在加载…' : '当前条件下暂无申报'}</p>{!loading && <button type="button" className="oh-quiet" onClick={() => { setSearchInput(''); changeFilters({ ...emptyFilters(field, false), scope: filters.scope, from: '', to: '' }); }}>查看全部记录</button>}</div>}
           </div>
+          {batch.footer}
           <footer className="oh-ledger-footer">{field ? <>{data && data.rows.length < data.pagination.total ? <button type="button" className="oh-load-more" disabled={loading || busy} onClick={() => setPage(n => n + 1)}>{loading ? '正在加载…' : '加载更多'}</button> : <span className="oh-list-end">{data?.rows.length ? '已显示全部记录' : ''}</span>}</> :
             <div className="oh-pagination"><button type="button" aria-label="上一页" disabled={page <= 1 || loading || busy} onClick={() => setPage(n => n - 1)}><ChevronLeft size={16} /></button><span>{page} / {Math.max(1, Math.ceil((data?.pagination.total || 0) / (data?.pagination.size || 30)))}</span>
               <button type="button" aria-label="下一页" disabled={page * (data?.pagination.size || 30) >= (data?.pagination.total || 0) || loading || busy} onClick={() => setPage(n => n + 1)}><ChevronRight size={16} /></button>
@@ -375,7 +430,8 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
         </section>
       </div>
     </div>
-    {field && detailOpen && <OtherHoursDialog title="申报详情" wide onClose={() => { setDetailOpen(false); selectionGeneration.current++; }} busy={busy} interactionEnabled={!nestedDialog}>
+    {batch.dialog}
+    {field && detailOpen && <OtherHoursDialog title="申报详情" wide onClose={() => { setDetailOpen(false); selectionGeneration.current++; contextRequest.current?.abort(); detailRequest.current?.abort(); }} busy={busy} interactionEnabled={!nestedDialog}>
       {detailLoading ? <div className="oh-empty" role="status">正在加载详情…</div> : detail}{error && !nestedDialog && <p className="oh-dialog-error" role="alert">{error}</p>}
     </OtherHoursDialog>}
     {modal && <OtherHoursDialog title={modal === 'help' ? field ? '填写说明' : '其他工时说明' : modal === 'qr' ? '其他工时固定二维码' : modal === 'categories' ? '选择事项分类' : modal === 'filters' ? '筛选申报' : modal === 'decision' ? decisionTitle[decisionAction] : modal === 'discard' ? '填写内容尚未保存' : '管理事项分类'}
