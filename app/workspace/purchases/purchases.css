@@ -783,6 +783,29 @@
 .pc-wide {
   grid-column: 1/-1;
 }
+.pc-reimbursement-total {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  background: #fff5eb;
+  border: 1px solid #ffd5b2;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+.pc-reimbursement-total strong { margin-left: auto; color: #b74700; font-size: 22px; }
+.pc-reimbursement-total small { flex-basis: 100%; color: #6b5c50; }
+.pc-reimbursement-details { border: 1px solid #e0e6ed; border-radius: 8px; margin-top: 16px; overflow: hidden; }
+.pc-reimbursement-details summary { cursor: pointer; padding: 14px 16px; font-weight: 600; color: #415269; }
+.pc-reimbursement-details > .pc-form-grid { padding: 4px 16px 16px; }
+.pc-reimbursement-scroll { max-height: 300px; overflow: auto; }
+.pc-reimbursement-scroll table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pc-reimbursement-scroll th { position: sticky; top: 0; background: #f5f7fa; }
+.pc-reimbursement-scroll th, .pc-reimbursement-scroll td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #e8edf2; }
+.pc-reimbursement-scroll td:first-child { min-width: 180px; }
+.pc-reimbursement-scroll small { display: block; color: #7c899a; margin-top: 4px; }
+.pc-legacy-payee { padding: 12px; border-radius: 6px; background: #fff8ed; line-height: 1.7; align-items: flex-start; }
 .pc-field {
   display: flex;
   flex-direction: column;

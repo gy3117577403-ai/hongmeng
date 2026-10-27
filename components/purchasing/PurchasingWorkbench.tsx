@@ -49,6 +49,7 @@ import PurchasePushPanel from "./PurchasePushPanel";
 import { purchasingNextStep } from "@/lib/purchasing-presentation";
 import { pcPurchasePricing } from "@/lib/purchasing-pricing";
 import { PC_RECEIPT_STATES, pcReceiptState, pcSelectPage, pcFundingGroups, pcFundingIssue } from '@/lib/purchasing-selection';
+import { pcReimbursementScope } from '@/lib/purchasing-reimbursement';
 import { PC_UNITS, pcLegacyUnit, pcPaymentValue, pcQuantityText } from "@/lib/purchasing-fields";
 
 type LineDetail = Extract<PcDetail, { kind: "line" }>["record"];
@@ -111,6 +112,7 @@ const titles: Record<string, string> = {
   APPROVE_AMOUNT_CORRECTION: "通过金额更正",
   REJECT_AMOUNT_CORRECTION: "退回金额更正",
   CREATE_FUND: "发起请款 / 报销",
+  CREATE_REIMBURSEMENT: '快速申请报销',
   BATCH_CREATE_FUNDS: "分组申请请款 / 报销",
   APPROVE_FUNDS: "通过资金审批",
   RETURN_FUNDS: "退回资金申请",
@@ -275,6 +277,8 @@ export default function PurchasingWorkbench({
     [detail, setDetail] = useState<PcDetail | null>(null);
   const [selectionRows, setSelectionRows] = useState<Record<string, PcRow>>({});
   const [showSelection, setShowSelection] = useState(false), [selectingAll, setSelectingAll] = useState(false);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [accountHint, setAccountHint] = useState('');
   const selectionEpoch = useRef(0);
   const clearSelection = useCallback(() => { selectionEpoch.current++; setSelected([]); setSelectionRows({}); setShowSelection(false); }, []);
   const [detailTab, setDetailTab] = useState("overview"),
@@ -580,7 +584,10 @@ export default function PurchasingWorkbench({
       if (action === 'CREATE_FUND') {
         const blocked = lines.map(l => ({ l, issue: pcFundingIssue(l, user.id, data.settings?.buyerIds || []) })).filter(v => v.issue);
         if (blocked.length) { setShowSelection(true); throw new Error(blocked.map(({l, issue}) => `${l.name}：${issue}`).join('；')); }
-        if (pcFundingGroups(lines).length > 1) action = 'BATCH_CREATE_FUNDS';
+        if (lines.some(l => l.settlement === 'ADVANCE')) {
+          pcReimbursementScope(lines);
+          action = 'CREATE_REIMBURSEMENT';
+        } else if (pcFundingGroups(lines).length > 1) action = 'BATCH_CREATE_FUNDS';
       }
       const currentRows = rows.map(row => {
         const l = lines.find(l => l.id === row.id), f = funds.find(f => f.id === row.id);
@@ -614,7 +621,7 @@ export default function PurchasingWorkbench({
         amount: yuan(
           sum(
             currentRows,
-            action === "CREATE_FUND" ||
+            action === "CREATE_FUND" || action === 'CREATE_REIMBURSEMENT' ||
               action === "OFFLINE_PAYMENT" ||
               action === "PAY"
               ? "availableCents"
@@ -626,6 +633,11 @@ export default function PurchasingWorkbench({
         ownerId: data.settings?.ownerId || user.id,
       };
       if (action === "BATCH_PAY") currentRows.forEach(row => { f["amount:" + row.id] = yuan(row.availableCents); });
+      if (action === 'CREATE_REIMBURSEMENT') {
+        f.payeeUserId = pcReimbursementScope(lines).payeeUserId;
+        f.payee = ''; f.bank = ''; f.account = ''; f.dueDate = '';
+        f.confirmLegacyPayee = ''; f.accountEdited = '';
+      }
       if (action === "CORRECT_QUANTITY" && p) {
         const legacy = pcLegacyUnit(p.unit);
         f.quantity = String(p.quantity * (legacy?.factor || 1));
@@ -801,6 +813,13 @@ export default function PurchasingWorkbench({
         entries,
         attachmentIds: files.map((f) => f.id),
       };
+      if (action === 'CREATE_REIMBURSEMENT') {
+        const scope = pcReimbursementScope(d.lines);
+        if (!form.payeeUserId) throw new Error('请选择实际垫付人');
+        if (scope.legacyIds.length && form.confirmLegacyPayee !== '1') throw new Error('请确认历史采购的实际垫付人');
+        payload.confirmLegacyPayee = form.confirmLegacyPayee === '1';
+        payload.amountCents = pcCents(form.amount);
+      }
       if (action === 'BATCH_CREATE_FUNDS') {
         payload = { action, groups: pcFundingGroups(d.lines).map(group => {
           const first = group[0];
@@ -933,7 +952,7 @@ export default function PurchasingWorkbench({
           "Idempotency-Key": mutation.current.key,
         },
         body,
-      }).then(response<{ id?: string; duplicates?: unknown[]; status?: string }>);
+      }).then(response<{ id?: string; number?: string; duplicates?: unknown[]; status?: string }>);
       setDialog(null);
       clearSelection();
       if (["CORRECT_ADVANCE_AMOUNT", "APPROVE_AMOUNT_CORRECTION", "REJECT_AMOUNT_CORRECTION"].includes(String(payload.action))) setDetailTab("corrections");
@@ -943,6 +962,7 @@ export default function PurchasingWorkbench({
           ? payload.submit
             ? "采购申请已提交"
             : "草稿已保存"
+          : payload.action === 'CREATE_REIMBURSEMENT' ? `报销单 ${result.number} 已提交，共 ${dialog.rows.length} 项采购，等待审批`
           : payload.action === "CORRECT_ADVANCE_AMOUNT" && result.status === "PENDING" ? "金额更正已提交复核，通过后生效" : `${titles[String(payload.action)]}已完成`,
       );
       if (result.duplicates?.length)
@@ -1092,6 +1112,7 @@ export default function PurchasingWorkbench({
     "EDIT_REQUEST",
     "PURCHASE",
     "CREATE_FUND",
+    'CREATE_REIMBURSEMENT',
     "PAY",
     "BATCH_PAY",
     "OFFLINE_PAYMENT",
@@ -1101,6 +1122,28 @@ export default function PurchasingWorkbench({
     "CONTRACT",
     "ATTACH_FILES",
   ].includes(formAction);
+  const reimbursementScope = formAction === 'CREATE_REIMBURSEMENT' && dialog?.lines.length ? pcReimbursementScope(dialog.lines) : { payeeUserId: '', legacyIds: [] };
+  useEffect(() => {
+    if (formAction !== 'CREATE_REIMBURSEMENT' || !form.payeeUserId) { setAccountLoading(false); setAccountHint('请选择实际垫付人，自动读取最近的完整收款信息'); return; }
+    const controller = new AbortController(), payerId = form.payeeUserId;
+    setAccountLoading(true); setAccountHint('正在读取收款信息…');
+    fetch('/api/purchases?' + new URLSearchParams({ lookup: '1', type: 'reimbursement-account', payeeUserId: payerId }), { signal: controller.signal })
+      .then(response<{ payer: { id: string; name: string }; account: { payee: string; bank: string; account: string } | null }>)
+      .then(result => {
+        setForm(current => current.payeeUserId !== payerId ? current : { ...current, payerName: result.payer.name,
+          ...(current.accountEdited === '1' ? {} : result.account || { payee: result.payer.name, bank: '', account: '' }) });
+        setAccountHint(result.account ? '已带出最近的完整收款信息，请核对后提交' : '暂无完整账户，补充一次即可用于本次全部采购');
+      }).catch(error => { if (error.name !== 'AbortError') setAccountHint('最近账户读取失败，可手动填写后提交'); })
+      .finally(() => { if (!controller.signal.aborted) setAccountLoading(false); });
+    return () => controller.abort();
+  }, [formAction, form.payeeUserId]);
+  function removeReimbursementLine(id: string) {
+    if (!dialog) return;
+    const lines = dialog.lines.filter(l => l.id !== id), rows = dialog.rows.filter(r => r.id !== id);
+    formDirty.current = true; selectionEpoch.current++;
+    setDialog({ ...dialog, lines, rows }); setSelected(ids => ids.filter(value => value !== id));
+    setForm(current => ({ ...current, amount: yuan(sum(rows, 'availableCents')), confirmLegacyPayee: '' }));
+  }
   return (
     <main className="pc-shell hm-workbench-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
@@ -2193,7 +2236,7 @@ export default function PurchasingWorkbench({
       {dialog && (
         <div className="pc-overlay">
           <div
-            className={"pc-dialog " + (requestForm || ['BATCH_PAY', 'BATCH_CREATE_FUNDS'].includes(formAction) ? "pc-dialog-wide" : "")}
+            className={"pc-dialog " + (requestForm || ['BATCH_PAY', 'BATCH_CREATE_FUNDS', 'CREATE_REIMBURSEMENT'].includes(formAction) ? "pc-dialog-wide" : "")}
             role="dialog"
             aria-modal="true"
             aria-labelledby="pc-dialog-title"
@@ -2437,7 +2480,7 @@ export default function PurchasingWorkbench({
                 </>
               )}
               {!requestForm &&
-                !["SAVE_SETTINGS", "BATCH_PAY", "BATCH_CREATE_FUNDS"].includes(formAction) &&
+                !["SAVE_SETTINGS", "BATCH_PAY", "BATCH_CREATE_FUNDS", 'CREATE_REIMBURSEMENT'].includes(formAction) &&
                 dialog.rows.length > 0 && (
                   <div className="pc-dialog-summary">
                     {dialog.rows.map((r) => (
@@ -2452,6 +2495,21 @@ export default function PurchasingWorkbench({
                   </div>
                 )}
               <div className="pc-form-grid">
+                {formAction === 'CREATE_REIMBURSEMENT' && <section className="pc-wide pc-reimbursement">
+                  <div className="pc-reimbursement-total"><span>已选 <b>{dialog.rows.length}</b> 项 · 一张报销单</span><strong>本次报销 {pcMoney(Math.round(Number(form.amount || '0') * 100))}</strong><small>可报销余额 {pcMoney(sum(dialog.rows, 'availableCents'))}</small></div>
+                  <div className="pc-form-grid">
+                    <Field label="实际垫付人" wide><select value={form.payeeUserId || ''} disabled={!!reimbursementScope.payeeUserId} onChange={e => { setForm(current => ({ ...current, payeeUserId: e.target.value, payee: '', bank: '', account: '', payerName: '', accountEdited: '', confirmLegacyPayee: '' })); }}>
+                      <option value="">请选择实际垫付人</option>
+                      {form.payeeUserId && !data.users.some(u => u.id === form.payeeUserId) && <option value={form.payeeUserId}>{form.payerName || '历史垫付人'}</option>}
+                      {data.users.map(u => <option value={u.id} key={u.id}>{u.name}</option>)}
+                    </select></Field>
+                    <p className="pc-wide pc-hint" role="status">{accountHint}</p>
+                    {(['payee', 'bank', 'account'] as const).map((key, index) => <Field key={key} label={['收款人 / 单位', '开户银行', '收款账号'][index]} wide={key === 'account'}><input autoComplete="off" value={form[key] || ''} onChange={e => setForm(current => ({ ...current, [key]: e.target.value, accountEdited: '1' }))} /></Field>)}
+                    {reimbursementScope.legacyIds.length > 0 && <label className="pc-wide pc-check pc-legacy-payee"><input type="checkbox" checked={form.confirmLegacyPayee === '1'} onChange={e => set('confirmLegacyPayee', e.target.checked ? '1' : '')} />已核实：{reimbursementScope.legacyIds.length} 项历史采购未登记实际垫付人，均由本次所选人员实际垫付</label>}
+                  </div>
+                  <details className="pc-reimbursement-details"><summary>查看 {dialog.rows.length} 项采购明细</summary><div className="pc-reimbursement-scroll"><table><thead><tr><th>物品 / 单号</th><th>数量</th><th>单价</th><th>可报销金额</th><th>操作</th></tr></thead><tbody>{dialog.lines.map(l => <tr key={l.id}><td><b>{l.name}</b><small>{l.number}</small>{!l.payeeUserId && <small>历史垫付人待本次核实</small>}</td><td>{pcQuantityText(l.quantity, l.unit)}</td><td>{l.unitPrice || '总额登记'}</td><td>{pcMoney(l.payableCents - l.reservedCents + l.refundedCents)}</td><td><button onClick={() => removeReimbursementLine(l.id)} aria-label={'移除报销项目 ' + l.number}>移除</button></td></tr>)}</tbody></table></div></details>
+                  <details className="pc-reimbursement-details"><summary>其他信息（选填）</summary><div className="pc-form-grid"><Field label="申请金额（元）">{input('amount', 'number')}</Field><Field label="期望付款日期">{input('dueDate', 'date')}</Field><p className="pc-wide pc-hint">默认报销全部可用余额；可减少本次金额，剩余金额以后继续申请。</p><Field label="报销备注" wide><textarea value={form.reason || ''} onChange={e => set('reason', e.target.value)} /></Field></div></details>
+                </section>}
                 {formAction === 'BATCH_CREATE_FUNDS' && <section className="pc-wide pc-batch-payment">
                   <p className="pc-banner">按收款人、账户、结算方式及账期分为 {pcFundingGroups(dialog.lines).length} 组。每组按可申请余额生成一张资金单，任一组校验失败时整批不提交。部分请款可返回后单独选择一组办理。</p>
                   {pcFundingGroups(dialog.lines).map((group, index) => { const first = group[0]; return <section className="pc-batch-payment-row" key={first.id}>
@@ -2793,6 +2851,7 @@ export default function PurchasingWorkbench({
                     "REFUND_HANDOVER",
                     "INVOICE",
                     "CONTRACT",
+                    'CREATE_REIMBURSEMENT',
                   ].includes(formAction) && (
                     <Field
                       label={
@@ -2875,14 +2934,14 @@ export default function PurchasingWorkbench({
               )}
               <button
                 className="pc-primary"
-                disabled={busy || uploading}
+                disabled={busy || uploading || (formAction === 'CREATE_REIMBURSEMENT' && (accountLoading || !dialog.rows.length))}
                 onClick={() => void submit()}
               >
                 {busy
                   ? "保存中…"
                   : requestForm
                     ? "提交请购申请"
-                    : formAction === "BATCH_PAY" ? `确认登记 ${dialog.rows.length} 笔付款` : "确认" + (formAction === "PAY" ? "登记付款" : "保存")}
+                    : formAction === 'CREATE_REIMBURSEMENT' ? '提交报销申请' : formAction === "BATCH_PAY" ? `确认登记 ${dialog.rows.length} 笔付款` : "确认" + (formAction === "PAY" ? "登记付款" : "保存")}
               </button>
             </footer>
           </div>

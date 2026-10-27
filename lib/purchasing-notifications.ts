@@ -230,7 +230,7 @@ export async function enqueuePurchasingPush(
   actor: PcActor,
   key: string,
 ) {
-  const action = String(input.action);
+  const action = input.action === 'CREATE_REIMBURSEMENT' ? 'CREATE_FUND' : String(input.action);
   if (
     !PC_PUSH_LABELS[action] ||
     action === "TEST" ||

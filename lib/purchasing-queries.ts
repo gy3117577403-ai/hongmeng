@@ -584,6 +584,20 @@ export async function purchasingFundsForExport(q: PcQuery, a: PcActor) {
 }
 export type PcExportFund = Awaited<ReturnType<typeof purchasingFundsForExport>>[number];
 export async function purchasingLookups(q: URLSearchParams) {
+  if (q.get('type') === 'reimbursement-account') {
+    const id = q.get('payeeUserId') || '';
+    if (!id || id.length > 100) throw new PurchasingError('请选择实际垫付人');
+    const payer = await prisma.user.findUnique({ where: { id }, select: { id: true, displayName: true, username: true } });
+    if (!payer) throw new PurchasingError('所选垫付人不存在');
+    const select = { payee: true, bank: true, account: true } as const;
+    const funds = await prisma.pcFund.findMany({ where: { settlement: 'ADVANCE', payeeUserId: id, status: { in: ['PENDING', 'APPROVED', 'PARTIAL', 'PAID', 'CLOSED'] } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 30, select });
+    let account = funds.find(pcHasPaymentAccount);
+    if (!account) {
+      const lines = await prisma.pcLine.findMany({ where: { settlement: 'ADVANCE', payeeUserId: id, status: 'ORDERED', request: { deletedAt: null } }, orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }], take: 100, select });
+      account = lines.find(pcHasPaymentAccount);
+    }
+    return { payer: { id: payer.id, name: payer.displayName || payer.username }, account: account || null };
+  }
   if (q.get("type") === "accounts") {
     const mode = q.get("settlement") || "CORPORATE",
       name = q.get("supplier") || "",

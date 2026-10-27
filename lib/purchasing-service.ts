@@ -12,6 +12,7 @@ import { createFixturePurchase } from "@/lib/quality-fixture-service";
 import { fixtureAvailable } from "@/lib/quality-fixture-domain";
 import { pcPurchasePricing, pcPricingSnapshot, pcGoodsCents } from "@/lib/purchasing-pricing";
 import { pcUnit, pcLegacyUnit, pcPaymentField, pcPaymentValue, pcHasPaymentAccount, pcCycle } from './purchasing-fields';
+import { pcReimbursementScope } from './purchasing-reimbursement';
 import {
   PurchasingError,
   pcChoice,
@@ -909,7 +910,7 @@ async function reviewAmountCorrection(tx: Tx, input: PcInput, a: PcActor) {
 }
 
 async function guardPendingAmountCorrections(tx: Tx, input: PcInput, action: string) {
-  if (!['CORRECT_ADVANCE_AMOUNT', 'CORRECT_QUANTITY', 'PURCHASE', 'UPDATE_SETTLEMENT', 'CREATE_FUND', 'OFFLINE_PAYMENT', 'APPROVE_FUNDS', 'RETURN_FUNDS', 'WITHDRAW_FUND', 'CLOSE_FUND', 'PAY', 'BATCH_PAY', 'RETURN_GOODS', 'REFUND', 'REFUND_HANDOVER', 'INVOICE', 'VOID_LINES'].includes(action)) return;
+  if (!['CORRECT_ADVANCE_AMOUNT', 'CORRECT_QUANTITY', 'PURCHASE', 'UPDATE_SETTLEMENT', 'CREATE_FUND', 'CREATE_REIMBURSEMENT', 'OFFLINE_PAYMENT', 'APPROVE_FUNDS', 'RETURN_FUNDS', 'WITHDRAW_FUND', 'CLOSE_FUND', 'PAY', 'BATCH_PAY', 'RETURN_GOODS', 'REFUND', 'REFUND_HANDOVER', 'INVOICE', 'VOID_LINES'].includes(action)) return;
   const ids = [input.id, ...(Array.isArray(input.entries) ? input.entries.map(v => pcRecord(v).id) : [])].filter((id): id is string => typeof id === 'string');
   const pending = await tx.pcAmountCorrection.findFirst({ where: { status: 'PENDING', line: { OR: [
     { id: { in: ids } }, { allocations: { some: { active: true, fundId: { in: ids } } } }, { returns: { some: { id: { in: ids } } } },
@@ -917,7 +918,7 @@ async function guardPendingAmountCorrections(tx: Tx, input: PcInput, action: str
   if (pending) conflict('关联采购正在复核金额更正，请先通过或退回更正，再处理资金、价格或退款');
 }
 
-async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
+async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false, reimbursement = false) {
   const s = await settings(tx),
     ps: Line[] = [];
   for (const e of entries(input.entries)) {
@@ -941,7 +942,19 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
   }
   if (new Set(ps.map(p => p.request.source)).size !== 1)
     throw new PurchasingError("治具申购与普通采购须分别申请资金");
-  if (new Set(ps.map(pcFundingKey)).size !== 1)
+  let reimbursementPayeeId: string | undefined;
+  if (reimbursement) {
+    const scope = pcReimbursementScope(ps);
+    reimbursementPayeeId = pcText(input.payeeUserId, '实际垫付人', 100);
+    if (scope.payeeUserId && scope.payeeUserId !== reimbursementPayeeId) conflict('实际垫付人与原采购记录不一致，请核对后重试');
+    if (scope.legacyIds.length && input.confirmLegacyPayee !== true) throw new PurchasingError('请确认历史未登记垫付人的采购均由本次所选人员实际垫付');
+    // Existing inactive people may still be owed reimbursement; newly assigning legacy
+    // records requires an active person. Neither path rewrites the original purchase.
+    if (scope.payeeUserId) {
+      if (!await tx.user.findUnique({ where: { id: reimbursementPayeeId }, select: { id: true } })) throw new PurchasingError('历史垫付人不存在，请核对');
+    } else await activeUser(tx, reimbursementPayeeId);
+  }
+  if (!reimbursement && new Set(ps.map(pcFundingKey)).size !== 1)
     throw new PurchasingError(
       "所选记录需拆分：同一资金单须同结算方式、收款人、账户和币种；对公还须同供应商，月结须同账期",
     );
@@ -953,8 +966,9 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
     available = ps.map((p) => p.payableCents - p.reservedCents + p.refundedCents),
     original = sum(available);
   pcInt(original, "本次明细合计");
+  if (reimbursement && (amount <= 0 || amount > original)) throw new PurchasingError('本次报销金额须大于 0 且不超过可报销余额');
   const adjustment = pcChoice(
-    input.adjustment || "NONE",
+    reimbursement ? (amount < original ? 'PARTIAL' : 'NONE') : input.adjustment || "NONE",
     ["NONE", "PARTIAL", "DISCOUNT", "FREIGHT", "ROUNDING"],
     "差额类型",
   );
@@ -967,12 +981,12 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
     throw new PurchasingError("运费不能减少应付金额");
   if (adjustment === "ROUNDING" && Math.abs(delta) > 100)
     throw new PurchasingError("舍入调整不得超过 1 元，请选择其他明确差额类型");
-  const payee = pcPaymentField(input.payee || first.payee, "收款人（请款前须补齐）", 200, true),
-    bank = pcPaymentField(input.bank || first.bank, "开户银行（请款前须补齐）", 200, true),
-    account = pcPaymentField(input.account || first.account, "收款账户（请款前须补齐）", 120, true);
+  const payee = pcPaymentField(reimbursement ? input.payee : input.payee || first.payee, "收款人（请款前须补齐）", 200, true),
+    bank = pcPaymentField(reimbursement ? input.bank : input.bank || first.bank, "开户银行（请款前须补齐）", 200, true),
+    account = pcPaymentField(reimbursement ? input.account : input.account || first.account, "收款账户（请款前须补齐）", 120, true);
   const changed = ps.some(p => (pcPaymentValue(p.payee) && payee !== p.payee) || (pcPaymentValue(p.bank) && bank !== p.bank) || (pcPaymentValue(p.account) && account !== p.account));
   const reason = pcText(
-    input.reason,
+    reimbursement ? pcText(input.reason, '报销备注', 1000, false) || '按本次确认的收款信息统一申请报销' : input.reason,
     "差额 / 收款信息变更原因",
     1000,
     delta !== 0 || changed || offline,
@@ -988,14 +1002,14 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
       settlement: first.settlement,
       supplierId: first.settlement === "ADVANCE" ? null : first.supplierId,
       payee,
-      payeeUserId: first.payeeUserId,
+      payeeUserId: reimbursementPayeeId || first.payeeUserId,
       bank,
       account,
       currency: first.currency,
       cycle: first.settlement === 'MONTHLY' ? pcCycle(input.cycle || first.cycle) : '',
       dueDate: input.dueDate
         ? pcDate(input.dueDate, "期望付款日期")
-        : first.dueDate,
+        : reimbursement ? '' : first.dueDate,
       originalCents: original,
       amountCents: amount,
       adjustment,
@@ -1015,6 +1029,7 @@ async function createFund(tx: Tx, input: PcInput, a: PcActor, offline = false) {
           payee: p.payee,
           bank: p.bank,
           account: p.account,
+          ...(reimbursement ? { originalPayeeUserId: p.payeeUserId, reimbursementPayeeUserId: reimbursementPayeeId, legacyPayeeConfirmed: !p.payeeUserId && input.confirmLegacyPayee === true } : {}),
         })),
       ),
       actorId: a.id,
@@ -1729,6 +1744,7 @@ export async function mutatePurchasing(
       else if (['APPROVE_AMOUNT_CORRECTION', 'REJECT_AMOUNT_CORRECTION'].includes(action)) result = await reviewAmountCorrection(tx, input, a);
       else if (action === "CREATE_FUND")
         result = await createFund(tx, input, a);
+      else if (action === 'CREATE_REIMBURSEMENT') result = await createFund(tx, input, a, false, true);
       else if (action === 'BATCH_CREATE_FUNDS') result = await createFundBatch(tx, input, a);
       else if (
         [

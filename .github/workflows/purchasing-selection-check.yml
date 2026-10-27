@@ -1,7 +1,7 @@
-name: Purchasing Selection and Sample Warehouse Preflight
+name: Quick Reimbursement and Purchasing Preflight
 on:
   push:
-    branches: ["codex/purchasing-selection-warehouse-v134284"]
+    branches: ["codex/quick-reimbursement-v134285"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,8 +36,8 @@ jobs:
       - run: npx prisma generate && npx prisma migrate deploy
       - name: Focused unit and transaction regressions
         run: |
-          npx tsx --test tests/purchasing-selection.test.ts tests/submodule-permissions.test.ts tests/access-data-contracts.test.ts tests/release-version.test.ts
-          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/purchasing-selection-integration.test.ts tests/purchasing-integration.test.ts tests/purchasing-batch-payment-integration.test.ts tests/purchasing-amount-correction-integration.test.ts
+          npx tsx --test tests/purchasing-selection.test.ts tests/purchasing-reimbursement.test.ts tests/submodule-permissions.test.ts tests/access-data-contracts.test.ts tests/release-version.test.ts
+          RUN_DB_INTEGRATION=1 npx tsx --test --test-concurrency=1 tests/purchasing-selection-integration.test.ts tests/purchasing-reimbursement-integration.test.ts tests/purchasing-integration.test.ts tests/purchasing-batch-payment-integration.test.ts tests/purchasing-amount-correction-integration.test.ts
       - run: npm run build
       - name: Real browser acceptance on isolated production build
         run: |
