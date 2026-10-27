@@ -24,6 +24,10 @@ jobs:
       DAILY_PLAN_ENABLED: 'true'
       SESSION_SECRET: disposable-other-hours-batch-session-2026-1234567890
       APP_BASE_URL: http://127.0.0.1:3000
+      S3_ENDPOINT: http://127.0.0.1:19000
+      S3_BUCKET: workorder-resources
+      S3_REGION: auto
+      S3_FORCE_PATH_STYLE: 'true'
       S3_ACCESS_KEY_ID: otherbatchstorage
       S3_SECRET_ACCESS_KEY: disposable-other-hours-storage-2026-123456
     steps:
