@@ -73,7 +73,7 @@ async function scenario(page, origin, f, dir) {
     await dialog.getByLabel('收款账号', { exact: true }).fill('QA-ONE-ACCOUNT');
     await dialog.getByRole('checkbox', { name: /已核实/ }).check();
     await shot('02-single-reimbursement');
-    const submitted = page.waitForResponse(r => r.request().method() === 'POST' && new URL(r.url()).pathname === '/api/purchases');
+    const submitted = page.waitForResponse(r => r.request().method() === 'POST' && r.url().split('?')[0] === origin + '/api/purchases');
     await dialog.getByRole('button', { name: '提交报销申请', exact: true }).click();
     const submitResponse = await submitted, submitBody = await submitResponse.json();
     check(submitResponse.ok() && submitBody.ok && !!submitBody.data.id, 'single reimbursement submission succeeds');
