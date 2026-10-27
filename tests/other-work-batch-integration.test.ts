@@ -55,6 +55,14 @@ test('batch approval preserves per-record authorization, atomic audit and realti
       assert.ok(compact.rows.every(row => row.attachments.length === 0 && row.attachmentCount === 0));
       assert.equal((await otherWorkContext(leader, rows[0].id)).expanded, false);
       assert.equal((await otherWorkContext(leader, rows[0].id, true)).reviewerAvailable, true);
+      const rejected = await create(42);
+      await commandOtherWork(leader, rejected.id, { action: 'REJECT', version: 0, reason: '请补充工作说明' });
+      const rejectedQuery = new URLSearchParams({ ...Object.fromEntries(listQuery), status: 'REJECTED' });
+      const [legacyRejected, compactRejected] = await Promise.all([listOtherWork(leader, rejectedQuery), listOtherWorkCompact(leader, rejectedQuery)]);
+      // The existing ledger card locates the latest rejection by action.
+      assert.equal(compactRejected.rows[0].reviews.find(review => review.action === 'REJECT')?.reason,
+        [...legacyRejected.rows[0].reviews].reverse().find(review => review.action === 'REJECT')?.reason);
+      assert.equal(compactRejected.rows[0].reviews[0].reason, '请补充工作说明');
     });
     await t.test('concurrent retries approve once and do not increase submitted hours', async () => {
       const before = await report();

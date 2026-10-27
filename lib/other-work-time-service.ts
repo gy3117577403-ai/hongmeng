@@ -307,7 +307,7 @@ export async function listOtherWorkCompact(actor: Actor, query: URLSearchParams)
         employeeNameSnapshot: true, employeeNoSnapshot: true, teamSnapshot: true, categoryId: true, categoryNameSnapshot: true,
         requestedMinutes: true, approvedMinutes: true, status: true, description: true, correctionRequestedAt: true,
         _count: { select: { attachments: { where: { deletedAt: null } } } },
-        reviews: { where: { action: 'REJECT' }, orderBy: { createdAt: 'desc' }, take: 1, select: { reason: true } } } }),
+        reviews: { where: { action: 'REJECT' }, orderBy: { createdAt: 'desc' }, take: 1, select: { action: true, reason: true } } } }),
     prisma.otherWorkTimeRequest.count({ where }),
   ]);
   return { rows: rows.map(row => ({ ...row, workDate: dateKeyFromDatabase(row.workDate), attachmentCount: row._count.attachments,
