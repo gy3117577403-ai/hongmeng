@@ -96,6 +96,9 @@ async function scenario(page, origin, f, dir) {
     check((await page.locator('tbody').innerText()).includes('待收 2 件'), 'partial receipt shows remaining quantity');
     await login(f.accounts[0].username, '/workspace/warehouse?branch=samples&taskId=' + f.taskId);
     await page.getByRole('button', { name: '确认已配齐', exact: true }).waitFor();
+    // Deep-linked detail and filtered list load independently. Wait for both;
+    // a ready detail button does not imply that the list request has finished.
+    await page.waitForFunction(marker => document.querySelector('.sw-workspace')?.getAttribute('aria-busy') === 'false' && document.querySelector('.sw-task-list')?.textContent.includes(marker), f.marker);
     check((await page.locator('.sw-task-list').innerText()).includes(f.marker), 'warehouse-only user reads sample task and detail');
     await page.waitForFunction(() => Number(document.querySelector('.sb-week-switch button.active b')?.textContent) > 0);
     check(!(await page.getByLabel('样品类型与计划周').innerText()).includes('周数量暂不可用'), 'sample week data is available');
