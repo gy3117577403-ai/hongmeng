@@ -55,8 +55,20 @@ async function scenario(page, origin, f, dir) {
     await page.getByRole('checkbox', { name: '全选本页', exact: true }).check();
     const pageCount = await page.locator('.oh-row-checkbox:checked').count();
     check(pageCount === 29, 'first page excludes the self-review request');
-    await page.getByRole('button', { name: '下一页', exact: true }).click(); await stable(2);
+    let releasePage, pageRequestStarted;
+    const pageGate = new Promise(resolve => { releasePage = resolve; });
+    const pageStarted = new Promise(resolve => { pageRequestStarted = resolve; });
+    const pageRoute = async route => {
+      if (queryValue(route.request().url(), 'part') === 'rows' && queryValue(route.request().url(), 'page') === '2') { pageRequestStarted(); await pageGate; }
+      await route.continue();
+    };
+    await page.route('**/api/other-work-times?*', pageRoute);
+    const nextPageResponse = page.waitForResponse(r => queryValue(r.url(), 'part') === 'rows' && queryValue(r.url(), 'page') === '2');
+    await page.getByRole('button', { name: '下一页', exact: true }).click(); await pageStarted;
+    check(await page.getByRole('checkbox', { name: '全选本页', exact: true }).isDisabled(), 'selection is disabled while the next page is still loading');
+    releasePage(); await nextPageResponse; await stable(2); await page.unroute('**/api/other-work-times?*', pageRoute);
     await page.getByRole('checkbox', { name: '全选本页', exact: true }).check();
+    await page.getByText('已选 59 笔', { exact: true }).waitFor();
     check((await page.locator('.oh-batch-footer').innerText()).includes('已选 59 笔'), 'selection persists across pages');
     check(requests.filter(url => url.includes('part=summary')).length === summaryBeforePaging, 'pagination reuses the scoped summary');
     await page.getByRole('button', { name: '选择当前筛选全部', exact: true }).click();

@@ -76,6 +76,7 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
   const nestedDialog = Boolean(modal || preview);
   const notify = (message: string) => showToast(message, { tone: 'success', duration: 2800 });
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : '操作失败，请重试');
+  const changePage = (next: number) => { setLoading(true); setPage(next); };
   const batch = useOtherHoursBatch({ filters, rows: data?.rows || [], enabled: !field && filters.scope === 'manage' && filters.status === 'PENDING' && Boolean(data?.permissions.manage), busy, loading,
     onBusyChange: value => { busyRef.current = value; setBusy(value); if (value) setError(''); }, onComplete: () => setRefresh(n => n + 1), onError: fail,
     onView: id => guard(() => { pinnedSelection.current = id; setComposerActive(false); void selectRow(id); }) });
@@ -389,7 +390,7 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
           <div className="oh-ledger-summary"><span>当前范围 · 待审批 <b>{summary ? `${summary.summary.pending} 笔` : '统计中…'}</b></span><span>已通过 <b>{summary ? hours(summary.summary.approvedMinutes) : '统计中…'}</b></span></div>
           {summaryError && <div className="oh-batch-entry"><button type="button" className="oh-quiet" disabled={busy} title={summaryError} onClick={() => setRefresh(n => n + 1)}>统计加载失败，点击重试</button></div>}
           {batch.trigger && <div className="oh-batch-entry">{batch.trigger}</div>}{batch.toolbar}
-          <div className="oh-list" aria-busy={loading} data-page={page}>{data?.rows.map((row, index) => <div key={row.id} className={batch.active ? 'oh-selectable-row' : undefined}>
+          <div className="oh-list" aria-busy={loading} data-page={data?.pagination.page ?? page}>{data?.rows.map((row, index) => <div key={row.id} className={batch.active ? 'oh-selectable-row' : undefined}>
             {batch.active && <input type="checkbox" className="oh-row-checkbox" aria-label={`选择 ${row.employeeNameSnapshot} ${row.employeeNoSnapshot} ${row.requestedMinutes} 分钟 ${row.id}`} checked={batch.selected.has(row.id)} disabled={busy || loading || !row.permissions.review} title={row.permissions.review ? '选择此申报' : '本人或当前不可审批的申报'} onChange={() => batch.toggle(row)} />}
             {field && (index === 0 || data.rows[index - 1].workDate !== row.workDate) && <div className="oh-date-group">{row.workDate === data.today ? '今天 · ' : ''}{row.workDate}</div>}
             <button type="button" disabled={busy} className={'oh-row' + ((!field && selected?.id === row.id && !composerActive) || highlight === row.id ? ' selected' : '')}
@@ -411,9 +412,9 @@ export default function OtherHoursWorkbench({ user, approval = false, field = fa
             {!data?.rows.length && <div className="oh-empty"><Clock3 size={28} /><p>{loading ? '正在加载…' : '当前条件下暂无申报'}</p>{!loading && <button type="button" className="oh-quiet" onClick={() => { setSearchInput(''); changeFilters({ ...emptyFilters(field, false), scope: filters.scope, from: '', to: '' }); }}>查看全部记录</button>}</div>}
           </div>
           {batch.footer}
-          <footer className="oh-ledger-footer">{field ? <>{data && data.rows.length < data.pagination.total ? <button type="button" className="oh-load-more" disabled={loading || busy} onClick={() => setPage(n => n + 1)}>{loading ? '正在加载…' : '加载更多'}</button> : <span className="oh-list-end">{data?.rows.length ? '已显示全部记录' : ''}</span>}</> :
-            <div className="oh-pagination"><button type="button" aria-label="上一页" disabled={page <= 1 || loading || busy} onClick={() => setPage(n => n - 1)}><ChevronLeft size={16} /></button><span>{page} / {Math.max(1, Math.ceil((data?.pagination.total || 0) / (data?.pagination.size || 30)))}</span>
-              <button type="button" aria-label="下一页" disabled={page * (data?.pagination.size || 30) >= (data?.pagination.total || 0) || loading || busy} onClick={() => setPage(n => n + 1)}><ChevronRight size={16} /></button>
+          <footer className="oh-ledger-footer">{field ? <>{data && data.rows.length < data.pagination.total ? <button type="button" className="oh-load-more" disabled={loading || busy} onClick={() => changePage(page + 1)}>{loading ? '正在加载…' : '加载更多'}</button> : <span className="oh-list-end">{data?.rows.length ? '已显示全部记录' : ''}</span>}</> :
+            <div className="oh-pagination"><button type="button" aria-label="上一页" disabled={page <= 1 || loading || busy} onClick={() => changePage(page - 1)}><ChevronLeft size={16} /></button><span>{page} / {Math.max(1, Math.ceil((data?.pagination.total || 0) / (data?.pagination.size || 30)))}</span>
+              <button type="button" aria-label="下一页" disabled={page * (data?.pagination.size || 30) >= (data?.pagination.total || 0) || loading || busy} onClick={() => changePage(page + 1)}><ChevronRight size={16} /></button>
               <button type="button" disabled={busy} onClick={exportLedger}><Download size={15} />导出</button></div>}
             {!field && data?.permissions.admin && <button type="button" className="oh-quiet" disabled={busy} onClick={() => setModal('config')}>管理事项分类</button>}
           </footer>
