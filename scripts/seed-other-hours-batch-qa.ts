@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import { S3Client, CreateBucketCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { prisma } from '../lib/prisma';
 import { otherWorkToday } from '../lib/other-work-time-service';
+import { expandModulePermissions } from '../lib/module-permissions';
 
 async function main() {
   assert.equal(process.env.OTHER_HOURS_QA_ALLOW, 'disposable-other-hours-batch');
@@ -16,14 +17,20 @@ async function main() {
   const password = process.env.OTHER_HOURS_QA_PASSWORD || 'OtherFixture-' + randomUUID() + '!9';
   const passwordHash = await bcrypt.hash(password, 10);
   const team = await prisma.productionTeam.create({ data: { code: marker, name: '批量工时验收 ' + marker } });
+  const secondTeam = await prisma.productionTeam.create({ data: { code: marker + '-B', name: '跨班组验收 ' + marker } });
+  const reviewerPermissions = expandModulePermissions({ 'other-hours': 'COLLABORATE', 'other-hours-approval': 'COLLABORATE', reports: 'READ' });
   const accounts = [];
   for (let index = 0; index < 3; index++) {
-    const employee = await prisma.employee.create({ data: { employeeNo: marker + '-' + index, name: ['验收张航', '验收曹俊南', '验收管理员'][index], team: team.name, department: '生产部', attendanceGroup: 'PRODUCTION', hireDate: new Date(today + 'T00:00:00Z') } });
+    const accountTeam = index === 1 ? secondTeam : team;
+    const employee = await prisma.employee.create({ data: { employeeNo: marker + '-' + index, name: ['验收张航', '验收曹俊南', '验收模块审批员'][index], team: accountTeam.name, department: '生产部', attendanceGroup: 'PRODUCTION', hireDate: new Date(today + 'T00:00:00Z') } });
     const user = await prisma.user.create({ data: { username: marker + '-' + index, displayName: employee.name, employeeId: employee.id, passwordHash, mustChangePassword: false,
-      laborRole: index === 2 ? 'ADMIN' : 'EMPLOYEE', accessGrants: { create: { profile: index === 2 ? 'ADMIN_GLOBAL' : 'FIELD_REPORTER', scopeKey: index === 2 ? 'GLOBAL' : 'SELF', grantType: 'PRIMARY' } } } });
-    accounts.push({ id: user.id, username: user.username, employeeId: employee.id, name: employee.name, employeeNo: employee.employeeNo });
+      laborRole: 'EMPLOYEE', accessGrants: { create: index === 2
+        ? [{ profile: 'MODULE_ACCESS', scopeKey: 'MODULES:ON', grantType: 'PRIMARY' },
+          ...Object.entries(reviewerPermissions).map(([key, level]) => ({ profile: 'MODULE_ACCESS' as const, scopeKey: `MODULE:${key}:${level}`, grantType: 'CONCURRENT' as const }))]
+        : [{ profile: 'FIELD_REPORTER', scopeKey: 'EMPLOYEE:' + employee.id, grantType: 'PRIMARY' }] } } });
+    accounts.push({ id: user.id, username: user.username, employeeId: employee.id, name: employee.name, employeeNo: employee.employeeNo, teamId: accountTeam.id, teamName: accountTeam.name });
     await prisma.attendanceRecord.create({ data: { employeeId: employee.id, workDate: new Date(today + 'T00:00:00Z'), status: 'confirmed', attendanceType: 'normal', plannedMilliseconds: 28800000, actualMilliseconds: 28800000,
-      segments: [], departmentSnapshot: '生产部', teamSnapshot: team.name, attainmentEligibleSnapshot: true, attainmentStreamSnapshot: 'batch' } });
+      segments: [], departmentSnapshot: '生产部', teamSnapshot: accountTeam.name, attainmentEligibleSnapshot: true, attainmentStreamSnapshot: 'batch' } });
   }
   const s3 = new S3Client({ endpoint: process.env.S3_ENDPOINT, region: process.env.S3_REGION || 'auto', forcePathStyle: true,
     credentials: { accessKeyId: process.env.S3_ACCESS_KEY_ID!, secretAccessKey: process.env.S3_SECRET_ACCESS_KEY! } });
@@ -36,7 +43,7 @@ async function main() {
     await s3.send(new PutObjectCommand({ Bucket: bucket, Key: objectKey, Body: photo, ContentType: 'image/jpeg' }));
     const account = accounts[index === 156 ? 2 : index % 2];
     const row = await prisma.otherWorkTimeRequest.create({ data: { employeeId: account.employeeId, createdById: account.id,
-      employeeNameSnapshot: account.name, employeeNoSnapshot: account.employeeNo, teamIdSnapshot: team.id, teamSnapshot: team.name,
+      employeeNameSnapshot: account.name, employeeNoSnapshot: account.employeeNo, teamIdSnapshot: account.teamId, teamSnapshot: account.teamName,
       categoryId: 'other-sample', categoryNameSnapshot: '协助样品', workDate: new Date(today + 'T00:00:00Z'), requestedMinutes: 5, status: 'PENDING', submittedAt: new Date(),
       description: marker + ' 批量 ' + String(index).padStart(3, '0') + ' · 样品准备与工位协助', idempotencyKey: randomUUID(), requestHash: randomUUID(), attainmentEligibleSnapshot: true, attainmentStreamSnapshot: 'batch',
       attachments: { create: { objectKey, mimeType: 'image/jpeg', size: photo.length, originalName: '隔离验收照片.jpg', uploadedById: account.id, requestVersion: 0 } },

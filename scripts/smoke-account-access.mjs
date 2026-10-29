@@ -144,6 +144,42 @@ await req('revoked HR retains lifecycle but cannot grant modules','/api/users/mo
 cookie=adminCookie;
 await enableManager((await req('reload delegate after login before restoring UI fixture','/api/users')).users.find(u=>u.id===delegate.id));
 
+// Production duties are explicitly granted by an administrator and remain tied
+// to the recipient employee. Ordinary module edits must not reset their expiry.
+const duty = await createAccount('跨部门生产兼岗验收', { planning: 'COLLABORATE', 'quality-data': 'READ' });
+const productionDepartmentId = catalog.departments.find(dept => dept.code === 'PRODUCTION')?.id;
+assert.ok(productionDepartmentId);
+const dutyPermissions = { ...duty.moduleAccess.permissions, 'quality-data': 'COLLABORATE', 'quality-management': 'COLLABORATE' };
+await req('module save cannot invent a cross-department production duty', '/api/users/module-access', { ...saveBody(duty, dutyPermissions), fieldReportEnabled: true }, 400);
+const dutyExpiry = new Date(Date.now() + 86400000).toISOString();
+const dutyGrant = (await req('administrator explicitly grants scoped production duty', `/api/users/${duty.id}/access-grants`, {
+  profileKey: 'FIELD_REPORTER', departmentId: productionDepartmentId, grantType: 'ACTING', effectiveTo: dutyExpiry,
+}, 201)).grant;
+const dutyNow = (await req('reload recipient before additive module save', '/api/users')).users.find(user => user.id === duty.id);
+const dutySaved = (await req('module edit retains explicitly granted cross-department duty', '/api/users/module-access', {
+  ...saveBody(dutyNow, dutyPermissions), fieldReportEnabled: true,
+})).user;
+assert.deepEqual(dutySaved.moduleAccess.permissions, expandModulePermissions(dutyPermissions));
+assert.equal(dutySaved.employeeId, duty.employeeId);
+assert.equal(dutySaved.employee.departmentId, duty.employee.departmentId);
+assert.equal(dutySaved.laborRole, duty.laborRole);
+assert.deepEqual(dutySaved.accessGrants.find(g => g.id === dutyGrant.id), dutyNow.accessGrants.find(g => g.id === dutyGrant.id));
+assert.equal(dutySaved.accessGrants.filter(g => g.isActive && g.profileKey === 'FIELD_REPORTER').length, 1);
+assert.equal(dutySaved.accessGrants.find(g => g.id === dutyGrant.id).effectiveTo, dutyExpiry);
+await login(duty.username, initial);
+await req('duty employee sets its own isolated password', '/api/auth/change-password', { currentPassword: initial, newPassword: password, confirmPassword: password });
+await login(duty.username, password);
+const dutyMe = (await req('recipient effective access includes own field reporting', '/api/me')).user;
+assert.equal(dutyMe.employeeId, duty.employeeId);
+assert.ok(dutyMe.access.capabilities.includes('FIELD_REPORT:EXECUTE_WORKFLOW'));
+assert.ok(dutyMe.access.capabilities.includes('QUALITY_DATA:CREATE'));
+assert.ok(!dutyMe.access.capabilities.includes('ACCOUNT_ADMIN:MANAGE'));
+cookie = adminCookie;
+const dutyFinal = (await req('reload recipient before explicit duty removal', '/api/users')).users.find(user => user.id === duty.id);
+const dutyRemoved = (await req('explicit removal still revokes production duty', '/api/users/module-access', saveBody(dutyFinal, dutyPermissions))).user;
+assert.equal(dutyRemoved.accessMethods.fieldReport, false);
+assert.ok(!dutyRemoved.accessGrants.some(g => g.isActive && g.profileKey === 'FIELD_REPORTER'));
+
 const output = process.env.ACCOUNT_ACCESS_QA_OUTPUT || 'artifacts/account-access/http.json';
 await fs.mkdir(path.dirname(output), { recursive: true });
 await fs.writeFile(output, JSON.stringify({ ok: true, tag, base, checks }, null, 2));

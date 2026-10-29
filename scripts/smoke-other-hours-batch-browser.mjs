@@ -38,7 +38,11 @@ async function scenario(page, origin, f, dir) {
     const response = page.waitForResponse(r => r.url().includes('/api/other-work-times?') && r.url().includes('part=rows') && queryValue(r.url(), 'search') === value);
     await page.getByRole('searchbox', { name: '搜索申报' }).fill(value); await response; await stable();
   };
-  const report = async () => (await request('/api/reports/employee-attainment?' + queryString({ period: 'today', date: f.today, employeeId: f.accounts[0].employeeId }))).body.report;
+  const report = async () => {
+    const result = await request('/api/reports/employee-attainment?' + queryString({ reportBranch: 'employee-attainment', period: 'today', date: f.today, employeeId: f.accounts[0].employeeId }));
+    if (result.status !== 200 || !result.body?.report) throw Error('Employee attainment report unavailable: ' + result.status + ' ' + result.body?.error);
+    return result.body.report;
+  };
   const login = async (account, path) => {
     await page.context().clearCookies(); await page.goto(origin + '/login?next=' + encodeURIComponent(path));
     await page.getByLabel('员工编号 / 管理账号').fill(account.username); await page.getByLabel('密码', { exact: true }).fill(f.password);
@@ -47,6 +51,9 @@ async function scenario(page, origin, f, dir) {
   try {
     await page.setViewportSize({ width: 1366, height: 1024 });
     await login(f.accounts[2], '/workspace/other-hours/approvals'); await stable(); await search(f.search);
+    const reviewer = (await request('/api/me')).body.user;
+    check(reviewer.laborRole !== 'ADMIN' && reviewer.access.modulePermissions['other-hours-approval'] === 'COLLABORATE' && !reviewer.access.capabilities.includes('ACCOUNT_ADMIN:MANAGE'), 'company batch reviewer uses module approval without administrator rights');
+    check(f.accounts[0].teamId !== f.accounts[1].teamId, 'approval fixture covers employees in two different teams');
     await page.getByRole('button', { name: '批量审批', exact: true }).waitFor();
     check(!requests.some(url => url.includes('employees=1')), 'initial approval view does not load the employee picker');
     check(!requests.some(url => url.includes('expanded=1')), 'collapsed reconciliation does not query production time details');

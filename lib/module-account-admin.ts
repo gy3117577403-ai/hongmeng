@@ -57,7 +57,15 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
     if (previous && input.employeeId && input.employeeId !== previous.employeeId) throw new AccessGrantInputError('不能通过权限配置更换员工绑定');
     const employee = await tx.employee.findFirst({ where: { id: employeeId, isActive: true }, include: { departmentRef: true } });
     if (!employee) throw new AccessGrantInputError('请选择有效的在职员工');
-    if (!preserve && fieldReportEnabled && employee.departmentRef?.code !== 'PRODUCTION') throw new AccessGrantInputError('扫码报工仅对生产岗位开放，后台模块不受部门限制');
+    // An administrator may already have explicitly granted a production duty to
+    // an employee in another department through the additional-grants endpoint.
+    // Editing unrelated modules must keep that employee-scoped grant intact,
+    // including its expiry, instead of rejecting the save or recreating it forever.
+    const retainedFieldGrants = !preserve && fieldReportEnabled && employee.departmentRef?.code !== 'PRODUCTION'
+      ? activeGrants.filter(grant => grant.profile === 'FIELD_REPORTER'
+        && grant.scopeKey === `EMPLOYEE:${employeeId}` && grant.department?.code === 'PRODUCTION')
+      : [];
+    if (!preserve && fieldReportEnabled && employee.departmentRef?.code !== 'PRODUCTION' && !retainedFieldGrants.length) throw new AccessGrantInputError('扫码报工仅对生产岗位或已明确授予生产兼岗的员工开放，后台模块不受部门限制');
     const username = previous?.username || String(input.username || employee.employeeNo).trim();
     if (!username || username.length > 80) throw new AccessGrantInputError('账号格式不正确');
     if (!previous || password || previous.fieldPasswordOnly && (workbenchEnabled || sampleLibraryEnabled || sampleCaptureEnabled)) {
@@ -76,7 +84,7 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
       const changed = await tx.user.updateMany({ where: { id: previous.id, updatedAt: expected }, data: { ...data, sessionVersion: { increment: 1 } } });
       if (!changed.count) throw new AccessGrantInputError('该账号已被其他人更新，请刷新并核对最新权限后再保存', 409);
       accountId = previous.id;
-      if (!preserve) await tx.userAccessGrant.updateMany({ where: { userId: accountId, isActive: true }, data: { isActive: false, version: { increment: 1 }, grantedById: actorId } });
+      if (!preserve) await tx.userAccessGrant.updateMany({ where: { userId: accountId, isActive: true, ...(retainedFieldGrants.length ? { id: { notIn: retainedFieldGrants.map(grant => grant.id) } } : {}) }, data: { isActive: false, version: { increment: 1 }, grantedById: actorId } });
       else await tx.userAccessGrant.updateMany({ where: { userId: accountId, isActive: true, profile: { in: [
         ...(input.sampleCaptureEnabled !== undefined ? ['SAMPLE_CAPTURE_COLLABORATOR' as const] : []),
         ...(input.sampleLibraryEnabled !== undefined ? ['SAMPLE_LIBRARY_READER' as const] : []),
@@ -91,7 +99,7 @@ export async function saveModuleAccount(actor: EmployeeAccountActor, input: Modu
       for (const [module, level] of Object.entries(permissions)) await tx.userAccessGrant.create({ data: {
         userId: accountId, profile: 'MODULE_ACCESS', grantType: 'CONCURRENT', scopeKey: 'MODULE:' + module + ':' + level, effectiveFrom: now, grantedById: actorId,
       } });
-      if (fieldReportEnabled) await tx.userAccessGrant.create({ data: { userId: accountId, profile: 'FIELD_REPORTER', grantType: 'CONCURRENT', scopeKey: 'EMPLOYEE:' + employeeId, departmentId: employee.departmentId, effectiveFrom: now, grantedById: actorId } });
+      if (fieldReportEnabled && !retainedFieldGrants.length) await tx.userAccessGrant.create({ data: { userId: accountId, profile: 'FIELD_REPORTER', grantType: 'CONCURRENT', scopeKey: 'EMPLOYEE:' + employeeId, departmentId: employee.departmentId, effectiveFrom: now, grantedById: actorId } });
     }
     if (sampleCaptureEnabled && (!preserve || input.sampleCaptureEnabled !== undefined)) await tx.userAccessGrant.create({ data: { userId: accountId, profile: 'SAMPLE_CAPTURE_COLLABORATOR', grantType: 'CONCURRENT', scopeKey: 'MOBILE:SAMPLE_CAPTURE', effectiveFrom: now, grantedById: actorId } });
     if (sampleLibraryEnabled && (!preserve || input.sampleLibraryEnabled !== undefined)) await tx.userAccessGrant.create({ data: { userId: accountId, profile: 'SAMPLE_LIBRARY_READER', grantType: 'CONCURRENT', scopeKey: 'MOBILE:SAMPLE_LIBRARY', effectiveFrom: now, grantedById: actorId } });

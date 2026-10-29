@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 if (process.env.ACCOUNT_ACCESS_QA_ALLOW !== 'disposable-account-access') throw Error('Disposable account runtime required');
 const origin = process.env.ACCOUNT_ACCESS_QA_BASE || 'http://127.0.0.1:3000';
 if (!['localhost', '127.0.0.1'].includes(new URL(origin).hostname)) throw Error('Loopback only');
@@ -9,7 +9,9 @@ if (!fixture.marker?.startsWith('ACL-')) throw Error('Unexpected fixture');
 const dir = process.env.ACCOUNT_ACCESS_BROWSER_OUTPUT || 'output/playwright/account-access'; mkdirSync(dir, { recursive: true });
 const file = join(dir, 'browser.generated.cjs');
 function cli(args) {
-  const result = spawnSync('npx', ['--yes', '--package', '@playwright/cli@0.1.19', 'playwright-cli', '-s=account-access', ...args], { encoding: 'utf8', timeout: 240000 });
+  const command = process.platform === 'win32' ? process.execPath : 'npx';
+  const prefix = process.platform === 'win32' ? [join(dirname(process.execPath), 'node_modules/npm/bin/npx-cli.js')] : [];
+  const result = spawnSync(command, [...prefix, '--yes', '--package', '@playwright/cli@0.1.19', 'playwright-cli', '-s=account-access', ...args], { encoding: 'utf8', timeout: 240000 });
   const output = ((result.stdout || '') + (result.stderr || '')).replace(/### Ran Playwright code\r?\n```[\s\S]*?```(?:\r?\n)?/g, '').replaceAll(fixture.password, '[disposable-password]').replaceAll(fixture.reader.password, '[disposable-password]');
   if (result.status || result.error) throw Error(output || result.error.message);
   return output;
