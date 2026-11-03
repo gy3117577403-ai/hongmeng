@@ -29,6 +29,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android SDK packages
         run: |
@@ -44,9 +47,22 @@ jobs:
         working-directory: android-webview-app
         run: gradle :app:assembleDebug --no-daemon
 
+      - name: Verify APK identity and signature
+        working-directory: android-webview-app
+        run: |
+          set -euo pipefail
+          apk_dir=app/build/outputs/apk/debug
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$apk_dir/app-debug.apk" > "$apk_dir/apk-info.txt"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$apk_dir/app-debug.apk" > "$apk_dir/signature.txt"
+          (cd "$apk_dir" && sha256sum app-debug.apk > SHA256SUMS.txt)
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: hongmeng-workorder-webview-debug-apk
-          path: android-webview-app/app/build/outputs/apk/debug/*.apk
+          path: |
+            android-webview-app/app/build/outputs/apk/debug/*.apk
+            android-webview-app/app/build/outputs/apk/debug/apk-info.txt
+            android-webview-app/app/build/outputs/apk/debug/signature.txt
+            android-webview-app/app/build/outputs/apk/debug/SHA256SUMS.txt
           if-no-files-found: error
