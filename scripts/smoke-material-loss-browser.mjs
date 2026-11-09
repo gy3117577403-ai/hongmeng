@@ -60,6 +60,11 @@ async function scenario(page, origin, f, dir) {
     await login('reporter', '/workspace/warehouse?branch=samples&taskId=' + f.sampleId);
     await page.getByRole('button', { name: '核对缺料后确认配齐', exact: true }).waitFor();
     check(await page.getByRole('button', { name: '核对缺料后确认配齐', exact: true }).isEnabled(), 'sample kitting action is accessible with unresolved shortage');
+    await page.getByRole('button', { name: '核对缺料后确认配齐', exact: true }).click();
+    await page.locator('.sw-arrival-dialog .mo-compose').waitFor();
+    check(await page.locator('.sw-arrival-dialog .mo-material-line').count()>0,'sample shortage action opens the shared physical verification in place');
+    await page.locator('.sw-arrival-dialog>header').getByRole('button', { name: '关闭弹窗', exact: true }).click();
+    await page.locator('.sw-shortage-table').getByRole('button', { name: '确认已到料', exact: true }).waitFor();
     check(!(await page.locator('.sw-main').innerText()).includes('GMT+0000'), 'sample list and header normalize the legacy date and flag the customer');
     await page.getByLabel('搜索样品配料',{exact:true}).fill(f.marker);
     await page.waitForResponse(r=>r.url().includes('/api/warehouse/sample-tasks?')&&r.url().includes('keyword='+f.marker));
