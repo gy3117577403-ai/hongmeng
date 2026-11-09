@@ -7,3 +7,18 @@
 候选 v1.34.295 在镜像构建前停止，收紧扫码入口例外，不放行批量审批、分类管理与后台导出。固定标签未移动。
 
 候选 v1.34.296 在采购数量选填浏览器检查停止。失败截图证明输入框未被自动化清空，实际提交为 8；采购业务代码未改动。测试改用键盘清空并断言输入值为空，保留保存后的数量及库存断言。
+
+## 最终发布验收
+
+源码 9e1ce7806ab265cfba1a010d17622d8b5e95de5f；工作流 https://github.com/gy3117577403-ai/hongmeng/actions/runs/42597566122 success。最终流水线约 41 分钟，前轮重跑导致总用时超出原估计。
+
+杭州主镜像：crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:v1.34.297
+摘要：sha256:e52440775a1bb1d29bac24e228e92b24c1c6cfc4391d38475fd468cb0fa9f249，与 GHCR 一致。
+Office：crpi-2acb2dabuutklbx4.cn-hangzhou.personal.cr.aliyuncs.com/zhiju-b/hongmeng:office-preview-v1.34.297
+摘要：sha256:f6667f6147db0800d904001b52f90a1a57f302a34e967d94c5cb9d399abe9293。
+
+源镜像和杭州独立环境：其他工时 68 项、损耗及样品 32 项、实时工时 52 项、退款合同及数量选填 30 项通过。普通测试 1430 通过、0 失败、245 条件跳过；数据库专项独立执行。类型和 lint 通过，保留原有非阻断 lint 提示。杭州匿名拉取和独立运行通过。
+
+验收覆盖配置 MODULES:OFF 的扫码员工手机实际提交及他人数据/审批隔离；管理员从物料追踪进入损耗台账只读，申报与审批操作被拒绝；独立权限编辑、附件和 CSV 下载继续通过。损耗不自动扣库存。
+
+临时发布凭据已删除。正式系统未替换，正式账号权限和业务数据未修改。未做实体平板或全系统人工巡检。报告保存在 output/releases/v1.34.297。
