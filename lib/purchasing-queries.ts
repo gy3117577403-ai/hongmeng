@@ -86,6 +86,9 @@ export function pcLineRow(p: Line): PcRow {
       (s, r) => s + r.refundDueCents - r.companyReceivedCents,
       0,
     ),
+    supplierRefundPending: p.returns.reduce((n, r) => n + r.refundDueCents - r.refundedCents, 0),
+    refundHandoverPending: p.returns.reduce((n, r) => n + r.refundedCents - r.companyReceivedCents, 0),
+    refundReceived: p.refundedCents,
     completed: !!p.completedAt,
     createdAt: p.createdAt.toISOString(),
     requestId: p.requestId,
@@ -273,7 +276,7 @@ export async function loadPurchasing(
       [fs, count, agg] = await Promise.all([
         prisma.pcFund.findMany({
           where,
-          include: { allocations: { include: { line: true } } },
+          include: { allocations: { include: { line: { include: { returns: true } } } } },
           orderBy: [q.sort === "amount" ? { amountCents: "desc" } : { createdAt: "desc" }, { id: "asc" }],
           skip: (page - 1) * pageSize,
           take: pageSize,
@@ -313,7 +316,8 @@ export async function loadPurchasing(
       availableCents: f.amountCents - f.paidCents,
       paidCents: f.paidCents,
       invoiceCents: 0,
-      refundOpen: 0,
+      refundOpen: f.allocations.reduce((n, al) => n + al.line.returns.reduce((s, r) => s + r.refundDueCents - r.companyReceivedCents, 0), 0),
+      refundLineIds: f.allocations.filter(al => al.line.returns.length > 0).map(al => al.lineId),
       completed: f.status === "PAID",
       createdAt: f.createdAt.toISOString(),
       requestId: "",
@@ -473,7 +477,7 @@ export async function purchasingDetail(id: string, a: PcActor) {
   const fund = await prisma.pcFund.findUnique({
     where: { id },
     include: {
-      allocations: { include: { line: { include: { request: true } } } },
+      allocations: { include: { line: { include: { request: true, returns: true } } } },
       payments: { include: { batch: { select: { number: true } } } },
     },
   });

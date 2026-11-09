@@ -3142,7 +3142,9 @@ model MaterialArrivalBatch {
   id               String   @id @default(uuid())
   exceptionId      String   @map("exception_id")
   status           String   @default("SHIPPED")
-  quantity         Float
+  quantity         Float?
+  declaredQuantity Float?  @map("declared_quantity")
+  issuePending     Boolean @default(false) @map("issue_pending")
   acceptedQuantity Float    @default(0) @map("accepted_quantity")
   rejectedQuantity Float    @default(0) @map("rejected_quantity")
   logisticsMode    String   @default("EXPRESS") @map("logistics_mode")
@@ -7807,6 +7809,9 @@ model PcRefund {
   destination String
   date        String
   reference   String
+  receiver    String   @default("")
+  account     String   @default("")
+  note        String   @default("")
   actorId     String
   actorName   String
   createdAt   DateTime @default(now())
@@ -7824,12 +7829,25 @@ model PcContract {
   taxNote     String
   amountCents Int
   snapshot    Json
+  document    Json?
+  templateRevision Int?
+  documentStatus String @default("ARCHIVED")
   actorId     String
   actorName   String
   createdAt   DateTime @default(now())
   lines       PcContractLine[]
 
   @@unique([number, revision])
+}
+
+model PcContractTemplate {
+  id        String @id @default(uuid())
+  revision  Int @unique
+  name      String
+  content   Json
+  actorId   String
+  actorName String
+  createdAt DateTime @default(now())
 }
 
 model PcContractLine {

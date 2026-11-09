@@ -31,7 +31,7 @@ export const PC_EXECUTION_STAGES = [
 ] as const;
 export const PC_FUND_STATES: Record<string, string> = {
   PENDING: "待资金审批", APPROVED: "已批准 / 待付款", PARTIAL: "部分付款",
-  PAID: "已付款", RETURNED: "已退回", WITHDRAWN: "已撤回", CLOSED: "已关闭",
+  PAID: "已付清", RETURNED: "已退回", WITHDRAWN: "已撤回", CLOSED: "已关闭",
 };
 export const PC_STATES: Record<string, string> = {
   DRAFT: "草稿",
@@ -217,6 +217,10 @@ export type PcRow = {
   paidCents: number;
   invoiceCents: number;
   refundOpen: number;
+  supplierRefundPending?: number;
+  refundHandoverPending?: number;
+  refundReceived?: number;
+  refundLineIds?: string[];
   completed: boolean;
   createdAt: string;
   requestId: string;

@@ -13,6 +13,7 @@ import { fixtureAvailable } from "@/lib/quality-fixture-domain";
 import { pcPurchasePricing, pcPricingSnapshot, pcGoodsCents } from "@/lib/purchasing-pricing";
 import { pcUnit, pcLegacyUnit, pcPaymentField, pcPaymentValue, pcHasPaymentAccount, pcCycle } from './purchasing-fields';
 import { pcReimbursementScope } from './purchasing-reimbursement';
+import { contractContent, contractProblems, defaultContractContent, type ContractDocument } from './purchasing-contract';
 import {
   PurchasingError,
   pcChoice,
@@ -596,14 +597,47 @@ async function createContract(tx: Tx, ps: Line[], input: PcInput, a: PcActor) {
     spec: p.spec,
     quantity: p.quantity,
     unit: p.unit,
-    amountCents: p.actualCents || p.estimateCents,
+    amountCents: p.status === 'ORDERED' ? p.actualCents : p.estimateCents,
+    unitPrice: p.unitPrice?.toString() || null,
+    freightCents: p.freightCents,
+    discountCents: p.discountCents,
+    estimated: p.status !== 'ORDERED',
   }));
+  let document: ContractDocument | null = null;
+  let templateRevision = 0, documentStatus = 'DRAFT';
+  if(input.document) {
+    const content=contractContent(input.document);
+    if(previous && input.baseRevision !== previous.revision) conflict('合同编号已存在或版本已更新，请从合同详情修订最新版本');
+    if(!previous && input.baseRevision) conflict('合同修订来源不存在');
+    if(new Set(ps.map(p=>p.currency)).size!==1 || ps.some(p=>p.currency!=='CNY')) throw new PurchasingError('当前模板仅支持人民币采购合同');
+    if(ps[0].supplier && content.fields.supplier!==ps[0].supplier.name) throw new PurchasingError('合同供方须与所选采购供应商一致');
+    const extras=Array.isArray(input.lineDetails)?input.lineDetails.map(pcRecord):[];
+    if(extras.length>100 || extras.some(e=>!ps.some(p=>p.id===e.id)) || new Set(extras.map(e=>e.id)).size!==extras.length) throw new PurchasingError('合同明细补充资料不匹配');
+    const lines=snapshot.map(l=>{const e=extras.find(e=>e.id===l.id);return {...l,brand:pcText(e?.brand,'品牌',100,false),deliveryDate:pcText(e?.deliveryDate,'明细交期',100,false),note:pcText(e?.note,'明细备注',500,false)};});
+    if(input.documentStatus!=='DRAFT' && input.documentStatus!=='FINAL') throw new PurchasingError('请选择保存草稿或定稿');
+    if(input.documentStatus==='FINAL') {const missing=contractProblems(content,lines);if(missing.length)throw new PurchasingError('定稿前请补全：'+missing.join('、'));}
+    if(input.templateRevision!==0 && !await tx.pcContractTemplate.findUnique({where:{revision:pcInt(input.templateRevision,'模板版本')}})) throw new PurchasingError('合同模板版本不存在');
+    document={...content,schemaVersion:1,lines,amountCents:sum(snapshot.map(l=>l.amountCents))};
+    templateRevision=Number(input.templateRevision);documentStatus=String(input.documentStatus);
+  } else {
+    // Automatic contract snapshots remain drafts until commercial terms are completed.
+    const template=await tx.pcContractTemplate.findFirst({orderBy:{revision:'desc'}});
+    const content=template?contractContent(template.content):defaultContractContent();
+    templateRevision=template?.revision||0;
+    document={...content,schemaVersion:1,fields:{...content.fields,
+      purchaser:pcText(input.purchaser||content.fields.purchaser,'需方',200),
+      supplier:pcText(input.supplier||ps[0].supplier?.name,'供方',200),date:dateNow(),
+      deliveryDate:ps[0].eta||content.fields.deliveryDate,payee:ps[0].payee,bank:ps[0].bank,account:ps[0].account,
+      paymentTerms:pcText(input.terms||content.fields.paymentTerms,'付款及交付约定',3000,false),
+      specialTerms:[content.fields.specialTerms,input.taxNote?`采购登记的税率 / 含税说明：${pcText(input.taxNote,'税率 / 含税口径',200)}`:''].filter(Boolean).join('\n'),
+    },lines:snapshot,amountCents:sum(snapshot.map(l=>l.amountCents))};
+  }
   const contract = await tx.pcContract.create({
     data: {
       number,
       revision: (previous?.revision || 0) + 1,
-      supplier: pcText(input.supplier || ps[0].supplier?.name, "供方", 200),
-      purchaser: pcText(input.purchaser || "杭连电子", "需方", 200),
+      supplier: pcText(document?.fields.supplier || input.supplier || ps[0].supplier?.name, "供方", 200),
+      purchaser: pcText(document?.fields.purchaser || input.purchaser || "杭州杭连电子有限公司", "需方", 200),
       terms: pcText(
         input.terms || "按双方确认的采购约定执行",
         "付款及交付约定",
@@ -616,6 +650,7 @@ async function createContract(tx: Tx, ps: Line[], input: PcInput, a: PcActor) {
       ),
       amountCents: sum(snapshot.map((p) => p.amountCents)),
       snapshot: json(snapshot),
+      ...(document ? {document:json(document),documentStatus,templateRevision} : {}),
       actorId: a.id,
       actorName: actorName(a),
       lines: {
@@ -635,6 +670,16 @@ async function createContract(tx: Tx, ps: Line[], input: PcInput, a: PcActor) {
   );
   await event(tx, "CONTRACT", contract.id, "CREATE", a, contract);
   return contract;
+}
+async function saveContractTemplate(tx: Tx, input: PcInput, a: PcActor) {
+  const s=await settings(tx);
+  if(s.ownerId!==a.id && a.laborRole!=='ADMIN') denied('仅采购配置维护人或管理员可修改通用合同模板');
+  const latest=await tx.pcContractTemplate.findFirst({orderBy:{revision:'desc'}});
+  if(input.templateRevision!==(latest?.revision || 0)) conflict('模板已被更新，请刷新后核对再保存');
+  const content=contractContent(input.content);
+  const row=await tx.pcContractTemplate.create({data:{revision:(latest?.revision||0)+1,name:pcText(input.name,'模板名称',100),content:json(content),actorId:a.id,actorName:actorName(a)}});
+  await event(tx,'CONTRACT_TEMPLATE',row.id,'SAVE_CONTRACT_TEMPLATE',a,{revision:row.revision,content});
+  return {id:row.id,revision:row.revision};
 }
 async function updateSettlement(tx: Tx, input: PcInput, a: PcActor) {
   responsible(await settings(tx), 'buyerIds', a);
@@ -1100,7 +1145,7 @@ async function createFundBatch(tx: Tx, input: PcInput, a: PcActor) {
   const funds = [];
   for (const group of groups) {
     await guardPendingAmountCorrections(tx, group, 'CREATE_FUND');
-    funds.push(await createFund(tx, { ...group, adjustment: 'NONE', attachmentIds: [] }, a));
+    funds.push(await createFund(tx, { ...group, adjustment: group.adjustment === 'PARTIAL' ? 'PARTIAL' : 'NONE', attachmentIds: [] }, a));
   }
   return { funds, count: funds.length };
 }
@@ -1610,6 +1655,9 @@ async function refund(tx: Tx, input: PcInput, a: PcActor) {
       destination,
       date,
       reference,
+      receiver: pcText(input.receiver, '实际收款人 / 单位', 200, false),
+      account: pcText(input.refundAccount, '退款收款账户', 120, false),
+      note: pcText(input.note, '退款备注', 1000, false),
       actorId: a.id,
       actorName: actorName(a),
     },
@@ -1730,6 +1778,7 @@ export async function mutatePurchasing(
       const action = pcText(input.action, "操作类型", 60);
       await guardPendingAmountCorrections(tx, input, action);
       if (action === "SAVE_SETTINGS") result = await saveSettings(tx, input, a);
+      else if(action === 'SAVE_CONTRACT_TEMPLATE') result=await saveContractTemplate(tx,input,a);
       else if (action === "CREATE_FIXTURE_PURCHASE") result = await createFixturePurchase(tx, input, a);
       else if (action === "SAVE_REQUEST")
         result = await saveRequest(tx, input, a);

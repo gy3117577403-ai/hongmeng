@@ -48,7 +48,7 @@ export function serializeMaterialOrder(task: ListRecord | Record) {
   const shortageCount = open.filter(e => !['WAITING_VERIFY', 'NEEDS_COMPLETION'].includes(e.phase)).length;
   const completionCount = open.filter(e => e.phase === 'NEEDS_COMPLETION').length;
   const forecast = materialForecast(open.filter(e => e.phase !== 'NEEDS_COMPLETION').map(e => ({ open: true, remaining: e.remaining, expectedAt: e.expectedAt })));
-  const pendingBatches = open.reduce((n, e) => n + e.arrivals.filter(b => b.status === 'ARRIVED').length, 0);
+  const pendingBatches = open.reduce((n, e) => n + e.arrivals.filter(b => ['ARRIVED', 'QUANTITY_PENDING'].includes(b.status)).length, 0);
   const detail = task as Record;
   return { id: task.id, workOrderId: task.workOrderId, sampleTaskId: task.sampleTaskId, version: task.version,
     planOrderId: task.planOrderId, preparationTaskId: task.preparationTaskId, preparedQuantity: task.preparedQuantity,
@@ -115,7 +115,7 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
       for (const entry of entries) {
         const item = current.exceptionCases.find(e => e.status === 'OPEN' && e.arrivals.some(b => b.id === entry.arrivalId));
         const batch = item?.arrivals.find(b => b.id === entry.arrivalId);
-        if (!item || !batch || batch.status !== 'ARRIVED') throw new MaterialInputError('所选批次已核验、尚未报到或不属于本单，请刷新', 409);
+        if (!item || !batch || batch.status !== 'ARRIVED' || batch.quantity === null) throw new MaterialInputError('所选批次已核验、数量待补录、尚未报到或不属于本单，请刷新', 409);
         const accepted = materialQuantity(entry.acceptedQuantity)!;
         if (accepted > batch.quantity) throw new MaterialInputError('可用数量不能超过本批报到数量');
         const rejected = Math.round((batch.quantity - accepted) * 1e6) / 1e6;
@@ -132,9 +132,9 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
         if (complete && rejectedItems.has(itemId)) throw new MaterialInputError('本项仍有异常待补，不能确认补齐');
         const item = await tx.warehouseMaterialExceptionCase.findUniqueOrThrow({ where: { id: itemId }, include: { arrivals: true } });
         const totals = materialAmounts(item.shortageQuantity, item.arrivals);
-        if (complete && (totals.pending || totals.transit)) throw new MaterialInputError('确认本项补齐前，请先核验本项全部批次');
-        const solved = !totals.pending && !totals.transit && (item.shortageQuantity === null ? complete : totals.usable + 1e-6 >= item.shortageQuantity);
-        const status = solved ? 'RESOLVED' : totals.pending > 0 && totals.remaining === 0 ? 'WAITING_WAREHOUSE' : 'IN_PROGRESS';
+        if (complete && (totals.pending || totals.transit || totals.quantityPending)) throw new MaterialInputError('确认本项补齐前，请先核验本项全部批次并补录数量');
+        const solved = !totals.pending && !totals.transit && !totals.quantityPending && (item.shortageQuantity === null ? complete : totals.usable + 1e-6 >= item.shortageQuantity);
+        const status = solved ? 'RESOLVED' : totals.quantityPending || totals.pending > 0 && totals.remaining === 0 ? 'WAITING_WAREHOUSE' : 'IN_PROGRESS';
         const progress = `批量核验后累计可用 ${totals.usable} ${item.unit}，${solved ? '本项已补齐' : item.shortageQuantity === null ? '待确认补齐结果' : `仍缺 ${totals.missing} ${item.unit}`}`;
         await tx.warehouseMaterialExceptionCase.update({ where: { id: itemId }, data: { receivedQuantity: totals.usable + totals.pending,
           ...(solved ? { status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, resolutionNote: content || progress, arrivalOutcome: 'COMPLETE' } : {}) } });
@@ -188,45 +188,68 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
           const outcome = text(input.arrivalOutcome, 20) || (input.itemComplete === true ? 'COMPLETE' : '');
           if (outcome && !['PARTIAL', 'COMPLETE'].includes(outcome)) throw new MaterialInputError('请选择本次到料后的补齐结果');
           const itemComplete = outcome === 'COMPLETE';
+          const noQuantity = input.quantity == null || String(input.quantity).trim() === '';
+          if (arrivalId && !batch || batch && !['SHIPPED', 'ARRIVED', 'QUANTITY_PENDING'].includes(batch.status)) throw new MaterialInputError('本批已确认或状态已变化，请刷新', 409);
+          if (input.hasIssue === true && !content) throw new MaterialInputError('请说明少料、错料或来料异常');
+          if (input.hasIssue === true && itemComplete) throw new MaterialInputError('本次仍有异常待补，请保留未解决状态');
           if (outcome) await tx.warehouseMaterialExceptionCase.update({ where: { id: event.id }, data: { arrivalOutcome: outcome } });
-          if (itemComplete && event.shortageQuantity === null && !batch && !input.quantity) {
-            if (amounts.pending || amounts.transit) throw new MaterialInputError('请先确认已登记的到料批次');
+          if (itemComplete && event.shortageQuantity === null && !batch && noQuantity) {
+            if (amounts.pending || amounts.transit || amounts.quantityPending) throw new MaterialInputError('请先确认已登记的到料批次并补录数量');
             content = `仓库确认本项已补齐${content ? `；${content}` : ''}`;
             await tx.warehouseMaterialExceptionCase.update({ where: { id: event.id }, data: { status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, resolutionNote: content } });
+          } else if (noQuantity) {
+            if (itemComplete || input.confirmComplete === true) throw new MaterialInputError('数量待补录时先登记到料，补录核验后再确认补齐');
+            const data = { status: 'QUANTITY_PENDING', quantity: null, declaredQuantity: batch?.declaredQuantity ?? batch?.quantity ?? null,
+              issuePending: input.hasIssue === true || batch?.issuePending === true, arrivedAt: batch?.arrivedAt || now,
+              note: content || batch?.note || '', acceptedQuantity: 0, rejectedQuantity: 0 };
+            const saved = batch ? await tx.materialArrivalBatch.update({ where: { id: batch.id }, data })
+              : await tx.materialArrivalBatch.create({ data: { ...data, exceptionId: event.id, logisticsMode: 'UNKNOWN', recordedById: actorId } });
+            arrivalId = saved.id; auditDetail.arrivalId = arrivalId;
+            content = `仓库确认已到料，数量待补录${data.issuePending ? '，有异常待核对' : ''}${content ? `；${content}` : ''}`;
           } else {
-            if (arrivalId && !batch || batch && !['SHIPPED', 'ARRIVED'].includes(batch.status)) throw new MaterialInputError('本批已确认或状态已变化，请刷新', 409);
             const quantity = materialQuantity(input.quantity)!;
+            if (input.hasIssue === true && (input.acceptedQuantity == null || String(input.acceptedQuantity).trim() === '')) throw new MaterialInputError('有异常时请核实可用数量');
             const accepted = input.acceptedQuantity == null || input.acceptedQuantity === '' ? quantity : materialQuantity(input.acceptedQuantity)!;
             if (quantity <= 0 || accepted > quantity) throw new MaterialInputError('请核对本次到料及可用数量');
-            const limit = batch?.quantity ?? amounts.unallocated;
+            const limit = batch?.quantity ?? batch?.declaredQuantity ?? amounts.unallocated;
             if (limit !== null && quantity > limit + 1e-6) throw new MaterialInputError('本次数量超过所选批次或尚未登记的缺料数量');
+            if (batch?.issuePending && !content) throw new MaterialInputError('请补充本批原有异常的核对处理说明');
+            if (itemComplete && batch?.declaredQuantity !== null && batch?.declaredQuantity !== undefined && batch.declaredQuantity > quantity + 1e-6) throw new MaterialInputError('实收少于原登记数量，请先核对剩余批次，不能确认补齐');
             const rejected = Math.round((quantity - accepted) * 1e6) / 1e6;
             if (rejected > 0 && !content) throw new MaterialInputError('请说明少料、错料或来料异常');
             if (rejected > 0 && itemComplete) throw new MaterialInputError('本次仍有异常待补，请保留未解决状态');
-            const verified = { status: 'VERIFIED', acceptedQuantity: accepted, rejectedQuantity: rejected, arrivedAt: now, verifiedAt: now, verifiedById: actorId, note: content || batch?.note || '' };
-            if (batch && Math.abs(batch.quantity - quantity) < 1e-6) {
+            const verified = { status: 'VERIFIED', issuePending: false, acceptedQuantity: accepted, rejectedQuantity: rejected, arrivedAt: batch?.arrivedAt || now, verifiedAt: now, verifiedById: actorId, note: content || batch?.note || '' };
+            if (batch?.status === 'QUANTITY_PENDING') {
+              await tx.materialArrivalBatch.update({ where: { id: batch.id }, data: { ...verified, quantity } });
+              if (batch.declaredQuantity !== null && batch.declaredQuantity - quantity > 1e-6 && batch.shippedAt) {
+                await tx.materialArrivalBatch.create({ data: { exceptionId: event.id, status: 'SHIPPED', quantity: Math.round((batch.declaredQuantity - quantity) * 1e6) / 1e6,
+                  logisticsMode: batch.logisticsMode, carrier: batch.carrier, trackingNumber: batch.trackingNumber, shippedAt: batch.shippedAt,
+                  expectedAt: batch.expectedAt, recordedById: actorId, note: '原登记批次数量减去本次实收到料，余量继续跟进' } });
+              }
+              arrivalId = batch.id;
+            } else if (batch && batch.quantity !== null && Math.abs(batch.quantity - quantity) < 1e-6) {
               await tx.materialArrivalBatch.update({ where: { id: batch.id }, data: verified });
               arrivalId = batch.id;
             } else {
-              if (batch) await tx.materialArrivalBatch.update({ where: { id: batch.id }, data: { quantity: Math.round((batch.quantity - quantity) * 1e6) / 1e6 } });
+              if (batch && batch.quantity !== null) await tx.materialArrivalBatch.update({ where: { id: batch.id }, data: { quantity: Math.round((batch.quantity - quantity) * 1e6) / 1e6 } });
               const receipt = await tx.materialArrivalBatch.create({ data: { ...verified, exceptionId: event.id, quantity, logisticsMode: batch?.logisticsMode || 'UNKNOWN', carrier: batch?.carrier || '', trackingNumber: batch?.trackingNumber || '', expectedAt: batch?.expectedAt || null, shippedAt: batch?.shippedAt || null, recordedById: actorId } });
               arrivalId = receipt.id;
             }
             auditDetail.arrivalId = arrivalId;
             content = `仓库确认到料 ${quantity} ${event.unit}，可用 ${accepted}${rejected ? `，异常待补 ${rejected}` : ''}${content ? `；${content}` : ''}`;
             if (itemComplete && event.shortageQuantity === null) {
-              const unsettled = await tx.materialArrivalBatch.count({ where: { exceptionId: event.id, status: { in: ['SHIPPED', 'ARRIVED'] } } });
+              const unsettled = await tx.materialArrivalBatch.count({ where: { exceptionId: event.id, status: { in: ['SHIPPED', 'ARRIVED', 'QUANTITY_PENDING'] } } });
               if (unsettled) throw new MaterialInputError('本项仍有在途或待确认批次');
               await tx.warehouseMaterialExceptionCase.update({ where: { id: event.id }, data: { status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, resolutionNote: content } });
             }
-            if (rejected > 0) await tx.warehouseMaterialExceptionCase.update({ where: { id: event.id }, data: { arrivalOutcome: 'PARTIAL' } });
+            if (rejected > 0 || batch?.status === 'QUANTITY_PENDING' && batch.declaredQuantity !== null && batch.declaredQuantity > quantity + 1e-6) await tx.warehouseMaterialExceptionCase.update({ where: { id: event.id }, data: { arrivalOutcome: 'PARTIAL' } });
             if (outcome === 'PARTIAL') content += '；仓库确认仍有缺料待补';
             if (outcome === 'COMPLETE' && event.shortageQuantity !== null && amounts.usable + accepted + 1e-6 < event.shortageQuantity) throw new MaterialInputError('累计可用数量尚未达到登记缺料数量，不能确认全部补齐');
           }
         } else if (action === 'confirm_outcome') {
           const outcome = text(input.arrivalOutcome, 20);
           if (!['PARTIAL', 'COMPLETE'].includes(outcome)) throw new MaterialInputError('请选择仍有缺料或本项全部补齐');
-          if (outcome === 'COMPLETE' && (amounts.pending || amounts.transit)) throw new MaterialInputError('请先处理本项的在途及待核验批次');
+          if (outcome === 'COMPLETE' && (amounts.pending || amounts.transit || amounts.quantityPending)) throw new MaterialInputError('请先处理本项的在途、待核验及数量待补录批次');
           if (outcome === 'COMPLETE' && event.shortageQuantity !== null && amounts.usable + 1e-6 < event.shortageQuantity) throw new MaterialInputError('核验可用数量尚未达到缺料数量');
           if (!content) throw new MaterialInputError('请填写现场核对结果');
           content = `${outcome === 'COMPLETE' ? '仓库核对本项全部补齐' : '仓库核对仍有缺料待补'}；${content}`;
@@ -259,7 +282,7 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
           await tx.materialArrivalBatch.update({ where: { id: batch.id }, data: { status: 'ARRIVED', arrivedAt: arrived } });
           content = `本批 ${batch.quantity} ${event.unit} 已报到，待仓库核验${content ? `；${content}` : ''}`;
         } else if (action === 'verify_arrival') {
-          if (!batch || batch.status !== 'ARRIVED') throw new MaterialInputError('本批已核验或尚未报到，请刷新', 409);
+          if (!batch || batch.status !== 'ARRIVED' || batch.quantity === null) throw new MaterialInputError('本批已核验、数量待补录或尚未报到，请刷新', 409);
           const accepted = materialQuantity(input.acceptedQuantity)!;
           if (accepted > batch.quantity) throw new MaterialInputError('合格数量不能超过本批数量');
           const rejected = Math.round((batch.quantity - accepted) * 1e6) / 1e6;
@@ -272,7 +295,7 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
           await tx.materialArrivalBatch.update({ where: { id: batch.id }, data: { status: 'CANCELLED', note: content } });
           content = `取消发货 ${batch.quantity} ${event.unit}；${content}`;
         } else if (action === 'resolve') {
-          if (event.arrivals.some(b => ['SHIPPED', 'ARRIVED'].includes(b.status))) throw new MaterialInputError('请先处理本项的在途及待核验批次');
+          if (event.arrivals.some(b => ['SHIPPED', 'ARRIVED', 'QUANTITY_PENDING'].includes(b.status))) throw new MaterialInputError('请先处理本项的在途、待核验及数量待补录批次');
           if (event.shortageQuantity !== null && amounts.usable < event.shortageQuantity) throw new MaterialInputError('核验可用数量尚未达到缺料数量');
           if (!content) throw new MaterialInputError('请填写仓库核实结果');
           await tx.warehouseMaterialExceptionCase.update({ where: { id: event.id }, data: { status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, resolutionNote: content } });
@@ -281,9 +304,10 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
       if (event) {
         const fresh = await tx.warehouseMaterialExceptionCase.findUniqueOrThrow({ where: { id: event.id }, include: { arrivals: true } });
         const amounts = materialAmounts(fresh.shortageQuantity, fresh.arrivals);
-        const solved = fresh.status === 'RESOLVED' || (['verify_arrival', 'confirm_arrival'].includes(action) && fresh.shortageQuantity !== null && amounts.usable + 1e-6 >= fresh.shortageQuantity && !amounts.pending && !amounts.transit);
+        if (action === 'confirm_arrival' && (input.arrivalOutcome === 'COMPLETE' || input.itemComplete === true) && amounts.quantityPending) throw new MaterialInputError('本项仍有数量待补录批次，不能确认补齐');
+        const solved = fresh.status === 'RESOLVED' || (['verify_arrival', 'confirm_arrival'].includes(action) && fresh.shortageQuantity !== null && amounts.usable + 1e-6 >= fresh.shortageQuantity && !amounts.pending && !amounts.transit && !amounts.quantityPending);
         const cancelled = fresh.status === 'CANCELLED';
-        const status = cancelled ? 'CANCELLED' : solved ? 'RESOLVED' : amounts.pending > 0 && amounts.remaining === 0 ? 'WAITING_WAREHOUSE' : fresh.expectedArrivalAt ? 'WAITING_ARRIVAL' : 'IN_PROGRESS';
+        const status = cancelled ? 'CANCELLED' : solved ? 'RESOLVED' : amounts.quantityPending || amounts.pending > 0 && amounts.remaining === 0 ? 'WAITING_WAREHOUSE' : fresh.expectedArrivalAt ? 'WAITING_ARRIVAL' : 'IN_PROGRESS';
         if (action !== 'note' && action !== 'eta') await tx.warehouseMaterialExceptionCase.update({ where: { id: event.id }, data: { receivedQuantity: amounts.usable + amounts.pending, ...(solved ? { status: 'RESOLVED', resolvedAt: now, resolvedById: actorId, resolutionNote: content } : {}), ...(['report_arrival', 'confirm_arrival'].includes(action) ? { actualArrivalAt: now, actualArrivalById: actorId } : {}) } });
         const follow = await tx.materialFollowUpTask.upsert({ where: { warehouseExceptionId: event.id }, create: { warehouseTaskId: id, warehouseExceptionId: event.id, createdById: actorId, status, expectedAt: fresh.expectedArrivalAt, latestProgress: content, lastFollowedAt: now }, update: { ...(action !== 'note' ? { status, expectedAt: fresh.expectedArrivalAt } : {}), ...(solved || cancelled ? { resolvedAt: now, resolvedById: actorId } : {}), latestProgress: content, lastFollowedAt: now, version: { increment: 1 } } });
         await tx.materialFollowUpActivity.create({ data: { taskId: follow.id, action, content, actorId, toStatus: follow.status } });

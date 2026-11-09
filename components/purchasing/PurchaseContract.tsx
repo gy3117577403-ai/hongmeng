@@ -1,6 +1,8 @@
 "use client";
 import { useRef, useState } from "react";
 import { pcMoney } from "@/lib/purchasing-domain";
+import type { ContractDocument } from '@/lib/purchasing-contract';
+import ContractDocumentView from './ContractDocumentView';
 type Contract = {
   id: string;
   number: string;
@@ -13,6 +15,8 @@ type Contract = {
   snapshot: unknown;
   createdAt: string;
   actorName: string;
+  document?: unknown;
+  documentStatus?: string;
 };
 type Line = {
   number: string;
@@ -118,10 +122,12 @@ export default function PurchaseContract({
       setBusy(false);
     }
   }
+  if(c.document) return <div className="contract-root"><div className="contract-toolbar"><a href="/workspace/purchases">← 采购工作台</a><span>合同 V{c.revision} · {c.documentStatus==='DRAFT'?'草稿':'已定稿存档'}</span><a href={'/api/purchases/contracts?id='+c.id+'&format=pdf'}>下载 PDF</a><a href={'/api/purchases/contracts?id='+c.id+'&format=xlsx'}>下载 Excel</a><button onClick={()=>window.print()}>打印</button><a href={'/workspace/purchases/contracts/editor?revisionOf='+c.id}>修订合同</a></div><ContractDocumentView document={c.document as ContractDocument} number={c.number} revision={c.revision} status={c.documentStatus}/></div>;
   return (
     <div className="contract-root">
       <div className="contract-toolbar">
         <span>合同存档版本 · 查看和下载不改变业务状态</span>
+        <a href={'/workspace/purchases/contracts/editor?revisionOf='+c.id}>用完整模板修订</a>
         <button onClick={() => void pdf()} disabled={busy}>
           {busy ? "正在生成 PDF…" : "下载 PDF"}
         </button>

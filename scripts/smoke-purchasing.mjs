@@ -125,7 +125,10 @@ const contract = await fetch(
   { headers: { cookie } },
 );
 assert.equal(contract.status, 200);
-assert.match(await contract.text(), /物品采购合同/);
+const contractHtml=await contract.text();
+assert.match(contractHtml, /采购合同/);
+assert.match(contractHtml, /草稿/);
+assert.match(contractHtml, /修订合同/);
 checks.push("contract-snapshot-no-auto-funding");
 const receipt = {
     action: "RECEIVE",

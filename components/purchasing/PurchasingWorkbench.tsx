@@ -113,7 +113,7 @@ const titles: Record<string, string> = {
   REJECT_AMOUNT_CORRECTION: "退回金额更正",
   CREATE_FUND: "发起请款 / 报销",
   CREATE_REIMBURSEMENT: '快速申请报销',
-  BATCH_CREATE_FUNDS: "分组申请请款 / 报销",
+  BATCH_CREATE_FUNDS: "申请请款 / 报销",
   APPROVE_FUNDS: "通过资金审批",
   RETURN_FUNDS: "退回资金申请",
   WITHDRAW_FUND: "撤回资金申请",
@@ -123,7 +123,7 @@ const titles: Record<string, string> = {
   OFFLINE_PAYMENT: "补录线下已付款",
   RECEIVE: "登记收货入库",
   RETURN_GOODS: "办理采购退货",
-  REFUND: "确认供应商退款",
+  REFUND: "登记退款到账",
   REFUND_HANDOVER: "确认个人归还公司",
   INVOICE: "登记发票 / 红冲",
   CONTRACT: "生成采购合同",
@@ -549,7 +549,10 @@ export default function PurchasingWorkbench({
       availableCents: Math.max(0, p.payableCents - p.reservedCents + p.refundedCents),
       paidCents: p.paidCents - p.refundedCents,
       invoiceCents: p.invoiceCents,
-      refundOpen: 0,
+      refundOpen: p.returns.reduce((n, r) => n + r.refundDueCents - r.companyReceivedCents, 0),
+      supplierRefundPending: p.returns.reduce((n,r)=>n+r.refundDueCents-r.refundedCents,0),
+      refundHandoverPending: p.returns.reduce((n,r)=>n+r.refundedCents-r.companyReceivedCents,0),
+      refundReceived: p.refundedCents,
       completed: !!p.completedAt,
       createdAt: p.createdAt,
       requestId: p.requestId,
@@ -563,6 +566,7 @@ export default function PurchasingWorkbench({
     extra?: { returnId?: string; correctionId?: string },
   ) {
     if (busyRef.current) return;
+    if(action === 'CONTRACT') { location.assign('/workspace/purchases/contracts/editor?ids='+encodeURIComponent(rows.map(r=>r.id).join(','))); return; }
     setFormError("");
     setError("");
     setFiles([]);
@@ -595,7 +599,8 @@ export default function PurchasingWorkbench({
           status: f.status, amountCents: f.amountCents, paidCents: f.paidCents, version: f.version,
           spec: f.allocations.map(al => al.line.name).join('、'), availableCents: Math.max(0, f.amountCents - f.paidCents) } : row;
       });
-      const returned = p?.returns.find((x) => x.id === extra?.returnId);
+      const returned = p?.returns.find((x) => extra?.returnId ? x.id === extra.returnId : action === 'REFUND' ? x.refundDueCents > x.refundedCents : action === 'REFUND_HANDOVER' ? x.refundedCents > x.companyReceivedCents : false);
+      if(['REFUND','REFUND_HANDOVER'].includes(action) && !returned) throw new Error('当前没有可登记的待退款或待归还记录，请刷新核对');
       const correction = p?.amountCorrections.find(c => c.id === extra?.correctionId);
       const f: Record<string, string> = {
         date: today(),
@@ -646,6 +651,7 @@ export default function PurchasingWorkbench({
       }
       for (const l of lines) {
         for (const key of ['payee', 'bank', 'account', 'cycle', 'dueDate'] as const) f[key + ':' + l.id] = pcPaymentValue(l[key]);
+        f['amount:' + l.id] = yuan(l.payableCents - l.reservedCents + l.refundedCents);
         f["actual:" + l.id] = yuan(l.actualCents || l.estimateCents);
         f["pricing:" + l.id] = l.status !== "ORDERED" || l.unitPrice ? "UNIT" : "TOTAL";
         f["price:" + l.id] = l.unitPrice || "";
@@ -666,6 +672,10 @@ export default function PurchasingWorkbench({
           ),
         );
       }
+      if(action==='BATCH_CREATE_FUNDS') {
+        f.dueDate='';
+        for(const group of pcFundingGroups(lines)) f['amount:'+group[0].id]=yuan(group.reduce((n,l)=>n+l.payableCents-l.reservedCents+l.refundedCents,0));
+      }
       if (action === "RETURN_GOODS" && p) {
         f.kind = p.receivedQty - p.returnedQty > 0 ? "STOCK" : "UNRECEIVED";
         f.stockId = p.balances.find((b) => b.onHand > 0)?.id || "";
@@ -677,6 +687,7 @@ export default function PurchasingWorkbench({
         );
       }
       if (returned) {
+        f.refundId = returned.id; f.receiver = '杭州杭连电子有限公司'; f.refundAccount = ''; f.note = '';
         f.amount = yuan(
           action === "REFUND_HANDOVER"
             ? returned.refundedCents - returned.companyReceivedCents
@@ -824,9 +835,10 @@ export default function PurchasingWorkbench({
         payload = { action, groups: pcFundingGroups(d.lines).map(group => {
           const first = group[0];
           return { entries: group.map(l => ({ id: l.id, version: l.version })),
-            amountCents: group.reduce((sum, l) => sum + l.payableCents - l.reservedCents + l.refundedCents, 0),
+            amountCents: pcCents(form['amount:' + first.id]),
+            adjustment: pcCents(form['amount:' + first.id]) < group.reduce((sum,l)=>sum+l.payableCents-l.reservedCents+l.refundedCents,0) ? 'PARTIAL' : 'NONE',
             payee: form['payee:' + first.id], bank: form['bank:' + first.id], account: form['account:' + first.id],
-            cycle: form['cycle:' + first.id], dueDate: form['dueDate:' + first.id], reason: form.reason };
+            cycle: form['cycle:' + first.id] || form.batchCycle, dueDate: form.dueDate, reason: form.reason };
         }) };
       }
       if (action === "BATCH_PAY") {
@@ -932,8 +944,11 @@ export default function PurchasingWorkbench({
       if (["ISSUE", "RESTOCK", "ADJUST_STOCK"].includes(action))
         payload.quantity = Number(form.quantity);
       if (["REFUND", "REFUND_HANDOVER"].includes(action)) {
-        payload.id = d.returnId;
-        payload.version = d.returnVersion;
+        const returned=d.lines[0]?.returns.find(r=>r.id===form.refundId);
+        if(!returned)throw new Error('请选择关联退款事项');
+        if(!form.receiver?.trim() || !form.refundAccount?.trim())throw new Error('请填写实际收款人或单位及收款账户');
+        payload.id = returned.id;
+        payload.version = returned.version;
       }
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "请核对输入");
@@ -1052,6 +1067,8 @@ export default function PurchasingWorkbench({
               btn("OFFLINE_PAYMENT", "补录已付款")}
           </>
         )}
+        {line && rows.length === 1 && data.permissions.finance && (rows[0].supplierRefundPending || 0) > 0 && btn('REFUND','登记退款到账',true)}
+        {line && rows.length === 1 && data.permissions.finance && (rows[0].refundHandoverPending || 0) > 0 && btn('REFUND_HANDOVER','确认归还公司',true)}
         {line && rows.some(r => r.status === 'ORDERED') && btn('CREATE_FUND', '请款 / 报销', true)}
         {line &&
           all(["APPROVED", "ORDERED"]) &&
@@ -1178,6 +1195,7 @@ export default function PurchasingWorkbench({
             <Bell size={16} />
             群推送
           </button>
+          {(data.permissions.configure||data.permissions.buy)&&<a className="pc-text-btn" href="/workspace/purchases/contracts/editor?template=1">合同模板</a>}
           {data.permissions.configure && (
             <button onClick={() => void open("SAVE_SETTINGS")}>
               <Settings size={15} />
@@ -1196,6 +1214,7 @@ export default function PurchasingWorkbench({
       {!data.settings && (
         <div className="pc-banner">
           首次使用，请配置采购审批、采购经办、资金审批和财务确认人。配置完成即可提交申请。
+          {(data.permissions.configure||data.permissions.buy)&&<a className="pc-text-btn" href="/workspace/purchases/contracts/editor?template=1">合同模板</a>}
           {data.permissions.configure && (
             <button onClick={() => void open("SAVE_SETTINGS")}>现在配置</button>
           )}
@@ -1258,7 +1277,7 @@ export default function PurchasingWorkbench({
               <span>
                 {data.total} {view === "stock" ? "条库存" : "条记录"}
               </span>
-              {view !== "stock" && <strong>{pcMoney(data.totalCents)}</strong>}
+              {view !== "stock" && <><small>{view === 'finance' ? '剩余待付' : '采购 / 申请金额'}</small><strong>{pcMoney(data.totalCents)}</strong></>}
               {view === "execution" && <small>{filters.executionStage === "pending" ? "预算合计" : filters.executionStage === "ordered" ? "采购应付合计" : "预算及采购应付合计"}</small>}
             </div>
           </div>
@@ -1513,24 +1532,24 @@ export default function PurchasingWorkbench({
                             }
                           >
                             {r.completed
-                              ? "已完成"
+                              ? (r.kind === "fund" ? "已付清" : "已完成")
                               : r.kind === "fund" ? PC_FUND_STATES[r.status] || r.status : PC_STATES[r.status]}
                           </span>
                           {r.kind === 'line' && (() => { const receipt = pcReceiptState(r); return <div className="pc-receipt"><strong className={'pc-receipt-badge ' + receipt.state.toLowerCase()}>{receipt.state === 'RECEIVED' ? '✓ ' : ''}{receipt.label}</strong>{r.status === 'ORDERED' && <small>已入库 {r.receivedQty} / {receipt.expected} {r.unit} · 待收 {receipt.pending} {r.unit}</small>}{receipt.returned > 0 && <small className="pc-warning">已退货 {receipt.returned} {r.unit}</small>}</div>; })()}
                           {r.status === "ORDERED" ? (
                             <small>
-                              已付 {pcMoney(r.paidCents)}
+                              净付款 {pcMoney(r.paidCents)}
                             </small>
                           ) : (
                             <small>
                               {r.needDate ? `需求 ${r.needDate}` : ""}
                             </small>
                           )}
-                          {r.refundOpen > 0 && (
-                            <small className="pc-warning">
-                              待归还 {pcMoney(r.refundOpen)}
-                            </small>
-                          )}
+                          {(r.supplierRefundPending || 0)>0 && <small className="pc-warning">待供应商退款 {pcMoney(r.supplierRefundPending!)}</small>}
+                          {(r.refundHandoverPending || 0)>0 && <small className="pc-warning">个人已收，待归还公司 {pcMoney(r.refundHandoverPending!)}</small>}
+                          {(r.refundReceived || 0)>0 && <small>公司已收退款 {pcMoney(r.refundReceived!)}{!r.refundOpen?' · 退款已结清':''}</small>}
+                          {r.kind==='fund' && r.refundOpen>0 && <small className="pc-warning">关联采购退款待处理 {pcMoney(r.refundOpen)}</small>}
+                          {r.kind==='line' && r.refundOpen>0 && !data.permissions.finance && <small>由财务确认人登记到账</small>}
                         </>
                       )}
                     </td>
@@ -1541,6 +1560,9 @@ export default function PurchasingWorkbench({
                       >
                         查看 →
                       </button>
+                      {r.kind==='line' && data.permissions.finance && (r.supplierRefundPending||0)>0 && <button className="pc-text-btn" onClick={()=>void open('REFUND',[r])}>登记退款到账</button>}
+                      {r.kind==='line' && data.permissions.finance && (r.refundHandoverPending||0)>0 && <button className="pc-text-btn" onClick={()=>void open('REFUND_HANDOVER',[r])}>确认归还公司</button>}
+                      {r.kind==='fund' && !!r.refundLineIds?.length && <button className="pc-text-btn" onClick={()=>openDetail(r.id)}>查看关联退款</button>}
                     </td>
                   </tr>
                 ))}
@@ -1979,7 +2001,7 @@ export default function PurchasingWorkbench({
                                         )
                                       }
                                     >
-                                      确认退款到账
+                                      登记退款到账
                                     </button>
                                   )}
                                   {r.refundedCents > r.companyReceivedCents && (
@@ -1997,6 +2019,7 @@ export default function PurchasingWorkbench({
                                   )}
                                 </div>
                               )}
+                              {r.refunds.length > 0 && <details><summary>到账记录（{r.refunds.length} 笔）</summary>{r.refunds.map(receipt => <p key={receipt.id}><b>{receipt.kind === 'HANDOVER' ? '个人归还公司' : receipt.destination === 'PERSON' ? '个人收到供应商退款' : '公司收到供应商退款'} · {pcMoney(receipt.amountCents)}</b><small>{receipt.date} · {receipt.receiver || '历史记录未填写收款人'} · {receipt.account || '历史记录未填写账户'}</small><small>流水号：{receipt.reference || '未填写'} · {receipt.actorName}</small>{receipt.note && <small>备注：{receipt.note}</small>}</p>)}</details>}
                             </div>
                           ))}
                         </>
@@ -2069,7 +2092,7 @@ export default function PurchasingWorkbench({
                       <span className="pc-badge">
                         {fund.status === "APPROVED"
                           ? "待打款"
-                          : PC_STATES[fund.status]}
+                          : PC_FUND_STATES[fund.status]}
                       </span>
                     </div>
                     {fund.accountChanged && (
@@ -2109,6 +2132,7 @@ export default function PurchasingWorkbench({
                         </small>
                       </button>
                     ))}
+                    {fund.allocations.some(al=>al.line.returns.length>0)&&<><h3>关联退款</h3>{fund.allocations.filter(al=>al.line.returns.length>0).map(al=><button key={al.id} className="pc-related" onClick={()=>{openDetail(al.lineId);setDetailTab('stock');}}><b>{al.line.name} · 查看退款及到账操作</b><small>待公司收回 {pcMoney(al.line.returns.reduce((n,r)=>n+r.refundDueCents-r.companyReceivedCents,0))} · 原付款记录保留</small></button>)}</>}
                     <h3>实际付款记录</h3>
                     {!fund.payments.length && (
                       <p className="pc-muted">
@@ -2511,14 +2535,16 @@ export default function PurchasingWorkbench({
                   <details className="pc-reimbursement-details"><summary>其他信息（选填）</summary><div className="pc-form-grid"><Field label="申请金额（元）">{input('amount', 'number')}</Field><Field label="期望付款日期">{input('dueDate', 'date')}</Field><p className="pc-wide pc-hint">默认报销全部可用余额；可减少本次金额，剩余金额以后继续申请。</p><Field label="报销备注" wide><textarea value={form.reason || ''} onChange={e => set('reason', e.target.value)} /></Field></div></details>
                 </section>}
                 {formAction === 'BATCH_CREATE_FUNDS' && <section className="pc-wide pc-batch-payment">
-                  <p className="pc-banner">按收款人、账户、结算方式及账期分为 {pcFundingGroups(dialog.lines).length} 组。每组按可申请余额生成一张资金单，任一组校验失败时整批不提交。部分请款可返回后单独选择一组办理。</p>
-                  {pcFundingGroups(dialog.lines).map((group, index) => { const first = group[0]; return <section className="pc-batch-payment-row" key={first.id}>
-                    <h3>第 {index + 1} 组 · {PC_SETTLEMENTS[first.settlement]} · {pcMoney(group.reduce((n, l) => n + l.payableCents - l.reservedCents + l.refundedCents, 0))}</h3>
-                    <ul>{group.map(l => <li key={l.id}>{l.name} · {pcQuantityText(l.quantity, l.unit)} · {pcMoney(l.payableCents - l.reservedCents + l.refundedCents)}</li>)}</ul>
-                    <div className="pc-form-grid"><Field label={`第 ${index + 1} 组收款人`}>{input('payee:' + first.id)}</Field><Field label={`第 ${index + 1} 组开户银行`}>{input('bank:' + first.id)}</Field><Field label={`第 ${index + 1} 组收款账号`} wide>{input('account:' + first.id)}</Field>
-                    {first.settlement === 'MONTHLY' && <Field label={`第 ${index + 1} 组账期（选填）`}>{input('cycle:' + first.id, 'month')}</Field>}<Field label={`第 ${index + 1} 组期望付款日期（选填）`}>{input('dueDate:' + first.id, 'date')}</Field></div>
-                  </section>; })}
-                  <Field label="收款信息变更原因 / 备注" wide>{input('reason')}</Field>
+                  <p className="pc-hint">已选 {dialog.lines.length} 项。核对收款信息后一次提交，系统按账户和结算条件生成资金单。</p>
+                  <div className="pc-reimbursement-scroll"><table className="pc-funding-table"><thead><tr><th>供应商 / 采购</th><th>收款人 / 单位</th><th>开户银行</th><th>收款账号</th><th>结算 / 账期</th><th>本次申请（元）</th></tr></thead><tbody>
+                    {pcFundingGroups(dialog.lines).map(group=>{const first=group[0],available=group.reduce((n,l)=>n+l.payableCents-l.reservedCents+l.refundedCents,0);return <tr key={first.id}>
+                      <td><b>{first.supplier?.name||first.name}</b><details><summary>{group.length} 项明细</summary>{group.map(l=><p key={l.id}>{l.name} · {pcQuantityText(l.quantity,l.unit)} · {pcMoney(l.payableCents-l.reservedCents+l.refundedCents)}</p>)}</details></td>
+                      {(['payee','bank','account'] as const).map((key,i)=><td key={key}><input aria-label={first.number+' '+['收款人','开户银行','收款账号'][i]} value={form[key+':'+first.id]||''} onChange={e=>set(key+':'+first.id,e.target.value)}/></td>)}
+                      <td>{PC_SETTLEMENTS[first.settlement]}{first.settlement==='MONTHLY'&&<input type="month" aria-label={first.number+' 账期'} value={form['cycle:'+first.id]||''} onChange={e=>set('cycle:'+first.id,e.target.value)}/>}</td>
+                      <td><input aria-label={first.number+' 本次申请金额'} type="number" min="0.01" step="0.01" max={available/100} value={form['amount:'+first.id]||''} onChange={e=>set('amount:'+first.id,e.target.value)}/><small>可申请 {pcMoney(available)}</small></td>
+                    </tr>;})}
+                  </tbody></table></div>
+                  <details className="pc-reimbursement-details"><summary>统一填写其他信息</summary><div className="pc-form-grid"><Field label="期望付款日期（选填）">{input('dueDate','date')}</Field>{dialog.lines.some(l=>l.settlement==='MONTHLY'&&!l.cycle)&&<Field label="补充空白月结账期（选填）">{input('batchCycle','month')}</Field>}<Field label="部分请款 / 收款信息变更说明" wide>{input('reason')}</Field></div></details>
                 </section>}
                 {formAction === "PURCHASE" && (
                   <>
@@ -2659,7 +2685,7 @@ export default function PurchasingWorkbench({
                       return <section className="pc-batch-payment-row" key={r.id} aria-label={`付款 ${r.number}`}>
                         <header><div><b>{r.payee || r.name || "收款人待补充"}</b><small>{r.number} · 账号 {r.account ? '尾号 ' + r.account.slice(-4) : '待补充'}</small><p>{r.spec}</p></div>
                           <button disabled={busy} onClick={() => { formDirty.current = true; setDialog(current => current ? { ...current, rows: current.rows.filter(row => row.id !== r.id) } : current); }}>移除本笔</button></header>
-                        <p>已付 {pcMoney(r.paidCents)} · 剩余待付 <b>{pcMoney(r.availableCents)}</b></p>
+                        <p>已付款 {pcMoney(r.paidCents)} · 剩余待付 <b>{pcMoney(r.availableCents)}</b></p>
                         {!eligible ? <p className="pc-error">当前状态：{PC_FUND_STATES[r.status] || r.status}，不可登记，请移除本笔后继续。</p> : <>
                           <div className="pc-form-grid">
                             <Field label={`${r.number} 本次付款金额（元）`}>{input("amount:" + r.id, "number")}</Field>
@@ -2713,15 +2739,14 @@ export default function PurchasingWorkbench({
                 )}
                 {["REFUND", "REFUND_HANDOVER"].includes(formAction) && (
                   <>
+                    <Field label="关联退款事项" wide><select aria-label="关联退款事项" value={form.refundId||''} onChange={e=>{const r=dialog.lines[0]?.returns.find(r=>r.id===e.target.value);setForm(current=>({...current,refundId:e.target.value,amount:r?yuan(formAction==='REFUND'?r.refundDueCents-r.refundedCents:r.refundedCents-r.companyReceivedCents):''}));formDirty.current=true;}}>{dialog.lines[0]?.returns.filter(r=>formAction==='REFUND'?r.refundDueCents>r.refundedCents:r.refundedCents>r.companyReceivedCents).map(r=><option key={r.id} value={r.id}>{r.number} · {r.reason} · 待处理 {pcMoney(formAction==='REFUND'?r.refundDueCents-r.refundedCents:r.refundedCents-r.companyReceivedCents)}</option>)}</select></Field>
+                    <Field label="实际收款人 / 单位">{input('receiver')}</Field><Field label="退款收款账户">{input('refundAccount')}</Field><Field label="退款备注（选填）">{input('note')}</Field>
                     <Field label="到账凭证 / 流水号">
                       {input("reference")}
                     </Field>
                     {formAction === "REFUND" && (
                       <Field label="实际到账对象">
-                        {select("destination", {
-                          COMPANY: "公司账户已收到",
-                          PERSON: "个人已收到，待归还公司",
-                        })}
+                        <select aria-label="实际到账对象" value={form.destination} onChange={e=>{const destination=e.target.value;setForm(current=>({...current,destination,receiver:destination==='COMPANY'?'杭州杭连电子有限公司':'',refundAccount:''}));formDirty.current=true;}}><option value="COMPANY">公司账户已收到</option><option value="PERSON">个人已收到，待归还公司</option></select>
                       </Field>
                     )}
                   </>
@@ -2852,6 +2877,7 @@ export default function PurchasingWorkbench({
                     "INVOICE",
                     "CONTRACT",
                     'CREATE_REIMBURSEMENT',
+                    'BATCH_CREATE_FUNDS',
                   ].includes(formAction) && (
                     <Field
                       label={

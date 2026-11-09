@@ -1,0 +1,35 @@
+import {mkdirSync,writeFileSync} from 'node:fs';
+import path from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {prisma} from '../lib/prisma';
+import {mutatePurchasing} from '../lib/purchasing-service';
+import {mutateMaterialOrder,readMaterialOrder} from '../lib/material-order-service';
+import type {PcInput} from '../lib/purchasing-domain';
+const {createFixture}=require('./seed-purchasing-smoke.cjs');
+async function main(){
+  const db=new URL(process.env.DATABASE_URL||'postgresql://invalid/invalid');
+  if(process.env.PURCHASING_QA_ALLOW!=='disposable-purchasing-runtime'||!['localhost','127.0.0.1'].includes(db.hostname)||!/(?:_ci|_test|_mirror)$/.test(db.pathname))throw Error('Disposable local database required');
+  const fixture=await createFixture(prisma),actor=await prisma.user.findUniqueOrThrow({where:{id:fixture.user.id}});
+  const run=(input:PcInput)=>mutatePurchasing(input,actor,randomUUID()) as Promise<any>;
+  const entry=async(id:string)=>({id,version:(await prisma.pcLine.findUniqueOrThrow({where:{id}})).version});
+  const settings=await prisma.pcSettings.findUnique({where:{id:'purchasing'}});
+  await run({action:'SAVE_SETTINGS',version:settings?.version,ownerId:actor.id,buyerIds:[actor.id],purchaseApproverIds:[actor.id],fundApproverIds:[actor.id],financeIds:[actor.id],reason:'隔离四项优化验收'});
+  const request=await run({action:'SAVE_REQUEST',submit:true,purpose:fixture.marker,lines:['退款采购','月结甲','月结乙','合同采购'].map(name=>({name:name+' '+fixture.marker,spec:'M8 / 测试规格',quantity:2,unit:'件',estimateCents:10000,needDate:fixture.date}))});
+  const ids=request.lineIds as string[];await run({action:'APPROVE_LINES',entries:await Promise.all(ids.map(entry))});
+  for(const [i,id] of ids.entries())await run({action:'PURCHASE',entries:[{...await entry(id),unitPrice:'50'}],settlement:i===1||i===2?'MONTHLY':'CORPORATE',supplier:'测试供应商'+(i===2?'乙':'甲')+' '+fixture.marker,payee:'测试收款单位'+i,bank:'隔离验收银行',account:'TEST-290-'+i,cycle:fixture.date.slice(0,7),eta:fixture.date,...(i===3?{contractNumber:fixture.marker+'-AUTO'}:{})});
+  const autoContract=await prisma.pcContract.findFirstOrThrow({where:{number:fixture.marker+'-AUTO'}});
+  const fund=await run({action:'CREATE_FUND',entries:[await entry(ids[0])],amountCents:10000});
+  const fundVersion=async()=>({id:fund.id,version:(await prisma.pcFund.findUniqueOrThrow({where:{id:fund.id}})).version});
+  await run({action:'APPROVE_FUNDS',...await fundVersion()});await run({action:'PAY',...await fundVersion(),amountCents:10000,date:fixture.date,source:'公司测试账户',reference:'QA-290-PAY'});
+  await run({action:'RECEIVE',entries:[{...await entry(ids[0]),quantity:2}],date:fixture.date,warehouse:'隔离测试仓',location:'A'});
+  const stock=await prisma.pcStockBalance.findFirstOrThrow({where:{lineId:ids[0]}});
+  const returned=await run({action:'RETURN_GOODS',...await entry(ids[0]),kind:'STOCK',stockId:stock.id,stockVersion:stock.version,quantity:2,amountCents:10000,date:fixture.date,reason:'验收全额退货'});
+  const plan=await prisma.productionPlanOrder.create({data:{sourceOrderNo:fixture.marker,sourceLineNo:1,productName:fixture.marker,specification:fixture.marker,customerName:'验收客户',orderQuantity:20,orderDate:new Date(),customerDueDate:new Date()}});
+  let order=await readMaterialOrder((await prisma.warehouseMaterialTask.create({data:{planOrderId:plan.id}})).id);
+  order=await mutateMaterialOrder(order.id,{action:'report_exception',version:order.version,requestKey:randomUUID(),exceptionType:'shortage',materialModel:'数量选填测试料',supplySource:'PURCHASED',shortageQuantity:8,unit:'件'},actor.id,true);
+  const lines=await prisma.pcLine.findMany({where:{id:{in:ids}},select:{id:true,number:true,name:true},orderBy:{number:'asc'}});
+  const output=process.env.PURCHASING_V290_FIXTURE||'.local/purchasing-v290-fixture.json';mkdirSync(path.dirname(output),{recursive:true});
+  writeFileSync(output,JSON.stringify({...fixture,lines,fundId:fund.id,returnId:returned.id,autoContractId:autoContract.id,materialOrderId:order.id,materialExceptionId:order.events[0].id},null,2));
+  console.log('Disposable v290 browser fixture saved.');
+}
+main().finally(()=>prisma.$disconnect());
