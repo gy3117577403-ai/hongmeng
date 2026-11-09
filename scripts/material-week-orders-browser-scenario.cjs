@@ -86,7 +86,7 @@ async function scenario(page, origin, f, dir) {
     await submit('确认到料');
     order=await read();check(order.events[0].usable===1&&order.events[0].missing===4,'rejected units remain in missing quantity');
     await page.locator('.mo-material-line').first().getByRole('button',{name:'确认到料',exact:true}).click();
-    await page.getByLabel('本次到料数量',{exact:true}).fill('4');
+    await page.getByLabel(/^本次到料数量(?:（选填）)?$/).fill('4');
     await page.getByRole('checkbox',{name:'同时确认整单配齐'}).check();
     await submit('确认到料');
     order=await read();check(order.state==='READY','direct receipt and whole kit confirmed in one transaction');
