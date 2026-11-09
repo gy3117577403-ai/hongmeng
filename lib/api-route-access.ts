@@ -759,7 +759,7 @@ export function canAccessApiRoute(
   }
   if (independentSampleCaptureRoute(access, pathname, method || 'GET')) return true;
   // Field reporting stays independent of workbench grants; services enforce ownership and approval.
-  if (/^\/api\/other-work-times(?:\/|$)/.test(pathOnly(pathname)) && hasCapability(access, 'FIELD_REPORT', 'READ')) return true;
+  if (/^\/api\/other-work-times(?:\/|$)/.test(pathOnly(pathname)) && !/^\/api\/other-work-times\/(?:batch-approve|categories|export)(?:\/|$)/.test(pathOnly(pathname)) && hasCapability(access, 'FIELD_REPORT', 'READ')) return true;
   const newRule = apiRouteAccessRule(pathname);
   const previewRetry = /^\/api\/knowledge\/attachments\/[^/]+\/preview$/.test(pathOnly(pathname)) && String(method).toUpperCase() === 'POST';
   const moduleDecision = moduleApiDecision(access, pathname, previewRetry ? 'GET' : method, newRule?.anyOf);
