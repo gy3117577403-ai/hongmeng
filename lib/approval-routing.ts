@@ -18,6 +18,9 @@ export function supportedHandoffApproval(input: RoutingNotification): boolean {
 /** Called before persistence, so badges, inboxes and realtime delivery share exactly the same recipients. */
 export async function routeBusinessRecipients(tx: Prisma.TransactionClient, input: RoutingNotification, candidates: readonly string[]): Promise<string[]> {
   const ids = [...new Set(candidates.filter(Boolean))];
+  // Loss approval is explicitly granted per account; legacy approval handoffs
+  // must not silently transfer either this authority or private draft messages.
+  if (input.sourceType === 'MATERIAL_LOSS') return ids;
   if (!ids.length) return ids;
   const policies = await tx.businessApprovalHandoff.findMany({ where: { isActive: true, fromUserId: { in: ids } } });
   if (!policies.length) return ids;

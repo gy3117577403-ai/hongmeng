@@ -104,3 +104,7 @@ main.sw-page.hm-workbench-root { --hm-shell-header:0px; padding-top:0; }
 .sp-schedule-presets {display:flex;gap:8px;flex-wrap:wrap}.sp-schedule-presets button {flex:1;min-height:36px;border:1px solid #e3eaf2;border-radius:9px;background:#f7f9fc;color:#536b84}.sp-schedule-presets button.active {background:#fff2e4;border-color:#f8bc8d;color:#cc5908}
 .sp-planning-page .sample-team-title {flex:0 0 auto}.sw-page .sb-week-tools input {width:140px;font-size:12px}.sw-shortage-table {font-size:13px}.sw-task-head p {font-size:12px}.sw-state-actions>small {font-size:12px}
 .sw-shortage-form label {font-size:13px}.sw-shortage-form label>span {display:block}.sw-shortage-form label em {display:inline}.sw-shortage-form legend {font-size:12px}
+
+.sw-arrival-dialog{width:min(1180px,96vw)!important;max-width:1180px!important}.sw-arrival-workbench{height:min(740px,80vh);overflow:auto}.sw-arrival-workbench .mo-embedded{height:100%}.sw-loss-entry{display:block;text-align:right;padding:8px 20px;color:#e36a15}
+
+.sw-loss-warning{margin:10px 20px;padding:12px 14px;background:#fff5e9;border:1px solid #f3d2aa;border-radius:8px;color:#a16b32;display:flex;gap:10px;align-items:center}.sw-loss-warning button{margin-left:auto;background:white;border:1px solid #f3d2aa;border-radius:6px;padding:8px;color:#b25c13}

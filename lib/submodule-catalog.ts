@@ -17,6 +17,8 @@ export const BUSINESS_SUBMODULE_BASE = [
   { key: 'quality-confirmation', group: 'quality', label: '品质确认', capabilities: ['QUALITY'], paths: ['/workspace/quality-confirmation'], apis: ['/api/quality-confirmations'] },
   { key: 'finished-goods', group: 'materials', label: '成品仓', capabilities: ['WAREHOUSE'], paths: ['/workspace/finished-goods'], apis: ['/api/finished-goods'] },
   { key: 'material-follow-up', group: 'materials', label: '物料跟进', capabilities: ['PROCUREMENT'], paths: ['/workspace/procurement'], apis: ['/api/material-follow-ups'] },
+  { key: 'material-loss-report', group: 'materials', label: '物料损耗申报', capabilities: [], paths: ['/workspace/material-loss'], apis: ['/api/material-loss'], explicitOnly: true },
+  { key: 'material-loss-approval', group: 'materials', label: '物料损耗审批', capabilities: [], paths: ['/workspace/material-loss'], apis: ['/api/material-loss'], explicitOnly: true },
   { key: 'purchasing', group: 'materials', label: '物品采购', capabilities: ['PROCUREMENT'], paths: ['/workspace/purchases'], apis: ['/api/purchases'] },
   { key: 'warehouse', group: 'materials', label: '仓库配料', capabilities: ['WAREHOUSE'], paths: ['/workspace/warehouse'], apis: ['/api/warehouse'] },
   { key: 'wip', group: 'materials', label: '半成品仓', capabilities: ['WAREHOUSE'], paths: ['/workspace/wip'], apis: ['/api/wip'] },
@@ -45,7 +47,7 @@ export const BUSINESS_SUBMODULE_BASE = [
 ] as const;
 export type SubmoduleKey = typeof BUSINESS_SUBMODULE_BASE[number]['key'] | `report-${ReportBranchKey}`;
 export type BusinessGroupKey = 'production' | 'quality' | 'materials' | 'technology' | 'people' | 'collaboration' | 'reports';
-export type BusinessSubmodule = { key: SubmoduleKey; group: BusinessGroupKey; label: string; capabilities: readonly string[]; paths: readonly string[]; apis: readonly string[]; readOnly?: boolean };
+export type BusinessSubmodule = { key: SubmoduleKey; group: BusinessGroupKey; label: string; capabilities: readonly string[]; paths: readonly string[]; apis: readonly string[]; readOnly?: boolean; explicitOnly?: boolean };
 export const BUSINESS_SUBMODULES: readonly BusinessSubmodule[] = [
   ...BUSINESS_SUBMODULE_BASE,
   ...REPORT_DOMAINS.flatMap(domain => domain.branches.map(branch => ({ key: `report-${branch.key}` as SubmoduleKey, group: 'reports' as const, label: branch.label, capabilities: ['REPORT_CENTER'], paths: [`/workspace/reports/${domain.key}/${branch.key}`], apis: [], readOnly: true }))),

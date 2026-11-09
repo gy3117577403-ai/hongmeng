@@ -2,6 +2,7 @@ import { drawingLibraryKey, invalidSpecificationReason } from '@/lib/drawing-lib
 import { sampleCustomerLevel } from '@/lib/sample-customer-levels';
 import { sampleWeek } from '@/lib/sample-plan-domain';
 import { sampleUnitTime } from '@/lib/sample-plan-time';
+import { isSampleCustomerDate } from '@/lib/sample-display';
 
 export const SAMPLE_PLAN_IMPORT_HEADERS = [
   '客户名称',
@@ -199,6 +200,7 @@ export function parseSamplePlanRow(
   if (issuedDate && dueDate && issuedDate > dueDate) errors.push('出货日期不能早于下达日期');
   if (!Number.isInteger(warningDays) || warningDays < 0 || warningDays > 30) errors.push('提前预警天数须为 0 至 30 的整数');
   if (!customerName) errors.push('客户名称不能为空');
+  if (isSampleCustomerDate(value('客户名称'))) errors.push('客户名称列是日期，请核对列对应关系后填写实际客户名称');
   if (!productName) errors.push('产品名称不能为空');
   if (!specification) errors.push('型号/规格不能为空');
   if (specification) {

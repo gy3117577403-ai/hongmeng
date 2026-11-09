@@ -66,6 +66,7 @@ export async function updateWarehouseException(tx: Tx, id: string, input: Input,
     }
     if (!canConfirm && !['report_exception', 'update_exception'].includes(action)) throw new MaterialInputError('实物确认及配料完成须由仓库人员操作', 403);
     if (action === 'complete' && await tx.warehouseMaterialExceptionCase.count({ where: { warehouseTaskId: id, status: 'OPEN' } })) throw new MaterialInputError('请先解决所有缺料，再确认已配齐', 409);
+    if (action === 'complete' && await tx.materialLoss.count({ where: { warehouseTaskId: id, status: 'APPROVED', supersededAt: null, affectsKitting: true, kittingReviewedAt: null } })) throw new MaterialInputError('有已批准的物料损耗影响齐套，请先登记实物复核结果', 409);
     const transition = prepareWarehouseTaskTransition({ ...current, status: current.status as WarehouseMaterialStatus, exceptionType: current.exceptionType as WarehouseExceptionType | null }, input);
     if (!transition.ok) throw new MaterialInputError(transition.error, transition.statusCode);
     const now = new Date();

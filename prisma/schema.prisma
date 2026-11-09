@@ -3056,6 +3056,7 @@ model ProcessRouteActivity {
 }
 
 model WarehouseMaterialTask {
+  materialLosses MaterialLoss[]
   id             String                           @id @default(uuid())
   planOrderId    String?                          @unique @map("plan_order_id")
   planOrder      ProductionPlanOrder?              @relation(fields: [planOrderId], references: [id], onDelete: Restrict)
@@ -8166,4 +8167,116 @@ model QfPlanBinding {
   selectedAt   DateTime @default(now())
 
   @@index([packageId])
+}
+
+/// One material per declaration. Revisions preserve approved evidence and statistics.
+model MaterialLoss {
+  kittingReviewedAt DateTime? @map("kitting_reviewed_at")
+  kittingReviewedById String? @map("kitting_reviewed_by_id")
+  id                    String                     @id @default(uuid())
+  number                String                     @unique
+  rootId                String                     @map("root_id")
+  root                  MaterialLoss               @relation("LossRoot", fields: [rootId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  revisions             MaterialLoss[]             @relation("LossRoot")
+  correctsId            String?                    @unique @map("corrects_id")
+  corrects              MaterialLoss?              @relation("LossCorrection", fields: [correctsId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  correction            MaterialLoss?              @relation("LossCorrection")
+  supersededAt          DateTime?                  @map("superseded_at")
+  warehouseTaskId       String?                    @map("warehouse_task_id")
+  warehouseTask         WarehouseMaterialTask?     @relation(fields: [warehouseTaskId], references: [id], onDelete: Restrict)
+  targetLabel           String                     @default("仓库公共损耗") @map("target_label")
+  applicantId           String                     @map("applicant_id")
+  applicantName         String                     @map("applicant_name")
+  status                String                     @default("DRAFT")
+  version               Int                        @default(0)
+  materialName          String                     @default("") @map("material_name")
+  materialModel         String                     @default("") @map("material_model")
+  unit                  String                     @default("")
+  supplySource          String                     @default("PURCHASED") @map("supply_source")
+  quantity              Decimal?                   @db.Decimal(18, 6)
+  occurredOn            DateTime?                  @map("occurred_on") @db.Date
+  category              String                     @default("其他")
+  reason                String                     @default("")
+  affectsKitting        Boolean                    @default(false) @map("affects_kitting")
+  needReplenishment     Boolean                    @default(false) @map("need_replenishment")
+  replenishmentQuantity Decimal?                   @map("replenishment_quantity") @db.Decimal(18, 6)
+  expectedOn            DateTime?                  @map("expected_on") @db.Date
+  correctionReason      String                     @default("") @map("correction_reason")
+  reviewNote            String                     @default("") @map("review_note")
+  reviewerId            String?                    @map("reviewer_id")
+  reviewerName          String?                    @map("reviewer_name")
+  submittedAt           DateTime?                  @map("submitted_at")
+  reviewedAt            DateTime?                  @map("reviewed_at")
+  createdAt             DateTime                   @default(now()) @map("created_at")
+  updatedAt             DateTime                   @updatedAt @map("updated_at")
+  history               MaterialLossEvent[]
+  attachments           MaterialLossAttachment[]
+  replenishment         MaterialLossReplenishment?
+
+  @@index([status, occurredOn, id])
+  @@index([applicantId, createdAt])
+  @@index([warehouseTaskId, status])
+  @@index([rootId])
+  @@map("material_losses")
+}
+
+model MaterialLossEvent {
+  id        String       @id @default(uuid())
+  lossId    String       @map("loss_id")
+  loss      MaterialLoss @relation(fields: [lossId], references: [id], onDelete: Restrict)
+  action    String
+  actorId   String       @map("actor_id")
+  actorName String       @map("actor_name")
+  note      String       @default("")
+  snapshot  Json
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@index([lossId, createdAt])
+  @@map("material_loss_events")
+}
+
+model MaterialLossCommand {
+  key         String   @id
+  actorId     String   @map("actor_id")
+  payloadHash String   @map("payload_hash")
+  lossId      String   @map("loss_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([lossId])
+  @@map("material_loss_commands")
+}
+
+model MaterialLossAttachment {
+  id           String       @id @default(uuid())
+  lossId       String       @map("loss_id")
+  loss         MaterialLoss @relation(fields: [lossId], references: [id], onDelete: Restrict)
+  objectKey    String       @unique @map("object_key")
+  originalName String       @map("original_name")
+  contentType  String       @map("content_type")
+  size         Int
+  actorId      String       @map("actor_id")
+  deletedAt    DateTime?    @map("deleted_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  @@index([lossId, deletedAt])
+  @@map("material_loss_attachments")
+}
+
+/// Separate replenishment ledger: never writes stock balances or hours.
+model MaterialLossReplenishment {
+  id               String       @id @default(uuid())
+  lossId           String       @unique @map("loss_id")
+  loss             MaterialLoss @relation(fields: [lossId], references: [id], onDelete: Restrict)
+  quantity         Decimal      @db.Decimal(18, 6)
+  receivedQuantity Decimal      @default(0) @map("received_quantity") @db.Decimal(18, 6)
+  status           String       @default("PENDING")
+  progress         String       @default("")
+  verifiedById     String?      @map("verified_by_id")
+  verifiedAt       DateTime?    @map("verified_at")
+  version          Int          @default(0)
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  @@index([status, updatedAt])
+  @@map("material_loss_replenishments")
 }

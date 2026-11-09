@@ -9,7 +9,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   try {
     await requireUser();
     const task = await prisma.warehouseMaterialTask.findFirst({ where: { sampleTaskId: params.id, sampleTask: { deletedAt: null } }, include: warehouseMaterialTaskDetailInclude });
-    return NextResponse.json({ ok: true, task: task ? serializeWarehouseMaterialTask(task) : null });
+    const lossWarnings = task ? await prisma.materialLoss.count({ where: { warehouseTaskId: task.id, status: 'APPROVED', supersededAt: null, affectsKitting: true, kittingReviewedAt: null } }) : 0;
+    return NextResponse.json({ ok: true, task: task ? serializeWarehouseMaterialTask(task) : null, lossWarnings });
   } catch (e) { if (e instanceof UnauthorizedError) return unauthorized(e); throw e; }
 }
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {

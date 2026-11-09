@@ -365,6 +365,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:sample-integration
+      - name: Sample arrival and material loss PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/sample-material-arrival-integration.test.ts tests/material-loss-integration.test.ts
       - name: Type check
         run: npx tsc --noEmit
       - name: Employee hours and proportional batch labor PostgreSQL integration
@@ -812,6 +816,7 @@ jobs:
 
           bash scripts/check-purchasing-selection.sh release
           bash scripts/check-purchasing-v290.sh release
+          bash scripts/check-material-loss.sh release
           bash scripts/check-other-hours-batch.sh release
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
@@ -1291,6 +1296,7 @@ jobs:
             node scripts/smoke-batch-knowledge-browser.mjs
           bash scripts/check-purchasing-selection.sh hangzhou
           bash scripts/check-purchasing-v290.sh hangzhou
+          bash scripts/check-material-loss.sh hangzhou
           bash scripts/check-other-hours-batch.sh hangzhou
           DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
             OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
@@ -1444,6 +1450,16 @@ jobs:
           name: realtime-hours-${{ github.ref_name }}
           path: artifacts/realtime-hours/*http.json
           if-no-files-found: warn
+      - name: Upload sample arrival and material loss acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: material-loss-${{ github.ref_name }}
+          path: |
+            output/playwright/material-loss*/*.png
+            output/playwright/material-loss*/browser-result.json
+            output/playwright/material-loss*/browser-runtime.txt
+            output/playwright/material-loss*/*.csv
       - name: Upload supplier refunds contracts and optional arrivals acceptance
         if: always()
         uses: actions/upload-artifact@v4

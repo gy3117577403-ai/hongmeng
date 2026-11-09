@@ -10,6 +10,7 @@ import { poolQuantities, poolInteger, PoolError } from './order-pool-domain';
 
 const actor = { select: { id: true, displayName: true, username: true } } as const;
 export const materialOrderInclude = Prisma.validator<Prisma.WarehouseMaterialTaskInclude>()({
+  materialLosses: { where: { status: 'APPROVED', supersededAt: null, affectsKitting: true, kittingReviewedAt: null }, select: { id: true, number: true, materialModel: true, quantity: true, unit: true }, orderBy: { createdAt: 'asc' }, take: 100 },
   planOrder: { include: { batches: { where: { deletedAt: null }, select: { quantity: true, poolPreparedQuantity: true } } } },
   workOrder: { select: { id: true, code: true, productName: true, specification: true, customerName: true, productionTargetQty: true, uncompletedQty: true, weekStartDate: true, weekEndDate: true, deliveryDay: true, deletedAt: true, productionPlanBatch: { select: { batchNo: true, scheduleState: true, scheduleReason: true, deletedAt: true, plannedCompletionDate: true, planOrder: { select: { customerDueDate: true, customerDueDateConfirmed:true, status: true, deletedAt: true } } } } } },
   sampleTask: { select: sampleMaterialSourceSelect },
@@ -50,7 +51,7 @@ export function serializeMaterialOrder(task: ListRecord | Record) {
   const forecast = materialForecast(open.filter(e => e.phase !== 'NEEDS_COMPLETION').map(e => ({ open: true, remaining: e.remaining, expectedAt: e.expectedAt })));
   const pendingBatches = open.reduce((n, e) => n + e.arrivals.filter(b => ['ARRIVED', 'QUANTITY_PENDING'].includes(b.status)).length, 0);
   const detail = task as Record;
-  return { id: task.id, workOrderId: task.workOrderId, sampleTaskId: task.sampleTaskId, version: task.version,
+  return { materialLossWarnings: task.materialLosses.map(loss => ({ ...loss, quantity: loss.quantity?.toString() || '' })), id: task.id, workOrderId: task.workOrderId, sampleTaskId: task.sampleTaskId, version: task.version,
     planOrderId: task.planOrderId, preparationTaskId: task.preparationTaskId, preparedQuantity: task.preparedQuantity,
     poolQuantities: pool ? poolQuantities(pool.orderQuantity, pool.preparationQuantity, task.preparedQuantity, pool.batches) : null,
     preparationRank: pool?.preparationRank || 0, preparationPriority: pool?.priority || 'normal', preparationDueAt: iso(pool?.preparationDueAt), preparationNote: pool?.preparationNote || '',
@@ -99,12 +100,27 @@ export async function mutateMaterialOrder(id: string, input: { [key: string]: un
     }
     if (serializeMaterialOrder(current).cancelled || current.sampleTask?.deletedAt || current.planOrder && (current.planOrder.deletedAt || ['cancelled','completed'].includes(current.planOrder.status))) throw new MaterialInputError('订单已取消，仅可查看历史记录', 409);
     if (action !== 'note' && (!Number.isInteger(suppliedVersion) || current.version !== suppliedVersion)) throw new MaterialInputError('订单已被更新，已刷新数据；请核对后重新提交', 409);
-    if (['verify_arrivals', 'confirm_prepared', 'confirm_arrival', 'confirm_outcome', 'cancel_duplicate', 'verify_arrival', 'complete', 'reopen', 'resolve'].includes(action) && !canConfirm) throw new MaterialInputError('需要仓库到料确认权限', 403);
+    if (['acknowledge_loss', 'verify_arrivals', 'confirm_prepared', 'confirm_arrival', 'confirm_outcome', 'cancel_duplicate', 'verify_arrival', 'complete', 'reopen', 'resolve'].includes(action) && !canConfirm) throw new MaterialInputError('需要仓库到料确认权限', 403);
     if (input.workspace === 'warehouse' && ['record_shipment', 'cancel_shipment', 'report_arrival', 'eta'].includes(action)) throw new MaterialInputError('发货与交期请在物料追踪中维护', 400);
     const now = new Date();
     let content = text(input.note), eventId = text(input.exceptionId, 100), arrivalId = text(input.arrivalId, 100);
     let event = current.exceptionCases.find(e => e.id === eventId);
     const auditDetail: { [key: string]: Prisma.InputJsonValue | null } = { exceptionCaseId: eventId || null, arrivalId: arrivalId || null, requestKey: key };
+    if ((action === 'complete' || input.confirmComplete === true) && current.materialLosses.length) throw new MaterialInputError('有已批准的物料损耗影响齐套，请先登记实物复核结果', 409);
+    if (action === 'acknowledge_loss') {
+      const lossId = text(input.lossId, 100);
+      if (!content || input.physicalVerified !== true) throw new MaterialInputError('请确认已核对实物，并说明损耗后的配料处理结果');
+      await tx.$queryRaw`SELECT id FROM material_losses WHERE id=${lossId} FOR UPDATE`;
+      const loss = await tx.materialLoss.findFirst({ where: { id: lossId, warehouseTaskId: id, status: 'APPROVED', supersededAt: null, affectsKitting: true, kittingReviewedAt: null } });
+      if (!loss) throw new MaterialInputError('该损耗已复核或状态已变化，请刷新', 409);
+      const person = await tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { displayName: true, username: true } });
+      await tx.materialLoss.update({ where: { id: lossId }, data: { kittingReviewedAt: now, kittingReviewedById: actorId, version: { increment: 1 } } });
+      await tx.materialLossEvent.create({ data: { lossId, action, actorId, actorName: person.displayName || person.username, note: content, snapshot: { warehouseTaskId: id, physicalVerified: true } } });
+      await tx.warehouseMaterialTask.update({ where: { id }, data: { version: { increment: 1 }, updatedById: actorId } });
+      await tx.warehouseMaterialActivity.create({ data: { taskId: id, action, actorId, content: `损耗 ${loss.number} 实物复核：${content}`, detail: { lossId, requestKey: key } } });
+      await tx.materialOrderCommand.create({ data: { taskId: id, key, hash } });
+      return serializeMaterialOrder(await tx.warehouseMaterialTask.findUniqueOrThrow({ where: { id }, include: materialOrderDetailInclude }));
+    }
     if (action === 'verify_arrivals') {
       if (current.status === 'completed') throw new MaterialInputError('已配齐订单请先重新核对', 409);
       const entries = input.entries as { arrivalId?: unknown; acceptedQuantity?: unknown; itemComplete?: unknown }[];

@@ -15,7 +15,7 @@ for (const module of BUSINESS_ACCESS_MODULES) {
     const context = access({ [module.key]: 'READ' });
     for (const group of PLATFORM_NAVIGATION_GROUPS) for (const item of group.items) {
       if (item.href === '/workspace/messages') continue; // personal notification inbox
-      assert.equal(canAccessAppRoute(context, item.href), group.id === module.key, item.href);
+      assert.equal(canAccessAppRoute(context, item.href), group.id === module.key && item.href !== '/workspace/material-loss', item.href);
     }
     assert.equal(canAccessAppRoute(context, '/workspace/reports'), module.key === 'reports');
     assert.equal(canAccessAppRoute(context, '/dashboard?openSettings=1'), false);

@@ -40,7 +40,7 @@ export function expandModulePermissions(permissions: ModulePermissions): ModuleP
     const children = BUSINESS_SUBMODULES.filter(item => item.group === group.key);
     const explicit = children.some(item => permissions[item.key] !== undefined);
     for (const child of children) {
-      const level = explicit ? permissions[child.key] : permissions[group.key];
+      const level = explicit ? permissions[child.key] : child.explicitOnly ? undefined : permissions[group.key];
       if (level) result[child.key] = child.readOnly ? 'READ' : level;
     }
   }
@@ -95,6 +95,7 @@ const PAGE_OWNERS: Array<[string, BusinessAccessModule[]]> = [
 ];
 function prefixMatch(path: string, prefix: string): boolean { return path === prefix || path.startsWith(prefix + '/') || (prefix.endsWith('-') && path.startsWith(prefix)); }
 export function modulePageDecision(access: ModuleAccessCarrier, pathname: string): boolean | null {
+  if (/^\/workspace\/material-loss(?:\/|\?|$)/.test(pathname)) return moduleAllows(access, ['material-loss-report', 'material-loss-approval']) === true;
   if (access.modulePermissions == null) return null;
   const path = pathname.split('?')[0].replace(/\/+$/, '') || '/';
   if (hasSubmoduleConfiguration(access)) {
@@ -126,6 +127,7 @@ const API_OWNERS: Array<[string, BusinessAccessModule[]]> = [
   ['/api/resource-files', ['technology', 'production']], ['/api/upload', ['technology', 'production']],
 ];
 export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string, method: string | null | undefined, ruleModules: readonly string[] = []): boolean | null {
+  if (/^\/api\/material-loss(?:\/|\?|$)/.test(pathname)) return moduleAllows(access, ['material-loss-report', 'material-loss-approval'], !['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) === true;
   if (access.modulePermissions == null) return null;
   const path = pathname.split('?')[0].replace(/\/+$/, '');
   const verb = String(method || 'GET').toUpperCase();
