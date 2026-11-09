@@ -21,7 +21,9 @@ test('upgrade preserves parent access dates, freezes children and honors existin
   const statements=(' -- Freeze each active parent grant'+sql).split(';').map(s=>s.trim()).filter(Boolean);
   await prisma.$transaction(async tx=>{for(const statement of statements)await tx.$executeRawUnsafe(statement);});
   const grants=await prisma.userAccessGrant.findMany({where:{userId:users[0].id,isActive:true,scopeKey:{startsWith:'MODULE:'}}});
-  assert.equal(grants.length,BUSINESS_SUBMODULES.filter(s=>s.group==='materials').length);
+  // Explicit-only permissions are deliberately not inherited by the historical migration.
+  assert.equal(grants.length,BUSINESS_SUBMODULES.filter(s=>s.group==='materials'&&!s.explicitOnly).length);
+  assert.equal(grants.some(g=>g.scopeKey.startsWith('MODULE:material-loss-')),false);
   for(const grant of grants){assert.equal(grant.effectiveFrom.toISOString(),from.toISOString());assert.equal(grant.effectiveTo?.toISOString(),to.toISOString());assert.ok(grant.scopeKey.endsWith(':COLLABORATE'));}
   const narrow=await prisma.userAccessGrant.findMany({where:{userId:users[1].id,isActive:true}});assert.deepEqual(narrow.map(g=>g.scopeKey),['MODULE:warehouse:READ']);
   assert.equal((await prisma.user.findUniqueOrThrow({where:{id:users[0].id}})).sessionVersion,1);
