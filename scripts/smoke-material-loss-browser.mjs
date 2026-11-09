@@ -129,6 +129,13 @@ async function scenario(page, origin, f, dir) {
     const exported = page.waitForEvent('download'); await page.getByRole('button', { name: '导出筛选结果', exact: true }).click(); await (await exported).saveAs(dir + '/material-loss.csv');
     await shot('05-loss-correction-ledger');
     await page.reload(); await waitLoss(correctionId); check((await page.locator('.ml-detail').innerText()).includes('2.5'), 'saved results survive a browser reload');
+    await login('admin', '/workspace/procurement');
+    await page.locator('.mo-loss-tabs').getByRole('link', {name:'物料损耗',exact:true}).click();
+    await page.locator('.ml-intro').waitFor();
+    check((await api('/api/material-loss')).status === 200, 'administrator can read loss ledger');
+    check(await page.getByRole('button',{name:'申报损耗',exact:true}).count() === 0, 'administrator does not inherit reporting permission');
+    check((await api('/api/material-loss/'+row.id,{action:'approve',version:row.version})).status === 403, 'administrator does not inherit approval permission');
+    await shot('admin-loss-read');
     await verifyAccountPermissions();
     check(errors.length === 0, 'no browser runtime errors: ' + JSON.stringify(errors));
     return { passed: true, checks, lossId: row.id, correctionId };

@@ -14,7 +14,7 @@ export type BusinessAccessModule = typeof BUSINESS_ACCESS_MODULES[number]['key']
 export type ModuleAccessLevel = 'READ' | 'COLLABORATE';
 export type ModulePermissionKey = BusinessAccessModule | SubmoduleKey;
 export type ModulePermissions = Partial<Record<ModulePermissionKey, ModuleAccessLevel>>;
-export type ModuleAccessCarrier = { modulePermissions?: ModulePermissions | null; workbenchEnabled?: boolean; sampleLibraryEnabled?: boolean; sampleCaptureEnabled?: boolean; employeeAccountManager?: boolean };
+export type ModuleAccessCarrier = { materialLossAdminRead?: boolean; modulePermissions?: ModulePermissions | null; workbenchEnabled?: boolean; sampleLibraryEnabled?: boolean; sampleCaptureEnabled?: boolean; employeeAccountManager?: boolean };
 export const MODULE_ACCESS_PROFILE = 'MODULE_ACCESS';
 export const MODULE_MARKER_ON = 'MODULES:ON';
 export const MODULE_MARKER_OFF = 'MODULES:OFF';
@@ -95,7 +95,7 @@ const PAGE_OWNERS: Array<[string, BusinessAccessModule[]]> = [
 ];
 function prefixMatch(path: string, prefix: string): boolean { return path === prefix || path.startsWith(prefix + '/') || (prefix.endsWith('-') && path.startsWith(prefix)); }
 export function modulePageDecision(access: ModuleAccessCarrier, pathname: string): boolean | null {
-  if (/^\/workspace\/material-loss(?:\/|\?|$)/.test(pathname)) return moduleAllows(access, ['material-loss-report', 'material-loss-approval']) === true;
+  if (/^\/workspace\/material-loss(?:\/|\?|$)/.test(pathname)) return access.materialLossAdminRead === true || moduleAllows(access, ['material-loss-report', 'material-loss-approval']) === true;
   if (access.modulePermissions == null) return null;
   const path = pathname.split('?')[0].replace(/\/+$/, '') || '/';
   if (hasSubmoduleConfiguration(access)) {
@@ -127,7 +127,7 @@ const API_OWNERS: Array<[string, BusinessAccessModule[]]> = [
   ['/api/resource-files', ['technology', 'production']], ['/api/upload', ['technology', 'production']],
 ];
 export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string, method: string | null | undefined, ruleModules: readonly string[] = []): boolean | null {
-  if (/^\/api\/material-loss(?:\/|\?|$)/.test(pathname)) return moduleAllows(access, ['material-loss-report', 'material-loss-approval'], !['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) === true;
+  if (/^\/api\/material-loss(?:\/|\?|$)/.test(pathname)) return (access.materialLossAdminRead === true && ['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) || moduleAllows(access, ['material-loss-report', 'material-loss-approval'], !['GET', 'HEAD', 'OPTIONS'].includes(String(method || 'GET').toUpperCase())) === true;
   if (access.modulePermissions == null) return null;
   const path = pathname.split('?')[0].replace(/\/+$/, '');
   const verb = String(method || 'GET').toUpperCase();

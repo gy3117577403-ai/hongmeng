@@ -206,6 +206,7 @@ export interface AccessContext {
   sampleCaptureEnabled?: boolean;
   sampleLibraryEnabled?: boolean;
   employeeAccountManager?: boolean;
+  materialLossAdminRead?: boolean;
   modulePermissions?: ModulePermissions | null;
   workbenchEnabled?: boolean;
   accountActive: boolean;
@@ -643,6 +644,7 @@ export function resolveAccessContext(
 
   return {
     accountActive: true,
+    materialLossAdminRead: currentGrants.some(grant => grant.profile === 'ADMIN_GLOBAL'),
     sampleCaptureEnabled: currentGrants.some(grant => grant.profile === 'SAMPLE_CAPTURE_COLLABORATOR'),
     sampleLibraryEnabled: currentGrants.some(grant => grant.profile === 'SAMPLE_LIBRARY_READER'),
     employeeAccountManager: currentGrants.some(grant => grant.profile === 'EMPLOYEE_ACCESS_MANAGER') && capabilities.has('HR:READ') && capabilities.has('HR:UPDATE') && (!configuration || moduleAllows({ modulePermissions: configuration.permissions, workbenchEnabled: configuration.workbenchEnabled }, ['employee-accounts'], true) === true),

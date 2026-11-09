@@ -25,8 +25,9 @@ test('loss grants are opt-in, independent and never grant warehouse or hours app
     }
   }
   const oldAdmin = resolveAccessContext([{ profile: 'ADMIN_GLOBAL', grantType: 'PRIMARY', scopeKey: 'GLOBAL' }]);
-  assert.equal(canAccessAppRoute(oldAdmin, '/workspace/material-loss'), false);
+  assert.equal(canAccessAppRoute(oldAdmin, '/workspace/material-loss'), true);
   assert.equal(canAccessApiRoute(oldAdmin, '/api/material-loss', 'POST'), false);
+  assert.equal(canAccessApiRoute(oldAdmin, '/api/material-loss', 'GET'), true);
 });
 test('drafts can be incomplete, submitted losses require facts and use precise positive quantities', () => {
   assert.equal(lossFields({}).quantity, null);

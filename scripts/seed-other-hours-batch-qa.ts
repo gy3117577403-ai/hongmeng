@@ -27,7 +27,7 @@ async function main() {
       laborRole: 'EMPLOYEE', accessGrants: { create: index === 2
         ? [{ profile: 'MODULE_ACCESS', scopeKey: 'MODULES:ON', grantType: 'PRIMARY' },
           ...Object.entries(reviewerPermissions).map(([key, level]) => ({ profile: 'MODULE_ACCESS' as const, scopeKey: `MODULE:${key}:${level}`, grantType: 'CONCURRENT' as const }))]
-        : [{ profile: 'FIELD_REPORTER', scopeKey: 'EMPLOYEE:' + employee.id, grantType: 'PRIMARY' }] } } });
+        : [{ profile: 'MODULE_ACCESS', scopeKey: 'MODULES:OFF', grantType: 'PRIMARY' }, { profile: 'FIELD_REPORTER', scopeKey: 'EMPLOYEE:' + employee.id, grantType: 'CONCURRENT' }] } } });
     accounts.push({ id: user.id, username: user.username, employeeId: employee.id, name: employee.name, employeeNo: employee.employeeNo, teamId: accountTeam.id, teamName: accountTeam.name });
     await prisma.attendanceRecord.create({ data: { employeeId: employee.id, workDate: new Date(today + 'T00:00:00Z'), status: 'confirmed', attendanceType: 'normal', plannedMilliseconds: 28800000, actualMilliseconds: 28800000,
       segments: [], departmentSnapshot: '生产部', teamSnapshot: accountTeam.name, attainmentEligibleSnapshot: true, attainmentStreamSnapshot: 'batch' } });

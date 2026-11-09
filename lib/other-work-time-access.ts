@@ -24,6 +24,7 @@ export function canReviewOtherWork(actor: OtherWorkActor, row: OtherWorkRecordSc
     && (scope.global || scope.teams.some(key => [row.teamIdSnapshot, row.teamSnapshot].some(v => v?.toLowerCase() === key.toLowerCase())));
 }
 export function canReadOtherWork(actor: OtherWorkActor, row: OtherWorkRecordScope) {
+  if (hasCapability(actor.access, 'FIELD_REPORT', 'READ') && (row.createdById === actor.id || row.employeeId === actor.employeeId)) return true;
   if (actor.access.modulePermissions != null) return moduleAllows(actor.access, ['other-hours', 'other-hours-approval']) === true;
   return row.createdById === actor.id || row.employeeId === actor.employeeId || canReviewOtherWork(actor, row) || actor.laborRole === 'ADMIN';
 }

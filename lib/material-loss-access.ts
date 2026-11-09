@@ -8,11 +8,13 @@ const userSelect = { id: true, displayName: true, username: true, isActive: true
   employee: { select: { isActive: true } }, accessGrants: { select: { profile: true, scopeKey: true, isActive: true, effectiveFrom: true, effectiveTo: true } } } as const;
 function permissions(user: Prisma.UserGetPayload<{ select: typeof userSelect }>) {
   const now = Date.now();
-  const config = moduleConfiguration(user.accessGrants.filter(g => g.isActive && g.effectiveFrom.getTime() <= now && (!g.effectiveTo || g.effectiveTo.getTime() > now)));
+  const grants = user.accessGrants.filter(g => g.isActive && g.effectiveFrom.getTime() <= now && (!g.effectiveTo || g.effectiveTo.getTime() > now));
+  const adminRead = grants.some(g => g.profile === 'ADMIN_GLOBAL');
+  const config = moduleConfiguration(grants);
   const access = { modulePermissions: config?.permissions || {}, workbenchEnabled: config?.workbenchEnabled === true };
   const active = user.isActive && user.accountStatus === 'ACTIVE' && (!user.employee || user.employee.isActive);
   const report = active ? moduleLevel(access, 'material-loss-report') : undefined, approval = active ? moduleLevel(access, 'material-loss-approval') : undefined;
-  return { id: user.id, name: user.displayName || user.username, read: !!(report || approval), report: report === 'COLLABORATE', approve: approval === 'COLLABORATE', reviewRead: !!approval };
+  return { id: user.id, name: user.displayName || user.username, read: active && (adminRead || !!(report || approval)), report: report === 'COLLABORATE', approve: approval === 'COLLABORATE', reviewRead: active && (adminRead || !!approval) };
 }
 export async function materialLossAccess(userId: string, tx: Tx = prisma) {
   const user = await tx.user.findUnique({ where: { id: userId }, select: userSelect });

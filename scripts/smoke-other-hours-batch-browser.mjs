@@ -164,6 +164,18 @@ async function scenario(page, origin, f, dir) {
     check(await page.getByRole('button', { name: '一键同意', exact: true }).count() === 0, 'employee mobile detail preserves read-only approved records');
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), '390px employee view has no horizontal overflow');
     await shot('04-mobile-detail');
+    await page.goto(origin + '/field-report/other-hours');
+    await page.getByRole('button',{name:'协助样品',exact:true}).click();
+    await page.getByPlaceholder('输入时长').fill('5');
+    await page.getByPlaceholder('如：协助样品组给连接线打端子').fill('扫码员工独立权限提交验收');
+    const submitted = page.waitForResponse(r => r.url().includes('/api/other-work-times/') && r.request().method() === 'PATCH');
+    await page.getByRole('button',{name:'提交审批',exact:true}).click();
+    check((await submitted).ok(), 'field-only submission persisted');
+    await page.getByRole('button',{name:'我的申报',exact:true}).click(); await stable();
+    const mine = await request('/api/other-work-times?part=rows');
+    check(mine.status === 200 && JSON.stringify(mine.body).includes('扫码员工独立权限提交验收'), 'configured field-only employee submits and reads own request');
+    check((await request('/api/other-work-times/'+f.rows[1].id+'?part=base')).status === 404, 'field-only employee cannot read another employee record');
+    check((await request('/api/other-work-times/batch-approve','POST',{batchId:f.rows[0].id,items:[{id:f.rows[1].id,version:0}]})).status === 403, 'field-only employee cannot batch approve');
     await page.context().clearCookies();
     check((await request(photo, 'GET', undefined, { 'If-None-Match': firstPhoto.etag })).status === 401, 'cached attachment never bypasses login');
     check((await request('/api/other-work-times/batch-approve', 'POST', { batchId: f.rows[0].id, items: [{ id: f.rows[0].id, version: 0 }] })).status === 401, 'batch approval requires login');
