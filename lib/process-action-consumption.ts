@@ -10,6 +10,7 @@ type Tx = Prisma.TransactionClient;
 export async function materializeProcessActionConsumptions(
   tx: Tx,
   stepId: string,
+  extendForQualityCorrection = false,
 ): Promise<void> {
   const completions = await tx.processCompletion.findMany({
     where: { stepId, voidedAt: null, reportQuantityBasis: 'action' },
@@ -52,9 +53,14 @@ export async function materializeProcessActionConsumptions(
       const available = remainingBySource.get(source.id) || 0;
       if (available <= 0) continue;
       const pairKey = `${source.id}:${consumer.id}`;
-      if (pairKeys.has(pairKey)) continue;
+      if (pairKeys.has(pairKey) && !extendForQualityCorrection) continue;
       const quantity = Math.min(required, available);
-      await tx.processActionConsumption.create({
+      if (pairKeys.has(pairKey)) {
+        await tx.processActionConsumption.update({
+          where: { sourceCompletionId_consumerCompletionId: { sourceCompletionId: source.id, consumerCompletionId: consumer.id } },
+          data: { quantity: { increment: quantity } },
+        });
+      } else await tx.processActionConsumption.create({
         data: {
           stepId,
           sourceCompletionId: source.id,

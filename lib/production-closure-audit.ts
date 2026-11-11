@@ -475,9 +475,15 @@ export function auditProductionClosure(
       }
 
       const groupStepIds = new Set(groupSteps.map(step => step.id));
+      const movementReleaseByTarget = new Map<string, { completionId: string; quantity: number }>();
       const movementReleaseByCompletion = new Map<string, number>();
       for (const movement of activeMovements) {
         if (!groupStepIds.has(movement.sourceStepId) || !RELEASE_MOVEMENT_TYPES.has(movement.type)) continue;
+        const key = `${movement.completionId}:${movement.type}:${movement.targetStepId || ''}`;
+        movementReleaseByTarget.set(key, { completionId: movement.completionId,
+          quantity: (movementReleaseByTarget.get(key)?.quantity || 0) + movement.quantity });
+      }
+      for (const movement of movementReleaseByTarget.values()) {
         movementReleaseByCompletion.set(
           movement.completionId,
           Math.max(movementReleaseByCompletion.get(movement.completionId) || 0, movement.quantity),
@@ -818,7 +824,7 @@ export function auditProductionClosure(
           message: '含不良品的完成记录没有建立后续分支工单',
         });
       }
-      if (coveredDefectQty === 0 && branch) {
+      if (coveredDefectQty === 0 && branch && branch.branchStatus !== 'CANCELLED') {
         add({
           severity: 'error',
           domain: 'branch',
@@ -952,6 +958,16 @@ export function auditProductionClosure(
     const expectedBranchType = originCompletion.defectDisposition
       ? BRANCH_TYPE_BY_DISPOSITION[originCompletion.defectDisposition]
       : undefined;
+    if (branch.branchStatus === 'CANCELLED' && branch.branchType === 'REWORK'
+      && originCompletion.defectQty === 0 && !originCompletion.defectDisposition) {
+      const hasBusiness = activeCompletions.some(c => c.workOrderId === branch.id)
+        || activeMovements.some(m => m.workOrderId === branch.id || m.branchWorkOrderId === branch.id)
+        || snapshot.laborPools.some(p => p.workOrderId === branch.id && p.status !== 'VOIDED');
+      if (hasBusiness) add({ severity: 'error', domain: 'branch', code: 'CANCELLED_BRANCH_HAS_BUSINESS',
+        entityType: 'work_order', entityId: branch.id, workOrderId: branch.id,
+        message: '误建作废返工单仍有有效业务记录' });
+      continue;
+    }
     if (
       !expectedBranchType
       || branch.branchType !== expectedBranchType
@@ -1172,7 +1188,7 @@ export function auditProductionClosure(
 
     if (completion && pool.status !== 'VOIDED') {
       const expectedEligibleQty = completion.reportQuantityBasis === 'action'
-        ? Math.max(0, completion.reportedGoodUnitQty || 0)
+        ? Math.max(0, completion.reportedUnitQty || 0)
         : completion.timeBasis === 'per_batch' && pool.allocationPolicy !== 'batch_proportional_v1'
         ? sumNumbers(activeCompletions
             .filter(record => record.stepId === pool.stepId)

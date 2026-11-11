@@ -3324,6 +3324,7 @@ async function applyCompletionCoverage(
       defectDisposition: string | null;
     };
     triggerCompletionId: string;
+    correctionKey?: string;
     targetQty: number;
     userId: string | null;
     actor: string;
@@ -3393,7 +3394,7 @@ async function applyCompletionCoverage(
       quantity: plan.deltaQty,
       goodQty: plan.deltaGoodQty,
       defectQty: plan.deltaDefectQty,
-      idempotencyKey: `coverage:${input.completion.id}:${input.triggerCompletionId}:${input.completion.coveredQty}:${plan.coveredQty}`,
+      idempotencyKey: `coverage:${input.completion.id}:${input.correctionKey || input.triggerCompletionId}:${input.completion.coveredQty}:${plan.coveredQty}`,
     },
   });
   input.completion.coveredQty = plan.coveredQty;
@@ -3459,7 +3460,7 @@ async function applyCompletionCoverage(
           quantity: release.releaseDeltaQty,
           sourceSequenceGroup: current.sequenceGroup,
           targetSequenceGroup: targetStep.sequenceGroup,
-          idempotencyKey: `${input.completion.id}:coverage:${input.triggerCompletionId}:${plan.coveredQty}:good:${targetStep.id}`,
+          idempotencyKey: `${input.completion.id}:coverage:${input.correctionKey || input.triggerCompletionId}:${plan.coveredQty}:good:${targetStep.id}`,
         })),
       });
       for (const targetStep of targetSteps) {
@@ -3493,7 +3494,7 @@ async function applyCompletionCoverage(
           quantity: release.releaseDeltaQty,
           sourceSequenceGroup: current.sequenceGroup,
           targetSequenceGroup: null,
-          idempotencyKey: `${input.completion.id}:coverage:${input.triggerCompletionId}:${plan.coveredQty}:finished`,
+          idempotencyKey: `${input.completion.id}:coverage:${input.correctionKey || input.triggerCompletionId}:${plan.coveredQty}:finished`,
         },
       });
     }
@@ -3545,7 +3546,7 @@ async function applyCompletionCoverage(
         quantity: plan.deltaDefectQty,
         sourceSequenceGroup: current.sequenceGroup,
         targetSequenceGroup: branch.firstSequenceGroup,
-        idempotencyKey: `${input.completion.id}:coverage:${input.triggerCompletionId}:${plan.coveredQty}:defect`,
+        idempotencyKey: `${input.completion.id}:coverage:${input.correctionKey || input.triggerCompletionId}:${plan.coveredQty}:defect`,
       },
     });
   }
@@ -3575,6 +3576,7 @@ async function reconcilePendingCompletionCoverage(
   input: {
     route: CompletionRouteRecord;
     triggerCompletionId: string;
+    correctionKey?: string;
     targetQty: number;
     userId: string | null;
     actor: string;
@@ -3629,6 +3631,7 @@ async function reconcilePendingCompletionCoverage(
         route: input.route,
         completion: report,
         triggerCompletionId: input.triggerCompletionId,
+        correctionKey: input.correctionKey,
         targetQty: input.targetQty,
         userId: input.userId,
         actor: input.actor,
@@ -3651,6 +3654,35 @@ async function reconcilePendingCompletionCoverage(
     ...(branchWorkOrderCode ? { branchWorkOrderCode } : {}),
     reworkReturns,
   };
+}
+
+/** Quality-only repair reuses quantity flow; it must never create/reallocate labor. */
+export async function reconcileQualityCorrection(tx: Prisma.TransactionClient, input: {
+  routeId: string; completionId: string; correctionKey: string; userId: string; actor: string; now: Date;
+}) {
+  const route = await tx.workOrderProcessRoute.findUniqueOrThrow({ where: { id: input.routeId }, include: completionRouteInclude });
+  route.steps = projectMaterialSequence(route.steps);
+  const targetQty = targetQuantity(route.workOrder);
+  const coverage = await reconcilePendingCompletionCoverage(tx, {
+    route, triggerCompletionId: input.completionId, correctionKey: input.correctionKey,
+    targetQty, userId: input.userId, actor: input.actor, now: input.now,
+  });
+  if (coverage.reworkReturns.length || coverage.branchWorkOrderId) {
+    throw new ProcessCompletionServiceError('更正将触发其他返工业务，需单独核对', 409, 'QUALITY_CORRECTION_BRANCH_DEPENDENCY');
+  }
+  const stepsClosed = await reconcileQuantityStepStatuses(tx, route.steps, { targetQty, userId: input.userId, now: input.now });
+  const obligations = await tx.processSupplementObligation.count({ where: { routeId: route.id, status: 'ACTIVE' } });
+  const pending = await tx.processCompletion.count({ where: { routeId: route.id, step: { retiredAt: null }, voidedAt: null, coverageStatus: { not: 'COVERED' } } });
+  const routeCompleted = stepsClosed && obligations === 0 && pending === 0;
+  const updated = await tx.workOrderProcessRoute.updateMany({ where: { id: route.id, version: route.version, status: { in: ['in_progress', 'completed'] } },
+    data: { version: { increment: 1 }, status: routeCompleted ? 'completed' : 'in_progress', completedAt: routeCompleted ? input.now : null } });
+  if (updated.count !== 1) throw new ProcessCompletionServiceError('路线已变化，请重新预览', 409, 'PROCESS_ROUTE_VERSION_CONFLICT');
+  await updateCompletionWorkOrders(tx, { route, targetQty, finishedGoodDelta: coverage.finishedGoodDelta,
+    frontendTransferDelta: coverage.frontendTransferDelta, routeCompleted, actor: input.actor, now: input.now, propagateFinishedToAncestors: true });
+  const completion = await tx.processCompletion.findUniqueOrThrow({ where: { id: input.completionId }, select: { workDate: true } });
+  await syncDailyProcessTasksAfterCompletion(tx, { completionId: input.completionId, routeId: route.id,
+    workDate: completion.workDate, steps: route.steps, actorId: input.userId });
+  return { routeVersion: route.version + 1, routeCompleted, finishedGoodDelta: coverage.finishedGoodDelta };
 }
 
 type SharedTerminalSessionPreparation = 'none' | 'new-batch' | 'replay-batch';

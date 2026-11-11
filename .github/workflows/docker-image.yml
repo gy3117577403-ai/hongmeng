@@ -333,6 +333,14 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:weekly-plan-export-integration
+      - name: Quality quantity correction isolated PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_quality_correction_ci?schema=public
+        run: |
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_quality_correction_ci'
+          npx prisma migrate deploy
+          npx tsx --test --test-concurrency=1 tests/process-quality-correction-integration.test.ts
       - name: Production correction and product-time sync PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -818,6 +826,7 @@ jobs:
           bash scripts/check-purchasing-v290.sh release
           bash scripts/check-material-loss.sh release
           bash scripts/check-other-hours-batch.sh release
+          bash scripts/check-quality-correction.sh release
           docker stop --time 20 hongmeng-release-smoke >/dev/null
           test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
       - name: Order pool preparation browser acceptance against exact release image
@@ -1298,6 +1307,7 @@ jobs:
           bash scripts/check-purchasing-v290.sh hangzhou
           bash scripts/check-material-loss.sh hangzhou
           bash scripts/check-other-hours-batch.sh hangzhou
+          bash scripts/check-quality-correction.sh hangzhou
           DATABASE_URL='postgresql://postgres:postgres@127.0.0.1:25437/hongmeng_sample_mirror?schema=public' \
             OFFICE_QA_ALLOW=disposable-office-runtime OFFICE_QA_OUTPUT=output/playwright/knowledge-preview-hangzhou \
             S3_ENDPOINT=http://127.0.0.1:29000 S3_BUCKET=workorder-resources S3_REGION=auto S3_FORCE_PATH_STYLE=true \
@@ -1639,3 +1649,11 @@ jobs:
             output/playwright/import-association-*/data-invariants.json
             output/playwright/import-association-*/browser-runtime.txt
           if-no-files-found: warn
+
+      - name: Upload quality correction acceptance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-correction-${{ github.ref_name }}
+          path: output/quality-correction/*-acceptance.json
+          if-no-files-found: error
