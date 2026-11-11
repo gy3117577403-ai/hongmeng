@@ -11,7 +11,7 @@ async function main() {
   assert.ok(f.username.startsWith('QUALITY-TEST-'));
   const checks: string[] = [];
   const check = (ok: boolean, label: string) => { assert.ok(ok, label); checks.push(label); };
-  const path = `/api/process-management/routes/${f.routeId}/completions/${f.completionId}/correct-quality`;
+  const path = `/api/process-management/routes/${f.routeId}/completions/${f.completionId}/${f.linked ? 'correct-quality-linked' : 'correct-quality'}`;
   async function login(username: string) {
     const r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ username, password: f.password }) });
     assert.equal(r.status, 200, await r.text());
@@ -24,25 +24,26 @@ async function main() {
   const cookie = await login(f.username);
   const get = async () => { const r = await fetch(base + path, { headers: { Cookie: cookie } }); assert.equal(r.status, 200, await r.clone().text()); return (await r.json()).data; };
   const p = await get(); check(p.canExecute, 'authorized preview succeeds');
-  check(p.before.defectQty === 40 && p.after.goodQty === 40 && p.after.defectQty === 0, 'before and proposed quantities shown');
+  check(f.linked ? p.corrections.length === 2 && p.closure.expectedCompleted && p.requiresLaterActionConfirmation : p.before.defectQty === 40 && p.after.goodQty === 40 && p.after.defectQty === 0, 'before and proposed quantities shown');
   const original = await prisma.processCompletion.findUniqueOrThrow({ where: { id: f.completionId } });
   check(original.defectQty === 40, 'GET preview did not change data');
   const stable = (x: unknown) => JSON.stringify(x, (_k, v) => typeof v === 'bigint' ? v.toString() : v);
   const ledger = () => prisma.processLaborPool.findMany({ where: { workOrderId: f.orderId }, orderBy: { id: 'asc' }, include: { claims: { orderBy: { id: 'asc' } } } });
   const before = stable(await ledger());
-  const command = { previewToken: p.previewToken, reason: '隔离测试确认实际劳动仅不良误填', confirmActualWork: true, idempotencyKey: randomUUID() };
+  const command = { previewToken: p.previewToken, reason: '隔离测试确认实际劳动仅不良误填', confirmActualWork: true, confirmLaterActions: true, idempotencyKey: randomUUID() };
   const post = (body: unknown, origin = base) => fetch(base + path, { method: 'POST', headers: { Cookie: cookie, Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   check((await post(command, 'https://invalid.example')).status === 403, 'cross-origin mutation denied');
   check((await post({ ...command, confirmActualWork: false })).status === 400, 'actual work confirmation required');
   check((await post({ ...command, previewToken: '0'.repeat(64) })).status === 409, 'stale preview rejected');
+  if (f.linked) check((await post({ ...command, confirmLaterActions: false })).status === 400, 'later same-day actions require explicit confirmation');
   const result = await post(command); check(result.status === 200, 'quality correction commits through API');
   check((await post(command)).status === 200, 'retry returns success without second mutation');
   check(before === stable(await ledger()), 'all employee claims and labor pools unchanged');
   const branch = await prisma.workOrder.findUniqueOrThrow({ where: { id: f.branchId } });
   check(branch.branchStatus === 'CANCELLED' && !branch.deletedAt && !branch.planActive, 'empty branch cancelled with history retained');
   const mainOrder = await prisma.workOrder.findUniqueOrThrow({ where: { id: f.orderId } });
-  check(mainOrder.completedQty === '14' && mainOrder.status !== 'done', 'partial downstream remains 14/40 instead of forced completion');
-  check(await prisma.operationLog.count({ where: { targetId: f.completionId, action: 'correct_quality_quantity' } }) === 1, 'one audit entry only');
+  check(f.linked ? mainOrder.completedQty === '40' && mainOrder.status === 'done' : mainOrder.completedQty === '14' && mainOrder.status !== 'done', f.linked ? 'linked correction closes fully reported order at 40/40' : 'partial downstream remains 14/40 instead of forced completion');
+  check(await prisma.operationLog.count({ where: { targetId: f.completionId, action: f.linked ? 'correct_linked_quality' : 'correct_quality_quantity' } }) === 1, 'one audit entry only');
   writeFileSync(process.env.QUALITY_CORRECTION_QA_REPORT || 'output/quality-correction/http-acceptance.json', JSON.stringify({ base, checks, count: checks.length, passed: true }, null, 2));
   console.log(`${checks.length} quality correction HTTP and ledger checks passed`);
 }

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { prisma } from '../../lib/prisma';
 import { completeProcessStep } from '../../lib/process-completion-service';
 
-export async function qualityFixture(options: { partialDownstream?: boolean; priorActions?: boolean; partialDefect?: boolean; noDownstream?: boolean } = {}) {
+export async function qualityFixture(options: { partialDownstream?: boolean; priorActions?: boolean; partialDefect?: boolean; noDownstream?: boolean; linked?: boolean } = {}) {
   const prefix = `QUALITY-TEST-${randomUUID().slice(0, 8)}`;
   const user = await prisma.user.create({ data: { username: prefix, displayName: '质量更正测试管理员', passwordHash: 'test-not-login', laborRole: 'ADMIN' } });
   const employee = await prisma.employee.create({ data: { employeeNo: prefix, name: '质量测试员工', department: '生产', team: '测试' } });
@@ -29,6 +29,16 @@ export async function qualityFixture(options: { partialDownstream?: boolean; pri
     version = result.routeVersion; return result;
   }
   if (options.priorActions) await report(0, 0, 0, 960, 0);
+  if (options.linked) {
+    await prisma.workOrderProcessStep.update({ where: { id: route.steps[1].id }, data: { position: 3, sequenceGroup: 3 } });
+    const heat = await prisma.workOrderProcessStep.create({ data: { routeId: route.id, processCode: 'HEAT', processName: '热缩', position: 2, sequenceGroup: 2,
+      stageGroup: 'backend', reportQuantityBasis: 'action', reportUnitLabel: '个', timeBasis: 'per_unit', unitsPerProduct: 3,
+      unitLabel: '套', standardSource: 'test', standardMillisecondsPerUnit: 15000, inputQty: 0, status: 'pending' } });
+    route.steps.push(heat);
+    await report(2, 0, 0, 10, 0);
+    await report(2, 40, 40, 40, 40);
+    await report(2, 0, 0, 110, 0);
+  }
   if (!options.noDownstream) await report(1, options.partialDownstream ? 14 : 40, 0, options.partialDownstream ? 14 : 40, 0);
   const defectQty = options.partialDefect ? 20 : 40;
   const completion = await report(0, 40, defectQty, options.priorActions ? 40 : 80, options.priorActions ? 40 : defectQty * 2);

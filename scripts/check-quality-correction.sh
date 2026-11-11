@@ -10,3 +10,9 @@ export QUALITY_CORRECTION_QA_REPORT="output/quality-correction/$1-acceptance.jso
 npx tsx scripts/seed-quality-correction-qa.ts
 npx tsx scripts/smoke-quality-correction.ts
 rm output/quality-correction/fixture.json
+
+export LINKED_QUALITY_QA=1
+export QUALITY_CORRECTION_QA_REPORT="output/quality-correction/$1-linked-acceptance.json"
+npx tsx scripts/seed-quality-correction-qa.ts
+npx tsx scripts/smoke-quality-correction.ts
+rm output/quality-correction/fixture.json

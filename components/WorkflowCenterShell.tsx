@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
+import { LinkedQualityQuantityCorrection } from '@/components/LinkedQualityQuantityCorrection';
 import { QualityQuantityCorrection } from '@/components/QualityQuantityCorrection';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ProcessRouteChangeReviewPanel } from '@/components/process-route-changes/ProcessRouteChangeReviewPanel';
@@ -214,7 +215,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     completion: WorkflowCompletionRecord;
   } | null>(null);
   const [withdrawalPreview, setWithdrawalPreview] = useState<WithdrawalPreview | null>(null);
-  const [qualityTarget, setQualityTarget] = useState<{ routeId: string; completionId: string } | null>(null);
+  const [qualityTarget, setQualityTarget] = useState<{ routeId: string; completionId: string; linked?: boolean } | null>(null);
   const [withdrawalLoading, setWithdrawalLoading] = useState(false);
   const [withdrawalCategory, setWithdrawalCategory] = useState<'REPORTING_ERROR' | 'PROCESS_EXCEPTION'>('REPORTING_ERROR');
   const [withdrawalRequests, setWithdrawalRequests] = useState<CompletionWithdrawalRequestDTO[]>([]);
@@ -1190,6 +1191,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                         </div>
                         {canCorrectProduction && <div className="workflow-completion-record-actions">
                           {user.access.capabilities.includes('PRODUCTION:UPDATE') && completion.defectQty > 0 && selected.processRouteId && <button type="button" disabled={routeActionPending} onClick={() => setQualityTarget({ routeId: selected.processRouteId!, completionId: completion.id })}>质量数量更正</button>}
+                          {user.access.capabilities.includes('PRODUCTION:UPDATE') && completion.defectQty > 0 && selected.processRouteId && <button type="button" disabled={routeActionPending} onClick={() => setQualityTarget({ routeId: selected.processRouteId!, completionId: completion.id, linked: true })}>关联质量更正</button>}
                           <button type="button" disabled={routeActionPending} onClick={() => openCompletionCorrection(selectedProcessStep, completion)}><Wrench size={13} />校正工序/工时</button>
                           <button className="danger" type="button" disabled={routeActionPending} onClick={() => { void openCompletionWithdrawal(selectedProcessStep, completion); }}><Undo2 size={13} />撤回本次完工</button>
                         </div>}
@@ -1307,7 +1309,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
         </section>
       </div>}
 
-      {qualityTarget && <QualityQuantityCorrection key={qualityTarget.completionId} {...qualityTarget} onClose={() => setQualityTarget(null)} onSaved={() => { setQualityTarget(null); setRouteActionMessage({ tone: 'success', text: '质量数量已更正，误建返工单已作废，原动作工时逐笔校验不变' }); void load(); }} />}
+      {qualityTarget?.linked && <LinkedQualityQuantityCorrection key={qualityTarget.completionId} {...qualityTarget} onClose={() => setQualityTarget(null)} onSaved={() => { setQualityTarget(null); setRouteActionMessage({ tone: 'success', text: '关联质量更正成功，工时逐笔不变，请核对最新成品及结单状态' }); void load(); }} />}
+      {qualityTarget && !qualityTarget.linked && <QualityQuantityCorrection key={qualityTarget.completionId} {...qualityTarget} onClose={() => setQualityTarget(null)} onSaved={() => { setQualityTarget(null); setRouteActionMessage({ tone: 'success', text: '质量数量已更正，误建返工单已作废，原动作工时逐笔校验不变' }); void load(); }} />}
       {withdrawalTarget && <div className="workflow-correction-backdrop" role="presentation" onMouseDown={event => {
         if (event.currentTarget === event.target && !routeActionPending) setWithdrawalTarget(null);
       }}>

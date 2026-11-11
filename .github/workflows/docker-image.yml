@@ -340,7 +340,7 @@ jobs:
         run: |
           PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_quality_correction_ci'
           npx prisma migrate deploy
-          npx tsx --test --test-concurrency=1 tests/process-quality-correction-integration.test.ts
+          npx tsx --test --test-concurrency=1 tests/process-quality-correction-integration.test.ts tests/linked-quality-correction-integration.test.ts
       - name: Production correction and product-time sync PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
