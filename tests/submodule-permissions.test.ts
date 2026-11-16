@@ -29,6 +29,19 @@ test('sibling writes do not inherit shared capabilities',()=>{
  const cases=[['warehouse','/api/finished-goods'],['material-follow-up','/api/purchases'],['finished-goods','/api/wip'],['connector-parameters','/api/drawing-library'],['assembly-manuals','/api/connector-parameters'],['quality-management','/api/quality-data'],['employees','/api/recruitment'],['employee-accounts','/api/employees/any'],['daily-shipment','/api/planning/orders'],['sample-planning','/api/order-pool/commands'],['major-approval','/api/other-work-times'],['workflows','/api/major-quality-approvals']];
  for(const [key,path] of cases)assert.equal(canAccessApiRoute(access({[key]:'COLLABORATE'}),path,'POST'),false,key+' '+path);
 });
+test('material tracking collaboration can reach the shared order PATCH handler for progress', () => {
+  const path = '/api/warehouse/material-orders/order';
+  const tracking = access({ 'material-follow-up': 'COLLABORATE' });
+  const reader = access({ 'material-follow-up': 'READ' });
+  const warehouse = access({ warehouse: 'COLLABORATE' });
+  assert.equal(canAccessApiRoute(tracking, path, 'PATCH'), true);
+  assert.equal(canAccessApiRoute(reader, path, 'GET'), true);
+  assert.equal(canAccessApiRoute(reader, path, 'PATCH'), false);
+  assert.equal(canAccessApiRoute(warehouse, path, 'PATCH'), true);
+  assert.equal(canAccessApiRoute(tracking, path, 'DELETE'), false);
+  assert.equal(canAccessApiRoute(tracking, '/api/warehouse/material-orders', 'PATCH'), false);
+  assert.equal(canAccessApiRoute(tracking, '/api/warehouse/material-tasks/order', 'PATCH'), false);
+});
 test('shared quality workbench enforces commands and view ownership',()=>{
  const reviewer=access({'quality-review':'COLLABORATE'}),fixtures=access({'fixture-management':'COLLABORATE'}),technical=access({'drawing-library':'COLLABORATE'});
  assert.equal(moduleFixtureActionAllowed(reviewer,'APPROVE'),true);assert.equal(moduleFixtureActionAllowed(reviewer,'STOCK'),false);

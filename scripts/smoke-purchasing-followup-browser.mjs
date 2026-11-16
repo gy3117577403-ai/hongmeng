@@ -42,13 +42,69 @@ async function scenario(page, origin, f, dir) {
     await page.locator('.mo-detail .mo-order-head').waitFor();
   };
   const materialRecord=async kind=>(await page.evaluate(async id=>(await fetch('/api/warehouse/material-orders/'+id)).json(),f.tasks.find(t=>t.kind===kind).id)).order;
-  try {
-    await page.setViewportSize({width:1366,height:1024});
-    await page.goto(origin+'/login?next='+encodeURIComponent('/workspace/purchases?view=execution'));
-    await page.getByLabel('员工编号 / 管理账号').fill(f.user.username);
+  const login = async (account, target) => {
+    await page.context().clearCookies();
+    await page.goto(origin + '/login?next=' + encodeURIComponent(target));
+    await page.getByLabel('员工编号 / 管理账号').fill(account.username);
     await page.getByLabel('密码',{exact:true}).fill(f.password);
     await page.getByRole('button',{name:'登录',exact:true}).click();
-    await page.waitForURL(u=>u.pathname==='/workspace/purchases',{timeout:60000});
+    await page.waitForURL(u => u.pathname === target.split('?')[0], { timeout: 60000 });
+  };
+  try {
+    await page.setViewportSize({width:1366,height:1024});
+    const noteTask = f.tasks.find(task => task.kind === 'duplicate');
+    const trackingPath = '/workspace/procurement?scope=pool&status=shortage&orderId=' + noteTask.id + '&q=' + encodeURIComponent(noteTask.code);
+    const orderEndpoint = origin + '/api/warehouse/material-orders/' + noteTask.id;
+    await login(f.trackingWriter, trackingPath);
+    await page.getByRole('heading', { name: noteTask.code, exact: true }).waitFor();
+    const beforeReply = await materialRecord('duplicate');
+    const shortage = beforeReply.events.find(event => event.status === 'OPEN' && event.source === 'CUSTOMER');
+    check(!!shortage, 'acceptance order has an open customer-supplied shortage');
+    const noteInput = page.getByRole('textbox', { name: '本单进展', exact: true });
+    const send = page.getByRole('button', { name: '保存进展', exact: true });
+    const timeline = page.locator('.mo-timeline');
+    const sendNote = async (content, exceptionId = '') => {
+      await page.getByLabel('进展关联物料', { exact: true }).selectOption(exceptionId);
+      await noteInput.fill(content);
+      const response = page.waitForResponse(r => r.url() === orderEndpoint && r.request().method() === 'PATCH');
+      await send.click();
+      check((await response).status() === 200, 'tracking-only collaborator saves ' + (exceptionId ? 'a material note' : 'an order note'));
+      await timeline.getByText(content, { exact: true }).waitFor();
+    };
+    const orderNote = '客户已回复，剩余物料待通知 ' + f.marker;
+    const shortageNote = '已核实该客供物料进展 ' + f.marker;
+    await sendNote(orderNote);
+    await sendNote(shortageNote, shortage.id);
+    await page.reload();
+    await timeline.getByText(shortageNote, { exact: true }).waitFor();
+    check(await timeline.getByText(orderNote, { exact: true }).count() === 1, 'order progress survives reload as one record');
+    const afterReply = await materialRecord('duplicate');
+    const savedNote = afterReply.activities.find(activity => activity.content === shortageNote);
+    check(savedNote?.actor === f.trackingWriter.displayName && savedNote.detail.exceptionCaseId === shortage.id, 'material progress retains the author and shortage link');
+    const materialFacts = order => ({
+      state: order.state,
+      preparedQuantity: order.preparedQuantity,
+      events: order.events.map(({ progress, progressAt, ...facts }) => facts),
+    });
+    check(JSON.stringify(materialFacts(afterReply)) === JSON.stringify(materialFacts(beforeReply)), 'text replies leave material quantities and arrival records unchanged');
+    await shot('00-tracking-progress-saved');
+
+    for (const action of ['confirm_arrival', 'confirm_prepared']) {
+      const response = await page.request.patch(orderEndpoint, { data: {
+        action, version: afterReply.version, requestKey: f.marker + '-blocked-' + action,
+        exceptionId: shortage.id, quantity: 1, preparedQuantity: 1, workspace: 'tracking',
+      } });
+      check(response.status() === 403, 'tracking-only collaborator cannot perform warehouse action ' + action);
+    }
+    await login(f.trackingReader, trackingPath);
+    await timeline.getByText(shortageNote, { exact: true }).waitFor();
+    check(await send.count() === 0, 'tracking reader can see notes without a send button');
+    const deniedNote = await page.request.patch(orderEndpoint, { data: {
+      action: 'note', note: '只读权限验收', requestKey: f.marker + '-readonly', workspace: 'tracking',
+    } });
+    check(deniedNote.status() === 403, 'tracking reader cannot save progress');
+
+    await login(f.user, '/workspace/purchases?view=execution');
     await page.getByRole('button',{name:'发起请购',exact:true}).click();
     check(await d().getByLabel('数量',{exact:true}).inputValue()==='', 'new request quantity starts empty');
     await d().getByLabel('物品名称',{exact:true}).fill('界面五件 '+f.marker);

@@ -15,10 +15,25 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser(), canConfirm = user.access.capabilities.includes('WAREHOUSE:UPDATE');
-    if (moduleReadOnly(user.access, 'warehouse') || (!canConfirm && !user.access.capabilities.includes('PROCUREMENT:UPDATE'))) return forbidden();
+    const user = await requireUser();
     const body = await req.json();
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw new MaterialInputError('提交内容不正确');
-    return NextResponse.json({ ok: true, order: await mutateMaterialOrder(params.id, body, user.id, canConfirm) });
+
+    const access = user.access;
+    const warehouseWritable = !moduleReadOnly(access, 'warehouse');
+    const canConfirm = warehouseWritable && access.capabilities.includes('WAREHOUSE:UPDATE');
+    const canTrack = access.capabilities.includes('PROCUREMENT:UPDATE');
+    const canUseOrderActions = warehouseWritable && (canConfirm || canTrack);
+    const canAddFollowUpNote = body.action === 'note' && canTrack && !moduleReadOnly(access, 'material-follow-up');
+    if (!canUseOrderActions && !canAddFollowUpNote) return forbidden();
+
+    const input = canUseOrderActions ? body : {
+      action: 'note',
+      note: body.note,
+      exceptionId: body.exceptionId,
+      requestKey: body.requestKey,
+      workspace: 'tracking',
+    };
+    return NextResponse.json({ ok: true, order: await mutateMaterialOrder(params.id, input, user.id, canConfirm) });
   } catch (e) { return failure(e); }
 }

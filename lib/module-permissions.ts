@@ -139,7 +139,13 @@ export function moduleApiDecision(access: ModuleAccessCarrier, pathname: string,
   // Read-only POSTs must be individually declared, never inferred from a UI button label.
   const readCommand = verb === 'POST' && /^\/api\/(?:reports\/[^/]+\/(?:preview|export)|drawing-library\/[^/]+\/print-preview|planning\/weekly-plan-export\/preview|finished-goods\/reports\/preview)$/.test(path);
   const write = !read && !readCommand;
-  if (hasSubmoduleConfiguration(access)) return submoduleApiDecision(access, path, write, ruleModules);
+  if (hasSubmoduleConfiguration(access)) {
+    // The shared order handler checks the specific action before allowing any write.
+    if (verb === 'PATCH' && /^\/api\/warehouse\/material-orders\/[^/]+$/.test(path)) {
+      return moduleAllows(access, ['warehouse', 'material-follow-up'], true);
+    }
+    return submoduleApiDecision(access, path, write, ruleModules);
+  }
   if (path.startsWith('/api/order-pool/commands') || path.startsWith('/api/order-pool/import')) return moduleAllows(access, ['production'], write);
   if (path.startsWith('/api/order-pool')) return moduleAllows(access, ['production', 'materials', 'technology'], write);
   const dependencies = /^\/api\/(?:work-orders|departments|customers|resource-categories|categories)(?:\/|$)/.test(path);

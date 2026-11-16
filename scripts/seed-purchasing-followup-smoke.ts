@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { mutatePurchasing } from '../lib/purchasing-service';
 import { mutateMaterialOrder } from '../lib/material-order-service';
@@ -11,6 +12,23 @@ async function main() {
   const db = new URL(process.env.DATABASE_URL || 'postgresql://invalid/invalid');
   if (process.env.PURCHASING_QA_ALLOW !== 'disposable-purchasing-runtime' || !['localhost','127.0.0.1'].includes(db.hostname) || !/(?:_ci|_test|_272|_mirror)$/.test(db.pathname)) throw Error('Disposable local purchasing database required');
   const fixture = await createFixture(prisma);
+  const passwordHash = await bcrypt.hash(fixture.password, 10);
+  const createTrackingAccount = (name: string, level: 'COLLABORATE' | 'READ') => prisma.user.create({
+    data: {
+      username: fixture.marker + '-' + name,
+      displayName: name === 'writer' ? '物料跟进协同验收员' : '物料跟进只读验收员',
+      passwordHash,
+      mustChangePassword: false,
+      laborRole: 'EMPLOYEE',
+      accessGrants: { create: [
+        { profile: 'MODULE_ACCESS', scopeKey: 'MODULES:ON' },
+        { profile: 'MODULE_ACCESS', scopeKey: 'MODULE:material-follow-up:' + level, grantType: 'CONCURRENT' },
+      ] },
+    },
+    select: { username: true, displayName: true },
+  });
+  const trackingWriter = await createTrackingAccount('writer', 'COLLABORATE');
+  const trackingReader = await createTrackingAccount('reader', 'READ');
   const actor = await prisma.user.findUniqueOrThrow({ where: { id: fixture.user.id } });
   const run = (input: PcInput) => mutatePurchasing(input, actor, randomUUID()) as Promise<Record<string, unknown>>;
   const entry = async (id: string) => ({ id, version: (await prisma.pcLine.findUniqueOrThrow({ where: { id } })).version });
@@ -45,7 +63,7 @@ async function main() {
   }
   const lines = await prisma.pcLine.findMany({ where: { id: { in: [approved, legacy] } }, select: { id: true, number: true, name: true }, orderBy: { number: 'asc' } });
   const output = process.env.PURCHASING_FOLLOWUP_FIXTURE || 'output/playwright/purchasing-followup/fixture.json';
-  mkdirSync(path.dirname(output), { recursive: true }); writeFileSync(output, JSON.stringify({ ...fixture, lines, tasks, fundId: fund.id }, null, 2));
+  mkdirSync(path.dirname(output), { recursive: true }); writeFileSync(output, JSON.stringify({ ...fixture, trackingWriter, trackingReader, lines, tasks, fundId: fund.id }, null, 2));
   console.log('Disposable purchasing follow-up fixtures saved.');
 }
 main().finally(() => prisma.$disconnect());
