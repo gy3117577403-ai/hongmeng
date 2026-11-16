@@ -22,8 +22,16 @@ function cli(args) {
 }
 async function scenario(page, origin, f, dir) {
   const checks=[], errors=[];
+  const noteTask = f.tasks.find(task => task.kind === 'duplicate');
+  const orderPath = '/api/warehouse/material-orders/' + noteTask.id;
+  const orderEndpoint = origin + orderPath;
   page.on('pageerror',e=>errors.push(String(e)));
-  page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
+  page.on('console', message => {
+    if (message.type() !== 'error') return;
+    const expectedDenial = message.location().url === orderEndpoint
+      && /^Failed to load resource:.*\b403\b/.test(message.text());
+    if (!expectedDenial) errors.push(message.text());
+  });
   const check=(yes,label)=>{if(!yes)throw Error(label);checks.push(label);};
   const shot=name=>page.screenshot({path:`${dir}/${name}.png`,fullPage:false,animations:'disabled'});
   const d=()=>page.getByRole('dialog');
@@ -42,6 +50,17 @@ async function scenario(page, origin, f, dir) {
     await page.locator('.mo-detail .mo-order-head').waitFor();
   };
   const materialRecord=async kind=>(await page.evaluate(async id=>(await fetch('/api/warehouse/material-orders/'+id)).json(),f.tasks.find(t=>t.kind===kind).id)).order;
+  const expectDenied = async (data, label) => {
+    const status = await page.evaluate(async ({ orderPath, data }) => {
+      const result = await fetch(orderPath, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, workspace: 'tracking' }),
+      });
+      return result.status;
+    }, { orderPath, data });
+    check(status === 403, label + ' (HTTP ' + status + ')');
+  };
   const login = async (account, target) => {
     await page.context().clearCookies();
     await page.goto(origin + '/login?next=' + encodeURIComponent(target));
@@ -52,9 +71,7 @@ async function scenario(page, origin, f, dir) {
   };
   try {
     await page.setViewportSize({width:1366,height:1024});
-    const noteTask = f.tasks.find(task => task.kind === 'duplicate');
     const trackingPath = '/workspace/procurement?scope=pool&status=shortage&orderId=' + noteTask.id + '&q=' + encodeURIComponent(noteTask.code);
-    const orderEndpoint = origin + '/api/warehouse/material-orders/' + noteTask.id;
     await login(f.trackingWriter, trackingPath);
     await page.getByRole('heading', { name: noteTask.code, exact: true }).waitFor();
     const beforeReply = await materialRecord('duplicate');
@@ -90,19 +107,17 @@ async function scenario(page, origin, f, dir) {
     await shot('00-tracking-progress-saved');
 
     for (const action of ['confirm_arrival', 'confirm_prepared']) {
-      const response = await page.request.patch(orderEndpoint, { data: {
+      await expectDenied({
         action, version: afterReply.version, requestKey: f.marker + '-blocked-' + action,
-        exceptionId: shortage.id, quantity: 1, preparedQuantity: 1, workspace: 'tracking',
-      } });
-      check(response.status() === 403, 'tracking-only collaborator cannot perform warehouse action ' + action);
+        exceptionId: shortage.id, quantity: 1, preparedQuantity: 1,
+      }, 'tracking-only collaborator cannot perform warehouse action ' + action);
     }
     await login(f.trackingReader, trackingPath);
     await timeline.getByText(shortageNote, { exact: true }).waitFor();
     check(await send.count() === 0, 'tracking reader can see notes without a send button');
-    const deniedNote = await page.request.patch(orderEndpoint, { data: {
-      action: 'note', note: '只读权限验收', requestKey: f.marker + '-readonly', workspace: 'tracking',
-    } });
-    check(deniedNote.status() === 403, 'tracking reader cannot save progress');
+    await expectDenied({
+      action: 'note', note: '只读权限验收', requestKey: f.marker + '-readonly',
+    }, 'tracking reader cannot save progress');
 
     await login(f.user, '/workspace/purchases?view=execution');
     await page.getByRole('button',{name:'发起请购',exact:true}).click();
