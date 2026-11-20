@@ -386,6 +386,8 @@ jobs:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/sample-material-arrival-integration.test.ts tests/material-loss-integration.test.ts
       - name: Type check
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npx tsc --noEmit
       - name: Employee hours and proportional batch labor PostgreSQL integration
         env:
