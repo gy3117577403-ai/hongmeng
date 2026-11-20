@@ -754,6 +754,7 @@ async function loadPreviewContext(
         drawingLibraryItemId: itemId,
         deletedAt: null,
         branchType: null,
+        forceClosedAt: null,
       },
     },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -2776,7 +2777,7 @@ async function recordFailedDeployment(
     }
     const deployment = await tx.productTimeDeployment.findUniqueOrThrow({ where: { profileId: profile.id } });
     const routes = await tx.workOrderProcessRoute.findMany({
-      where: { workOrder: { drawingLibraryItemId: preview.itemId, deletedAt: null, branchType: null } },
+      where: { workOrder: { drawingLibraryItemId: preview.itemId, deletedAt: null, branchType: null, forceClosedAt: null } },
       select: { id: true, version: true, workOrderId: true, workOrder: { select: { code: true } } },
     });
     for (const route of routes) {

@@ -138,6 +138,9 @@ async function loadCorrectionState(
       'PROCESS_COMPLETION_ALREADY_WITHDRAWN',
     );
   }
+  if (state.route.status === 'force_closed') {
+    throw new ProcessCompletionWithdrawalError('工单已强制结单，当前报工记录仅供查询', 409, 'PRODUCTION_FORCE_CLOSED');
+  }
   return state;
 }
 

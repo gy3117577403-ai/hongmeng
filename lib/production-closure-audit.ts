@@ -52,6 +52,7 @@ export type AuditWorkOrder = {
   rejoinStepId: string | null;
   branchSequence: number | null;
   completedAt: string | null;
+  forceClosedAt?: string | null;
   route: AuditRoute | null;
 };
 
@@ -382,7 +383,15 @@ export function auditProductionClosure(
         },
       });
     }
-    if (order.stage === 'completed' || order.status === 'done') {
+    if (order.forceClosedAt) {
+      if (order.stage !== 'completed' || !order.completedAt || (order.route && order.route.status !== 'force_closed')) {
+        add({
+          severity: 'error', domain: 'route', code: 'FORCE_CLOSE_STATE_INVALID', entityType: 'work_order',
+          entityId: order.id, workOrderId: order.id, message: '强制结单记录与工单终态不一致',
+          detail: { forceClosedAt: order.forceClosedAt, completedAt: order.completedAt, routeStatus: order.route?.status ?? null },
+        });
+      }
+    } else if (order.stage === 'completed' || order.status === 'done') {
       const routeClosed = !order.route || order.route.status === 'completed';
       const quantityClosed = order.targetQty !== null && order.completedQty === order.targetQty;
       if (!routeClosed || !quantityClosed || hasActiveDescendant(order.id) || !order.completedAt) {

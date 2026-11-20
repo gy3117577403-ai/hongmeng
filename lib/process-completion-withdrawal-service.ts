@@ -518,6 +518,9 @@ async function loadState(
       'PROCESS_COMPLETION_NOT_FOUND',
     );
   }
+  if (state.route.status === 'force_closed') {
+    throw new ProcessCompletionWithdrawalError('工单已强制结单，当前报工记录仅供查询', 409, 'PRODUCTION_FORCE_CLOSED');
+  }
   state.step.sequenceGroup = materialSequenceGroup(state.step);
   state.route.steps = projectMaterialSequence(state.route.steps);
   // The coverage columns were added after the original completion ledger.

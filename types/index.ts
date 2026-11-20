@@ -2001,7 +2001,7 @@ export type ProductionPlanningSummaryDTO = {
 };
 
 export type ProcessStageGroup = 'frontend' | 'backend' | 'finish';
-export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'completed';
+export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'completed' | 'force_closed';
 export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
 export type ProcessTimeBasis = 'per_unit' | 'per_batch';
 export type ProcessReportQuantityBasis = 'product' | 'action';

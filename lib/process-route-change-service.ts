@@ -954,6 +954,9 @@ export async function createProcessRouteChangeProposal(
         'PROCESS_ROUTE_CHANGE_ROUTE_NOT_FOUND',
       );
     }
+    if (route.status === 'force_closed') {
+      throw new ProcessRouteChangeServiceError('工单已强制结单，当前工艺路线仅供查询', 409, 'PRODUCTION_FORCE_CLOSED');
+    }
     if (route.version !== identity.expectedVersion) {
       throw new ProcessRouteChangeServiceError(
         '工艺路线已更新，请刷新后重新发起',
@@ -3519,6 +3522,9 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
       });
       if (!change) throw new ProcessRouteChangeServiceError('工艺变更不存在', 404, 'PROCESS_ROUTE_CHANGE_NOT_FOUND');
       if (change.status === ProcessRouteChangeStatus.ACTIVE) return change.id;
+      if (change.route.status === 'force_closed') {
+        throw new ProcessRouteChangeServiceError('工单已强制结单，当前工艺路线仅供查询', 409, 'PRODUCTION_FORCE_CLOSED');
+      }
       if (change.status !== ProcessRouteChangeStatus.APPROVED) {
         throw new ProcessRouteChangeServiceError(
           '只有已审核通过的工艺变更可以启用',

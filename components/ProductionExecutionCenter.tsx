@@ -13,6 +13,8 @@ import './process-report-recovery.css';
 import ReportingRecoveryDialog from '@/components/ReportingRecoveryDialog';
 import { productionProcessProgress } from '@/lib/production-process-progress';
 import { ProductionControlButton, ProductionNoteSummary } from '@/components/ProductionControl';
+import { ProductionForceCloseDialog } from '@/components/production/ProductionForceCloseDialog';
+import type { ProductionForceClosePreview } from '@/lib/production-force-close';
 import { EmployeeRealtimeHours } from '@/components/EmployeeRealtimeHours';
 import { ProductionWorkloadCards, ProductionWorkloadDrawer, type WorkloadView } from '@/components/ProductionWorkload';
 import type { ProductionWorkloadReport } from '@/lib/production-workload';
@@ -313,6 +315,9 @@ type ProductionOrder = {
   productName: string;
   stage: StageKey;
   stageText: string;
+  forceClosedAt?: string | null;
+  forceClosedQty?: number | null;
+  rootForceClosedAt?: string | null;
   priority: string;
   plannedAt?: string | null;
   deliveryDay?: string | null;
@@ -1276,6 +1281,7 @@ export default function ProductionExecutionCenter({
 }) {
   const router = useRouter();
   const [recoveryContext, setRecoveryContext] = useState<{ id?: string; keyword?: string } | null>(null);
+  const [forceCloseOrder, setForceCloseOrder] = useState<ProductionOrder | null>(null);
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     if (query.get('recovery') === '1') setRecoveryContext({ id: query.get('submissionId') || undefined, keyword: query.get('keyword') || undefined });
@@ -2967,6 +2973,15 @@ export default function ProductionExecutionCenter({
     setProgressLogs([]);
   }
 
+  function onProductionForceClosed(closure: NonNullable<ProductionForceClosePreview['closure']>) {
+    setDetailOrder(current => current && current.id === forceCloseOrder?.id
+      ? { ...current, stage: 'completed', stageText: '已结单（强制）', completedAt: closure.at, forceClosedAt: closure.at, forceClosedQty: closure.actualQty }
+      : current);
+    productionBoardCache.clear();
+    setRefreshToken(value => value + 1);
+    setToast('工单已强制结单');
+  }
+
   function switchDetailTab(tab: DetailTab): void {
     setDetailTab(tab);
     if (tab === 'progress' && detailOrder) void loadProgress(detailOrder.id);
@@ -3541,7 +3556,14 @@ export default function ProductionExecutionCenter({
         {drawingMenuOrder && drawingStatuses.map(status => <button className={drawingMenuOrder.drawingStatus === status ? 'active' : ''} type="button" disabled={saving} key={status} onClick={() => void saveDrawingStatus(drawingMenuOrder, status)}>{status}</button>)}
       </PortalMenu>
 
-      {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} canPrintTraveler={canPrintTravelers} travelerPrinting={false} printTraveler={() => printTravelers([detailOrder.id])} canViewQualityRisks={canViewQualityRisks} canManageQualityRisks={canManageQualityRisks} canAcknowledgeQualityRisks={canAcknowledgeQualityRisks} userId={user.id} />}
+      {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} canPrintTraveler={canPrintTravelers} travelerPrinting={false} printTraveler={() => printTravelers([detailOrder.id])} canViewQualityRisks={canViewQualityRisks} canManageQualityRisks={canManageQualityRisks} canAcknowledgeQualityRisks={canAcknowledgeQualityRisks} userId={user.id}
+        openForceClose={detailOrder.forceClosedAt || (
+          canManageProductionControl(user) && !board?.readOnly && detailOrder.stage !== 'completed'
+          && !detailOrder.completedAt && !detailOrder.wipContinuation
+        ) ? () => setForceCloseOrder(detailOrder) : undefined} />}
+      {forceCloseOrder && <ProductionForceCloseDialog workOrderId={forceCloseOrder.id}
+        unit={forceCloseOrder.processRoute?.steps[0]?.unitLabel || '件'}
+        close={() => setForceCloseOrder(null)} onClosed={onProductionForceClosed} />}
       <OlderCarryoverDrawer
         open={olderCarryoverOpen}
         targetWeekStart={summary?.navigation?.current?.weekStartDate || ''}
@@ -3947,10 +3969,11 @@ function ProductionDispatchRow({
           : '';
   const risk = dispatchRisk(order);
   const selectedRow = selected.includes(order.id);
+  const familyForceClosed = Boolean(order.forceClosedAt || order.rootForceClosedAt);
   const lifecycle = productionDispatchLifecycle({
     continuationStatus: wipContinuation?.status,
     routeCompleted: route?.status === 'completed',
-    workOrderCompletedAt: order.completedAt,
+    workOrderCompletedAt: order.completedAt || order.rootForceClosedAt,
   });
   const currentProcess = isWipContinuation && lifecycle.aggregateCompleted
     ? isWipHistoricalContinuation ? '历史已完成' : '续作已完成'
@@ -4055,7 +4078,12 @@ function ProductionDispatchRow({
     </div>
 
     <div className="production-dispatch-process-cell">
-    <button className="production-dispatch-process-flow" type="button" title="进入流程中心查看完整工序进度" onClick={() => openWorkflow(order, displayStage)}>
+    {familyForceClosed ? <button className="production-dispatch-process-flow" type="button" onClick={() => openDetail(order)}>
+      <span className="production-dispatch-process-flow-head">
+        <span><b>{order.forceClosedAt ? '已结单（强制）' : '主单已强制结单'}</b>
+          {order.forceClosedAt && <small>现场核定 {order.forceClosedQty == null ? '待核定' : `${formatProductionQuantity(order.forceClosedQty)} ${unitLabel}`}</small>}</span>
+      </span>
+    </button> : <button className="production-dispatch-process-flow" type="button" title="进入流程中心查看完整工序进度" onClick={() => openWorkflow(order, displayStage)}>
       <span className="production-dispatch-process-flow-head">
         <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{isWipContinuation ? lifecycle.aggregateCompleted ? '本次续作事实已归档' : '执行半成品剩余工序' : isMovedOutSource ? '整单工艺事实 · 转出后保留历史进度' : lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
         <em>{isWipContinuation ? `${wipContinuation?.steps.filter(step => step.remainingQty <= 0).length || 0}/${wipContinuation?.steps.length || 0}` : route ? `${route.completedStepCount}/${route.stepCount}` : '未建路线'}</em>
@@ -4067,8 +4095,8 @@ function ProductionDispatchRow({
           ? routePreview.map(step => <i className={`state-${step.status}`} title={`${step.processName} · ${step.status === 'completed' ? '已完成' : step.status === 'current' ? '当前工序' : '待处理'}${step.changeTag === 'TIME_CHANGED' ? ' · 工时已变更' : step.changeTag && step.changeTag !== 'NONE' ? ' · 新增工序' : ''}${(step.systemCoveredQty || 0) > 0 ? ` · 系统历史承接 ${step.systemCoveredQty}，不记人员报工` : ''}`} key={step.id}><span /><em>{step.processName}{step.changeTag && step.changeTag !== 'NONE' && <b className="production-route-new-badge">{step.changeTag === 'TIME_CHANGED' ? '工时 NEW' : 'NEW'}</b>}{(step.systemCoveredQty || 0) > 0 && <b className="production-route-coverage-badge">承接 {step.systemCoveredQty}</b>}</em></i>)
           : <i className="state-pending"><span /><em>待维护</em></i>}
       </span>
-    </button>
-    {currentQuantityProgress && <div className="production-current-quantity"><span>{currentQuantityProgress.name} · 已确认 {currentQuantityProgress.confirmed}/{currentQuantityProgress.required} {unitLabel}</span><progress aria-label={`${currentQuantityProgress.name}数量进度`} value={currentQuantityProgress.percentage} max={100} /></div>}
+    </button>}
+    {!familyForceClosed && currentQuantityProgress && <div className="production-current-quantity"><span>{currentQuantityProgress.name} · 已确认 {currentQuantityProgress.confirmed}/{currentQuantityProgress.required} {unitLabel}</span><progress aria-label={`${currentQuantityProgress.name}数量进度`} value={currentQuantityProgress.percentage} max={100} /></div>}
     {!lifecycle.aggregateCompleted && !isFullyMovedOutSource && <details className="production-progress-reasons"><summary>未完成原因{processProgress.length ? ` · ${processProgress.length}道` : ''}</summary><div>{processProgress.map(step => <p key={step.id}><strong>{step.name}</strong><span>{step.reason}</span></p>)}{lifecycle.awaitingBranchClosure && <p>主路线已完成，等待返工或补产分支结束</p>}{!processProgress.length && !lifecycle.awaitingBranchClosure && <p>等待工序、报工核销及成品数量核对</p>}<button type="button" onClick={() => openWorkflow(order, displayStage)}>查看工序与报工明细</button></div></details>}
     </div>
 
@@ -4135,7 +4163,9 @@ function ProductionDispatchRow({
       ? <div className="production-note-button is-readonly" title="原目标周历史事实仅供查看，不能从本行修改生产备注"><ProductionNoteSummary control={order.productionControl} /></div>
       : <ProductionControlButton workOrderId={order.id} mode="note" className="production-note-button" wipAllocationId={wipContinuation?.allocationId} restrictExecutionActions={isFullyMovedOutSource}><ProductionNoteSummary control={order.productionControl} /></ProductionControlButton>}</div>
     <div className="production-dispatch-row-actions">
-      <>{isFullyMovedOutSource
+      <>{familyForceClosed
+        ? <button className="primary" type="button" onClick={() => openDetail(order)}>查看记录</button>
+        : isFullyMovedOutSource
         ? primaryMovedOutTarget
           ? <Link className="primary" href={`/production?scope=history&weekStart=${encodeURIComponent(primaryMovedOutTarget.targetWeekStartDate)}&weekEnd=${encodeURIComponent(primaryMovedOutTarget.targetWeekEndDate)}&workOrderId=${encodeURIComponent(order.id)}&wipAllocationId=${encodeURIComponent(primaryMovedOutAllocationId)}`}>{primaryMovedOutTargetHasRemaining ? '查看续作' : '查看历史'}</Link>
           : order.productionPlanBatchId
@@ -4922,7 +4952,7 @@ function qualityAlertStateText(state: WorkOrderQualityAlertsDTO['alerts'][number
   return ({ ACTIVE: '待知悉', ACKNOWLEDGED: '已知悉', SUPERSEDED: '已被新版替代', REVOKED: '已撤销', EXPIRED: '已到期' } as const)[state];
 }
 
-function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close, resources, drawingLibrary, canPrintTraveler, travelerPrinting, printTraveler, canViewQualityRisks, canManageQualityRisks, canAcknowledgeQualityRisks, userId }: { order: ProductionOrder; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; resources: () => void; drawingLibrary: () => void; canPrintTraveler: boolean; travelerPrinting: boolean; printTraveler: () => void; canViewQualityRisks: boolean; canManageQualityRisks: boolean; canAcknowledgeQualityRisks: boolean; userId: string }) {
+function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close, resources, drawingLibrary, canPrintTraveler, travelerPrinting, printTraveler, canViewQualityRisks, canManageQualityRisks, canAcknowledgeQualityRisks, userId, openForceClose }: { order: ProductionOrder; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; resources: () => void; drawingLibrary: () => void; canPrintTraveler: boolean; travelerPrinting: boolean; printTraveler: () => void; canViewQualityRisks: boolean; canManageQualityRisks: boolean; canAcknowledgeQualityRisks: boolean; userId: string; openForceClose?: () => void }) {
   const [qualityData, setQualityData] = useState<WorkOrderQualityAlertsDTO | null>(null);
   const [qualityLoading, setQualityLoading] = useState(true);
   const [qualityError, setQualityError] = useState('');
@@ -5051,7 +5081,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
           ['工序', order.processName || '-'], ['单件计划工时', order.planUnitMilliseconds ? planMinutesText(order.planUnitMilliseconds) : order.unitWorkHours || '-'], ['总计划工时', order.planTotalMilliseconds ? planHoursText(order.planTotalMilliseconds) : order.totalWorkHours || '-'], ['图纸说明', order.drawingIssueNote || '-'],
         ]} />}
       </div>
-      <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button>{order.processRoute && <Link href={`/workspace/workflows?workOrderId=${encodeURIComponent(order.id)}&from=production`}><GitPullRequestArrow size={15} />工艺变更</Link>}{canPrintTraveler && <button type="button" disabled={travelerPrinting || !order.processRoute || order.processRoute.status === 'draft'} title={!order.processRoute || order.processRoute.status === 'draft' ? '确认工艺路线后才能打印' : '生成一工单一码流转单'} onClick={printTraveler}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button>}<button className="primary-button" type="button" onClick={close}>关闭</button></div>
+      <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button>{order.processRoute && <Link href={`/workspace/workflows?workOrderId=${encodeURIComponent(order.id)}&from=production`}><GitPullRequestArrow size={15} />{order.forceClosedAt ? '工序记录' : '工艺变更'}</Link>}{canPrintTraveler && <button type="button" disabled={travelerPrinting || !order.processRoute || order.processRoute.status === 'draft'} title={!order.processRoute || order.processRoute.status === 'draft' ? '确认工艺路线后才能打印' : '生成一工单一码流转单'} onClick={printTraveler}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button>}{openForceClose && <button type="button" onClick={openForceClose}>{order.forceClosedAt ? '查看强制结单记录' : '强制结单'}</button>}<button className="primary-button" type="button" onClick={close}>关闭</button></div>
     </section></div>
     {pendingProductRisk && <div className="modal-backdrop production-risk-confirm-backdrop"><section className="production-dialog production-stage-confirm production-risk-confirm" role="dialog" aria-modal="true" aria-label="确认同步质量预警">
       <div className="dialog-title"><div><strong>确认同步质量预警</strong><small>由质量人员确认同产品历史风险是否适用于当前工单</small></div><button type="button" disabled={!!qualityActionId} onClick={() => setPendingProductRisk(null)} aria-label="关闭">×</button></div>

@@ -50,7 +50,10 @@ export function resolvePlanningFlow(facts: PlanningFlowFacts): PlanningFlowState
     workOrderCompletedAt: facts.workOrderCompletedAt,
   });
   if (lifecycle.aggregateCompleted) {
-    return { status: 'completed', label: '已完成', tone: 'complete', workflowStatus: 'closed', nextStep: null };
+    return {
+      status: 'completed', label: facts.processStatus === 'force_closed' ? '已结单（强制）' : '已完成',
+      tone: 'complete', workflowStatus: 'closed', nextStep: null,
+    };
   }
   if (!facts.drawingReady) {
     return { status: 'missing_drawing', label: '图纸待上传', tone: 'warning', workflowStatus: 'waiting', nextStep: '上传图纸资料' };

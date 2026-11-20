@@ -99,7 +99,7 @@ const weekScopeLabels: Record<WorkflowWeekScope, string> = {
   history: '历史周', current: '本周', next: '下周', afterNext: '下下周',
 };
 const stageLabels = { frontend: '前端', backend: '后端', finish: '完工' } as const;
-const routeStatusLabels = { draft: '待确认', confirmed: '已确认', in_progress: '生产中', completed: '已完成' } as const;
+const routeStatusLabels = { draft: '待确认', confirmed: '已确认', in_progress: '生产中', completed: '已完成', force_closed: '已结单（强制）' } as const;
 
 function safeLocalRoute(value: string | null): string {
   return value && value.startsWith('/') && !value.startsWith('//') ? value : '/production';
@@ -1189,7 +1189,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                             : `报工 ${completion.processedQty.toLocaleString()}，已核销 ${completion.coveredQty.toLocaleString()}${completion.defectQty ? `，不良 ${completion.defectQty.toLocaleString()}` : ''}`}</strong>
                           <small>{completion.pendingCoverageQty > 0 ? `待前序核销 ${completion.pendingCoverageQty.toLocaleString()} · ` : ''}{completion.participantNames.length ? completion.participantNames.join('、') : '未记录作业人员'} · {completion.laborClaimedQty > 0 ? `已自动记工 ${completion.laborClaimedQty} ${completion.reportUnitLabel}` : '暂无标准工时'}</small>
                         </div>
-                        {canCorrectProduction && <div className="workflow-completion-record-actions">
+                        {canCorrectProduction && selected.routeStatus !== 'force_closed' && <div className="workflow-completion-record-actions">
                           {user.access.capabilities.includes('PRODUCTION:UPDATE') && completion.defectQty > 0 && selected.processRouteId && <button type="button" disabled={routeActionPending} onClick={() => setQualityTarget({ routeId: selected.processRouteId!, completionId: completion.id })}>质量数量更正</button>}
                           {user.access.capabilities.includes('PRODUCTION:UPDATE') && completion.defectQty > 0 && selected.processRouteId && <button type="button" disabled={routeActionPending} onClick={() => setQualityTarget({ routeId: selected.processRouteId!, completionId: completion.id, linked: true })}>关联质量更正</button>}
                           <button type="button" disabled={routeActionPending} onClick={() => openCompletionCorrection(selectedProcessStep, completion)}><Wrench size={13} />校正工序/工时</button>

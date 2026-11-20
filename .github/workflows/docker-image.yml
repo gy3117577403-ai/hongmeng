@@ -345,6 +345,14 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/process-completion-withdrawal-integration.test.ts tests/product-time-active-sync-integration.test.ts tests/product-time-draft-sync-integration.test.ts tests/product-time-draft-rebuild-integration.test.ts tests/product-time-route-confirmation-repair-integration.test.ts
+      - name: Production force close isolated PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/hongmeng_force_close_ci?schema=public
+        run: |
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE hongmeng_force_close_ci'
+          npx prisma migrate deploy
+          npx tsx --test --test-concurrency=1 tests/production-force-close-integration.test.ts
       - name: Process route change PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

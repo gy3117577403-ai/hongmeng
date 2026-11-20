@@ -2164,7 +2164,7 @@ export async function reconcileSupplementRouteCompletion(
         );
       }
       visited.add(order.id);
-      if (order.deletedAt || order.planClearedAt || order.branchStatus === 'CANCELLED') break;
+      if (order.deletedAt || order.planClearedAt || order.forceClosedAt || order.branchStatus === 'CANCELLED') break;
       const ownRoute = await tx.workOrderProcessRoute.findUnique({
         where: { workOrderId: order.id }, select: { status: true },
       });
@@ -2226,10 +2226,11 @@ async function hasActiveDescendantBranches(
       select: {
         id: true,
         branchStatus: true,
+        forceClosedAt: true,
       },
     });
     if (children.some(child => (
-      child.branchStatus !== 'RESOLVED' && child.branchStatus !== 'CANCELLED'
+      !child.forceClosedAt && child.branchStatus !== 'RESOLVED' && child.branchStatus !== 'CANCELLED'
     ))) {
       return true;
     }
@@ -2838,6 +2839,9 @@ async function updateCompletionWorkOrders(
           'PROCESS_BRANCH_PARENT_NOT_FOUND',
         );
       }
+      if (ancestor.forceClosedAt) {
+        throw new ProcessCompletionServiceError('上级工单已强制结单，不能再回补生产数量', 409, 'PRODUCTION_FORCE_CLOSED');
+      }
       const ancestorTarget = targetQuantity(ancestor);
       const ancestorCompletedQty = resolveCompletedQuantityDelta({
         previousCompletedQty: parseStoredQuantity(ancestor.completedQty),
@@ -3069,6 +3073,9 @@ async function returnReworkOutputToParent(
       409,
       'PROCESS_REWORK_RETURN_PARENT_ROUTE_MISSING',
     );
+  }
+  if (parentRoute.workOrder.forceClosedAt) {
+    throw new ProcessCompletionServiceError('原工单已强制结单，不能再回流生产数量', 409, 'PRODUCTION_FORCE_CLOSED');
   }
   parentRoute.steps = projectMaterialSequence(parentRoute.steps);
   const originStep = parentRoute.steps.find(step => step.id === sourceOrder.originStepId);

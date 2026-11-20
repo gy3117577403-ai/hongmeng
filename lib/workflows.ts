@@ -604,7 +604,7 @@ export function resolveWorkflowRouteState(
         ? 'processing'
         : 'waiting',
     currentStep: lifecycle.aggregateCompleted
-      ? '全部工序完成'
+      ? route.status === 'force_closed' ? '已结单（强制）' : '全部工序完成'
       : lifecycle.awaitingBranchClosure
         ? '主路线完成 · 待分支闭环'
         : currentGroup.length > 0

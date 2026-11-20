@@ -1,0 +1,86 @@
+.production-dialog.production-force-close {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, 94vw);
+  max-height: 90vh;
+  overflow: hidden;
+}
+
+.production-force-close-body {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  padding-block: 12px;
+}
+
+.production-force-close-outstanding,
+.production-force-close-result {
+  border: 1px solid #e4e8ed;
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.production-force-close-outstanding summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.production-force-close-outstanding ul {
+  max-height: 180px;
+  overflow: auto;
+  padding: 0;
+  margin: 8px 0 0;
+  list-style: none;
+}
+
+.production-force-close-outstanding li {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid #edf0f3;
+}
+
+.production-force-close-result p {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.production-force-close fieldset {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 0 0;
+  border: 0;
+}
+
+.production-force-close-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.production-force-close-modes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px solid #e4e8ed;
+  border-radius: 8px;
+}
+
+.production-force-close-field {
+  display: grid;
+  gap: 4px;
+}
+
+.production-force-close-field input,
+.production-force-close-field textarea {
+  max-width: 100%;
+  border: 1px solid #d3dbe4;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}

@@ -1197,7 +1197,7 @@ export async function confirmWorkOrderTravelerPrints(input: {
 
 export function resolveFieldReportAccess(input: {
   ticketStatus: WorkOrderQrTicketStatus;
-  workOrder: { planType: string | null; planClearedAt: Date | null; stage: string; deletedAt: Date | null };
+  workOrder: { planType: string | null; planClearedAt: Date | null; stage: string; deletedAt: Date | null; forceClosedAt?: Date | null };
   route: { status: string; hasActiveSupplement?: boolean } | null;
   materialExecutionAllowed?: boolean;
 }): FieldReportTicketView['access'] {
@@ -1206,6 +1206,9 @@ export function resolveFieldReportAccess(input: {
   }
   if (input.workOrder.deletedAt || !isExecutableProductionWorkOrder(input.workOrder)) {
     return { canReport: false, state: 'BLOCKED', message: '该工单已清除或归档，仅可查看历史信息' };
+  }
+  if (input.workOrder.forceClosedAt || input.route?.status === 'force_closed') {
+    return { canReport: false, state: 'COMPLETED', message: '工单已强制结单，当前二维码仅供查询' };
   }
   if (!input.route || input.route.status === 'draft') {
     return { canReport: false, state: 'BLOCKED', message: '工艺路线尚未确认，请联系生产主管' };
@@ -1258,6 +1261,7 @@ export async function loadFieldReportTicket(
       },
       workOrder: {
         include: {
+          rootWorkOrder: { select: { forceClosedAt: true } },
           processRoute: {
             include: {
               steps: {
@@ -1446,7 +1450,7 @@ export async function loadFieldReportTicket(
     wipSources,
     access: resolveFieldReportAccess({
       ticketStatus: ticket.status,
-      workOrder: order,
+      workOrder: { ...order, forceClosedAt: order.forceClosedAt || order.rootWorkOrder?.forceClosedAt },
       route: route ? {
         status: route.status,
         hasActiveSupplement: route.steps.some(step => (

@@ -13,6 +13,7 @@ import {
   type ProductTimeProfileRecord,
 } from '@/lib/product-time';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
+import { PRODUCTION_FORCE_CLOSE_ROUTE_STATUS } from '@/lib/production-force-close';
 import { processReportContractTransitionIssue } from '@/lib/process-report-contract';
 import { legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
@@ -22,7 +23,7 @@ import {
 } from '@/lib/process-supplement-coverage';
 
 export const PROCESS_STAGE_GROUPS: ProcessStageGroup[] = ['frontend', 'backend', 'finish'];
-export const PROCESS_ROUTE_STATUSES: ProcessRouteStatus[] = ['draft', 'confirmed', 'in_progress', 'completed'];
+export const PROCESS_ROUTE_STATUSES: ProcessRouteStatus[] = ['draft', 'confirmed', 'in_progress', 'completed', PRODUCTION_FORCE_CLOSE_ROUTE_STATUS];
 export const PROCESS_STEP_STATUSES: ProcessStepStatus[] = ['pending', 'current', 'completed', 'skipped'];
 export const PRODUCT_TIME_PENDING_ROUTE_SOURCE = 'product_time_pending';
 export const PRODUCT_TIME_PENDING_ROUTE_NAME = '产品工序与工时待发布';
@@ -50,6 +51,7 @@ export const processRouteStatusText: Record<ProcessRouteStatus, string> = {
   confirmed: '已确认',
   in_progress: '生产中',
   completed: '已完成',
+  force_closed: '已结单（强制）',
 };
 
 export const processStepStatusText: Record<ProcessStepStatus, string> = {

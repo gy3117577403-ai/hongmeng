@@ -1015,6 +1015,8 @@ model WorkOrder {
   branchSequence               Int?                                 @map("branch_sequence")
   startedAt                    DateTime?                            @map("started_at")
   completedAt                  DateTime?                            @map("completed_at")
+  forceClosedAt                DateTime?                            @map("force_closed_at")
+  forceClosedQty               Int?                                 @map("force_closed_qty")
   lastProgressAt               DateTime?                            @map("last_progress_at")
   latestProgressRemark         String?                              @map("latest_progress_remark")
   operationalNote              Json?                                @map("operational_note")

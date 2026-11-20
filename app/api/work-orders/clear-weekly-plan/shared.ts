@@ -48,6 +48,8 @@ export async function summarizeWeeklyPlanClear(weekStartDate: Date): Promise<Wee
       id: true,
       completedAt: true,
       branchStatus: true,
+      forceClosedAt: true,
+      rootWorkOrder: { select: { forceClosedAt: true } },
       resourceFiles: {
         where: { deletedAt: null, status: 'uploaded' },
         select: { id: true },
@@ -60,7 +62,7 @@ export async function summarizeWeeklyPlanClear(weekStartDate: Date): Promise<Wee
     weekStartDate: ymd(weekStartDate),
     weekEndDate: ymd(addDays(weekStartDate, 6)),
     workOrderCount: workOrders.length,
-    incompleteWorkOrderCount: workOrders.filter(order => (
+    incompleteWorkOrderCount: workOrders.filter(order => !order.forceClosedAt && !order.rootWorkOrder?.forceClosedAt && (
       !order.completedAt
       || (order.branchStatus !== null
         && order.branchStatus !== 'RESOLVED'

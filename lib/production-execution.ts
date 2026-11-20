@@ -359,17 +359,26 @@ export function summarizeWipMovedOutForProductionOrder(input: {
 }
 
 export function shouldSuppressNativeOrderForWipTarget(input: {
-  order: WipSourceOrderIdentity;
+  order: WipSourceOrderIdentity & { forceClosedAt?: Date | null; rootWorkOrder?: { forceClosedAt?: Date | null } | null };
   continuations: WipContinuationProjection[];
   sourceLots: WipSourceLotProjection[];
   displayedWeekStartDate: string;
 }): boolean {
+  if (forceClosedExecution(input.order)) return false;
   const linked = wipContinuationsForProductionOrder(input.order, input.continuations);
   if (!linked.some(item => item.crossWeek && item.targetWeekStartDate === input.displayedWeekStartDate)) return false;
   return summarizeWipMovedOutForProductionOrder(input)?.fullyMovedOut === true;
 }
 
 type ProductionStatusOrderRecord = ProductionExecutionOrderRecord | ProductionSummaryOrderRecord;
+
+function forceClosedExecution(order: { forceClosedAt?: Date | null; rootWorkOrder?: { forceClosedAt?: Date | null } | null }) {
+  return Boolean(order.forceClosedAt || order.rootWorkOrder?.forceClosedAt);
+}
+
+function executionStage(order: ProductionStatusOrderRecord): WorkOrderStage {
+  return forceClosedExecution(order) ? 'completed' : normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+}
 
 function inheritProductionControl<T extends ProductionStatusOrderRecord>(order: T): T {
   if (!order.rootWorkOrder) return order;
@@ -1196,7 +1205,8 @@ export function serializeProductionOrder(
   now = new Date(),
   carryover: ProductionCarryoverMetadata | null = null,
 ) {
-  const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+  const stage = executionStage(order);
+  const forceClosed = forceClosedExecution(order);
   const completeness = executionCompleteness(order);
   const exceptionCodes = productionExceptionCodes(order, now);
   const quantitySummary = getProductionQuantitySummary({
@@ -1246,7 +1256,7 @@ export function serializeProductionOrder(
       executionVersion: flowResolution.state.executionVersion,
       legacy: flowResolution.state.legacy,
       materialized: flowResolution.state.materialized,
-      segments: flowResolution.state.segments,
+      segments: forceClosed ? [{ stage: 'completed' as const, quantity: quantitySummary.completedQty }] : flowResolution.state.segments,
       error: null,
     }
     : {
@@ -1295,7 +1305,10 @@ export function serializeProductionOrder(
     customerName: order.customerName,
     productName: order.productName,
     stage,
-    stageText: stageText[stage],
+    stageText: order.forceClosedAt ? '已结单（强制）' : order.rootWorkOrder?.forceClosedAt ? '主单已强制结单' : stageText[stage],
+    forceClosedAt: order.forceClosedAt?.toISOString() || null,
+    forceClosedQty: order.forceClosedQty,
+    rootForceClosedAt: order.rootWorkOrder?.forceClosedAt?.toISOString() || null,
     priority: order.priority,
     plannedAt: order.plannedAt?.toISOString() || null,
     deliveryDay: order.deliveryDay,
@@ -1590,9 +1603,11 @@ function matchesFilters(
     if (!haystack.includes(keyword)) return false;
   }
   if (filters.customers?.length && !filters.customers.some(customer => lower(customer) === lower(order.customerName))) return false;
-  const normalizedStage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+  const normalizedStage = executionStage(order);
+  const forceClosed = forceClosedExecution(order);
   const flowResolution = resolveEffectiveFrontendTransferredQty(order);
-  const flowStages = continuation ? [normalizedStage] : flowResolution.ok ? flowResolution.state.segments.map(segment => segment.stage) : [normalizedStage];
+  const flowStages = continuation || forceClosed || !flowResolution.ok
+    ? [normalizedStage] : flowResolution.state.segments.map(segment => segment.stage);
   if (filters.stage && !flowStages.includes(normalizeWorkOrderStage(filters.stage) || normalizedStage)) return false;
   if (filters.priority && order.priority !== filters.priority) return false;
   if (!matchesDuePreset(order, filters.duePreset, week, now)) return false;
@@ -1918,7 +1933,7 @@ async function buildProductionExecutionSnapshot(input: {
   let filteredWip = weekWipContinuations.filter(continuation => {
     if (filters.workOrderId && continuation.workOrderId !== filters.workOrderId) return false;
     const order = wipSummaryOrderById.get(continuation.workOrderId);
-    return Boolean(order && matchesFilters(order, filters, input.week, [], now, continuation));
+    return Boolean(order && !forceClosedExecution(order) && matchesFilters(order, filters, input.week, [], now, continuation));
   });
   if (!filters.workOrderId && input.view === 'today') {
     filteredNative = filteredNative.filter(order => isTodayTask(order, now));
@@ -2000,9 +2015,9 @@ async function buildProductionExecutionSnapshot(input: {
       continue;
     }
     const order = task.order;
-    const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+    const stage = executionStage(order);
     const resolution = resolveEffectiveFrontendTransferredQty(order);
-    const segments = resolution.ok ? resolution.state.segments : [{ stage, quantity: 0 }];
+    const segments = resolution.ok && !forceClosedExecution(order) ? resolution.state.segments : [{ stage, quantity: 0 }];
     for (const segment of segments) stageCounts[segment.stage] += 1;
   }
   const seeds: ProductionExecutionSeed[] = tasks.map(task => ({
@@ -2029,7 +2044,10 @@ async function buildProductionExecutionSnapshot(input: {
     ? await loadProductionCarryoverMetadata(input.week.weekStart, summaryRootOrders.map(order => order.id))
     : new Map<string, ProductionCarryoverMetadata>();
   const summaryNativeIds = new Set(summaryRootOrders.map(order => order.id));
-  const summaryStandaloneWip = weekWipContinuations.filter(item => item.crossWeek || !summaryNativeIds.has(item.workOrderId));
+  const summaryStandaloneWip = weekWipContinuations.filter(item => {
+    const order = wipSummaryOrderById.get(item.workOrderId);
+    return order && !forceClosedExecution(order) && (item.crossWeek || !summaryNativeIds.has(item.workOrderId));
+  });
   const executionCountBreakdown = input.includeSummary && input.week.scope === 'current'
     ? {
         nativeCurrent: Math.max(0, summaryRootOrders.length - summaryCarryoverByOrder.size),
@@ -2051,7 +2069,7 @@ async function buildProductionExecutionSnapshot(input: {
     ? await loadProductionOutcomeSummary(input.week.weekStart, input.productionScope) : null;
   const summaryWipRecords = summaryStandaloneWip.flatMap(continuation => {
     const order = wipSummaryOrderById.get(continuation.workOrderId);
-    return order ? [{ continuation, order }] : [];
+    return order && !forceClosedExecution(order) ? [{ continuation, order }] : [];
   });
   const summaryStageCounts = summaryBase ? { ...summaryBase.stageCounts } : null;
   const summaryStageQuantityTotals = summaryBase ? { ...summaryBase.stageQuantityTotals } : null;
@@ -2124,9 +2142,10 @@ function summarizeProductionRecords(
   let dispatchCompleted = 0;
   const planAttainmentRecords: Array<{ completed: boolean; weekStartDateKey: string | null }> = [];
   for (const order of orders) {
-    const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+    const stage = executionStage(order);
+    const forceClosed = forceClosedExecution(order);
     const flowResolution = resolveEffectiveFrontendTransferredQty(order);
-    const segments = flowResolution.ok ? flowResolution.state.segments : [{ stage, quantity: 0 }];
+    const segments = flowResolution.ok && !forceClosed ? flowResolution.state.segments : [{ stage, quantity: Number(order.completedQty) || 0 }];
     for (const segment of segments) {
       stageCounts[segment.stage] += 1;
       stageQuantityTotals[segment.stage] += segment.quantity;
@@ -2179,7 +2198,7 @@ function summarizeProductionRecords(
     if (isProductionDueSoon(order, now)) dispatchDueSoon += 1;
     if (stage === 'completed') dispatchCompleted += 1;
     planAttainmentRecords.push({
-      completed: stage === 'completed',
+      completed: stage === 'completed' && !forceClosed,
       weekStartDateKey: order.weekStartDate ? chinaYmd(order.weekStartDate) : null,
     });
   }
@@ -2274,9 +2293,11 @@ export async function summarizeProduction(week: ProductionWeek, scope?: Producti
   const stageCounts = { ...summary.stageCounts };
   const stageQuantityTotals = { ...summary.stageQuantityTotals };
   const dispatchMetrics = { ...summary.dispatchMetrics };
+  let activeContinuationCount = 0;
   for (const continuation of standaloneContinuations) {
     const order = continuationOrderById.get(continuation.workOrderId);
-    if (!order) continue;
+    if (!order || forceClosedExecution(order)) continue;
+    activeContinuationCount += 1;
     const { stage, paused, withNextProcess } = productionWipExecutionState(order, continuation);
     stageCounts[stage] += 1;
     stageQuantityTotals[stage] += stage === 'completed' ? continuation.completedQty : continuation.remainingQty;
@@ -2291,14 +2312,14 @@ export async function summarizeProduction(week: ProductionWeek, scope?: Producti
     ? {
         nativeCurrent: Math.max(0, orders.length - carryoverByOrder.size),
         carryover: carryoverByOrder.size,
-        wipContinuation: standaloneContinuations.length,
-        total: orders.length + standaloneContinuations.length,
+        wipContinuation: activeContinuationCount,
+        total: orders.length + activeContinuationCount,
       }
     : null;
   return {
     ...summary,
     ...outcomeSummary,
-    total: summary.total + standaloneContinuations.length,
+    total: summary.total + activeContinuationCount,
     stageCounts,
     stageQuantityTotals,
     dispatchMetrics,

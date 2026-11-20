@@ -119,12 +119,27 @@ async function assertNoActiveNonMaterialHold(
   }
 }
 
+export async function assertProductionNotForceClosed(
+  tx: Prisma.TransactionClient,
+  workOrderId: string,
+  lockedRoot?: Awaited<ReturnType<typeof lockProductionWorkOrder>>,
+): Promise<void> {
+  const root = lockedRoot || await lockProductionWorkOrder(tx, workOrderId);
+  const selected = root.id === workOrderId ? root : await tx.workOrder.findUnique({
+    where: { id: workOrderId }, select: { forceClosedAt: true },
+  });
+  if (root.forceClosedAt || selected?.forceClosedAt) {
+    throw new ProductionControlError('工单已强制结单，生产记录仅供查询', 'PRODUCTION_FORCE_CLOSED', 409);
+  }
+}
+
 /** Planning/scheduling is independent from warehouse material readiness. */
 export async function assertProductionMayBeScheduled(
   tx: Prisma.TransactionClient,
   workOrderId: string,
 ): Promise<void> {
   const root = await lockProductionWorkOrder(tx, workOrderId);
+  await assertProductionNotForceClosed(tx, workOrderId, root);
   await assertNoActiveNonMaterialHold(tx, root.id);
   const wipSourceGate = await loadProductionWipSourceGate(tx, root);
   if (wipSourceGate.fullyMovedOut) {
@@ -150,6 +165,7 @@ export async function assertProductionMayRun(
   backfill?: ProductionBackfillAuthorization,
 ): Promise<void> {
   const root = await lockProductionWorkOrder(tx, workOrderId);
+  await assertProductionNotForceClosed(tx, workOrderId, root);
   await assertNoActiveNonMaterialHold(tx, root.id, !!backfill);
   if (!root.productionPausedAt) {
     if (backfill) throw new ProductionControlError('暂停状态已变化，请刷新后重新确认补录方式', 'PRODUCTION_BACKFILL_INVALID', 409);
@@ -188,6 +204,7 @@ const withoutActivePlanHold: Prisma.WorkOrderWhereInput = {
 
 export const runningProductionWorkOrderWhere: Prisma.WorkOrderWhereInput = {
   productionPausedAt: null,
+  forceClosedAt: null,
   AND: [
     withoutActivePlanHold,
     {
@@ -197,6 +214,7 @@ export const runningProductionWorkOrderWhere: Prisma.WorkOrderWhereInput = {
           rootWorkOrder: {
             is: {
               productionPausedAt: null,
+              forceClosedAt: null,
               AND: [withoutActivePlanHold],
             },
           },

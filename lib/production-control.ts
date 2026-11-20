@@ -21,6 +21,7 @@ export type ProductionControlFields = {
 export type ProductionControlView = ReturnType<typeof serializeProductionControl>;
 export const PRODUCTION_CONTROL_SELECT = {
   operationalNote: true, productionPausedAt: true, productionPause: true, productionControlVersion: true,
+  forceClosedAt: true,
   estimatedCompletionAt: true, deliveryDay: true, plannedAt: true, deliveryBaselineDay: true,
   planBaselineAt: true, dateBaselineSource: true, deliveryAdjustmentCount: true,
 } as const;

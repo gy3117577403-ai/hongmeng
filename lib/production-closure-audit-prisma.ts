@@ -33,6 +33,7 @@ export async function loadProductionClosureAuditSnapshot(
         rejoinStepId: true,
         branchSequence: true,
         completedAt: true,
+        forceClosedAt: true,
         processRoute: {
           select: {
             id: true,
@@ -185,6 +186,7 @@ export async function loadProductionClosureAuditSnapshot(
         rejoinStepId: order.rejoinStepId,
         branchSequence: order.branchSequence,
         completedAt: iso(order.completedAt),
+        forceClosedAt: iso(order.forceClosedAt),
         route: order.processRoute ? {
           id: order.processRoute.id,
           workOrderId: order.processRoute.workOrderId,
