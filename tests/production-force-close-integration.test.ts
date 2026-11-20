@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { prisma } from '../lib/prisma';
 import { closeProductionByException, previewProductionForceClose } from '../lib/production-force-close-service';
-import { completeProcessStep } from '../lib/process-completion-service';
+import { completeProcessStep, loadProcessCompletionContext } from '../lib/process-completion-service';
 import { loadProductionOrderById, serializeProductionOrder } from '../lib/production-execution';
 import { summarizeWeeklyClose } from '../lib/weekly-work-orders';
 import { assertProductionMayBeScheduled } from '../lib/production-pause-guard';
@@ -114,8 +114,11 @@ test('normal last-step reporting still produces verified output, labor, and auto
   assert.equal((await previewProductionForceClose(productionActor(fixture.user), order.id)).canClose, false);
 });
 
-test('a closed parent leaves outstanding branch records intact and removes them from active production scheduling', { skip }, async () => {
+test('a closed strict route shows its history and stops work without rewriting its outstanding branch', { skip }, async () => {
   const fixture = await productionForceCloseFixture({ scenario: 'normal' });
+  await prisma.workOrderProcessRoute.update({
+    where: { id: fixture.route.id }, data: { reportingPolicy: 'strict_sequence' },
+  });
   const completion = await fixture.report(0, 1);
   assert.ok(completion.branchWorkOrderId);
   const branch = await prisma.workOrder.findUniqueOrThrow({ where: { id: completion.branchWorkOrderId } });
@@ -130,4 +133,7 @@ test('a closed parent leaves outstanding branch records intact and removes them 
   assert.deepEqual(await prisma.workOrder.findUniqueOrThrow({ where: { id: branch.id } }), branch);
   await assert.rejects(prisma.$transaction(tx => assertProductionMayBeScheduled(tx, branch.id)), { code: 'PRODUCTION_FORCE_CLOSED' });
   assert.equal((await summarizeWeeklyClose(fixture.week.start)).incompleteWorkOrderCount, before.incompleteWorkOrderCount - 2);
+  const history = await loadProcessCompletionContext(fixture.route.id, null, { allowCompletedSelection: true });
+  assert.equal(history.step.id, fixture.route.steps[0].id);
+  assert.equal(history.recentCompletions[0]?.id, completion.completionId);
 });

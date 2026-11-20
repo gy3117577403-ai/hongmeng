@@ -1488,6 +1488,8 @@ export async function loadProcessCompletionContext(
     : 'free_sequence' as const;
   const allowAdvanceReporting = options.allowAdvanceReporting
     ?? reportingPolicy === 'free_sequence';
+  const forceClosedHistory = options.allowCompletedSelection
+    && Boolean(route.workOrder.forceClosedAt || route.workOrder.rootWorkOrder?.forceClosedAt);
   const target = targetQuantity(route.workOrder);
   const totalByStep = new Map(completionTotals.map(total => [
     total.stepId,
@@ -1521,7 +1523,7 @@ export async function loadProcessCompletionContext(
   };
   const selected = stepId
     ? route.steps.find(step => step.id === stepId)
-    : allowAdvanceReporting
+    : allowAdvanceReporting || forceClosedHistory
       ? route.steps.find(step => (
           step.status === 'current' && hasRemainingReport(step)
         ))
@@ -1539,6 +1541,7 @@ export async function loadProcessCompletionContext(
   }
   if (
     !allowAdvanceReporting
+    && !forceClosedHistory
     && selected.status !== 'current'
     && !(options.allowCompletedSelection && selected.completions.length > 0)
   ) {
